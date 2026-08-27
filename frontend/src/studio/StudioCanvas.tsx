@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Image as KonvaImage, Layer, Line, Rect, Stage } from 'react-konva'
 import Konva from 'konva'
 import useImage from 'use-image'
@@ -178,15 +178,29 @@ export default function StudioCanvas({
     onUpdateBlock(id, pts)
   }
 
+  // La posizione del nodo al dragstart è l'unico riferimento affidabile: un
+  // re-render durante il drag (autosave, selezione…) ri-applica x/y da props
+  // e la posizione al rilascio conterrebbe anche l'origine, non solo il gesto.
+  // Leggere node.x() come fosse il solo spostamento faceva «crollare» il
+  // blocco in basso della propria posizione, accumulando ad ogni trascinamento.
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null)
+  const onDragStart = (id: string) => {
+    const node = (stageRef.current?.findOne(`#${id}`) ?? null) as Konva.Node | null
+    dragStartRef.current = node ? { x: node.x(), y: node.y() } : null
+  }
+
   const onDragEnd = (id: string, _kind: 'rect' | 'polygon') => {
     const node = (stageRef.current?.findOne(`#${id}`) ?? null) as Konva.Node | null
     if (!node) return
     const block = blocks.find((b) => b.id === id)
     if (!block) return
-    const dx = node.x()
-    const dy = node.y()
-    node.x(0)
-    node.y(0)
+    const start = dragStartRef.current ?? { x: 0, y: 0 }
+    dragStartRef.current = null
+    const dx = node.x() - start.x
+    const dy = node.y() - start.y
+    if (!dx && !dy) return
+    node.x(start.x)
+    node.y(start.y)
     onUpdateBlock(
       id,
       block.points.map((p) => ({ x: p.x + dx, y: p.y + dy })),
@@ -234,6 +248,7 @@ export default function StudioCanvas({
             showFlow={showFlow}
             colorFor={colorFor}
             onSelect={onSelect}
+            onDragStart={onDragStart}
             onDragEnd={onDragEnd}
             onRectTransformEnd={onRectTransformEnd}
             onLineTransformEnd={onLineTransformEnd}

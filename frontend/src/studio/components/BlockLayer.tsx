@@ -12,6 +12,7 @@ interface BlockLayerProps {
   showFlow: boolean
   colorFor: (label: string) => string
   onSelect: (id: string | null) => void
+  onDragStart: (id: string) => void
   onDragEnd: (id: string, kind: 'rect' | 'polygon') => void
   onRectTransformEnd: (id: string) => void
   onLineTransformEnd: (id: string) => void
@@ -25,6 +26,7 @@ export default function BlockLayer({
   showFlow,
   colorFor,
   onSelect,
+  onDragStart,
   onDragEnd,
   onRectTransformEnd,
   onLineTransformEnd,
@@ -97,6 +99,7 @@ export default function BlockLayer({
                 e.cancelBubble = true
                 onSelect(b.id)
               }}
+              onDragStart={() => onDragStart(b.id)}
               onDragEnd={() => onDragEnd(b.id, 'rect')}
               onTransformEnd={() => onRectTransformEnd(b.id)}
               perfectDrawEnabled={false}
@@ -122,6 +125,7 @@ export default function BlockLayer({
               e.cancelBubble = true
               onSelect(b.id)
             }}
+            onDragStart={() => onDragStart(b.id)}
             onDragEnd={() => onDragEnd(b.id, 'polygon')}
             onTransformEnd={() => onLineTransformEnd(b.id)}
           />
