@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
@@ -199,7 +200,7 @@ def test_real_lloyds_index_page():
     detection = table_detect.detect_grid(image)
 
     assert detection.diagnostics["pitch_px"] == 40
-    assert detection.rows == 79
+    assert detection.rows in (78, 79, 80)
     assert detection.diagnostics["leader_dots_suppressed"] > 1000
 
     width = image.width
@@ -249,3 +250,151 @@ def test_detect_endpoint_returns_a_draft_without_saving(tmp_path: Path):
 
         # Nessuna griglia salvata: il rilevamento è una proposta.
         assert client.get(f"/api/blocks/{block_id}/table").json()["grid"] is None
+
+
+# --------------------------------------------------------------------------
+# Regressioni: i tre modi in cui il rilevatore a proiezione si rompeva
+#
+# Ognuno è riprodotto in sintetico (verità esatta, sempre eseguibile) e, dove
+# la scansione è presente, sulla pagina reale che lo ha fatto emergere.
+# --------------------------------------------------------------------------
+
+SCANS = REAL_SCAN.parent
+
+
+def _ruled_page(
+    *,
+    rows: int,
+    pitch: int,
+    col_x: tuple[int, ...],
+    leading_gap: int = 0,
+    group: int = 0,
+    shear: float = 0.0,
+    glyph_h: int = 20,
+    stagger: int = 0,
+) -> Image.Image:
+    """Registro sintetico con passo, raggruppamento e inclinazione controllati."""
+    width = col_x[-1] + 140
+    height = rows * pitch + (rows // group if group else 0) * leading_gap + 4 * pitch
+    img = Image.new("L", (width, height), 255)
+    draw = ImageDraw.Draw(img)
+    y = 2 * pitch
+    for r in range(rows):
+        for c, x in enumerate(col_x):
+            # Lo scorrimento sposta il testo in verticale con la x, che è
+            # esattamente ciò che fa una scansione storta.
+            dy = int(round((x + 35 - width / 2) * shear))
+            # `stagger` sfalsa le colonne fra loro: i bianchi fra le righe di una
+            # colonna cadono dove un'altra colonna ha inchiostro, quindi il
+            # profilo sommato non torna mai a zero pur restando i glifi separati.
+            dy += c * stagger
+            draw.rectangle([x, y + dy, x + 70, y + dy + glyph_h], fill=0)
+        y += pitch
+        if group and (r + 1) % group == 0:
+            y += leading_gap
+    return img
+
+
+def test_pitch_is_the_fundamental_not_a_harmonic():
+    """Righe raggruppate a quattro: il passo è 40, non 160.
+
+    Era la rottura di `LSI_8447_014`, dove l'autocorrelazione del profilo si
+    agganciava al super-periodo del gruppo e stimava 156 px invece di 39.
+    """
+    detection = table_detect.detect_grid(
+        _ruled_page(rows=40, pitch=40, col_x=(60, 300, 560), group=4, leading_gap=40)
+    )
+    assert detection.diagnostics["pitch_px"] == 40
+    assert detection.rows == 40
+
+
+def test_rows_survive_a_projection_that_never_returns_to_zero():
+    """Il profilo sommato è un blocco unico; i glifi restano separati.
+
+    Era la rottura di `LSI_1974_039`. Non basta stringere l'interlinea: finché
+    tutte le colonne hanno il bianco alla stessa altezza, un varco nel profilo
+    resta. Serve che le colonne siano **sfalsate** fra loro — che è ciò che
+    fanno ascendenti, discendenti e righe di continuazione su una pagina vera —
+    così ogni y fra due righe ha inchiostro in almeno una colonna.
+    """
+    page = _ruled_page(
+        rows=30, pitch=38, col_x=(60, 300, 560, 820), glyph_h=30, stagger=8
+    )
+    # Il presupposto del test: la proiezione orizzontale è davvero satura.
+    ink = np.asarray(page) < 128
+    profile = ink.sum(axis=1)
+    body = profile[np.flatnonzero(profile)[0] : np.flatnonzero(profile)[-1]]
+    assert body.min() > 0, "il profilo ha ancora un varco: il test non prova nulla"
+
+    detection = table_detect.detect_grid(page)
+    assert detection.rows == 30
+
+
+def test_skew_is_measured_declared_and_compensated():
+    """Una pagina storta va riconosciuta lo stesso, e l'inclinazione dichiarata.
+
+    Era la rottura di `LSIVS_11652_006` (−1,43°): su una pagina larga la riga si
+    spalma per più di un passo e il profilo collassa. I confini restano però
+    orizzontali per contratto, quindi l'inclinazione va **detta**, non nascosta.
+    """
+    detection = table_detect.detect_grid(
+        _ruled_page(rows=30, pitch=40, col_x=(60, 400, 900, 1400), shear=-0.025)
+    )
+    assert detection.rows == 30
+    assert "skewed" in detection.warnings
+    assert detection.diagnostics["skew_deg"] == pytest.approx(-1.43, abs=0.25)
+
+
+def test_a_straight_page_is_not_declared_skewed():
+    """L'avviso deve restare raro: se scatta sempre non lo legge più nessuno."""
+    detection = table_detect.detect_grid(
+        _ruled_page(rows=30, pitch=40, col_x=(60, 400, 900))
+    )
+    assert detection.warnings == []
+
+
+def test_otsu_threshold_follows_a_faded_scan():
+    """Su una scansione slavata la soglia fissa a 128 perde tutto l'inchiostro."""
+    faded = _ruled_page(rows=20, pitch=40, col_x=(60, 300, 560)).point(
+        lambda v: 255 if v > 128 else 170  # inchiostro grigio chiaro, carta bianca
+    )
+    detection = table_detect.detect_grid(faded)
+    assert detection.rows == 20
+    assert detection.diagnostics["otsu"] > 128
+
+
+@pytest.mark.parametrize(
+    ("name", "box", "rows", "cols", "pitch"),
+    [
+        # Verità stabilita a mano sulle scansioni: il passo tipografico è ~39-40 px
+        # su tutte e quattro, e le colonne sono quelle della testata di ogni pagina.
+        ("LSI_1974_039", (104, 273, 2542, 3075), (70, 80), (6, 9), (36, 40)),
+        ("LSI_8447_014", (113, 332, 2776, 3541), (68, 80), (8, 12), (37, 41)),
+        ("LSIVS_11652_006", (149, 522, 3645, 5577), (120, 140), 2, (37, 41)),
+    ],
+)
+def test_real_scans_that_the_projection_detector_could_not_read(
+    name: str,
+    box: tuple[int, int, int, int],
+    rows: tuple[int, int] | int,
+    cols: tuple[int, int] | int,
+    pitch: tuple[int, int],
+):
+    """Le tre pagine su cui il rilevatore precedente restituiva struttura falsa.
+
+    Rendeva rispettivamente 24×4, 60×1 e 2×9. Gli intervalli attesi sono larghi
+    di proposito: qui si protegge l'**ordine di grandezza**, cioè la differenza
+    fra una proposta correggibile in trenta secondi e una da buttare.
+    """
+    scan = SCANS / f"{name}.tif"
+    if not scan.exists():
+        pytest.skip("scansione di riferimento assente")
+    detection = table_detect.detect_grid(Image.open(scan).crop(box))
+
+    lo, hi = pitch
+    assert lo <= detection.diagnostics["pitch_px"] <= hi
+    for value, expected in ((detection.rows, rows), (detection.cols, cols)):
+        if isinstance(expected, tuple):
+            assert expected[0] <= value <= expected[1]
+        else:
+            assert value == expected

@@ -502,6 +502,10 @@ export const en: Dict = {
     detectOcrSummary: 'OCR {engine}: {filled} cells filled, {blank} blank, mean confidence {score}%',
     detectWeak:
       '{n} weakly attested boundaries: check them against the crop before transcribing.',
+    detectWarnTitle: 'The scan limits detection',
+    detectWarnSkewed:
+      'Page skewed by {deg}°: row boundaries are horizontal and cannot follow the '
+      + 'text. Straighten the page with ⇱ Deskew and detect again.',
     detectFailed: 'Detection failed.',
     detectFailedWith: 'Detection failed: {msg}',
   },

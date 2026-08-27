@@ -302,6 +302,19 @@ export default function TableCellsEditor({
         </div>
       )}
 
+      {/* Gli avvisi del rilevatore non sono statistica: dicono che una condizione
+          misurata della scansione limita la proposta, e cosa fare per toglierla.
+          Vanno quindi in una piastra d'allarme, non nella riga di riepilogo. */}
+      {detectInfo?.warnings.includes('skewed') && (
+        <div className="p-3 pb-0">
+          <WarnNotice title={t('table.detectWarnTitle')}>
+            {t('table.detectWarnSkewed', {
+              deg: (detectInfo.diagnostics.skew_deg ?? 0).toFixed(2),
+            })}
+          </WarnNotice>
+        </div>
+      )}
+
       {notice && (
         <div className="p-3 pb-0">
           <WarnNotice title={t('table.notDone')}>{notice}</WarnNotice>

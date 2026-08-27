@@ -502,6 +502,10 @@ export const it = {
     detectOcrSummary: 'OCR {engine}: {filled} celle riempite, {blank} vuote, confidenza media {score}%',
     detectWeak:
       '{n} confini poco attestati: controllali sul ritaglio prima di trascrivere.',
+    detectWarnTitle: 'La scansione limita il rilevamento',
+    detectWarnSkewed:
+      'Pagina inclinata di {deg}°: i confini di riga sono orizzontali e non possono '
+      + 'seguire il testo. Raddrizza la pagina con ⇱ Deskew e rileva di nuovo.',
     detectFailed: 'Rilevamento non riuscito.',
     detectFailedWith: 'Rilevamento non riuscito: {msg}',
   },

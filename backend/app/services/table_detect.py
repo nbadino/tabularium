@@ -52,9 +52,21 @@ non inventa struttura, propone e dichiara quanto è sicuro. I confini che la
 geometria non può provare — due colonne adiacenti senza gutter né allineamento
 costante — restano all'annotatore, che li aggiunge trascinando.
 
-`warnings` dice quando il rilevatore è **fuori dal proprio dominio**: un ritaglio
-che contiene più colonne di pagina non è una tabella, e restituire una griglia
-per una pagina simile sarebbe una risposta sbagliata data con sicurezza.
+`warnings` porta solo ciò che il rilevatore sa **misurare**. Oggi è
+`skewed`: oltre ~0,2° di inclinazione un confine di riga orizzontale non può
+più seguire la riga di testo, e la pagina va raddrizzata prima di annotarla.
+
+Non c'è invece un avviso «questa non è una tabella ma una pagina a più colonne».
+Le due ipotesi verificabili sono state misurate su `LSIVS_11652_006`, che è un
+supplemento a cinque colonne di giornale, e **nessuna delle due funziona**: il
+gutter di pagina più largo lì è 0,62 passi contro 1,07 passi del gutter *interno*
+più largo di `LSI_17186_015`, che è una tabella sola; e le linee di base non si
+disallineano, perché le cinque colonne sono composte sulla stessa griglia
+tipografica (residuo mediano 0,125 passi, in mezzo a quello delle due pagine a
+tabella singola). Un avviso che scatta sulle pagine sbagliate è peggio di nessun
+avviso: insegna a ignorare gli avvisi. Il caso resta risolto dal flusso, dove è
+l'utente a disegnare il blocco `Table` e su una pagina simile disegnerebbe cinque
+blocchi `Column`.
 
 Coordinate in uscita: `vlines`/`hlines` normalizzate 0–1 sul ritaglio, cioè la
 convenzione già usata da `TableGrid` (`cols+1` e `rows+1` valori crescenti).
@@ -79,13 +91,11 @@ _SHEAR_REPORT = 0.0035     # oltre ~0.2° l'inclinazione va dichiarata
 _ASCENDER = 0.72           # da linea di base a cima della riga, in passi
 _DESCENDER = 0.26          # da linea di base a fondo della riga, in passi
 _PEAK_SEPARATION = 0.62    # distanza minima fra due linee di base, in passi
+_FUNDAMENTAL_FRAC = 0.60   # forza minima di un picco perché valga come fondamentale
 _WORD_GAP_FRAC = 0.35      # gap fra parole della stessa cella, frazione del passo
 _DOT_W_FRAC = 0.20         # larghezza massima di un puntino, frazione del passo
 _DOT_H_FRAC = 0.20         # altezza massima di un puntino, frazione del passo
 _PEAK_TOL_FRAC = 0.15      # tolleranza di clustering dei bordi, frazione del passo
-_GUTTER_MIN_ROWS = 0.97    # frazione di righe senza inchiostro per un gutter di pagina
-_GUTTER_MIN_PITCH = 1.2    # larghezza minima di un gutter di pagina, in passi
-_GUTTER_MIN_SIDE = 0.15    # inchiostro minimo su ciascun lato di un gutter di pagina
 
 
 @dataclass
@@ -324,30 +334,64 @@ def _pick_peaks(hist: np.ndarray, smooth: int, separation: int) -> list[int]:
     return peaks
 
 
+def _pitch(hist: np.ndarray, glyph_height: float) -> int:
+    """Passo tipografico: **fondamentale** dell'istogramma delle linee di base.
+
+    L'autocorrelazione qui è affidabile dove sul profilo di inchiostro non lo
+    era, perché l'istogramma dei fondi è un treno di impulsi e non una somma
+    spalmata: le linee di base sono già isolate quando ci arriva.
+
+    Resta il problema delle armoniche — un treno di periodo `P` correla anche a
+    `2P`, `3P`, `4P` — e il massimo globale può cadere su una di quelle: era
+    esattamente la rottura di `LSI_8447_014`, dove il passo veniva stimato 156 px
+    invece di 39. Si prende quindi il **primo** massimo locale che raggiunge una
+    frazione del migliore, cioè la fondamentale, non il massimo assoluto.
+    """
+    centred = hist - hist.mean()
+    if not np.any(centred):
+        return max(_MIN_XHEIGHT, int(round(glyph_height * 1.6)))
+    ac = np.correlate(centred, centred, mode="full")[len(centred) - 1 :]
+    if ac[0] <= 0:
+        return max(_MIN_XHEIGHT, int(round(glyph_height * 1.6)))
+    ac = ac / ac[0]
+
+    lo = max(4, int(round(glyph_height * 0.6)))
+    hi = min(int(round(glyph_height * 6)), len(ac) - 1)
+    if hi <= lo + 2:
+        return max(_MIN_XHEIGHT, int(round(glyph_height * 1.6)))
+    window = ac[lo:hi]
+    best = float(window.max())
+    for i in range(1, len(window) - 1):
+        if (
+            window[i] >= _FUNDAMENTAL_FRAC * best
+            and window[i] >= window[i - 1]
+            and window[i] >= window[i + 1]
+        ):
+            return lo + i
+    return lo + int(np.argmax(window))
+
+
 def _baselines(hist: np.ndarray, glyph_height: float) -> tuple[list[int], int]:
-    """Linee di base e passo tipografico, in due passate.
+    """Linee di base e passo tipografico.
 
     La distanza minima fra due linee di base è il **passo**, non l'altezza del
     glifo: legarla all'altezza sbaglia in entrambi i versi, perché il rapporto
     fra corpo e interlinea cambia da un'annata all'altra. Sul corpus corrente
-    l'altezza dominante è 27–30 px con un passo di 39 px, quindi una separazione
-    di `1,1 × altezza` ne cancella una riga su sei.
-
-    Perciò: una prima passata volutamente permissiva serve solo a *misurare* il
-    passo dalla mediana delle distanze, e la seconda usa quel passo. La mediana
-    regge anche se la prima passata produce qualche picco spurio.
+    l'altezza dominante è 27–30 px con un passo di 39–40 px, quindi una
+    separazione di `1,1 × altezza` cancella una riga su sei, e una di
+    `0,55 × altezza` sdoppia ogni riga sui discendenti.
     """
-    seed_smooth = max(1, int(round(glyph_height * 0.30)))
-    seed = _pick_peaks(hist, seed_smooth, max(3, int(round(glyph_height * 0.55))))
-    if len(seed) < 3:
-        return seed, max(_MIN_XHEIGHT, int(round(glyph_height * 1.6)))
-
-    pitch = int(round(float(np.median(np.diff(seed)))))
-    pitch = max(_MIN_XHEIGHT, pitch)
-    smooth = max(1, int(round(pitch * 0.22)))
-    peaks = _pick_peaks(hist, smooth, max(3, int(round(pitch * _PEAK_SEPARATION))))
+    smoothed = np.convolve(hist, np.ones(5), mode="same")
+    pitch = _pitch(smoothed, glyph_height)
+    peaks = _pick_peaks(
+        hist,
+        max(1, int(round(pitch * 0.22))),
+        max(3, int(round(pitch * _PEAK_SEPARATION))),
+    )
     if len(peaks) < 3:
-        return seed, pitch
+        return peaks, pitch
+    # Il passo misurato sulle linee trovate è la verifica della stima: se le due
+    # divergono molto, sono le linee a comandare, perché sono ciò che si vede.
     return peaks, max(_MIN_XHEIGHT, int(round(float(np.median(np.diff(peaks))))))
 
 
@@ -585,31 +629,6 @@ def _column_bounds(
     return xs, support, diagnostics
 
 
-def _page_columns(
-    ink: np.ndarray, bands: list[tuple[int, int]], pitch: int, shear: float
-) -> list[int]:
-    """Gutter che attraversano *quasi tutte* le righe: colonne di pagina, non di tabella.
-
-    Un supplemento di viaggio è cinque colonne di giornale affiancate. Una griglia
-    non lo descrive, e proporgliene una sarebbe una risposta sbagliata data con
-    sicurezza: meglio dirlo.
-    """
-    if not bands:
-        return []
-    _, occupied = _shear_profiles(ink, bands, shear)
-    empty = occupied <= (1.0 - _GUTTER_MIN_ROWS) * len(bands)
-    width_min = max(3, int(_GUTTER_MIN_PITCH * pitch))
-    inside = np.flatnonzero(occupied > 0)
-    if inside.size == 0:
-        return []
-    lo, hi = int(inside[0]), int(inside[-1])
-    return [
-        (start + end) // 2
-        for start, end in _runs(empty, width_min)
-        if lo < (start + end) // 2 < hi
-    ]
-
-
 # --------------------------------------------------------------------------
 # Ingresso pubblico
 # --------------------------------------------------------------------------
@@ -668,12 +687,9 @@ def detect_grid(
     # I bordi esterni non sono "attestati": marcali con il numero di righe piene.
     column_support = [len(bands), *support, len(bands)]
 
-    page_cols = _page_columns(ink, bands, pitch, shear)
     warnings: list[str] = []
     if abs(shear) > _SHEAR_REPORT:
         warnings.append("skewed")
-    if page_cols:
-        warnings.append("multi_column")
 
     diagnostics.update(
         {
@@ -684,7 +700,6 @@ def detect_grid(
             "otsu": int(threshold),
             "shear": round(float(shear), 5),
             "skew_deg": round(float(np.degrees(np.arctan(shear))), 3),
-            "page_column_gutters": [int(g) for g in page_cols],
             "image_size": [int(width), int(height)],
         }
     )

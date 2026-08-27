@@ -502,6 +502,10 @@ export const fr: Dict = {
     detectOcrSummary: 'OCR {engine} : {filled} cellules remplies, {blank} vides, confiance moyenne {score} %',
     detectWeak:
       '{n} limites peu attestées : vérifiez-les sur le rognage avant de transcrire.',
+    detectWarnTitle: 'La numérisation limite la détection',
+    detectWarnSkewed:
+      'Page inclinée de {deg}° : les limites de ligne sont horizontales et ne peuvent '
+      + 'pas suivre le texte. Redressez la page avec ⇱ Deskew puis relancez la détection.',
     detectFailed: 'Échec de la détection.',
     detectFailedWith: 'Échec de la détection : {msg}',
   },

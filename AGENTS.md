@@ -101,9 +101,10 @@ riduce: sono già piccoli e ridurli cancellerebbe i caratteri.
 I chunk ciechi non sono una strategia sicura: possono spezzare righe, rowspan e contesto di
 colonna. Il dataset conserva sempre il crop completo della tabella. Come augmentazione opzionale
 può aggiungere bande di righe logiche sovrapposte, ma solo quando l'annotazione contiene `hlines`
-verificate; i boundary che attraversano un rowspan sono vietati. Non si usano filetti visibili né
-si assume che il rilevatore geometrico sia affidabile: sul campione corrente è stabile solo su una
-delle quattro pagine misurate.
+verificate; i boundary che attraversano un rowspan sono vietati. Non si usano filetti visibili.
+Il rilevatore geometrico è stabile su tutte e quattro le pagine del campione da quando ricava le
+righe dalle linee di base dei glifi (v. §2.3.4), ma resta una **proposta da correggere**, non una
+verità: le `hlines` valgono come verificate solo dopo il passaggio dell'annotatore.
 
 In inferenza il percorso a bande resta un fallback sperimentale del riconoscimento per crop. La
 prima riga non viene più trattata implicitamente come intestazione (su molti registri è già una
@@ -114,6 +115,46 @@ END2END a 2 MP deve essere confrontato con questo fallback su pagine gold senza 
 > convertire con `html2otsl.py`; a inferenza il modello viene interrogato **direttamente in OTSL**.
 > Quindi i dati di training devono contenere OTSL. Il builder esporterà OTSL generato dal grid
 > di annotazione (+ opzione HTML intermedio per fedeltà al flusso ufficiale).
+
+### 2.3.4 Rilevamento della griglia: contratto e dominio d'uso
+`services/table_detect.detect_grid()` propone la struttura di un ritaglio `Table`. Non salva
+niente e non è una verità: è una bozza che l'annotatore accetta, sposta o rifiuta.
+
+**Righe dalle linee di base, non dal profilo.** Il passo tipografico e le righe si ricavano dalle
+componenti connesse (istogramma dei *fondi* dei glifi), non dall'autocorrelazione del profilo di
+inchiostro. Il percorso a proiezione reggeva su una pagina su quattro e si rompeva in tre modi
+distinti, tutti riprodotti nei test di regressione (`tests/test_table_detect.py`): armonica del
+periodo (`LSI_8447_014`, 156 px invece di 39), profilo saturo per interlinea stretta
+(`LSI_1974_039`), spalmatura da inclinazione (`LSIVS_11652_006`, −1,43°).
+
+| Campo | Significato |
+|---|---|
+| `vlines` / `hlines` | Confini normalizzati 0–1 **sul ritaglio**, crescenti, `cols+1` e `rows+1`. |
+| `column_support` | Su quante righe è attestato ciascun confine verticale. I due estremi valgono per definizione il numero di righe: non sono attestati, sono i bordi del contenuto. |
+| `warnings` | Codici stabili, mai prosa: il backend parla inglese, la UI traduce (§13.11). Oggi solo `skewed`. |
+| `diagnostics` | Misure che rendono verificabile l'esito: `pitch_px`, `glyph_height_px`, `glyphs`, `otsu`, `shear`, `skew_deg`, `row_bands`, `leader_dots_suppressed`, `gutters`, `content_x`. |
+
+**Binarizzazione con Otsu**, non a soglia fissa: sul corpus la soglia cade fra 142 e 152, quindi
+128 perdeva sistematicamente i tratti sottili. Convenzione `gray <= t`, come `cv2`.
+
+**L'inclinazione si compensa, non si ruota.** Lo scorrimento `tan θ` corregge le coordinate dei
+glifi e trasla i profili di riga; l'immagine non viene mai ruotata, così i confini restituiti
+restano nel sistema di riferimento del ritaglio. Ma un `hline` è orizzontale per contratto: oltre
+~0,2° non può più seguire la riga di testo, e il rilevatore emette `skewed` perché la pagina va
+raddrizzata con *⇱ Deskew* prima di annotare. L'avviso è un limite dichiarato, non un errore.
+
+**Dominio d'uso.** Vale su un ritaglio che è **una sola tabella allineata a spazi**. Su una pagina
+a più colonne di giornale (`LSIVS_11652_006`, supplemento a cinque colonne) restituisce una griglia
+priva di senso, e **non sa accorgersene**: entrambe le ipotesi verificabili sono state misurate e
+respinte — la larghezza dei gutter è invertita rispetto all'attesa (0,62 passi lì contro 1,07 del
+gutter *interno* più largo di una tabella singola) e le linee di base non si disallineano, perché
+le cinque colonne sono composte sulla stessa griglia tipografica. Un avviso che scatta sulle pagine
+sbagliate insegna a ignorare gli avvisi, quindi non ce n'è uno. Il caso è risolto dal flusso: su una
+pagina simile l'utente disegna cinque blocchi `Column`, non un blocco `Table`.
+
+**Dipendenze.** Solo `numpy` e `Pillow`, come tutto il backend: le componenti connesse sono
+implementate nel modulo (run + union-find) e verificate contro `cv2` nei test, senza che `cv2`
+diventi una dipendenza dichiarata.
 
 ### 2.4 Coordinate (CRITICO — verificato in `core_runner.py::_map_bbox_to_image`)
 - Il modello emette i bbox **normalizzati in scala 0–1000 per asse** (x e y indipendentemente).

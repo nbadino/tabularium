@@ -184,6 +184,9 @@ class TableDetectOut(BaseModel):
     grid: TableGrid
     # Su quante righe è attestato ciascun confine verticale (len = cols + 1).
     column_support: list[int] = []
+    # Condizioni misurate che limitano la proposta, come codici stabili
+    # (`skewed`): la UI li traduce, il backend non spedisce mai prosa.
+    warnings: list[str] = []
     diagnostics: dict = {}
     ocr: dict | None = None
 

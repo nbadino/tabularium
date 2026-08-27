@@ -350,6 +350,7 @@ def block_table_detect(
     return TableDetectOut(
         grid=grid,
         column_support=detection.column_support,
+        warnings=detection.warnings,
         diagnostics=detection.diagnostics,
         ocr=ocr_stats,
     )

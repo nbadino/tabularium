@@ -175,9 +175,16 @@ export interface TableDetectOut {
   grid: TableGrid
   /** Su quante righe è attestato ciascun confine verticale (len = cols + 1). */
   column_support: number[]
+  /** Condizioni misurate che limitano la proposta: codici stabili, tradotti a video. */
+  warnings: string[]
   diagnostics: {
     pitch_px?: number
     row_bands?: number
+    glyph_height_px?: number
+    glyphs?: number
+    otsu?: number
+    shear?: number
+    skew_deg?: number
     leader_dots_suppressed?: number
     gutters?: number[]
     content_x?: [number, number]
