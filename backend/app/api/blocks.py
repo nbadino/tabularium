@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, HTTPException, Request, Response
+from PIL import Image
 
 from ..db import connect
 from ..schemas import (
@@ -13,6 +14,8 @@ from ..schemas import (
     BlockUpdate,
     LabelSchemaOut,
     TableCell,
+    TableCellRecognizeOut,
+    TableCellRecognizeRequest,
     TableDetectOut,
     TableDetectRequest,
     TableGrid,
@@ -283,6 +286,7 @@ def block_table_detect(
     vlines, hlines = detection.vlines, detection.hlines
     cells = table_detect.empty_cells(rows, cols)
     ocr_stats: dict | None = None
+    prefill_source: str | None = None
 
     if payload.fill == "ocr":
         engine = ocrmod.OcrEngine()
@@ -303,11 +307,18 @@ def block_table_detect(
                 detail=msg("ocr_engine_failed", lang, engine=engine.name, exc=exc),
             ) from exc
         ocr_stats["engine"] = engine.name
+        prefill_source = "ocr"
 
     elif payload.fill == "model":
         # Qui il modello dà struttura E contenuto: la griglia che torna è la
         # sua, non quella geometrica. I confini di riga rilevati servono solo a
         # tagliare le bande senza spezzare una riga a metà.
+        cfg = inference.get_inference_config()
+        if not cfg.get("enabled", True):
+            raise HTTPException(
+                status_code=400,
+                detail="L'inferenza del modello (GPU/Cloud) è disattivata. Attivala nelle impostazioni o usa il riempimento OCR/nessuno.",
+            )
         client = inference.get_vllm_client()
         if not client.ping():
             raise HTTPException(
@@ -338,6 +349,20 @@ def block_table_detect(
             "below_threshold": 0,
             "mean_score": 0.0,
         }
+        prefill_source = "model"
+
+    # Il prefill non è verità: ogni cella con testo nasce non verificata, così
+    # l'export distingue il testo proposto da quello confermato dall'umano. Le
+    # celle senza testo non c'entrano (non c'è niente da verificare).
+    if prefill_source:
+        cells = [
+            {
+                **c,
+                "source": prefill_source,
+                "verified": not (c.get("text") or "").strip(),
+            }
+            for c in cells
+        ]
 
     grid = TableGrid(
         rows=rows,
@@ -354,6 +379,109 @@ def block_table_detect(
         diagnostics=detection.diagnostics,
         ocr=ocr_stats,
     )
+
+
+@router.post(
+    "/api/blocks/{block_id}/table/cell-recognize",
+    response_model=TableCellRecognizeOut,
+)
+def block_table_cell_recognize(
+    block_id: int, payload: TableCellRecognizeRequest, request: Request
+) -> TableCellRecognizeOut:
+    """Ri-riconosce una sola cella della griglia salvata.
+
+    Non persiste nulla: il testo torna all'editor come proposta (`source=ocr`,
+    `verified=false`) finché l'annotatore non la conferma. Serve quando una
+    cella sola è sbagliata: rigirare tutta la tabella cancellerebbe il lavoro
+    fatto — e verificato — sulle altre.
+    """
+    lang = parse_lang(request.headers.get("accept-language"))
+    with connect() as conn:
+        block = _get_block_or_404(conn, block_id)
+        page = conn.execute(
+            "SELECT * FROM pages WHERE id=?", (block["page_id"],)
+        ).fetchone()
+        if page is None:
+            raise HTTPException(status_code=404, detail="pagina non trovata")
+        grid = _get_table_grid(
+            conn.execute("SELECT * FROM tables WHERE block_id=?", (block_id,)).fetchone()
+        )
+    if not grid:
+        raise HTTPException(
+            status_code=422, detail=msg("table_grid_missing_skip", lang, id=block_id)
+        )
+
+    rows, cols = int(grid["rows"]), int(grid["cols"])
+    if payload.r >= rows or payload.c >= cols:
+        raise HTTPException(status_code=422, detail="cella fuori dalla griglia")
+
+    # La cella richiesta può essere coperta da una unita: si riconosce l'estensione
+    # completa del proprietario, non la sola traccia.
+    owner: dict | None = None
+    for cell in grid.get("cells", []):
+        if (
+            cell["r"] <= payload.r < cell["r"] + cell["rowspan"]
+            and cell["c"] <= payload.c < cell["c"] + cell["colspan"]
+        ):
+            owner = cell
+            break
+    if owner is None:
+        raise HTTPException(status_code=422, detail="cella fuori dalla griglia")
+
+    hlines = [float(v) for v in grid.get("hlines", [])] or [
+        i / rows for i in range(rows + 1)
+    ]
+    vlines = [float(v) for v in grid.get("vlines", [])] or [
+        i / cols for i in range(cols + 1)
+    ]
+
+    image = pagesvc.crop_block_image(page, _block_bbox(block))
+    width, height = image.width, image.height
+    r0, r1 = owner["r"], owner["r"] + owner["rowspan"]
+    c0, c1 = owner["c"], owner["c"] + owner["colspan"]
+    x0 = round(vlines[c0] * width)
+    x1 = round(vlines[c1] * width)
+    y0 = round(hlines[r0] * height)
+    y1 = round(hlines[r1] * height)
+
+    # Stesso trattamento del prefill a griglia piena (table_detect.fill_cells):
+    # i riconoscitori vogliono un po' d'aria e un'altezza tipica, altrimenti le
+    # celle corte tornano quasi sempre vuote.
+    diffs = sorted(b - a for a, b in zip(hlines, hlines[1:]) if b > a)
+    pitch = max(8, int(round(diffs[len(diffs) // 2] * height)) if diffs else height // rows)
+    pad = max(2, int(0.25 * pitch))
+    target_h = max(24, int(2.5 * pitch))
+
+    engine = ocrmod.OcrEngine()
+    if not engine.available:
+        raise HTTPException(status_code=400, detail=msg("ocr_unavailable", lang))
+    try:
+        crop = image.crop(
+            (
+                max(0, x0 - pad),
+                max(0, y0 - pad),
+                min(width, x1 + pad),
+                min(height, y1 + pad),
+            )
+        )
+        if crop.width < 2 or crop.height < 2:
+            raise HTTPException(status_code=422, detail="cella troppo piccola")
+        scale = target_h / crop.height
+        crop = crop.resize(
+            (max(8, int(crop.width * scale)), target_h), Image.LANCZOS
+        )
+        text, score = engine.recognize_line(crop)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=400,
+            detail=msg("ocr_engine_failed", lang, engine=engine.name, exc=exc),
+        ) from exc
+
+    if score < payload.min_score:
+        text = ""
+    return TableCellRecognizeOut(text=text, score=round(score, 4), engine=engine.name)
 
 
 @router.get("/api/blocks/{block_id}/crop")

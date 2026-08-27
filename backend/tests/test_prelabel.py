@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from app.main import app
 
@@ -90,6 +90,100 @@ def test_prelabel_inserts_filtered_blocks(tmp_path: Path, monkeypatch):
             json={"page_ids": [page_id], "mode": "replace", "confidence": 0.5},
         )
         assert len(client.get(f"/api/pages/{page_id}/annotations").json()["items"]) == 2
+
+
+def test_ocr_prelabel_promotes_register_to_table(tmp_path: Path, monkeypatch):
+    """Su un registro allineato a spazi il prefill OCR produce una tabella.
+
+    La pagina sintetica ha una testata in alto e un registro di 15 righe a 5
+    colonne. L'OCR finto vede solo righe (le colonne fuse, come nella realtà):
+    la promozione deve ricostruire la struttura dal ritaglio, non dalle righe.
+    """
+    from app.services import ocr as ocrmod
+
+    class FakeRowEngine:
+        name = "rapidocr"
+        available = True
+
+        def detect(self, image):
+            lines = [
+                {"bbox": [60.0, 20.0, 500.0, 60.0], "text": "LLOYD'S LIST", "score": 0.9},
+                {"bbox": [60.0, 70.0, 400.0, 110.0], "text": "May 20, 1940.", "score": 0.9},
+            ]
+            for r in range(15):
+                y = 400.0 + r * 40.0
+                lines.append(
+                    {"bbox": [60.0, y + 4, 870.0, y + 30], "text": "row", "score": 0.9}
+                )
+            return lines
+
+        def recognize_line(self, image):
+            return ("x", 0.9)
+
+    # La pagina deve contenere davvero la tabella: la promozione passa dalla
+    # geometria del ritaglio, non dai bbox dell'OCR.
+    archive = tmp_path / "archive"
+    archive.mkdir(parents=True)
+    img = Image.new("L", (950, 1300), 255)
+    draw = ImageDraw.Draw(img)
+    col_x = (60, 300, 420, 560, 800)
+    for r in range(15):
+        y = 400 + r * 40
+        for x in col_x:
+            draw.rectangle([x, y + 6, x + 70, y + 26], fill=0)
+    draw.rectangle([60, 30, 300, 55], fill=0)  # testata
+    draw.rectangle([60, 80, 260, 105], fill=0)  # data
+    img.convert("RGB").save(archive / "LSI_test_001.png")
+
+    monkeypatch.setattr(ocrmod, "OcrEngine", FakeRowEngine)
+
+    with TestClient(app) as client:
+        pid = client.post(
+            "/api/projects", json={"name": "T", "archive_dir": str(archive)}
+        ).json()["id"]
+        client.post(f"/api/projects/{pid}/scan")
+        page = client.get(f"/api/projects/{pid}/pages").json()["items"][0]
+
+        r = client.post(
+            f"/api/projects/{pid}/prelabel",
+            json={"page_ids": [page["id"]], "mode": "replace", "confidence": 0.5},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()["results"][0]
+        assert body["tables"] == 1
+        assert body["grids"] == 1
+
+        blocks = client.get(f"/api/pages/{page['id']}/annotations").json()["items"]
+        labels = sorted(b["label"] for b in blocks)
+        assert labels == ["Table", "Text", "Text"]
+        table = next(b for b in blocks if b["label"] == "Table")
+        assert table["prefill_source"] == "rapidocr:table"
+        # L'ordine di lettura mette la testata sopra il registro.
+        assert max(b["order_idx"] for b in blocks if b["label"] == "Text") < table["order_idx"]
+
+        grid = client.get(f"/api/blocks/{table['id']}/table").json()["grid"]
+        assert grid["rows"] == 15
+        assert grid["cols"] == 5
+        filled = [c for c in grid["cells"] if c["text"].strip()]
+        assert filled, "le celle con inchiostro devono avere il testo proposto"
+        assert all(c["source"] == "ocr" and c["verified"] is False for c in filled)
+        empty = [c for c in grid["cells"] if not c["text"].strip()]
+        assert all(c["verified"] for c in empty)
+
+        # Con la promozione disattivata si torna al comportamento di riga.
+        r = client.post(
+            f"/api/projects/{pid}/prelabel",
+            json={
+                "page_ids": [page["id"]],
+                "mode": "replace",
+                "confidence": 0.5,
+                "table_promote": False,
+            },
+        )
+        assert r.status_code == 200
+        assert r.json()["results"][0]["tables"] == 0
+        blocks = client.get(f"/api/pages/{page['id']}/annotations").json()["items"]
+        assert all(b["label"] == "Text" for b in blocks)
 
 
 def test_model_end2end_persists_table_without_second_call(tmp_path: Path, monkeypatch):

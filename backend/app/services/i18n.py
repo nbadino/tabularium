@@ -87,6 +87,7 @@ _IT: dict[str, str] = {
     "table_error": "blocco {id} (Table): {exc}",
     "table_band_failed": "blocco {id} (Table): generazione banda fallita ({exc})",
     "table_band_no_boundaries": "blocco {id} (Table): bande non generate perché mancano confini di riga verificati",
+    "table_unverified_cells": "blocco {id} (Table): {n}/{total} celle di testo con prefill non ancora verificate",
     "formula_empty": "blocco {id} (Formula): contenuto vuoto",
     # --- valutazione ------------------------------------------------------------
     "inference_failed": "pagina {id}: inferenza fallita ({exc})",
@@ -188,6 +189,7 @@ _EN: dict[str, str] = {
     "table_error": "block {id} (Table): {exc}",
     "table_band_failed": "block {id} (Table): band generation failed ({exc})",
     "table_band_no_boundaries": "block {id} (Table): bands not generated because verified row boundaries are missing",
+    "table_unverified_cells": "block {id} (Table): {n}/{total} text cells with unverified prefill",
     "formula_empty": "block {id} (Formula): empty content",
     "inference_failed": "page {id}: inference failed ({exc})",
     "table_error_w": "table block {id}: {exc}",
@@ -286,6 +288,7 @@ _FR: dict[str, str] = {
     "table_error": "bloc {id} (Table) : {exc}",
     "table_band_failed": "bloc {id} (Table) : échec de génération de la bande ({exc})",
     "table_band_no_boundaries": "bloc {id} (Table) : bandes non générées car les limites de lignes vérifiées sont absentes",
+    "table_unverified_cells": "bloc {id} (Table) : {n}/{total} cellules de texte avec pré-remplissage non vérifié",
     "formula_empty": "bloc {id} (Formule) : contenu vide",
     "inference_failed": "page {id} : inférence impossible ({exc})",
     "table_error_w": "tableau bloc {id} : {exc}",

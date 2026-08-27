@@ -412,6 +412,9 @@ def build_datasets(
     }
     crops_generated = 0
     table_variants = {"full": 0, "bands": 0, "without_boundaries": 0}
+    # Provenienza del testo nelle celle esportate: il prefill non verificato è
+    # la parte del dataset che un umano non ha ancora guardato, e va dichiarata.
+    table_cells = {"total": 0, "verified": 0, "prefill_unverified": 0}
 
     for pid in page_ids:
         split = "train" if pid in train_ids else "val"
@@ -473,6 +476,25 @@ def build_datasets(
                 except ValueError as exc:
                     warnings.append(msg("table_error", lang, id=block["id"], exc=exc))
                     continue
+                # Conteggio per il report, con avviso quando il testo proposto
+                # dall'OCR/modello non è ancora passato dall'annotatore.
+                text_cells = [
+                    c for c in grid.get("cells", []) if (c.get("text") or "").strip()
+                ]
+                unverified = [c for c in text_cells if c.get("verified") is False]
+                table_cells["total"] += len(text_cells)
+                table_cells["verified"] += len(text_cells) - len(unverified)
+                table_cells["prefill_unverified"] += len(unverified)
+                if unverified:
+                    warnings.append(
+                        msg(
+                            "table_unverified_cells",
+                            lang,
+                            id=block["id"],
+                            n=len(unverified),
+                            total=len(text_cells),
+                        )
+                    )
                 if include_full_tables:
                     img = _write_crop(page, block["id"], points, crops_dir, warnings, lang=lang)
                     if img:
@@ -572,6 +594,7 @@ def build_datasets(
         pilot_only=pilot_only,
         pilot_pages=len(pilot_ids),
         table_variants=table_variants,
+        table_cells=table_cells,
         table_band_rows=table_band_rows,
         table_band_overlap=table_band_overlap,
         include_full_tables=include_full_tables,
@@ -620,6 +643,7 @@ def _report(
     pilot_only: bool = False,
     pilot_pages: int = 0,
     table_variants: dict | None = None,
+    table_cells: dict | None = None,
     table_band_rows: int = 15,
     table_band_overlap: int = 2,
     include_full_tables: bool = True,
@@ -646,6 +670,7 @@ def _report(
         "pilot_only": pilot_only,
         "pilot_pages": pilot_pages,
         "table_variants": table_variants or {"full": 0, "bands": 0, "without_boundaries": 0},
+        "table_cells": table_cells or {"total": 0, "verified": 0, "prefill_unverified": 0},
         "table_strategy": {
             "experimental": True,
             "include_full": include_full_tables,

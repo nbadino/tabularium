@@ -30,6 +30,11 @@ class PrelabelRequest(BaseModel):
     # END2END è ufficiale ma più lento e va confrontato sul corpus. Il default
     # resta esplicito per non cambiare silenziosamente run esistenti.
     model_mode: Literal["two_stage", "end2end"] = "two_stage"
+    # Il percorso OCR vede solo righe: qui si prova a promuovere il più grande
+    # cluster di righe consecutive a blocco `Table` (griglia + celle precompilate
+    # via OCR). Va bene lasciarlo attivo: la promozione non è un'ipotesi, la
+    # geometria la dimostra, e in caso di dubbio resta tutto `Text` come prima.
+    table_promote: bool = True
 
 
 def _iou(a: list[float], b: list[float]) -> float:
@@ -89,6 +94,77 @@ def _recognize_table(client, image, bbox: list[int]) -> dict:
     except Exception:  # noqa: BLE001
         row_bounds = None
     return client.table_grid(crop, row_bounds=row_bounds)
+
+
+def _table_cluster(kept: list[dict]) -> tuple[list[int], list[int]] | None:
+    """Il più grande cluster verticale di righe consecutive, candidato tabella.
+
+    L'OCR di riga non sa che è una tabella, ma le righe del registro si
+    riconoscono per contiguità: il passo fra una riga e la successiva è
+    dell'ordine dell'altezza di riga, mentre sopra (testata, numero del
+    fascicolo) c'è un salto. Prendere il cluster più grande evita il difetto
+    misurato di passare al rilevatore la pagina intera, testata compresa.
+    """
+    if len(kept) < _TABLE_MIN_ROWS:
+        return None
+    heights = sorted(b["bbox"][3] - b["bbox"][1] for b in kept)
+    med_h = max(1, heights[len(heights) // 2])
+    order = sorted(range(len(kept)), key=lambda i: kept[i]["bbox"][1])
+    clusters: list[list[int]] = []
+    for i in order:
+        if clusters and kept[i]["bbox"][1] - kept[clusters[-1][-1]]["bbox"][3] <= 1.5 * med_h:
+            clusters[-1].append(i)
+        else:
+            clusters.append([i])
+    best = max(clusters, key=len)
+    if len(best) < _TABLE_MIN_ROWS:
+        return None
+    xs1 = [kept[i]["bbox"][0] for i in best]
+    ys1 = [kept[i]["bbox"][1] for i in best]
+    xs2 = [kept[i]["bbox"][2] for i in best]
+    ys2 = [kept[i]["bbox"][3] for i in best]
+    return [min(xs1), min(ys1), max(xs2), max(ys2)], best
+
+
+def _ocr_table_grid(
+    image, bbox: list[int], engine, min_score: float
+) -> dict | None:
+    """Griglia + celle precompilate per un blocco tabella via OCR locale.
+
+    Struttura dal rilevatore geometrico, testo cella per cella: è il solo modo
+    in cui l'OCR di riga smette di fondere le colonne. Celle con testo nascono
+    `verified=False`: sono una proposta, non trascrizioni confermate.
+    """
+    x1, y1, x2, y2 = bbox
+    crop = image.crop((x1, y1, x2, y2))
+    try:
+        detection = table_detect.detect_grid(crop)
+        cells, _stats = table_detect.fill_cells(
+            crop,
+            detection.vlines,
+            detection.hlines,
+            engine,
+            pitch=int(detection.diagnostics.get("pitch_px", 20)),
+            min_score=min_score,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    cells = [
+        {
+            **c,
+            "source": "ocr" if (c.get("text") or "").strip() else "manual",
+            "verified": not (c.get("text") or "").strip(),
+        }
+        for c in cells
+    ]
+    return {
+        "rows": detection.rows,
+        "cols": detection.cols,
+        "cells": cells,
+        "phantom_cols": [],
+        "vlines": detection.vlines,
+        "hlines": detection.hlines,
+    }
 
 
 def _prelabel_with_model(
@@ -254,6 +330,12 @@ def prelabel(project_id: int, payload: PrelabelRequest, request: Request) -> dic
         _get_project_or_404(conn, project_id)
 
     if payload.engine == "model":
+        cfg = inference.get_inference_config()
+        if not cfg.get("enabled", True):
+            raise HTTPException(
+                status_code=400,
+                detail="L'inferenza del modello (GPU/Cloud) è disattivata. Attivala nelle impostazioni o usa l'OCR locale.",
+            )
         client = inference.get_vllm_client()
         if not client.ping():
             raise HTTPException(
@@ -315,27 +397,77 @@ def prelabel(project_id: int, payload: PrelabelRequest, request: Request) -> dic
                 kept.append({"bbox": bbox, "text": d["text"].strip(), "score": d["score"]})
             kept = _nms_lite(kept)
 
+            # Promozione a tabella: il più grande cluster di righe consecutive
+            # che la geometria dimostra essere una griglia diventa un blocco
+            # `Table` con celle precompilate; le righe fuori dal cluster
+            # (testata, numero del fascicolo) restano `Text`.
+            table_bbox: list[int] | None = None
+            if payload.table_promote:
+                candidate = _table_cluster(kept)
+                if candidate and _looks_like_table(image, candidate[0]):
+                    table_bbox, consumed = candidate
+                    consumed_set = set(consumed)
+                    kept = [k for i, k in enumerate(kept) if i not in consumed_set]
+
+            outputs: list[dict] = [
+                {
+                    "label": "Text",
+                    "bbox": k["bbox"],
+                    "content": k["text"],
+                    "prefill": f"{engine.name}:{k['score']:.4f}",
+                }
+                for k in kept
+            ]
+            if table_bbox:
+                outputs.append(
+                    {
+                        "label": "Table",
+                        "bbox": table_bbox,
+                        "content": "",
+                        "prefill": f"{engine.name}:table",
+                    }
+                )
+            # Ordine di lettura: dall'alto verso il basso (e da sinistra), la
+            # stessa convenzione dell'annotazione manuale.
+            outputs.sort(key=lambda o: (o["bbox"][1], o["bbox"][0]))
+
             if payload.mode == "replace":
                 conn.execute("DELETE FROM blocks WHERE page_id=?", (pid,))
-            for i, k in enumerate(kept, start=1):
-                conn.execute(
+            grids = 0
+            for i, o in enumerate(outputs, start=1):
+                cur = conn.execute(
                     "INSERT INTO blocks (page_id, label, kind, points, content, order_idx, "
                     "prefill_source, confirmed) VALUES (?,?,?,?,?,?,?,0)",
                     (
                         pid,
-                        "Text",
+                        o["label"],
                         "rect",
-                        json.dumps([[k["bbox"][0], k["bbox"][1]], [k["bbox"][2], k["bbox"][3]]]),
-                        k["text"],
+                        json.dumps(
+                            [[o["bbox"][0], o["bbox"][1]], [o["bbox"][2], o["bbox"][3]]]
+                        ),
+                        o["content"],
                         i,
-                        f"{engine.name}:{k['score']:.4f}",
+                        o["prefill"],
                     ),
                 )
+                if o["label"] != "Table":
+                    continue
+                grid = _ocr_table_grid(image, o["bbox"], engine, min_score=0.0)
+                if grid:
+                    conn.execute(
+                        "INSERT INTO tables (block_id, grid_json) VALUES (?, ?) "
+                        "ON CONFLICT(block_id) DO UPDATE SET grid_json=excluded.grid_json, "
+                        "updated_at=datetime('now')",
+                        (cur.lastrowid, json.dumps(grid)),
+                    )
+                    grids += 1
             results.append(
                 {
                     "page_id": pid,
                     "detected": len(detections),
-                    "inserted": len(kept),
+                    "inserted": len(outputs),
+                    "tables": 1 if table_bbox else 0,
+                    "grids": grids,
                     "mode": payload.mode,
                     "deskew_angle": applied_angle,
                 }

@@ -213,14 +213,20 @@ questo motivo.
      preview "a fiume" (frecce) che segue l'ordine per validazione visiva;
    - **trascrizione** dei blocchi testo con checklist convenzioni attiva;
    - **prefill via pseudo-labeling**, motori/modalità distinti e non intercambiabili:
-     - `ocr` (RapidOCR/PaddleOCR): rileva **righe di testo** e le etichetta tutte `Text`. Non ha
-       alcuna nozione di tabella; su un registro allineato a spazi fonde le colonne. Utile sulle
-       pagine di prosa, controproducente sulle pagine indice.
+     - `ocr` (RapidOCR/PaddleOCR): rileva **righe di testo** e le etichetta `Text`. Non ha alcuna
+       nozione di tabella, ma con `table_promote=True` (default) il più grande cluster di righe
+       consecutive la cui geometria dimostra una griglia viene **promosso a blocco `Table`** con
+       griglia e celle precompilate cella per cella (le colonne fuse non servono); le righe fuori
+       dal cluster (testata, numero del fascicolo) restano `Text`. Le celle con testo nascono
+       `source=ocr`, `verified=false`. Utile sulle pagine di prosa e, con la promozione, anche sui
+       registri; disattivabile per richiesta.
      - `model/two_stage` (MonkeyOCRv2 via vLLM): layout, poi riconoscimento per blocco;
      - `model/end2end`: una generazione ufficiale bbox+label+content. Se il contenuto `Table` è OTSL
        valido viene salvato direttamente; altrimenti ricade esplicitamente sul crop tabella.
-     In entrambi i casi il dato di training sono le **correzioni** dell'utente, non l'output grezzo:
-     reimmettere il predetto senza correggerlo insegna al modello i suoi stessi errori;
+     In tutti i casi il dato di training sono le **correzioni** dell'utente, non l'output grezzo:
+     ogni cella/blocco precompilato nasce non verificato, e il report d'export distingue le due
+     cose (`table_cells.verified` / `prefill_unverified`). Reimmettere il predetto senza correggerlo
+     insegna al modello i suoi stessi errori;
    - autosave, stato avanzamento per pagina, scorciatoie da tastiera.
 3. **Dataset builder**: genera le 3 famiglie JSONL (§7), split **per pagina** e mai per ritaglio,
    normalizzazione 0–1000, mappa classi, stat e validazioni (box fuori pagina, classi senza prompt, ecc.).
@@ -322,8 +328,10 @@ lloyds-lab/
   page_type, status, meta_json)`.
 - `blocks(id, page_id, label, bbox_px_json [x1,y1,x2,y2 pixel], content, order_idx, kind
   ['text','table','formula','picture','custom'], prefill_source, confirmed, updated_at)`.
-- `tables(id, block_id, grid_json)` — `grid_json`: `{rows: n, cols: m, cells:[{r,c,rowspan,colspan,text}],
-  vlines:[...], hlines:[...]}` (griglia fisica; gli span sono i merge).
+- `tables(id, block_id, grid_json)` — `grid_json`: `{rows: n, cols: m, cells:[{r,c,rowspan,colspan,
+  text, source, verified}], vlines:[...], hlines:[...]}` (griglia fisica; gli span sono i merge;
+  `source` = chi ha scritto il testo della cella, `verified` = conferma umana — solo le celle con
+  testo sono interessate).
 - Coordinate **memorizzate in pixel sorgente**; normalizzazione a 0–1000 **solo in export** (§7).
 - `annotation_state(id, page_id, user, ...)` per avanzamento multi-pagina senza login.
 

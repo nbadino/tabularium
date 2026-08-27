@@ -142,6 +142,12 @@ class TableCell(BaseModel):
     rowspan: int = Field(default=1, ge=1)
     colspan: int = Field(default=1, ge=1)
     text: str = ""
+    # Chi ha scritto il testo: `manual` quando l'annotatore l'ha toccata, `ocr`
+    # o `model` per il prefill. `verified` è falso finché un umano non conferma:
+    # il builder distingue le due cose perché il dataset è fatto dalle correzioni,
+    # non dall'output grezzo (le celle senza testo non sono interessate).
+    source: Literal["manual", "ocr", "model"] = "manual"
+    verified: bool = True
 
 
 class TableGrid(BaseModel):
@@ -178,6 +184,20 @@ class TableDetectRequest(BaseModel):
     rows_per_band: int = Field(default=15, ge=1, le=200)
     # Nessuna euristica: 0 significa che la tabella non dichiara intestazioni.
     header_rows: int = Field(default=0, ge=0, le=20)
+
+
+class TableCellRecognizeRequest(BaseModel):
+    """Ri-riconoscimento di una singola cella della griglia corrente."""
+
+    r: int = Field(ge=0)
+    c: int = Field(ge=0)
+    min_score: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class TableCellRecognizeOut(BaseModel):
+    text: str
+    score: float
+    engine: str
 
 
 class TableDetectOut(BaseModel):
@@ -228,6 +248,7 @@ class TrainConfig(BaseModel):
 
 # --- Inferenza Cloud & Locale -------------------------------------------------
 class InferenceConfigIn(BaseModel):
+    enabled: bool = True
     url: str = Field(default="http://127.0.0.1:8888/v1", max_length=1000)
     model: str = Field(default="MonkeyOCRv2", max_length=200)
     api_key: str = Field(default="", max_length=500)
@@ -237,6 +258,7 @@ class InferenceConfigIn(BaseModel):
 
 
 class InferenceConfigOut(BaseModel):
+    enabled: bool = True
     url: str
     model: str
     has_api_key: bool = False
