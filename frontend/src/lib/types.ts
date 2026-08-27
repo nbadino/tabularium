@@ -1,0 +1,389 @@
+/** Tipi condivisi tra frontend e API backend. */
+
+export interface HealthResponse {
+  status: string
+  app: string
+  version: string
+}
+
+export interface SystemInfo {
+  app: string
+  version: string
+  data_dir: string
+  db_path: string
+  schema_version: string | null
+  python: string
+  platform: string
+}
+
+// --- Progetti & pagine (M1) --------------------------------------------------
+
+export interface Project {
+  id: number
+  name: string
+  root_dir: string
+  archive_dir: string | null
+  settings_json: Record<string, unknown>
+  pages_count: number
+  created_at: string
+}
+
+export interface WorkflowStatus {
+  project_id: number
+  counts: Record<string, number>
+  total_pages: number
+  approved_pages: number
+  progress: number
+  next_page: {
+    id: number
+    rel_path: string
+    status: string
+    issue_date: string | null
+    issue_no: string | null
+    page_no: string | null
+    blocks: number
+  } | null
+}
+
+export interface PageItem {
+  id: number
+  project_id: number
+  rel_path: string
+  abs_path: string
+  source_kind: 'image' | 'pdf'
+  pdf_page: number | null
+  width: number
+  height: number
+  issue_date: string | null
+  issue_no: string | null
+  page_no: string | null
+  page_type: string | null
+  status: string
+  created_at: string
+}
+
+export interface ScanReport {
+  found_files: number
+  registered: number
+  duplicates: number
+  unsupported: number
+  errors: string[]
+}
+
+export const PAGE_TYPES = [
+  'front',
+  'editorial',
+  'shipping',
+  'casualties',
+  'adverts',
+  'misc',
+] as const
+
+export const PAGE_STATUSES = [
+  'new',
+  'annotated',
+  'qa',
+  'exported',
+  'review',
+  'approved',
+] as const
+
+// --- Annotazioni (M2) --------------------------------------------------------
+
+export interface BlockOut {
+  id: number
+  page_id: number
+  label: string
+  kind: 'rect' | 'polygon'
+  points: number[][]
+  content: string
+  order_idx: number | null
+  confirmed: boolean
+  prefill_source: string | null
+  updated_at: string
+}
+
+export interface BlockBulkWrite {
+  items: Array<{
+    id?: number
+    label: string
+    kind: 'rect' | 'polygon'
+    points: number[][]
+    content: string
+    order_idx: number | null
+    confirmed?: boolean
+  }>
+}
+
+export interface LabelDef {
+  name: string
+  color: string
+  short: string
+  prompt_kind: 'text' | 'table' | 'formula' | 'picture' | 'structure'
+  prompt: string
+}
+
+export interface LabelSchema {
+  labels: LabelDef[]
+}
+
+// --- Tabelle (M3) ------------------------------------------------------------
+
+export interface TableCell {
+  r: number
+  c: number
+  rowspan: number
+  colspan: number
+  text: string
+}
+
+export interface TableGrid {
+  rows: number
+  cols: number
+  cells: TableCell[]
+  phantom_cols: number[]
+  vlines?: number[]
+  hlines?: number[]
+}
+
+export interface TableGridOut {
+  grid: TableGrid | null
+}
+
+export interface TableSaveOut {
+  grid: TableGrid
+  otsl: string
+}
+
+export interface PrefillEngines {
+  ocr: { available: boolean; engine: string | null }
+  model: { available: boolean; url: string; model: string }
+  /** Quale usare di default: il modello quando è servito. */
+  recommended: 'ocr' | 'model' | null
+}
+
+export interface TableDetectRequest {
+  min_support?: number
+  suppress_leaders?: boolean
+  /** none = solo struttura · ocr = per cella · model = struttura e testo dal modello */
+  fill?: 'none' | 'ocr' | 'model'
+  min_score?: number
+  rows_per_band?: number
+}
+
+export interface TableDetectOut {
+  grid: TableGrid
+  /** Su quante righe è attestato ciascun confine verticale (len = cols + 1). */
+  column_support: number[]
+  diagnostics: {
+    pitch_px?: number
+    row_bands?: number
+    leader_dots_suppressed?: number
+    gutters?: number[]
+    content_x?: [number, number]
+  }
+  ocr: {
+    engine?: string
+    cells?: number
+    filled?: number
+    blank?: number
+    below_threshold?: number
+    mean_score?: number
+  } | null
+}
+
+// --- Convenzioni --------------------------------------------------------------
+
+export interface ConventionItem {
+  id: string
+  label: string
+  checked: boolean
+}
+
+export interface ConventionsOut {
+  conventions: ConventionItem[]
+}
+
+// --- Dataset (M4) --------------------------------------------------------------
+
+export interface DatasetReport {
+  project_id: number
+  built_at: string
+  split: { ratio: number; seed: number; strategy?: string }
+  adapter_id?: string
+  pages: { total: number; with_blocks: number; train: number; val: number }
+  counts: Record<string, { train: number; val: number }>
+  crops_generated: number
+  warnings: string[]
+  files: Array<{ path: string; size: number; lines: number }>
+  sample_lines: Record<string, string[]>
+  dataset_dir: string
+}
+
+export interface DatasetStatus {
+  built: boolean
+  report: DatasetReport | null
+}
+
+// --- Training (M5) --------------------------------------------------------------
+
+export interface GpuInfo {
+  index: string
+  name: string
+  memory_total: number
+  memory_used: number
+  utilization: number
+  temp: number
+}
+
+export interface TrainingMetric {
+  t?: number
+  loss?: number
+  lr?: number
+  step?: number
+}
+
+export interface TrainingRun {
+  run_id: string
+  state: string
+  started_at?: string
+  ended_at?: string
+  exit_code?: number
+  config?: Record<string, unknown>
+}
+
+export interface TrainingStatus {
+  active: boolean
+  run: TrainingRun | null
+  log_tail: string
+  metrics: TrainingMetric[]
+  gpu: GpuInfo[]
+}
+
+export interface TrainingPreflight {
+  ready: boolean
+  errors: string[]
+  warnings: string[]
+  dataset: { dir: string; counts: Record<string, number> }
+  training_repo: string | null
+  python: string
+  gpus: GpuInfo[]
+}
+
+export interface TrainConfigBody {
+  model?: string
+  model_path?: string
+  train_type?: 'lora' | 'full'
+  lora_rank?: number
+  lora_alpha?: number
+  freeze_vit?: boolean
+  epochs?: number
+  learning_rate?: number
+  batch_size?: number
+  grad_accum?: number
+  max_length?: number
+  max_pixels?: number
+  gpus?: string
+  nproc?: number
+  eval_steps?: number
+  output_dir?: string
+}
+
+// --- Valutazione (M6) ------------------------------------------------------------
+
+export interface LayoutMetrics {
+  n_gt: number
+  n_pred: number
+  matched: number
+  precision: number
+  recall: number
+  mean_iou_of_matched: number | null
+}
+
+export interface OrderMetrics {
+  mean_levenshtein_norm: number
+  exact_pct: number | null
+}
+
+export interface EvalPage {
+  page_id: number
+  rel_path: string
+  error?: string
+  layout: {
+    n_gt: number
+    n_pred: number
+    matched: number
+    precision: number
+    recall: number
+    mean_iou: number
+  }
+  order: { levenshtein_norm: number; exact: boolean; n: number }
+  gt_items: Array<{ bbox: number[]; label: string; content?: string }>
+  pred_items: Array<{ bbox: number[]; label: string }>
+  text?: Array<{ label: string; cer: number; wer: number; gt: string; hyp: string }>
+  tables?: Array<{ structure_ok: boolean; cell_cer: number }>
+  actions?: string[]
+}
+
+export interface EvalReport {
+  project_id: number
+  evaluated_at: string
+  config: {
+    server_url: string
+    model: string
+    with_text: boolean
+    split: { ratio: number; seed: number }
+  }
+  pages_evaluated: number
+  val_pages: number
+  aggregates: {
+    layout: LayoutMetrics
+    order: OrderMetrics
+    text: { n: number; mean_cer: number | null; mean_wer: number | null }
+    tables: { n: number; structure_ok_pct: number | null; mean_cell_cer: number | null }
+  }
+  pages: EvalPage[]
+  warnings: string[]
+  eval_dir: string
+  comparison?: {
+    layout_recall_delta: number
+    layout_precision_delta: number
+    text_cer_delta: number
+    order_delta: number
+  }
+}
+
+export interface PlaygroundResult {
+  ok: boolean
+  server: string
+  model: string
+  width: number
+  height: number
+  items: Array<{ bbox_norm: number[]; bbox_px: number[]; label: string; content: string }>
+}
+
+export interface InferenceConfig {
+  url: string
+  model: string
+  has_api_key?: boolean
+  api_key?: string
+  extra_headers?: Record<string, string>
+  timeout?: number
+  max_pixels?: number | null
+  is_cloud?: boolean
+  available?: boolean
+  latency_ms?: number | null
+  models_available?: string[]
+  error?: string | null
+}
+
+export interface InferenceTestResult {
+  ok: boolean
+  url: string
+  model: string
+  models_available: string[]
+  latency_ms?: number | null
+  is_cloud?: boolean
+  error?: string | null
+}
+

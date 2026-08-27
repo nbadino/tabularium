@@ -1,0 +1,36 @@
+{
+  "id": "lloyds-list-1900s",
+  "name": "Lloyd's List — giornali marittimi 1900s",
+  "description": "Profilo per giornali storici inglesi con più colonne, registri navali e tabelle dense. Il corpus contiene generi diversi: le pagine indice (LSI) sono un'unica tabella larga senza filetti, quelle del Voyage Supplement (LSIVS) sono colonne parallele di schede-nave.",
+  "labels": [
+    "Title", "Page-header", "Issue-number", "Issue-date",
+    "Headline", "Byline", "Column", "Text", "Section-header", "List-item",
+    "Advertisement", "Note", "Table", "Formula", "Picture"
+  ],
+  "page_types": {
+    "index": {
+      "description": "Lloyd's Shipping Index: una tabella a piena pagina senza filetti.",
+      "recipe": ["Title", "Issue-number", "Issue-date", "Page-header", "Table"],
+      "table_format": "otsl"
+    },
+    "voyage-supplement": {
+      "description": "Voyage Supplement: colonne parallele di schede-nave, non una tabella.",
+      "recipe": ["Page-header", "Issue-date", "Column", "Section-header", "List-item"],
+      "table_format": null
+    }
+  },
+  "default_objective": "tables",
+  "conventions": [
+    "Espandere i soft hyphen di fine riga.",
+    "Conservare grafia, sigle e abbreviazioni originali.",
+    "Annotare le colonne fantasma senza trascriverle.",
+    "Rappresentare i filetti tramite la griglia, mai nel testo.",
+    "Non trascrivere mai i puntini di guida: sono riempitivo tipografico e separano due campi.",
+    "Le righe bianche fra i gruppi di voci non sono righe della tabella: sono respiro tipografico.",
+    "Una cella con «——» è vuota (ecel): non trascrivere il trattino.",
+    "Le continuazioni a capo rientrate che iniziano con «[» appartengono alla cella precedente: unire con uno spazio e scartare la parentesi.",
+    "Una classe di layout non spezza mai una riga tipografica: se la data è fusa col titolo (testate 1940) resta dentro il Title."
+  ],
+  "recommended_split": "issue",
+  "recommended_language": "en"
+}

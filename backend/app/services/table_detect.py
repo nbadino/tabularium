@@ -1,0 +1,791 @@
+"""Rilevamento della struttura di tabelle *senza filetti* (whitespace-aligned).
+
+I registri navali Lloyd's non hanno righe di riquadro: le colonne sono tenute
+insieme dalla composizione tipografica (allineamenti costanti) e i campi sono
+collegati da puntini di guida. I modelli di struttura tabellare addestrati su
+tabelle moderne riquadrate (PubTabNet & simili) qui rendono male, mentre la
+geometria della pagina è estremamente regolare e si sfrutta direttamente.
+
+## Perché le righe vengono dai glifi e non dal profilo
+
+La versione precedente ricavava il passo tipografico dall'autocorrelazione del
+profilo di inchiostro sull'asse y e da lì le bande di testo. Misurato sulle
+quattro scansioni reali in `test/`, quel percorso funzionava su **una pagina su
+quattro**, e le tre diagnosi sono distinte:
+
+| Pagina | Passo stimato | Passo vero | Rottura |
+|---|---|---|---|
+| `LSI_17186_015` | 40 px | 40 px | — |
+| `LSI_8447_014` | 156 px | 39 px | autocorrelazione agganciata a un'**armonica** (4×) |
+| `LSI_1974_039` | 117 px | 38 px | interlinea stretta: il profilo **non torna mai a zero** fra le righe |
+| `LSIVS_11652_006` | 10 px | 39 px | inclinazione −1,45°: su 3500 px la riga **si spalma** per 90 px |
+
+Nessuna delle tre si ripara ritoccando soglie: il profilo orizzontale è una
+somma su tutta la larghezza, quindi qualunque cosa spalmi o saldi le righe lo
+distrugge prima che la soglia possa vederle.
+
+Le **componenti connesse** non hanno questo difetto: un glifo resta un oggetto
+separato anche quando la sua banda si sovrappone a quella della riga vicina, e
+porta con sé la propria posizione. Da lì:
+
+1. **Linee di base** — istogramma dei *fondi* delle componenti. Il fondo è molto
+   più stabile del centro, che dipende da ascendenti e discendenti; i picchi
+   dell'istogramma sono le linee di base, e la loro distanza mediana è il passo.
+   Niente autocorrelazione, quindi niente armoniche.
+2. **Inclinazione** — cercata come lo **scorrimento** (`tan θ`) che rende più
+   netto quell'istogramma. L'immagine **non viene ruotata**: la correzione si
+   applica alle coordinate delle componenti, così i confini restituiti restano
+   nel sistema di riferimento del ritaglio originale e nessuno deve saperlo.
+3. **Gutter verticali** — colonne di pagina prive di inchiostro su tutte le
+   righe: prova forte ma incompleta (i puntini di guida le riempiono).
+4. **Bordi di parola ricorrenti** — istogramma dei bordi sinistri e destri delle
+   parole su tutte le righe. Una colonna allineata a sinistra produce un picco
+   di bordi sinistri, una allineata a destra un picco di bordi destri. Un
+   confine di colonna sta fra un picco destro e il picco sinistro successivo.
+
+I puntini di guida vengono soppressi prima del punto 4: sono inchiostro, quindi
+saldano fra loro parole che appartengono a colonne diverse e cancellano proprio
+i confini che servono.
+
+Ogni confine esce con un **supporto** (su quante righe è attestato): il rilevatore
+non inventa struttura, propone e dichiara quanto è sicuro. I confini che la
+geometria non può provare — due colonne adiacenti senza gutter né allineamento
+costante — restano all'annotatore, che li aggiunge trascinando.
+
+`warnings` dice quando il rilevatore è **fuori dal proprio dominio**: un ritaglio
+che contiene più colonne di pagina non è una tabella, e restituire una griglia
+per una pagina simile sarebbe una risposta sbagliata data con sicurezza.
+
+Coordinate in uscita: `vlines`/`hlines` normalizzate 0–1 sul ritaglio, cioè la
+convenzione già usata da `TableGrid` (`cols+1` e `rows+1` valori crescenti).
+
+Dipendenze: solo `numpy` e `Pillow`, come il resto del backend. Le componenti
+connesse sono implementate qui (`_components`) a run + union-find; l'esito è
+verificato bit a bit contro `cv2.connectedComponentsWithStats` nei test.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+import numpy as np
+from PIL import Image
+
+# Soglie geometriche. Espresse in frazioni dell'altezza di riga dove possibile,
+# così restano valide a risoluzioni di scansione diverse.
+_MIN_XHEIGHT = 3           # altezza minima credibile per un glifo (px)
+_MAX_SHEAR = 0.045         # ricerca inclinazione: ±0.045 ≈ ±2.6°
+_SHEAR_REPORT = 0.0035     # oltre ~0.2° l'inclinazione va dichiarata
+_ASCENDER = 0.72           # da linea di base a cima della riga, in passi
+_DESCENDER = 0.26          # da linea di base a fondo della riga, in passi
+_PEAK_SEPARATION = 0.62    # distanza minima fra due linee di base, in passi
+_WORD_GAP_FRAC = 0.35      # gap fra parole della stessa cella, frazione del passo
+_DOT_W_FRAC = 0.20         # larghezza massima di un puntino, frazione del passo
+_DOT_H_FRAC = 0.20         # altezza massima di un puntino, frazione del passo
+_PEAK_TOL_FRAC = 0.15      # tolleranza di clustering dei bordi, frazione del passo
+_GUTTER_MIN_ROWS = 0.97    # frazione di righe senza inchiostro per un gutter di pagina
+_GUTTER_MIN_PITCH = 1.2    # larghezza minima di un gutter di pagina, in passi
+_GUTTER_MIN_SIDE = 0.15    # inchiostro minimo su ciascun lato di un gutter di pagina
+
+
+@dataclass
+class GridDetection:
+    """Esito del rilevamento, con la diagnostica che lo rende verificabile."""
+
+    rows: int
+    cols: int
+    vlines: list[float]
+    hlines: list[float]
+    column_support: list[int] = field(default_factory=list)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "rows": self.rows,
+            "cols": self.cols,
+            "vlines": self.vlines,
+            "hlines": self.hlines,
+            "column_support": self.column_support,
+            "diagnostics": self.diagnostics,
+            "warnings": self.warnings,
+        }
+
+
+# --------------------------------------------------------------------------
+# Binarizzazione
+# --------------------------------------------------------------------------
+
+def _otsu(gray: np.ndarray) -> int:
+    """Soglia di Otsu. Una soglia fissa a 128 sbaglia sulle scansioni sbiadite.
+
+    Sul corpus corrente Otsu cade fra 142 e 152, cioè sempre *sopra* 128: con la
+    soglia fissa si perdeva sistematicamente l'inchiostro più chiaro dei tratti
+    sottili, che è esattamente quello che tiene insieme un glifo.
+    """
+    hist = np.bincount(gray.reshape(-1), minlength=256).astype(float)
+    total = hist.sum()
+    if total <= 0:
+        return 128
+    levels = np.arange(256, dtype=float)
+    w0 = np.cumsum(hist)
+    w1 = total - w0
+    valid = (w0 > 0) & (w1 > 0)
+    if not valid.any():
+        return 128
+    sum0 = np.cumsum(hist * levels)
+    total_sum = sum0[-1]
+    mu0 = np.divide(sum0, w0, out=np.zeros_like(sum0), where=w0 > 0)
+    mu1 = np.divide(total_sum - sum0, w1, out=np.zeros_like(sum0), where=w1 > 0)
+    between = w0 * w1 * (mu0 - mu1) ** 2
+    between[~valid] = -1.0
+    return int(np.argmax(between))
+
+
+# --------------------------------------------------------------------------
+# Componenti connesse (8-connesse) a run + union-find, solo numpy
+# --------------------------------------------------------------------------
+
+def _components(ink: np.ndarray) -> np.ndarray:
+    """Riquadri delle componenti connesse: colonne `[x0, x1, y0, y1, area]`.
+
+    Estremi in convenzione semiaperta (`x1`/`y1` esclusi), come `cv2`.
+    Scorre le righe una volta sola unendo i tratti che si sovrappongono a quelli
+    della riga precedente; il costo è lineare nei tratti, non nei pixel.
+    """
+    height, width = ink.shape
+    parent: list[int] = []
+
+    def find(a: int) -> int:
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    previous: list[tuple[int, int, int]] = []
+    runs: list[tuple[int, int, int, int]] = []  # (y, x0, x1, label)
+
+    for y in range(height):
+        row = ink[y]
+        if not row.any():
+            previous = []
+            continue
+        delta = np.diff(row.astype(np.int8))
+        starts = np.flatnonzero(delta == 1) + 1
+        ends = np.flatnonzero(delta == -1) + 1
+        if row[0]:
+            starts = np.concatenate(([0], starts))
+        if row[-1]:
+            ends = np.concatenate((ends, [width]))
+
+        current: list[tuple[int, int, int]] = []
+        cursor = 0
+        for x0, x1 in zip(starts, ends):
+            label = -1
+            # I tratti precedenti sono ordinati: si scorre in avanti una volta.
+            while cursor < len(previous) and previous[cursor][1] < x0:
+                cursor += 1
+            probe = cursor
+            while probe < len(previous) and previous[probe][0] <= x1:
+                if label < 0:
+                    label = previous[probe][2]
+                else:
+                    union(label, previous[probe][2])
+                probe += 1
+            if label < 0:
+                label = len(parent)
+                parent.append(label)
+            current.append((int(x0), int(x1), label))
+            runs.append((y, int(x0), int(x1), label))
+        previous = current
+
+    if not runs:
+        return np.zeros((0, 5), dtype=np.int64)
+
+    roots = np.array([find(run[3]) for run in runs])
+    ys = np.array([run[0] for run in runs])
+    xs0 = np.array([run[1] for run in runs])
+    xs1 = np.array([run[2] for run in runs])
+    _, index = np.unique(roots, return_inverse=True)
+
+    count = int(index.max()) + 1
+    big = np.iinfo(np.int64).max
+    out = np.zeros((count, 5), dtype=np.int64)
+    out[:, 0] = big
+    out[:, 2] = big
+    np.minimum.at(out[:, 0], index, xs0)
+    np.maximum.at(out[:, 1], index, xs1)
+    np.minimum.at(out[:, 2], index, ys)
+    np.maximum.at(out[:, 3], index, ys + 1)
+    np.add.at(out[:, 4], index, xs1 - xs0)
+    return out
+
+
+def _glyphs(comps: np.ndarray, height: int, width: int) -> np.ndarray:
+    """Componenti plausibilmente *glifi*: via lo sporco, i filetti, le macchie."""
+    if len(comps) == 0:
+        return comps
+    w = comps[:, 1] - comps[:, 0]
+    h = comps[:, 3] - comps[:, 2]
+    keep = (
+        (comps[:, 4] >= 6)              # area: sotto è granello di scansione
+        & (h >= _MIN_XHEIGHT)
+        & (h <= max(4, height // 10))   # sopra è un filetto o una macchia
+        & (w <= max(4, width // 4))     # una parola intera non è un glifo
+    )
+    return comps[keep]
+
+
+def _glyph_height(glyphs: np.ndarray) -> float:
+    """Altezza del glifo dominante: mediana delle altezze **pesata sull'area**.
+
+    Senza il peso vincono i puntini di guida e la punteggiatura, che sono i più
+    numerosi ma i più piccoli, e l'altezza di riga collassa a 3–4 px.
+    """
+    if len(glyphs) == 0:
+        return float(_MIN_XHEIGHT)
+    h = (glyphs[:, 3] - glyphs[:, 2]).astype(float)
+    area = glyphs[:, 4].astype(float)
+    order = np.argsort(h)
+    h, area = h[order], area[order]
+    cumulative = np.cumsum(area)
+    if cumulative[-1] <= 0:
+        return float(np.median(h))
+    return float(h[int(np.searchsorted(cumulative, cumulative[-1] / 2.0))])
+
+
+# --------------------------------------------------------------------------
+# Inclinazione e linee di base
+# --------------------------------------------------------------------------
+
+def _baseline_histogram(
+    bottoms: np.ndarray, centres: np.ndarray, shear: float, height: int, x_mid: float
+) -> np.ndarray:
+    """Istogramma dei fondi dei glifi, corretto dello scorrimento `shear`."""
+    corrected = bottoms - (centres - x_mid) * shear
+    idx = np.clip(np.rint(corrected).astype(int), 0, height - 1)
+    return np.bincount(idx, minlength=height).astype(float)
+
+
+def _estimate_shear(
+    glyphs: np.ndarray, height: int, width: int, smooth: int
+) -> float:
+    """Scorrimento `tan θ` che rende più *netto* l'istogramma delle linee di base.
+
+    Una pagina dritta concentra i fondi su poche righe; una inclinata li spalma.
+    L'energia dell'istogramma (somma dei quadrati) misura esattamente questa
+    concentrazione, quindi il massimo è la correzione giusta.
+    """
+    if len(glyphs) < 20:
+        return 0.0
+    bottoms = glyphs[:, 3].astype(float)
+    centres = (glyphs[:, 0] + glyphs[:, 1]) / 2.0
+    x_mid = width / 2.0
+    kernel = np.ones(2 * smooth + 1)
+
+    def sharpness(shear: float) -> float:
+        hist = _baseline_histogram(bottoms, centres, shear, height, x_mid)
+        return float(np.sum(np.convolve(hist, kernel, mode="same") ** 2))
+
+    # Griglia grossa poi affinamento: la funzione ha un massimo netto e non
+    # servono più di due passate.
+    coarse = np.linspace(-_MAX_SHEAR, _MAX_SHEAR, 25)
+    best = max(coarse, key=sharpness)
+    fine = np.linspace(best - _MAX_SHEAR / 12, best + _MAX_SHEAR / 12, 13)
+    return float(max(fine, key=sharpness))
+
+
+def _pick_peaks(hist: np.ndarray, smooth: int, separation: int) -> list[int]:
+    """Massimi dell'istogramma, dal più forte in giù, distanti almeno `separation`."""
+    dense = np.convolve(hist, np.ones(2 * smooth + 1), mode="same")
+    positive = dense[dense > 0]
+    if positive.size == 0:
+        return []
+    # Soglia relativa al 95° percentile: una riga di testo vera raccoglie molti
+    # fondi, il rumore di scansione qualcuno sparso.
+    threshold = max(3.0, 0.12 * float(np.percentile(positive, 95)))
+
+    peaks: list[int] = []
+    taken = np.zeros(len(dense), dtype=bool)
+    for i in np.argsort(dense)[::-1]:
+        if dense[i] < threshold:
+            break
+        lo = max(0, int(i) - separation)
+        if taken[lo : int(i) + separation + 1].any():
+            continue
+        peaks.append(int(i))
+        taken[int(i)] = True
+    peaks.sort()
+    return peaks
+
+
+def _baselines(hist: np.ndarray, glyph_height: float) -> tuple[list[int], int]:
+    """Linee di base e passo tipografico, in due passate.
+
+    La distanza minima fra due linee di base è il **passo**, non l'altezza del
+    glifo: legarla all'altezza sbaglia in entrambi i versi, perché il rapporto
+    fra corpo e interlinea cambia da un'annata all'altra. Sul corpus corrente
+    l'altezza dominante è 27–30 px con un passo di 39 px, quindi una separazione
+    di `1,1 × altezza` ne cancella una riga su sei.
+
+    Perciò: una prima passata volutamente permissiva serve solo a *misurare* il
+    passo dalla mediana delle distanze, e la seconda usa quel passo. La mediana
+    regge anche se la prima passata produce qualche picco spurio.
+    """
+    seed_smooth = max(1, int(round(glyph_height * 0.30)))
+    seed = _pick_peaks(hist, seed_smooth, max(3, int(round(glyph_height * 0.55))))
+    if len(seed) < 3:
+        return seed, max(_MIN_XHEIGHT, int(round(glyph_height * 1.6)))
+
+    pitch = int(round(float(np.median(np.diff(seed)))))
+    pitch = max(_MIN_XHEIGHT, pitch)
+    smooth = max(1, int(round(pitch * 0.22)))
+    peaks = _pick_peaks(hist, smooth, max(3, int(round(pitch * _PEAK_SEPARATION))))
+    if len(peaks) < 3:
+        return seed, pitch
+    return peaks, max(_MIN_XHEIGHT, int(round(float(np.median(np.diff(peaks))))))
+
+
+def _row_boundaries(peaks: list[int], pitch: int, height: int) -> list[int]:
+    """Confini di riga: nel bianco fra il discendente di una e l'ascendente della successiva.
+
+    Le estensioni sono frazioni del **passo** e non dell'altezza del glifo: il
+    passo è ciò che separa davvero due linee di base, ed è l'unica misura che
+    resta corretta quando corpo e interlinea non sono in proporzione fissa.
+    """
+    descender = pitch * _DESCENDER
+    ascender = pitch * _ASCENDER
+    bounds = [max(0, int(round(peaks[0] - ascender)))]
+    for upper, lower in zip(peaks, peaks[1:]):
+        lo = upper + descender
+        hi = lower - ascender
+        middle = (lo + hi) / 2.0 if hi > lo else (upper + lower) / 2.0
+        bounds.append(int(round(min(max(middle, upper + 1), lower - 1))))
+    bounds.append(min(height, int(round(peaks[-1] + descender)) + 1))
+    return bounds
+
+
+# --------------------------------------------------------------------------
+# Colonne
+# --------------------------------------------------------------------------
+
+def _runs(mask: np.ndarray, min_len: int = 1) -> list[tuple[int, int]]:
+    """Estremi [start, end) dei tratti consecutivi True lunghi almeno min_len."""
+    out: list[tuple[int, int]] = []
+    start: int | None = None
+    for i, value in enumerate(mask):
+        if value and start is None:
+            start = i
+        elif not value and start is not None:
+            if i - start >= min_len:
+                out.append((start, i))
+            start = None
+    if start is not None and len(mask) - start >= min_len:
+        out.append((start, len(mask)))
+    return out
+
+
+def _shear_row_profile(
+    ink: np.ndarray, start: int, end: int, shear: float, y_mid: float
+) -> np.ndarray:
+    """Profilo x di una banda, riportato al sistema raddrizzato per traslazione."""
+    profile = ink[start:end].sum(axis=0).astype(float)
+    if not shear:
+        return profile
+    offset = int(round(((start + end) / 2.0 - y_mid) * shear))
+    if not offset:
+        return profile
+    profile = np.roll(profile, offset)
+    if offset > 0:
+        profile[:offset] = 0
+    else:
+        profile[offset:] = 0
+    return profile
+
+
+def _shear_profiles(
+    ink: np.ndarray, bands: list[tuple[int, int]], shear: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Profilo x cumulato e conteggio delle righe occupate, entrambi raddrizzati.
+
+    Il primo dice quanto inchiostro c'è a ogni x, il secondo su quante righe ce
+    n'è: un gutter di *pagina* è una x dove il secondo è zero quasi ovunque, e
+    quella è una domanda diversa da «quanto inchiostro».
+    """
+    width = ink.shape[1]
+    y_mid = ink.shape[0] / 2.0
+    total = np.zeros(width)
+    occupied = np.zeros(width)
+    for start, end in bands:
+        profile = _shear_row_profile(ink, start, end, shear, y_mid)
+        total += profile
+        occupied += profile > 0
+    return total, occupied
+
+
+def _suppress_leaders(row_profile: np.ndarray, pitch: int) -> tuple[np.ndarray, int]:
+    """Azzera i puntini di guida (e lo sporco) dal profilo x di una riga.
+
+    Un puntino è un tratto stretto E basso: le lettere, anche strette come «i»,
+    sono alte quanto la riga. Ritorna il profilo ripulito e quanti ne ha tolti.
+    """
+    cleaned = row_profile.copy()
+    max_w = max(3, int(_DOT_W_FRAC * pitch))
+    max_h = max(3, int(_DOT_H_FRAC * pitch))
+    removed = 0
+    for start, end in _runs(cleaned > 0, 1):
+        if end - start <= max_w and cleaned[start:end].max() <= max_h:
+            cleaned[start:end] = 0
+            removed += 1
+    return cleaned, removed
+
+
+def _word_edges(
+    ink: np.ndarray,
+    bands: list[tuple[int, int]],
+    pitch: int,
+    suppress_leaders: bool,
+    shear: float,
+    y_mid: float,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Istogrammi dei bordi sinistri e destri delle parole su tutte le righe.
+
+    Lo scorrimento si compensa **traslando il profilo di ogni riga** invece di
+    ruotare l'immagine: la rotazione costerebbe un'interpolazione su tutto il
+    ritaglio e sposterebbe i confini in un sistema di riferimento diverso da
+    quello in cui vanno restituiti. Su una pagina inclinata di 1,5° i bordi di
+    una colonna larga 3500 px si spalmano di 90 px e nessun picco sopravvive.
+    """
+    width = ink.shape[1]
+    left = np.zeros(width)
+    right = np.zeros(width)
+    gap = max(4, int(_WORD_GAP_FRAC * pitch))
+    dots = 0
+
+    for start, end in bands:
+        profile = _shear_row_profile(ink, start, end, shear, y_mid)
+        if suppress_leaders:
+            profile, removed = _suppress_leaders(profile, pitch)
+            dots += removed
+        merged: list[list[int]] = []
+        for word_start, word_end in _runs(profile > 0, 2):
+            if merged and word_start - merged[-1][1] < gap:
+                merged[-1][1] = word_end
+            else:
+                merged.append([word_start, word_end])
+        for word_start, word_end in merged:
+            left[word_start] += 1
+            right[min(word_end, width - 1)] += 1
+
+    return left, right, dots
+
+
+def _peaks(
+    hist: np.ndarray, lo: int, hi: int, tol: int, min_count: float
+) -> list[tuple[int, float]]:
+    """Massimi locali dell'istogramma, dopo smoothing su ±tol."""
+    smooth = np.convolve(hist, np.ones(2 * tol + 1), mode="same")
+    out: list[tuple[int, float]] = []
+    for x in range(lo, hi):
+        value = smooth[x]
+        if value < min_count:
+            continue
+        if value != smooth[max(0, x - tol) : x + tol + 1].max():
+            continue
+        if not out or x - out[-1][0] > 2 * tol:
+            out.append((x, float(value)))
+        elif value > out[-1][1]:
+            out[-1] = (x, float(value))
+    return out
+
+
+def _column_bounds(
+    ink: np.ndarray,
+    bands: list[tuple[int, int]],
+    pitch: int,
+    min_support: float,
+    suppress_leaders: bool,
+    shear: float = 0.0,
+) -> tuple[list[int], list[int], dict[str, Any]]:
+    """Confini interni di colonna (px) con il rispettivo supporto."""
+    n_rows = len(bands)
+    # Profilo x sommato **riga per riga con la traslazione dello scorrimento**:
+    # sommare l'immagine intera darebbe lo stesso smearing che il rilevatore sta
+    # cercando di annullare, e i gutter sparirebbero proprio dove servono.
+    xprof, _ = _shear_profiles(ink, bands, shear)
+    noise = max(1.0, 0.01 * n_rows)
+
+    # Il bordo del contenuto va cercato con una soglia alta: una colonna vera ha
+    # inchiostro su molte righe, mentre i margini della scansione hanno sporco
+    # sparso che con la sola soglia di rumore verrebbe scambiato per contenuto.
+    solid = _runs(xprof > max(2.0, 0.05 * n_rows), max(5, pitch // 3))
+    if not solid:
+        return [], [], {"reason": "nessun contenuto"}
+    x_min, x_max = solid[0][0], solid[-1][1]
+
+    gutters = [
+        (start + end) // 2
+        for start, end in _runs(xprof <= noise, max(6, pitch // 4))
+        if x_min < (start + end) // 2 < x_max
+    ]
+
+    left, right, dots = _word_edges(
+        ink, bands, pitch, suppress_leaders, shear, ink.shape[0] / 2.0
+    )
+    tol = max(3, int(_PEAK_TOL_FRAC * pitch))
+    need = min_support * n_rows
+    left_peaks = _peaks(left, x_min, x_max, tol, need)
+    right_peaks = _peaks(right, x_min, x_max, tol, need)
+
+    events = sorted(
+        [(x, "L", v) for x, v in left_peaks] + [(x, "R", v) for x, v in right_peaks]
+    )
+    bounds: list[tuple[int, int]] = []
+    for (x1, kind1, v1), (x2, kind2, v2) in zip(events, events[1:]):
+        # Una colonna finisce (bordi destri allineati) e la successiva comincia
+        # (bordi sinistri allineati): il confine sta in mezzo.
+        if kind1 == "R" and kind2 == "L" and x2 - x1 >= max(6, pitch // 6):
+            bounds.append(((x1 + x2) // 2, int(min(v1, v2))))
+
+    # Un gutter bianco vale più di un allineamento: è inchiostro assente su tutte
+    # le righe, non una ricorrenza statistica. Entra come candidato a supporto
+    # pieno e, in caso di collisione, è lui a vincere sulla posizione.
+    candidates = [(x, s, False) for x, s in bounds]
+    candidates += [(g, n_rows, True) for g in gutters]
+    candidates.sort()
+
+    merged: list[tuple[int, int, bool]] = []
+    for x, s, is_gutter in candidates:
+        # Due confini più vicini di ~3/4 di riga sono lo stesso confine visto da
+        # segnali diversi: nessuna colonna di testo può essere più stretta di così
+        # (un singolo carattere occupa già circa mezza altezza di riga).
+        if merged and x - merged[-1][0] <= max(2 * tol, int(0.75 * pitch)):
+            prev_x, prev_s, prev_gutter = merged[-1]
+            # Stesso confine visto da due segnali: tieni la posizione più
+            # affidabile e il supporto più alto, senza sdoppiare la colonna.
+            keep_x = x if (is_gutter and not prev_gutter) else prev_x
+            merged[-1] = (keep_x, max(prev_s, s), prev_gutter or is_gutter)
+        else:
+            merged.append((x, s, is_gutter))
+
+    xs = [x for x, _, _ in merged]
+    support = [s for _, s, _ in merged]
+    diagnostics = {
+        "content_x": [int(x_min), int(x_max)],
+        "gutters": [int(g) for g in gutters],
+        "leader_dots_suppressed": int(dots),
+        "left_peaks": [[int(x), int(v)] for x, v in left_peaks],
+        "right_peaks": [[int(x), int(v)] for x, v in right_peaks],
+    }
+    return xs, support, diagnostics
+
+
+def _page_columns(
+    ink: np.ndarray, bands: list[tuple[int, int]], pitch: int, shear: float
+) -> list[int]:
+    """Gutter che attraversano *quasi tutte* le righe: colonne di pagina, non di tabella.
+
+    Un supplemento di viaggio è cinque colonne di giornale affiancate. Una griglia
+    non lo descrive, e proporgliene una sarebbe una risposta sbagliata data con
+    sicurezza: meglio dirlo.
+    """
+    if not bands:
+        return []
+    _, occupied = _shear_profiles(ink, bands, shear)
+    empty = occupied <= (1.0 - _GUTTER_MIN_ROWS) * len(bands)
+    width_min = max(3, int(_GUTTER_MIN_PITCH * pitch))
+    inside = np.flatnonzero(occupied > 0)
+    if inside.size == 0:
+        return []
+    lo, hi = int(inside[0]), int(inside[-1])
+    return [
+        (start + end) // 2
+        for start, end in _runs(empty, width_min)
+        if lo < (start + end) // 2 < hi
+    ]
+
+
+# --------------------------------------------------------------------------
+# Ingresso pubblico
+# --------------------------------------------------------------------------
+
+def detect_grid(
+    image: Image.Image,
+    *,
+    min_support: float = 0.22,
+    suppress_leaders: bool = True,
+) -> GridDetection:
+    """Rileva righe e colonne nel ritaglio di una tabella senza filetti.
+
+    `min_support` è la frazione di righe su cui un allineamento deve ricorrere
+    perché valga come confine di colonna: alzarlo dà meno colonne ma più solide.
+    """
+    gray = np.asarray(image.convert("L"))
+    if gray.ndim != 2 or gray.size == 0:
+        raise ValueError("immagine non valida per il rilevamento griglia")
+    threshold = _otsu(gray)
+    # `<=`: Otsu restituisce il livello *incluso* nella classe scura, la stessa
+    # convenzione di `cv2.threshold(..., THRESH_OTSU)`. Con `<` un'immagine a due
+    # soli livelli (0 e 255, cioè ogni test sintetico) perde tutto l'inchiostro.
+    ink = gray <= threshold
+    height, width = ink.shape
+
+    glyphs = _glyphs(_components(ink), height, width)
+    if len(glyphs) == 0:
+        raise ValueError("nessun glifo rilevato nel ritaglio")
+    glyph_height = _glyph_height(glyphs)
+
+    smooth = max(1, int(round(glyph_height * 0.30)))
+    shear = _estimate_shear(glyphs, height, width, smooth)
+    hist = _baseline_histogram(
+        glyphs[:, 3].astype(float),
+        (glyphs[:, 0] + glyphs[:, 1]) / 2.0,
+        shear,
+        height,
+        width / 2.0,
+    )
+    peaks, pitch = _baselines(hist, glyph_height)
+    if not peaks:
+        raise ValueError("nessuna riga di testo rilevata nel ritaglio")
+
+    hlines_px = _row_boundaries(peaks, pitch, height)
+    bands = [
+        (max(0, lo), min(height, hi))
+        for lo, hi in zip(hlines_px, hlines_px[1:])
+        if hi > lo
+    ]
+
+    vbounds, support, diagnostics = _column_bounds(
+        ink, bands, pitch, min_support, suppress_leaders, shear
+    )
+    x_min, x_max = diagnostics.get("content_x", [0, width])
+    vlines_px = [max(0, x_min - pitch // 6), *vbounds, min(width, x_max + pitch // 6)]
+    # I bordi esterni non sono "attestati": marcali con il numero di righe piene.
+    column_support = [len(bands), *support, len(bands)]
+
+    page_cols = _page_columns(ink, bands, pitch, shear)
+    warnings: list[str] = []
+    if abs(shear) > _SHEAR_REPORT:
+        warnings.append("skewed")
+    if page_cols:
+        warnings.append("multi_column")
+
+    diagnostics.update(
+        {
+            "pitch_px": int(pitch),
+            "glyph_height_px": round(float(glyph_height), 1),
+            "row_bands": len(bands),
+            "glyphs": int(len(glyphs)),
+            "otsu": int(threshold),
+            "shear": round(float(shear), 5),
+            "skew_deg": round(float(np.degrees(np.arctan(shear))), 3),
+            "page_column_gutters": [int(g) for g in page_cols],
+            "image_size": [int(width), int(height)],
+        }
+    )
+
+    return GridDetection(
+        rows=len(bands),
+        cols=len(vlines_px) - 1,
+        vlines=[round(x / width, 6) for x in vlines_px],
+        hlines=[round(y / height, 6) for y in hlines_px],
+        column_support=column_support,
+        diagnostics=diagnostics,
+        warnings=warnings,
+    )
+
+
+def empty_cells(rows: int, cols: int) -> list[dict[str, Any]]:
+    """Celle 1x1 vuote che coprono l'intera griglia."""
+    return [
+        {"r": r, "c": c, "rowspan": 1, "colspan": 1, "text": ""}
+        for r in range(rows)
+        for c in range(cols)
+    ]
+
+
+# Il ritaglio di una cella va allargato e ingrandito prima di darlo al motore
+# OCR: i riconoscitori sono addestrati su righe di testo con un po' d'aria
+# attorno e a una altezza tipica, e su celle strette («Da», «57») senza questo
+# trattamento tornano quasi sempre vuoti.
+_CELL_PAD_FRAC = 0.25      # padding attorno alla cella, frazione del passo
+_CELL_TARGET_H = 2.5       # altezza a cui portare il ritaglio, in passi
+
+
+def fill_cells(
+    image: Image.Image,
+    vlines: list[float],
+    hlines: list[float],
+    engine: Any,
+    *,
+    pitch: int,
+    min_score: float = 0.0,
+    skip_blank: bool = True,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Riempie le celle della griglia con l'OCR, una cella alla volta.
+
+    È il punto in cui l'OCR di riga smette di essere controproducente: il
+    riquadro arriva dalla griglia, quindi il motore non può più fondere colonne
+    diverse in una stringa sola e ogni errore resta confinato alla sua cella.
+
+    Le celle senza inchiostro non vengono nemmeno passate al motore: sono celle
+    vuote legittime (`ecel` in OTSL) e interrogarle produrrebbe solo rumore.
+    """
+    gray = np.asarray(image.convert("L"))
+    ink = gray <= _otsu(gray)
+    height, width = ink.shape
+    rows, cols = len(hlines) - 1, len(vlines) - 1
+    pad = max(2, int(_CELL_PAD_FRAC * pitch))
+    target_h = max(24, int(_CELL_TARGET_H * pitch))
+
+    cells: list[dict[str, Any]] = []
+    filled = blank = low = 0
+    scores: list[float] = []
+
+    for r in range(rows):
+        y0, y1 = round(hlines[r] * height), round(hlines[r + 1] * height)
+        for c in range(cols):
+            x0, x1 = round(vlines[c] * width), round(vlines[c + 1] * width)
+            text, score = "", 0.0
+            if x1 - x0 >= 2 and y1 - y0 >= 2:
+                has_ink = bool(ink[y0:y1, x0:x1].any())
+                if not has_ink and skip_blank:
+                    blank += 1
+                else:
+                    crop = image.crop(
+                        (
+                            max(0, x0 - pad),
+                            max(0, y0 - pad),
+                            min(width, x1 + pad),
+                            min(height, y1 + pad),
+                        )
+                    )
+                    if crop.width >= 2 and crop.height >= 2:
+                        scale = target_h / crop.height
+                        crop = crop.resize(
+                            (max(8, int(crop.width * scale)), target_h), Image.LANCZOS
+                        )
+                        text, score = engine.recognize_line(crop)
+                    if score < min_score:
+                        low += 1
+                        text = ""
+                    elif text:
+                        filled += 1
+                        scores.append(score)
+            cells.append(
+                {"r": r, "c": c, "rowspan": 1, "colspan": 1, "text": text}
+            )
+
+    stats = {
+        "cells": rows * cols,
+        "filled": filled,
+        "blank": blank,
+        "below_threshold": low,
+        "mean_score": round(sum(scores) / len(scores), 4) if scores else 0.0,
+    }
+    return cells, stats

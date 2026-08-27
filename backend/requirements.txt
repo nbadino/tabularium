@@ -1,0 +1,9 @@
+fastapi>=0.141,<1
+uvicorn[standard]>=0.52,<1
+pydantic>=2.13,<3
+pillow>=12,<13
+numpy>=2,<3
+requests>=2.32,<3
+python-multipart>=0.0.20,<1
+# Ingestion PDF (split + anteprime): installare solo se serve
+# pypdfium2>=2.0

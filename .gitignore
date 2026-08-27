@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+*.local
+
+# Data sensibili / locali (mai versionare)
+data/
+checkpoints/
+crops/
+uploads/
+
+# Env e tooling
+.env
+.DS_Store
+.idea/
+.vscode/
+*.log
+# Checkout esterni vendor-ati: ricreati con scripts/setup_docscanner.sh (AGENTS.md 2)
+vendor/
+
+# Scansioni d'archivio usate come corpus di regressione: pesanti, i test
+# stanno in piedi senza di esse (guard skipif). Toglierle se si vuole includerle.
+test/*.tif
+test/**/*.tif
+
+# Artefatti runtime
+backend/data/
+frontend/dist/

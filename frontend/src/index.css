@@ -1,0 +1,447 @@
+@import "tailwindcss";
+
+/* =============================================================================
+   Lloyds Lab — sistema visivo «alta densità»
+   Un mosaico di moduli rigati, ciascuno con la sua linguetta, impacchettati
+   bordo a bordo. Filetti da 1px, niente ombre, niente card fluttuanti: la
+   pagina è un foglio stampato, non una superficie con oggetti sopra.
+   ========================================================================== */
+
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/archivo-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/archivo-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Chivo Mono';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url('/fonts/chivomono-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Chivo Mono';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url('/fonts/chivomono-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@theme {
+  /* ---- superficie -------------------------------------------------------- */
+  --color-sheet: #ffffff;
+  --color-fill: #f4f5f7;
+  --color-fill-2: #eceef1;
+  --color-rule: #c9ccd1;
+  --color-rule-strong: #111111;
+
+  /* ---- inchiostro -------------------------------------------------------- */
+  --color-ink: #111111;
+  --color-ink-2: #4c5259;
+  --color-ink-3: #6b7178;
+
+  /* ---- segnale: un solo ruolo, «qui è vivo» ------------------------------ */
+  --color-sig: #e60012;
+  --color-sig-text: #c4000e;
+  --color-sig-plate: #d0000f;
+  --color-sig-wash: #fdecec;
+
+  /* ---- avviso e conferma: canali distinti dal segnale -------------------- */
+  --color-warn: #8a5a00;
+  --color-warn-rule: #e8a100;
+  --color-warn-wash: #fdf6e3;
+  --color-ok: #0a6c3d;
+  --color-ok-rule: #14a05c;
+  --color-ok-wash: #eaf7ef;
+
+  /* ---- tavolo luminoso: il fondo su cui posa una scansione --------------- */
+  --color-table: #dfe2e6;
+
+  --font-ui: 'Archivo', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Chivo Mono', ui-monospace, 'Cascadia Mono', Menlo, monospace;
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+    /* Le cifre dei dati si incolonnano: è una superficie di misura. */
+    font-variant-numeric: tabular-nums;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-sheet);
+    color: var(--color-ink);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    line-height: 1.45;
+    letter-spacing: -0.005em;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* --- superfici del browser: anche ciò che non disegniamo è progettato --- */
+  ::selection {
+    background: var(--color-sig);
+    color: #ffffff;
+  }
+
+  :root {
+    caret-color: var(--color-sig);
+    accent-color: var(--color-sig);
+    scrollbar-color: var(--color-rule) transparent;
+    scrollbar-width: thin;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-fill);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-rule);
+    border: 2px solid var(--color-fill);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-ink-3);
+  }
+  ::-webkit-scrollbar-corner {
+    background: var(--color-fill);
+  }
+
+  /* Un anello di messa a fuoco unico, visibile su ogni fondo: il doppio
+     tratto (segnale + foglio) sopravvive sia al bianco sia al rosso pieno. */
+  :focus-visible {
+    outline: 2px solid var(--color-sig);
+    outline-offset: 1px;
+    box-shadow: 0 0 0 1px var(--color-sheet);
+  }
+
+  a {
+    color: var(--color-sig-text);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+
+  code,
+  pre,
+  kbd,
+  samp {
+    font-family: var(--font-mono);
+    font-feature-settings: 'zero' 1;
+  }
+
+  /* I campi ereditano la superficie, non il chrome del sistema operativo. */
+  input,
+  select,
+  textarea,
+  button {
+    font: inherit;
+    letter-spacing: inherit;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-ink-3);
+    opacity: 1;
+  }
+}
+
+@layer components {
+  /* ---- il modulo: il contenitore universale di questo mondo -------------- */
+  /* Un rettangolo rigato con la sua linguetta. I moduli confinano bordo a
+     bordo e condividono i filetti: il mosaico è un foglio, non delle card. */
+  .mod {
+    position: relative;
+    border: 1px solid var(--color-rule);
+    background: var(--color-sheet);
+    min-width: 0;
+  }
+
+  .mod-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 8px;
+    border-bottom: 1px solid var(--color-rule);
+    background: var(--color-fill);
+    min-height: 26px;
+  }
+
+  /* La linguetta: piastra piena a sinistra della testata del modulo. */
+  .mod-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 9px;
+    background: var(--color-sig);
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .mod-tab-quiet {
+    background: var(--color-ink);
+  }
+
+  .mod-head-aux {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    padding: 0 8px;
+    color: var(--color-ink-2);
+    font-size: 11px;
+  }
+
+  .mod-body {
+    padding: 10px;
+  }
+  .mod-body-flush {
+    padding: 0;
+  }
+
+  /* ---- righe rigate ------------------------------------------------------ */
+  .ruled > * + * {
+    border-top: 1px solid var(--color-rule);
+  }
+
+  /* ---- etichetta di campo ----------------------------------------------- */
+  .lbl {
+    display: block;
+    margin-bottom: 3px;
+    color: var(--color-ink-2);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  /* ---- controlli --------------------------------------------------------- */
+  .fld {
+    width: 100%;
+    padding: 4px 7px;
+    border: 1px solid var(--color-rule);
+    background: var(--color-sheet);
+    color: var(--color-ink);
+    font-size: 13px;
+  }
+  .fld:hover:not(:disabled) {
+    border-color: var(--color-ink-3);
+  }
+  .fld:focus {
+    border-color: var(--color-sig);
+    outline: none;
+  }
+  .fld:focus-visible {
+    outline: 2px solid var(--color-sig);
+    outline-offset: -1px;
+    box-shadow: none;
+  }
+  .fld:disabled {
+    background: var(--color-fill);
+    color: var(--color-ink-3);
+    cursor: not-allowed;
+  }
+  .fld[aria-invalid='true'] {
+    border-color: var(--color-sig);
+    background: var(--color-sig-wash);
+  }
+  .fld-mono {
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  /* Azione primaria: piastra di segnale piena. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 11px;
+    border: 1px solid var(--color-rule);
+    background: var(--color-sheet);
+    color: var(--color-ink);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn:hover:not(:disabled) {
+    border-color: var(--color-ink);
+  }
+  .btn:disabled {
+    color: var(--color-ink-3);
+    background: var(--color-fill);
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    border-color: var(--color-sig-plate);
+    background: var(--color-sig-plate);
+    color: #ffffff;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--color-sig);
+    border-color: var(--color-sig);
+  }
+  .btn-primary:disabled {
+    background: var(--color-rule);
+    border-color: var(--color-rule);
+    color: var(--color-sheet);
+  }
+
+  .btn-danger {
+    border-color: var(--color-sig-plate);
+    color: var(--color-sig-text);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: var(--color-sig-plate);
+    border-color: var(--color-sig-plate);
+    color: #ffffff;
+  }
+  /* Un'azione distruttiva non disponibile deve *sembrare* non disponibile. */
+  .btn-danger:disabled {
+    border-color: var(--color-rule);
+    background: var(--color-fill);
+    color: var(--color-ink-3);
+  }
+
+  .btn-sm {
+    padding: 2px 7px;
+    font-size: 11px;
+  }
+
+  /* ---- distintivi di stato: parola + segno, mai solo colore -------------- */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 6px;
+    border: 1px solid currentColor;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+
+  /* ---- voce macchina: percorsi, coordinate, JSONL, OTSL, log ------------- */
+  .mono {
+    font-family: var(--font-mono);
+    font-feature-settings: 'zero' 1;
+  }
+
+  /* ---- il rail di navigazione multi-riga --------------------------------- */
+  .navtab {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    color: var(--color-ink-2);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    border-right: 1px solid var(--color-rule);
+  }
+  .navtab:hover {
+    background: var(--color-fill);
+    color: var(--color-ink);
+  }
+  .navtab[data-active='true'] {
+    background: var(--color-ink);
+    color: var(--color-sheet);
+  }
+  /* La piastra di segnale stampata sotto la linguetta viva. */
+  .navtab[data-active='true']::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    height: 3px;
+    background: var(--color-sig);
+  }
+
+  /* ---- tavolo luminoso --------------------------------------------------- */
+  .lighttable {
+    background-color: var(--color-table);
+    background-image: linear-gradient(
+        45deg,
+        rgb(0 0 0 / 0.035) 25%,
+        transparent 25%,
+        transparent 75%,
+        rgb(0 0 0 / 0.035) 75%
+      ),
+      linear-gradient(
+        45deg,
+        rgb(0 0 0 / 0.035) 25%,
+        transparent 25%,
+        transparent 75%,
+        rgb(0 0 0 / 0.035) 75%
+      );
+    background-size: 16px 16px;
+    background-position: 0 0, 8px 8px;
+  }
+}
+
+@layer utilities {
+  /* L'unico momento animato del sistema: il cambio di stato in posto.
+     Sotto prefers-reduced-motion resta uno scambio istantaneo. */
+  .swap {
+    animation: swap-in 140ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes swap-in {
+    from {
+      opacity: 0;
+      clip-path: inset(0 0 0 6%);
+    }
+    to {
+      opacity: 1;
+      clip-path: inset(0 0 0 0);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .swap {
+      animation: none;
+    }
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+    }
+  }
+}

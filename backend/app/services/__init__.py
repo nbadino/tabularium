@@ -1,0 +1,1 @@
+"""Servizi di dominio (immagini, scan, dataset, ecc.)."""
