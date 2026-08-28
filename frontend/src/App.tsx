@@ -1,6 +1,9 @@
 import { lazy, Suspense, useEffect } from 'react'
+import type { ReactElement } from 'react'
 import { Link, Route, Routes } from 'react-router'
+import AuthGate from './app/AuthGate'
 import Layout from './app/Layout'
+import { useAuth } from './app/auth'
 const HomePage = lazy(() => import('./pages/HomePage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
@@ -9,6 +12,8 @@ const DatasetPage = lazy(() => import('./pages/DatasetPage'))
 const TrainingPage = lazy(() => import('./pages/TrainingPage'))
 const EvaluationPage = lazy(() => import('./pages/EvaluationPage'))
 const PlaygroundPage = lazy(() => import('./pages/PlaygroundPage'))
+const SettingsPage = lazy(() => import('./pages/SettingsPage'))
+const UsersPage = lazy(() => import('./pages/UsersPage'))
 import { Module } from './app/ui'
 import { useI18n } from './i18n'
 
@@ -42,6 +47,16 @@ function LocaleEffects() {
   return null
 }
 
+/**
+ * Le pagine di amministrazione non si aprono nemmeno per chi non è admin:
+ * digitare l'URL a mano non basta, il backend rifiuterebbe comunque.
+ */
+function AdminRoute({ children }: { children: ReactElement }) {
+  const { user } = useAuth()
+  if (user?.role !== 'admin') return <NotFoundPage />
+  return children
+}
+
 export default function App() {
   const { t } = useI18n()
   return (
@@ -53,19 +68,37 @@ export default function App() {
       }
     >
       <LocaleEffects />
-      <Routes>
-        <Route element={<Layout />}>
-          <Route index element={<HomePage />} />
-          <Route path="progetti" element={<ProjectsPage />} />
-          <Route path="progetti/:id" element={<ProjectDetailPage />} />
-          <Route path="annotazione" element={<AnnotationPage />} />
-          <Route path="dataset" element={<DatasetPage />} />
-          <Route path="training" element={<TrainingPage />} />
-          <Route path="valutazione" element={<EvaluationPage />} />
-          <Route path="playground" element={<PlaygroundPage />} />
-          <Route path="*" element={<NotFoundPage />} />
-        </Route>
-      </Routes>
+      <AuthGate>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route index element={<HomePage />} />
+            <Route path="progetti" element={<ProjectsPage />} />
+            <Route path="progetti/:id" element={<ProjectDetailPage />} />
+            <Route path="annotazione" element={<AnnotationPage />} />
+            <Route path="dataset" element={<DatasetPage />} />
+            <Route path="training" element={<TrainingPage />} />
+            <Route path="valutazione" element={<EvaluationPage />} />
+            <Route path="playground" element={<PlaygroundPage />} />
+            <Route
+              path="impostazioni"
+              element={
+                <AdminRoute>
+                  <SettingsPage />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="utenti"
+              element={
+                <AdminRoute>
+                  <UsersPage />
+                </AdminRoute>
+              }
+            />
+            <Route path="*" element={<NotFoundPage />} />
+          </Route>
+        </Routes>
+      </AuthGate>
     </Suspense>
   )
 }

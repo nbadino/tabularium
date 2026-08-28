@@ -5,5 +5,7 @@ pillow>=12,<13
 numpy>=2,<3
 requests>=2.32,<3
 python-multipart>=0.0.20,<1
+# Download pesi dal registro modelli (model_registry.py)
+huggingface-hub>=0.27,<1
 # Ingestion PDF (split + anteprime): installare solo se serve
 # pypdfium2>=2.0

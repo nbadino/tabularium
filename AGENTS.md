@@ -270,9 +270,14 @@ questo motivo.
 1. **Progetti**: crea progetto, scegli cartella archivio scansioni, registra pagine (immagini/PDF),
    metadati data/annata/pagina/tipo di pagina, anteprima.
 2. **Studio di annotazione** (cuore del prodotto):
-   - **deskew**: pulsante *⇱ Deskew* per raddrizzare le pagine storte prima di annotare
-     (OpenCV/Hough, opz. `?confirm=true` per cancellare i blocchi esistenti; invalida
-     thumb/preview/tiles e diventa la sorgente di crop/export);
+   - **rettifica geometrica revisionabile**: *Allinea e confronta* genera una proposta senza
+     toccare annotazioni o master attivo; motori distinti `deskew`, `uvdoc`, `docscanner`,
+     prospettiva manuale a quattro angoli e mesh manuale. Originale e proposta restano affiancati
+     fino ad *Accetta come master*; solo l'accettazione, previa conferma, elimina eventuali blocchi
+     le cui coordinate diventerebbero invalide. Il master è PNG lossless e diventa l'unica sorgente
+     per canvas, Prefill, crop ed export; JPEG solo per preview/tile. Metadati e API dichiarano
+     motore richiesto/reale, fallback, warning ed errore diagnostico. Il Prefill non riesegue mai
+     il deskew sull'originale quando esiste un master accettato;
    - zoom/pan fluido su scansioni ad alta risoluzione (server serve tile/anteprime downsampled);
    - strumenti blocco: rettangolo e poligono; palette classi con colori; edit/resize/delete;
    - **editor tabellare**: righe/colonne, **celle unite (merge)**, colonne "fantasma" dove i
@@ -303,6 +308,24 @@ questo motivo.
    resume dai checkpoint.
 5. **Valutazione & iterazione**: layout GT vs predetto overlay, metriche §11, analisi fallimenti.
 6. **Playground**: prova del modello affinato su nuove pagine (via vLLM).
+7. **Istanza self-hosted** (auth/utenti/impostazioni):
+   - **primo avvio**: schermata di setup che crea l'amministratore dell'istanza
+     (un solo account, poi login normali); registrazione **chiusa di default**
+     (`TABULARIUM_REGISTRATION_OPEN=0`), apribile dall'admin nelle Impostazioni;
+   - **login/logout**: sessioni via cookie HttpOnly + SameSite=Strict
+     (`tab_session`) con fallback `Authorization: Bearer`; reset password di un
+     utente invalida tutte le sue sessioni aperte;
+   - **ruoli globali**: `admin` (governa tutto, anche utenti/impostazioni),
+     `editor` (crea e lavora sui progetti), `viewer` (legge). Il backend è la
+     fonte di verità: la UI disabilita solo i comandi che finirebbero in un 400;
+   - **accesso ai progetti**: `projects.owner_id` + `project_members` per
+     condividere un progetto con altri utenti (editor/viewer). Regole sensibili
+     protette lato server: niente auto-declassamento, niente eliminazione
+     dell'ultimo admin, 404 per i progetti altrui (esistenza nascosta);
+   - **Impostazioni istanza** (solo admin): nome, registrazione aperta/chiusa,
+     ruolo predefinito per i nuovi account;
+   - **gestione utenti** (solo admin): creazione, cambio ruolo/attivazione,
+     reset password, eliminazione.
 
 ---
 
@@ -319,12 +342,23 @@ PyTorch nel processo dashboard (il training gira in env separati).
 - `subprocess` per orchestrazione training/valutazione; `nvidia-smi`/`psutil` per telemetria GPU.
 - Client HTTP (requests/httpx) verso server **vLLM** (inferenza/prefill/eval).
 - Librerie opzionali (import lazy): `rapidocr-onnxruntime` o `paddleocr` per il prefill.
+- **Autenticazione** (solo stdlib, nessuna dipendenza): PBKDF2-HMAC-SHA256 per le
+  password, token di sessione conservati come hash SHA-256 in SQLite, cookie
+  HttpOnly + SameSite=Strict. Modalità locale `TABULARIUM_AUTH=off` per i test.
+  Permessi per ruolo globale e per progetto in `services/auth.py` +
+  `api/deps.py::require_resource`; routing protetto a livello router.
 
 ### Frontend
-- React 18 + Vite + TypeScript + Tailwind CSS + Zustand (stato) + React Router + Recharts (grafici).
+- React 19 + Vite + TypeScript + Tailwind CSS 4 + React Router 7 + Recharts (grafici).
+  Stato globale via **piccoli store modulari** (`useSyncExternalStore`, senza
+  Zustand): `app/i18n`, `app/auth` — il pattern `useSyncExternalStore` è quello
+  canonico del progetto.
 - Canvas di annotazione: **Konva.js** (shape editing, transformer) per i blocchi;
   overlay/grid tabellare in SVG o canvas custom (componente `TableCellsEditor`).
 - Nessun framework "tutto pronto": UI costruita su componenti nostri.
+- **Auth lato UI**: `AuthGate` decide cosa mostrare all'avvio (setup admin,
+  login o app), `api.ts` reagisce ai 401 azzerando l'utente, `Layout` espone
+  menu utente (nome + ruolo + logout, Impostazioni/Utenti solo per l'admin).
 
 ### Componenti riusati (non fork)
 - `ms-swift` + script `full.sh` / `lora.sh` ufficiali (template; l'app le genera parametrizzate).
@@ -346,15 +380,21 @@ tabularium/
       db.py                 # schema SQLite + DAO
       schemas.py            # Pydantic models
       api/
+        deps.py             # require_resource(write=...) path-based, permessi progetto
+        auth.py             # setup, login, logout, me, register, status
+        users.py            # CRUD utenti (admin) + reset password
+        settings.py         # impostazioni istanza (PUT admin)
         projects.py
         pages.py
-        blocks.py             # annotazioni (blocchi) + tassonomia label
+        blocks.py           # annotazioni (blocchi) + tassonomia label
         prelabel.py
         datasets.py         # export JSONL famiglie + split + stats
         training.py         # wizard scripts, run, SSE log, stop, resume
         evaluate.py
         playground.py
       services/
+        security.py         # hash password (PBKDF2), token di sessione (SHA-256)
+        auth.py             # login/sessioni + require_role/require_project_access
         images.py           # thumbnails/tiles/EXIF/deskew
         pages.py            # anteprime/thumbnail on-demand per pagina
         scan.py             # scansione archivio (immagini + PDF lazy)
@@ -369,8 +409,9 @@ tabularium/
     requirements.txt        # split requirements-core / -prelabel / -dev
   frontend/
     src/
-      app/                  # routes, layout, shell
-      pages/                # Projects, AnnotationStudio, DatasetBuilder, Training, Evaluation, Playground
+      app/                  # routes, layout, shell (Layout, AuthGate, auth, i18n, ui)
+      pages/                # Home, Projects, Annotation, Dataset, Training, Evaluation,
+                            # Playground, Login, Setup, Settings, Users
       studio/
         canvas/             # zoom-pan-canvas, tools (Block/Table/Order/Transcribe)
         components/         # LayersPanel, Inspector, ClassPalette, TableCellsEditor, FlowPreview, ConventionsChecklist
@@ -383,6 +424,10 @@ tabularium/
     setup_frontend.sh / .ps1
     run.sh / run.ps1        # avvio locale (backend+frontend build/preview)
     train_on_gpu.sh         # helper per lanciare training in env GPU dedicato
+    cloud/                  # offloading inferenza su GPU remota: setup_cloud_vllm.sh,
+                            # ssh_tunnel.sh, vast_onstart.sh, test_cloud_connection.py,
+                            # modal_vllm.py (deployment Modal serverless, vLLM >= 0.25,
+                            # GPU Ampere+ per il bf16 — la T4 non è servibile)
   data/                     # (gitignored) progetti locali
 ```
 
@@ -390,8 +435,9 @@ tabularium/
 
 ## 6. Modello dati (SQLite)
 
-- `projects(id, name, root_dir, created_at, settings_json)` — settings: classi+colori+prompt map,
-  convenzioni trascrizione, modello base, max_pixels/max_length, split ratio, py/conda env names.
+- `projects(id, name, root_dir, owner_id, created_at, settings_json)` — settings: classi+colori+prompt map,
+  convenzioni trascrizione, modello base, max_pixels/max_length, split ratio, py/conda env names;
+  `owner_id` = chi ha creato il progetto (vedi permessi sotto).
 - `pages(id, project_id, rel_path, abs_path, width, height, issue_date, issue_no, page_no,
   page_type, status, meta_json)`.
 - `blocks(id, page_id, label, bbox_px_json [x1,y1,x2,y2 pixel], content, order_idx, kind
@@ -401,7 +447,17 @@ tabularium/
   `source` = chi ha scritto il testo della cella, `verified` = conferma umana — solo le celle con
   testo sono interessate).
 - Coordinate **memorizzate in pixel sorgente**; normalizzazione a 0–1000 **solo in export** (§7).
-- `annotation_state(id, page_id, user, ...)` per avanzamento multi-pagina senza login.
+- `annotation_state(id, page_id, user, ...)` per avanzamento multi-pagina.
+- **Auth (SCHEMA_VERSION 6)**:
+  - `users(id, username UNIQUE, password_hash, email, role ['admin','editor','viewer'],
+    active, created_at, last_login_at)`;
+  - `sessions(id, user_id, token_hash, expires_at)` — token casuale a 32 byte,
+    conservato **solo hashato**; cookie `tab_session` (HttpOnly, SameSite=Strict);
+  - `project_members(project_id, user_id, role ['editor','viewer'])` — accesso
+    condiviso ai progetti; `projects.owner_id` è l'altro lato (solo l'owner elimina);
+  - `settings(id, instance_name, allow_registration, default_new_user_role)` — singola riga;
+  - migrazioni **additive** in `db.py::_MIGRATIONS`; i test auth girano su
+    `TABULARIUM_AUTH=off` per la suite storica e `on` (fixture) per `test_auth.py`.
 
 ---
 
@@ -600,6 +656,22 @@ Ogni milestone termina con la sezione "Verifica": cosa lanciare per testare (ved
 10. Log e metriche dei run di training in `data/<project>/runs/<run_id>/` (JSONL + .log + plot data),
     così la UI è always-replayable anche a training terminato.
 11. **Localizzazione (obbligatoria da ora)**: l'interfaccia è multilingue **it/en/fr**. Nessuna
+    stringa UI hardcoded: ogni testo passa dal dizionario i18n
+    (`frontend/src/i18n/it.ts` = sorgente di verità della struttura; `en.ts`/`fr.ts` identici,
+    tipati come `Dict`). Segnaposto `{var}` identici nelle tre lingue; plurali come `{one, other}`
+    (il francese usa il singolare per 0 e 1). Lo switch di lingua è nel rail (persistito in
+    `localStorage['tabularium.locale']`). Il backend localizza i messaggi che finiscono in UI
+    (dettagli HTTPException, warnings dataset/eval, errori readiness, reason della coda,
+    preflight training) tramite `Accept-Language` e `backend/app/services/i18n.py`
+    (default italiano; `localize_detail` riconosce i dettagli esistenti dal catalogo inverso).
+    Il client API manda sempre `Accept-Language: <locale>`.
+12. **Auth come difesa, non come ornamento**: ogni nuova rotta entra protetta dal
+    `require_resource` del suo path (o da un controllo esplicito quando l'id del
+    progetto è nel body). Regole che non si devono mai regalare lato client: niente
+    auto-declassamento/auto-disattivazione, niente eliminazione dell'ultimo admin,
+    niente reset password del proprio account, 404 (non 403) per i progetti altrui.
+    Password e token solo hashati in DB; sessioni con scadenza; `TABULARIUM_AUTH`
+    resta `off` **solo** per i test.
     stringa UI hardcoded: ogni testo passa dal dizionario i18n
     (`frontend/src/i18n/it.ts` = sorgente di verità della struttura; `en.ts`/`fr.ts` identici,
     tipati come `Dict`). Segnaposto `{var}` identici nelle tre lingue; plurali come `{one, other}`

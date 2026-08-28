@@ -1,7 +1,7 @@
 """API pagine: listing, aggiornamento metadati, thumbnail e preview."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
 from .. import config
@@ -10,10 +10,15 @@ from ..schemas import PageList, PageOut, PageUpdate
 from ..services import pages as pagesvc
 from ..services import otsl as otslmod
 from ..services.i18n import msg, parse_lang
+from ..services import auth as authsvc
+from .deps import require_resource
 import json
 from pydantic import BaseModel, Field
 
-router = APIRouter(tags=["pages"])
+router = APIRouter(
+    tags=["pages"],
+    dependencies=[Depends(authsvc.get_current_user)],
+)
 
 
 class ReviewIn(BaseModel):
@@ -39,6 +44,7 @@ def list_pages(
     page_type: str | None = None,
     status: str | None = None,
     limit: int = Query(default=200, ge=1, le=2000),
+    _auth: dict = Depends(require_resource(write=False)),
 ) -> PageList:
     sql = "SELECT * FROM pages WHERE project_id=?"
     params: list = [project_id]
@@ -75,7 +81,11 @@ def list_pages(
 
 
 @router.patch("/api/pages/{page_id}", response_model=PageOut)
-def update_page(page_id: int, payload: PageUpdate) -> PageOut:
+def update_page(
+    page_id: int,
+    payload: PageUpdate,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> PageOut:
     updates = payload.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(status_code=400, detail="nessun campo da aggiornare")
@@ -158,14 +168,22 @@ def _readiness(conn, page_id: int, lang: str = "it") -> dict:
 
 
 @router.get("/api/pages/{page_id}/readiness")
-def page_readiness(page_id: int, request: Request) -> dict:
+def page_readiness(
+    page_id: int,
+    request: Request,
+    _auth: dict = Depends(require_resource(write=False)),
+) -> dict:
     lang = parse_lang(request.headers.get("accept-language"))
     with connect() as conn:
         return _readiness(conn, page_id, lang=lang)
 
 
 @router.post("/api/pages/{page_id}/approve")
-def approve_page(page_id: int, request: Request) -> dict:
+def approve_page(
+    page_id: int,
+    request: Request,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> dict:
     lang = parse_lang(request.headers.get("accept-language"))
     with connect() as conn:
         readiness = _readiness(conn, page_id, lang=lang)
@@ -188,7 +206,10 @@ def approve_page(page_id: int, request: Request) -> dict:
 
 
 @router.get("/api/pages/{page_id}/reviews")
-def page_reviews(page_id: int) -> dict:
+def page_reviews(
+    page_id: int,
+    _auth: dict = Depends(require_resource(write=False)),
+) -> dict:
     with connect() as conn:
         _get_page_or_404(conn, page_id)
         rows = conn.execute("SELECT * FROM page_reviews WHERE page_id=? ORDER BY id DESC", (page_id,)).fetchall()
@@ -196,7 +217,11 @@ def page_reviews(page_id: int) -> dict:
 
 
 @router.post("/api/pages/{page_id}/reviews")
-def add_page_review(page_id: int, payload: ReviewIn) -> dict:
+def add_page_review(
+    page_id: int,
+    payload: ReviewIn,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> dict:
     with connect() as conn:
         _get_page_or_404(conn, page_id)
         cur = conn.execute("INSERT INTO page_reviews (page_id, reviewer, status, errors_json, notes) VALUES (?,?,?,?,?)", (page_id, payload.reviewer, payload.status, json.dumps(payload.errors, ensure_ascii=False), payload.notes))
@@ -208,7 +233,10 @@ def add_page_review(page_id: int, payload: ReviewIn) -> dict:
 
 
 @router.get("/api/pages/{page_id}/thumbnail")
-def page_thumbnail(page_id: int) -> FileResponse:
+def page_thumbnail(
+    page_id: int,
+    _auth: dict = Depends(require_resource(write=False)),
+) -> FileResponse:
     with connect() as conn:
         page = _get_page_or_404(conn, page_id)
         thumb = pagesvc.ensure_thumbnail(conn, page)
@@ -216,7 +244,10 @@ def page_thumbnail(page_id: int) -> FileResponse:
 
 
 @router.get("/api/pages/{page_id}/preview")
-def page_preview(page_id: int) -> FileResponse:
+def page_preview(
+    page_id: int,
+    _auth: dict = Depends(require_resource(write=False)),
+) -> FileResponse:
     with connect() as conn:
         page = _get_page_or_404(conn, page_id)
         preview = pagesvc.ensure_preview(conn, page)
@@ -239,6 +270,7 @@ def _invalidate_page_cache(page_id: int) -> None:
 def deskew_page(
     page_id: int,
     confirm: bool = Query(default=False, description="elimina i blocchi già annotati"),
+    _auth: dict = Depends(require_resource(write=True)),
 ) -> dict:
     """Raddrizza la pagina (text deskew). Cambia le coordinate: richiede pagina
     senza blocchi, oppure ?confirm=true per cancellarli e ripartire."""
@@ -287,6 +319,7 @@ def deskew_page(
 def deskew_remove(
     page_id: int,
     confirm: bool = Query(default=False, description="elimina i blocchi già annotati"),
+    _auth: dict = Depends(require_resource(write=True)),
 ) -> dict:
     """Rimuove ogni trasformazione salvata e torna all'immagine originale."""
     with connect() as conn:
@@ -326,6 +359,7 @@ def align_page_endpoint(
     page_id: int,
     payload: AlignRequest,
     confirm: bool = Query(default=False, description="elimina i blocchi già annotati"),
+    _auth: dict = Depends(require_resource(write=True)),
 ) -> dict:
     """Allinea la pagina con livello di qualità scelto:
     basic = solo rotazione, medium/high = UVDoc con validazione anti-crop.
@@ -406,14 +440,21 @@ def _transform_state(page_id: int) -> dict:
 
 
 @router.get("/api/pages/{page_id}/transform")
-def transform_state(page_id: int) -> dict:
+def transform_state(
+    page_id: int,
+    _auth: dict = Depends(require_resource(write=False)),
+) -> dict:
     with connect() as conn:
         _get_page_or_404(conn, page_id)
     return _transform_state(page_id)
 
 
 @router.get("/api/pages/{page_id}/transform-preview/{kind}")
-def transform_preview(page_id: int, kind: str) -> FileResponse:
+def transform_preview(
+    page_id: int,
+    kind: str,
+    _auth: dict = Depends(require_resource(write=False)),
+) -> FileResponse:
     with connect() as conn:
         page = _get_page_or_404(conn, page_id)
         preview = pagesvc.ensure_transform_preview(page, kind)
@@ -421,7 +462,11 @@ def transform_preview(page_id: int, kind: str) -> FileResponse:
 
 
 @router.post("/api/pages/{page_id}/transform/candidate")
-def generate_transform_candidate(page_id: int, payload: TransformCandidateRequest) -> dict:
+def generate_transform_candidate(
+    page_id: int,
+    payload: TransformCandidateRequest,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> dict:
     """Genera una proposta lossless senza cambiare canvas, crop o annotazioni."""
     from ..services import dewarp
 
@@ -471,6 +516,7 @@ def generate_transform_candidate(page_id: int, payload: TransformCandidateReques
 def accept_transform_candidate(
     page_id: int,
     confirm: bool = Query(default=False, description="elimina i blocchi già annotati"),
+    _auth: dict = Depends(require_resource(write=True)),
 ) -> dict:
     """Promuove atomicamente la proposta a master dopo conferma esplicita."""
     candidate = pagesvc.candidate_path(page_id)
@@ -515,7 +561,10 @@ def accept_transform_candidate(
 
 
 @router.delete("/api/pages/{page_id}/transform/candidate")
-def reject_transform_candidate(page_id: int) -> dict:
+def reject_transform_candidate(
+    page_id: int,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> dict:
     with connect() as conn:
         _get_page_or_404(conn, page_id)
     pagesvc.clear_candidate(page_id)
@@ -523,7 +572,13 @@ def reject_transform_candidate(page_id: int) -> dict:
 
 
 @router.get("/api/pages/{page_id}/tile/{level}/{x}/{y}")
-def page_tile(page_id: int, level: int, x: int, y: int) -> FileResponse:
+def page_tile(
+    page_id: int,
+    level: int,
+    x: int,
+    y: int,
+    _auth: dict = Depends(require_resource(write=False)),
+) -> FileResponse:
     with connect() as conn:
         page = _get_page_or_404(conn, page_id)
         tile = pagesvc.ensure_tile(page, level, x, y)

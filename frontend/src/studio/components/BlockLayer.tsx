@@ -13,6 +13,7 @@ interface BlockLayerProps {
   colorFor: (label: string) => string
   onSelect: (id: string | null) => void
   onDragStart: (id: string) => void
+  onDragMove: (id: string) => void
   onDragEnd: (id: string, kind: 'rect' | 'polygon') => void
   onRectTransformEnd: (id: string) => void
   onLineTransformEnd: (id: string) => void
@@ -27,6 +28,7 @@ export default function BlockLayer({
   colorFor,
   onSelect,
   onDragStart,
+  onDragMove,
   onDragEnd,
   onRectTransformEnd,
   onLineTransformEnd,
@@ -95,12 +97,32 @@ export default function BlockLayer({
               strokeWidth={selected ? sw * 1.8 : sw}
               dash={selected ? [6 / viewportK, 4 / viewportK] : undefined}
               draggable={tool === 'select'}
+              hitStrokeWidth={Math.max(8 / viewportK, sw)}
+              onMouseEnter={(e) => {
+                if (tool === 'select') e.target.getStage()!.container().style.cursor = 'move'
+              }}
+              onMouseLeave={(e) => {
+                if (tool === 'select') e.target.getStage()!.container().style.cursor = ''
+              }}
               onClick={(e) => {
                 e.cancelBubble = true
                 onSelect(b.id)
               }}
-              onDragStart={() => onDragStart(b.id)}
-              onDragEnd={() => onDragEnd(b.id, 'rect')}
+              onTap={(e) => {
+                e.cancelBubble = true
+                onSelect(b.id)
+              }}
+              onDragStart={(e) => {
+                e.target.opacity(0.5)
+                e.target.getStage()!.container().style.cursor = 'grabbing'
+                onDragStart(b.id)
+              }}
+              onDragMove={() => onDragMove(b.id)}
+              onDragEnd={(e) => {
+                e.target.opacity(0.28)
+                e.target.getStage()!.container().style.cursor = ''
+                onDragEnd(b.id, 'rect')
+              }}
               onTransformEnd={() => onRectTransformEnd(b.id)}
               perfectDrawEnabled={false}
             />
@@ -121,12 +143,32 @@ export default function BlockLayer({
             strokeWidth={selected ? sw * 1.8 : sw}
             dash={selected ? [6 / viewportK, 4 / viewportK] : undefined}
             draggable={tool === 'select'}
+            hitStrokeWidth={Math.max(8 / viewportK, sw)}
+            onMouseEnter={(e) => {
+              if (tool === 'select') e.target.getStage()!.container().style.cursor = 'move'
+            }}
+            onMouseLeave={(e) => {
+              if (tool === 'select') e.target.getStage()!.container().style.cursor = ''
+            }}
             onClick={(e) => {
               e.cancelBubble = true
               onSelect(b.id)
             }}
-            onDragStart={() => onDragStart(b.id)}
-            onDragEnd={() => onDragEnd(b.id, 'polygon')}
+            onTap={(e) => {
+              e.cancelBubble = true
+              onSelect(b.id)
+            }}
+            onDragStart={(e) => {
+              e.target.opacity(0.5)
+              e.target.getStage()!.container().style.cursor = 'grabbing'
+              onDragStart(b.id)
+            }}
+            onDragMove={() => onDragMove(b.id)}
+            onDragEnd={(e) => {
+              e.target.opacity(0.24)
+              e.target.getStage()!.container().style.cursor = ''
+              onDragEnd(b.id, 'polygon')
+            }}
             onTransformEnd={() => onLineTransformEnd(b.id)}
           />
         )
@@ -163,7 +205,14 @@ export default function BlockLayer({
         keepRatio={false}
         anchorSize={8 / viewportK}
         borderStrokeWidth={sw}
-        anchorCornerRadius={2 / viewportK}
+        anchorCornerRadius={0}
+        anchorFill="#ffffff"
+        anchorStroke="#111111"
+        anchorStrokeWidth={1.5 / viewportK}
+        boundBoxFunc={(oldBox, nextBox) => {
+          if (nextBox.width * viewportK < 8 || nextBox.height * viewportK < 8) return oldBox
+          return nextBox
+        }}
       />
     </>
   )

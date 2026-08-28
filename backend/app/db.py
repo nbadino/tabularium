@@ -10,7 +10,7 @@ import sqlite3
 
 from . import config
 
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -82,11 +82,50 @@ CREATE TABLE IF NOT EXISTS page_reviews (
 );
 
 CREATE INDEX IF NOT EXISTS idx_page_reviews_page ON page_reviews(page_id);
+
+-- Self-hosted: utenti, sessioni, proprietà e membri dei progetti (v6).
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT    NOT NULL UNIQUE,
+    email         TEXT,
+    password_hash TEXT    NOT NULL,
+    salt          TEXT    NOT NULL,
+    role          TEXT    NOT NULL DEFAULT 'editor'
+                  CHECK(role IN ('admin','editor','viewer')),
+    active        INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+    last_login_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash TEXT    NOT NULL UNIQUE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT    NOT NULL,
+    ip         TEXT,
+    user_agent TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS project_members (
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role       TEXT    NOT NULL DEFAULT 'editor'
+               CHECK(role IN ('editor','viewer')),
+    created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (project_id, user_id)
+);
 """
 
 # Migrazioni additive: (tabella, check_colonna, DDL)
 _MIGRATIONS = [
     ("projects", "archive_dir", "ALTER TABLE projects ADD COLUMN archive_dir TEXT"),
+    # Self-hosted: ogni progetto ha un proprietario (NULL per i progetti esistenti:
+    # vengono assegnati all'amministratore al primo setup, v. services/auth.py).
+    ("projects", "owner_id", "ALTER TABLE projects ADD COLUMN owner_id INTEGER"),
 ]
 
 

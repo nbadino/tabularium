@@ -52,6 +52,10 @@ register pages → guided annotation → export ms-swift JSONL → LoRA fine-tun
 - **Data safety by construction.** Autosave preserves block IDs (bulk PUT never cascades away
   your table grids); destructive actions require explicit confirmation; splits are deterministic
   (ratio + seed) and split **by page** so crops never leak between train and val.
+- **Self-hosted multi-user.** Optional but on by default: first-run setup creates the instance
+  administrator, login/logout via HttpOnly session cookies, global roles (admin / editor /
+  viewer) and per-project sharing, instance settings and user management — passwords and
+  session tokens stored only as hashes.
 
 ## Quickstart
 
@@ -69,6 +73,48 @@ only for fine-tuning and model inference; annotation and OCR prefill run on CPU.
 ./scripts/run.sh
 ```
 
+On first launch the app opens the **setup screen** and asks you to create the instance
+administrator; afterwards every session starts at the login page. To run the studio without
+any authentication (single-user local mode) start the backend with
+`TABULARIUM_AUTH=off`. Registration is closed by default; the administrator opens it from
+**Settings → Open registration**.
+
+### Page rectification (deskew, perspective, dewarp)
+
+In the Annotation Studio, **Align and compare** always creates a non-destructive proposal.
+The original and the proposal stay side by side until the user accepts the result. The accepted
+master is stored as lossless PNG and becomes the single source for canvas, Prefill, crops and
+dataset export; JPEG is used only for previews and tiles.
+
+Available methods are global rotation, UVDoc, experimental DocScanner-L, manual four-corner
+perspective, and a draggable manual mesh for curved pages. Responses and metadata record the
+requested engine, actual engine, fallback, warnings and diagnostic error.
+
+UVDoc needs a complete PaddleOCR runtime. Keep it in the dedicated Python 3.12 environment that
+`scripts/run.sh` discovers automatically:
+
+```bash
+python3.12 -m venv .venv-uvdoc
+source .venv-uvdoc/bin/activate       # Windows: .venv-uvdoc\Scripts\activate
+python -m pip install -r backend/requirements.txt
+# Install the platform-specific PaddlePaddle CPU/CUDA wheel from its official guide, then:
+python -m pip install -r backend/requirements-uvdoc.txt
+```
+
+Set `TABULARIUM_UVDOC_DEVICE=cpu` or `gpu:0`. DocScanner-L is a separate experimental choice; install
+its official checkout and weights with `scripts/setup_docscanner.sh`. It never silently replaces
+UVDoc.
+
+To compare the installed engines without touching project data:
+
+```bash
+source .venv-uvdoc/bin/activate
+python scripts/benchmark_dewarp.py test/*.tif --output /tmp/dewarp-benchmark
+```
+
+The report's OCR coverage and confidence are proxies; final engine selection should use CER on a
+small gold transcription set.
+
 For model inference / fine-tuning you also need the
 [MonkeyOCRv2](https://github.com/Yuliang-Liu/MonkeyOCRv2) checkout with the
 `MonkeyOCRv2-B-Parsing` checkpoint and a vLLM environment:
@@ -84,13 +130,17 @@ export TABULARIUM_TRAIN_PYTHON=/path/to/envs/MonkeyOCRv2Parsing/bin/python
 
 ```
 backend (FastAPI, SQLite, Pillow/NumPy, vLLM client)
+  ├── services/security.py       PBKDF2 password hashing, SHA-256 session tokens
+  ├── services/authsvc.py        login/sessions, role + per-project access checks
   ├── services/table_detect.py   borderless grid detection (baselines, shear, snapping)
   ├── services/otsl.py           grid ⇄ OTSL, oracle-tested against the official converter
   ├── services/dataset_builder.py  3 JSONL families + health report (per-cell provenance)
   ├── services/inference.py      vLLM client: layout, END2END, band-wise table recognition
   ├── services/trainer.py        official swift sft scripts, resume, SSE logs, GPU telemetry
   └── services/vram.py           VRAM preflight (logits dominate; bisection on max_length)
-frontend (React 18 + Vite + TS + Tailwind + Zustand + Konva)
+frontend (React 19 + Vite + TS + Tailwind + React Router + Konva; state via
+          useSyncExternalStore stores, no global framework)
+  ├── app/AuthGate.tsx           setup → login → app at startup; 401 → back to login
   └── studio/                    canvas, layers, reading order, table editor (draggable rules)
 ```
 
@@ -102,7 +152,9 @@ OTSL encoding, JSONL shapes) and every design decision with its justification li
 
 Milestones M0–M8 are implemented and in daily use on the Historic Shipping Index corpus: projects,
 annotation studio, table editor, dataset builder, training center, evaluation, playground,
-pseudo-labeling. The model-facing parts (vLLM, training) target the
+pseudo-labeling. On top of that sits the **self-hosted layer**: first-run setup, login/logout,
+role-based and per-project access, instance settings and user management. The model-facing parts
+(vLLM, training) target the
 `zenosai/MonkeyOCRv2-B-Parsing` / `-S-Parsing` checkpoints and the ms-swift fork bundled with
 the official repo.
 

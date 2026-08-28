@@ -1,15 +1,19 @@
 """API playground: analisi di una pagina con il modello servito via vLLM."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ..db import connect
 from ..services import inference as infmod
 from ..services import labeling
 from ..services import pages as pagesvc
+from ..services import auth as authsvc
 
-router = APIRouter(tags=["playground"])
+router = APIRouter(
+    tags=["playground"],
+    dependencies=[Depends(authsvc.get_current_user)],
+)
 
 _TEXT_LABELS = {l.name for l in labeling.DEFAULT_LABELS if l.prompt_kind == "text"}
 
@@ -22,7 +26,10 @@ class ParseRequest(BaseModel):
 
 
 @router.post("/api/playground/parse")
-def playground_parse(payload: ParseRequest) -> dict:
+def playground_parse(
+    payload: ParseRequest,
+    user: dict = Depends(authsvc.get_current_user),
+) -> dict:
     with connect() as conn:
         page = conn.execute("SELECT * FROM pages WHERE id=?", (payload.page_id,)).fetchone()
         project = conn.execute(
@@ -30,6 +37,8 @@ def playground_parse(payload: ParseRequest) -> dict:
         ).fetchone()
     if page is None or project is None or page["project_id"] != payload.project_id:
         raise HTTPException(status_code=404, detail="pagina non trovata nel progetto")
+    # project_id è nel body, non nel path: controllo manuale dell'accesso.
+    authsvc.require_project_access(payload.project_id, user, write=False)
 
     image = pagesvc.load_source_image(page)
     if image is None:

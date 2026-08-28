@@ -188,6 +188,44 @@ export const IconMinus = (p: IconProps) => (
   </Icon>
 )
 
+/** Selezione e spostamento di un blocco. */
+export const IconSelect = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3 2.5l9 6-4.1 1.1-1.5 3.9z" />
+  </Icon>
+)
+
+/** Rettangolo di annotazione. */
+export const IconRectangle = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M2.5 3h11v10h-11z" />
+    <path d="M2.5 6V3h3M10.5 3h3v3M13.5 10v3h-3M5.5 13h-3v-3" />
+  </Icon>
+)
+
+/** Poligono di annotazione con vertici espliciti. */
+export const IconPolygon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3 4l5-2 5 4-2 7H4z" />
+    <path d="M2 3h2v2H2zM7 1h2v2H7zM12 5h2v2h-2zM10 12h2v2h-2zM3 11h2v2H3z" />
+  </Icon>
+)
+
+/** Mano aperta: trascinamento della pagina. */
+export const IconHand = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M5 7V3.5a1 1 0 012 0V7M7 6V2.5a1 1 0 012 0V7M9 6V3.5a1 1 0 012 0V8M11 6.5a1 1 0 012 0v3c0 2.5-1.7 4-4.2 4H6c-1.4 0-2.4-.7-3.1-1.8L1.7 9.8a1.1 1.1 0 011.8-1.3L5 10z" />
+  </Icon>
+)
+
+/** Pagina riportata interamente nel campo visivo. */
+export const IconFit = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" />
+    <path d="M5 4.5h6v7H5z" />
+  </Icon>
+)
+
 export const IconCheck = (p: IconProps) => (
   <Icon {...p}>
     <path d="M2.5 8.5l3.5 3.5 7.5-8" />
@@ -259,4 +297,3 @@ export const IconCloud = (p: IconProps) => (
     <path d="M4.5 13.5h7a3 3 0 00.5-5.96 4 4 0 00-7.78-1.04A3 3 0 004.5 13.5z" />
   </Icon>
 )
-

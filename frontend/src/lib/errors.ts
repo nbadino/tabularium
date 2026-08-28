@@ -75,6 +75,13 @@ export function describeError(e: unknown): Explained {
     }
 
     switch (e.status) {
+      case 401:
+        return {
+          titolo: t('errors.unauthorizedTitle'),
+          messaggio: detail ?? t('errors.unauthorizedMsg'),
+          suggerimento: t('errors.unauthorizedHint'),
+          dettaglio,
+        }
       case 400:
         return {
           titolo: t('errors.badRequestTitle'),

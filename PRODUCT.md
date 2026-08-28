@@ -10,9 +10,12 @@ web
 
 Pubblico potenziale open source: ricercatori e archivisti digitali che lavorano su giornali
 storici con layout complessi (multi-colonna, tabelle dense) e vogliono affinare un modello di
-document parsing sul proprio corpus. Uso reale corrente: utente singolo in locale, senza login
-(`annotation_state` registra l'avanzamento per `user` come discriminatore tecnico, non come
-identità autenticata).
+document parsing sul proprio corpus. Uso reale corrente: studio self-hosted, multi-utente —
+primo avvio con setup dell'amministratore, login con sessioni (cookie HttpOnly), ruoli globali
+(admin/editor/viewer), accesso ai progetti per proprietario o membro, impostazioni istanza e
+gestione utenti (creazione, attivazione, reset password, eliminazione). La registrazione è
+chiusa di default e l'admin la apre dalle Impostazioni; `TABULARIUM_AUTH=off` conserva la
+modalità locale a utente singolo per chi non vuole login.
 
 ## Product Purpose
 

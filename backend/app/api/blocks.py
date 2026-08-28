@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from PIL import Image
 
 from ..db import connect
+from ..services import auth as authsvc
+from .deps import require_resource
 from ..schemas import (
     BlockBulkWrite,
     BlockListOut,
@@ -27,7 +29,10 @@ from ..services import ocr as ocrmod
 from ..services import pages as pagesvc
 from ..services.i18n import msg, parse_lang
 
-router = APIRouter(tags=["annotations"])
+router = APIRouter(
+    tags=["annotations"],
+    dependencies=[Depends(authsvc.get_current_user)],
+)
 
 
 def _get_page_or_404(conn, page_id: int):
@@ -64,7 +69,10 @@ def _block_out(row) -> BlockOut:
 
 
 @router.get("/api/pages/{page_id}/annotations", response_model=BlockListOut)
-def list_annotations(page_id: int) -> BlockListOut:
+def list_annotations(
+    page_id: int,
+    _auth: dict = Depends(require_resource(write=False)),
+) -> BlockListOut:
     with connect() as conn:
         _get_page_or_404(conn, page_id)
         rows = conn.execute(
@@ -76,7 +84,11 @@ def list_annotations(page_id: int) -> BlockListOut:
 
 
 @router.put("/api/pages/{page_id}/annotations", response_model=BlockListOut)
-def replace_annotations(page_id: int, payload: BlockBulkWrite) -> BlockListOut:
+def replace_annotations(
+    page_id: int,
+    payload: BlockBulkWrite,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> BlockListOut:
     """Sincronizza i blocchi della pagina preservando gli ID esistenti.
 
     Le tabelle sono legate a ``blocks.id`` con ``ON DELETE CASCADE``. Il
@@ -140,7 +152,11 @@ def replace_annotations(page_id: int, payload: BlockBulkWrite) -> BlockListOut:
 
 
 @router.patch("/api/blocks/{block_id}", response_model=BlockOut)
-def update_block(block_id: int, payload: BlockUpdate) -> BlockOut:
+def update_block(
+    block_id: int,
+    payload: BlockUpdate,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> BlockOut:
     updates = payload.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(status_code=400, detail="nessun campo da aggiornare")
@@ -159,7 +175,10 @@ def update_block(block_id: int, payload: BlockUpdate) -> BlockOut:
 
 
 @router.delete("/api/blocks/{block_id}")
-def delete_block(block_id: int) -> dict:
+def delete_block(
+    block_id: int,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> dict:
     with connect() as conn:
         block = _get_block_or_404(conn, block_id)
         conn.execute("DELETE FROM blocks WHERE id=?", (block_id,))
@@ -167,7 +186,10 @@ def delete_block(block_id: int) -> dict:
 
 
 @router.get("/api/projects/{project_id}/labels", response_model=LabelSchemaOut)
-def project_labels(project_id: int) -> LabelSchemaOut:
+def project_labels(
+    project_id: int,
+    _auth: dict = Depends(require_resource(write=False)),
+) -> LabelSchemaOut:
     # Verifica che il progetto esista (endpoint attualmente indipendente da settings).
     from ..api.projects import _get_project_or_404  # noqa: PLC0415
 
@@ -188,7 +210,10 @@ def _get_table_grid(row) -> dict | None:
 
 
 @router.get("/api/blocks/{block_id}/table", response_model=TableGridOut)
-def block_table_get(block_id: int) -> TableGridOut:
+def block_table_get(
+    block_id: int,
+    _auth: dict = Depends(require_resource(write=False)),
+) -> TableGridOut:
     with connect() as conn:
         _get_block_or_404(conn, block_id)
         row = conn.execute(
@@ -199,7 +224,11 @@ def block_table_get(block_id: int) -> TableGridOut:
 
 
 @router.put("/api/blocks/{block_id}/table", response_model=TableSaveOut)
-def block_table_put(block_id: int, payload: TableGrid) -> TableSaveOut:
+def block_table_put(
+    block_id: int,
+    payload: TableGrid,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> TableSaveOut:
     for name, lines, expected in (
         ("vlines", payload.vlines, payload.cols + 1),
         ("hlines", payload.hlines, payload.rows + 1),
@@ -255,7 +284,10 @@ def _block_bbox(block) -> tuple[int, int, int, int]:
 
 @router.post("/api/blocks/{block_id}/table/detect", response_model=TableDetectOut)
 def block_table_detect(
-    block_id: int, payload: TableDetectRequest, request: Request
+    block_id: int,
+    payload: TableDetectRequest,
+    request: Request,
+    _auth: dict = Depends(require_resource(write=True)),
 ) -> TableDetectOut:
     """Propone righe e colonne del blocco tabella a partire dalla geometria.
 
@@ -389,7 +421,10 @@ def block_table_detect(
     response_model=TableCellRecognizeOut,
 )
 def block_table_cell_recognize(
-    block_id: int, payload: TableCellRecognizeRequest, request: Request
+    block_id: int,
+    payload: TableCellRecognizeRequest,
+    request: Request,
+    _auth: dict = Depends(require_resource(write=True)),
 ) -> TableCellRecognizeOut:
     """Ri-riconosce una sola cella della griglia salvata.
 
@@ -488,7 +523,10 @@ def block_table_cell_recognize(
 
 
 @router.get("/api/blocks/{block_id}/crop")
-def block_crop(block_id: int) -> Response:
+def block_crop(
+    block_id: int,
+    _auth: dict = Depends(require_resource(write=False)),
+) -> Response:
     """Crop della regione del blocco (pixel pagina) come JPEG in memoria."""
     with connect() as conn:
         block = _get_block_or_404(conn, block_id)

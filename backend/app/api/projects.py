@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import uuid
 
-from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 
 from .. import config
 from ..db import connect
@@ -27,9 +27,14 @@ from ..services import pages as pagesvc
 from ..services import scan as scanmod
 from ..services import corpus as corpusmod
 from ..services import pilot as pilotmod
+from ..services import auth as authsvc
 from ..services.i18n import msg, parse_lang
+from .deps import require_resource
 
-router = APIRouter(tags=["projects"])
+router = APIRouter(
+    tags=["projects"],
+    dependencies=[Depends(authsvc.get_current_user)],
+)
 
 # Page type ammessi (estensione della tassonomia giornale) — usati nel frontend.
 PAGE_TYPES = [
@@ -206,15 +211,21 @@ def _register_candidate(
 
 # --- endpoints ---------------------------------------------------------------
 @router.post("/api/projects", response_model=ProjectOut, status_code=201)
-def create_project(payload: ProjectCreate) -> ProjectOut:
+def create_project(
+    payload: ProjectCreate,
+    user: dict = Depends(authsvc.get_current_user),
+) -> ProjectOut:
+    # Chi crea il progetto ne diventa il proprietario. In modalità off
+    # `owner_id` resta NULL (non esistono utenti).
+    authsvc.require_role(user, "editor")
     archive_dir = str(Path(payload.archive_dir).expanduser().resolve())
     if not Path(archive_dir).is_dir():
         raise HTTPException(status_code=400, detail="la cartella archivio non esiste")
     with connect() as conn:
         cur = conn.execute(
-            """INSERT INTO projects (name, root_dir, archive_dir, settings_json)
-               VALUES (?, ?, ?, '{}')""",
-            (payload.name, str(config.DATA_DIR), archive_dir),
+            """INSERT INTO projects (name, root_dir, archive_dir, settings_json, owner_id)
+               VALUES (?, ?, ?, '{}', ?)""",
+            (payload.name, str(config.DATA_DIR), archive_dir, user.get("id")),
         )
         project_id = cur.lastrowid
         # directory dati del progetto (crops/runs arriveranno nelle milestone successive)
@@ -224,20 +235,38 @@ def create_project(payload: ProjectCreate) -> ProjectOut:
 
 
 @router.get("/api/projects", response_model=ProjectList)
-def list_projects() -> ProjectList:
+def list_projects(user: dict = Depends(authsvc.get_current_user)) -> ProjectList:
     with connect() as conn:
-        rows = conn.execute("SELECT * FROM projects ORDER BY created_at DESC").fetchall()
+        if authsvc.is_local(user) or authsvc.is_admin(user):
+            rows = conn.execute(
+                "SELECT * FROM projects ORDER BY created_at DESC"
+            ).fetchall()
+        else:
+            # Solo i progetti di cui l'utente è proprietario o membro.
+            rows = conn.execute(
+                """SELECT DISTINCT p.* FROM projects p
+                   LEFT JOIN project_members pm ON pm.project_id = p.id
+                   WHERE p.owner_id = ? OR pm.user_id = ?
+                   ORDER BY p.created_at DESC""",
+                (user["id"], user["id"]),
+            ).fetchall()
         return ProjectList(items=[_project_out(conn, r) for r in rows])
 
 
 @router.get("/api/projects/{project_id}", response_model=ProjectOut)
-def get_project(project_id: int) -> ProjectOut:
+def get_project(
+    project_id: int,
+    _auth: dict = Depends(require_resource()),
+) -> ProjectOut:
     with connect() as conn:
         return _project_out(conn, _get_project_or_404(conn, project_id))
 
 
 @router.get("/api/projects/{project_id}/workflow")
-def project_workflow(project_id: int) -> dict:
+def project_workflow(
+    project_id: int,
+    _auth: dict = Depends(require_resource()),
+) -> dict:
     """Stato operativo e prossimo compito consigliato per il ricercatore."""
     with connect() as conn:
         _get_project_or_404(conn, project_id)
@@ -271,6 +300,7 @@ def annotation_queue(
     project_id: int,
     request: Request,
     limit: int = Query(default=50, ge=1, le=500),
+    _auth: dict = Depends(require_resource()),
 ) -> dict:
     """Coda deterministica: prima pagine nuove/incomplete, poi QA e revisione."""
     lang = parse_lang(request.headers.get("accept-language"))
@@ -322,14 +352,20 @@ def annotation_queue(
 
 
 @router.get("/api/projects/{project_id}/corpus-map")
-def corpus_map(project_id: int) -> dict:
+def corpus_map(
+    project_id: int,
+    _auth: dict = Depends(require_resource()),
+) -> dict:
     with connect() as conn:
         _get_project_or_404(conn, project_id)
     return corpusmod.corpus_map(project_id)
 
 
 @router.get("/api/projects/{project_id}/study-protocol", response_model=StudyProtocolOut)
-def get_study_protocol(project_id: int) -> StudyProtocolOut:
+def get_study_protocol(
+    project_id: int,
+    _auth: dict = Depends(require_resource()),
+) -> StudyProtocolOut:
     with connect() as conn:
         project = _get_project_or_404(conn, project_id)
         settings = json.loads(project["settings_json"] or "{}")
@@ -338,7 +374,11 @@ def get_study_protocol(project_id: int) -> StudyProtocolOut:
 
 
 @router.put("/api/projects/{project_id}/study-protocol", response_model=StudyProtocolOut)
-def put_study_protocol(project_id: int, payload: StudyProtocolIn) -> StudyProtocolOut:
+def put_study_protocol(
+    project_id: int,
+    payload: StudyProtocolIn,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> StudyProtocolOut:
     now = datetime.now(timezone.utc).isoformat()
     with connect() as conn:
         project = _get_project_or_404(conn, project_id)
@@ -354,7 +394,11 @@ def put_study_protocol(project_id: int, payload: StudyProtocolIn) -> StudyProtoc
 
 
 @router.post("/api/projects/{project_id}/gold-set")
-def set_gold_set(project_id: int, page_ids: list[int]) -> dict:
+def set_gold_set(
+    project_id: int,
+    page_ids: list[int],
+    _auth: dict = Depends(require_resource(write=True)),
+) -> dict:
     """Protegge un campione di pagine invisibile al tuning."""
     with connect() as conn:
         project = _get_project_or_404(conn, project_id)
@@ -371,7 +415,10 @@ def set_gold_set(project_id: int, page_ids: list[int]) -> dict:
 
 
 @router.get("/api/projects/{project_id}/qa-report")
-def qa_report(project_id: int) -> dict:
+def qa_report(
+    project_id: int,
+    _auth: dict = Depends(require_resource()),
+) -> dict:
     """Riepilogo revisioni e conteggio degli errori ricorrenti."""
     with connect() as conn:
         _get_project_or_404(conn, project_id)
@@ -388,14 +435,23 @@ def qa_report(project_id: int) -> dict:
 
 
 @router.get("/api/projects/{project_id}/pilot-sample")
-def pilot_sample(project_id: int, target: int = Query(default=40, ge=1, le=50), seed: int = Query(default=42, ge=0)) -> dict:
+def pilot_sample(
+    project_id: int,
+    target: int = Query(default=40, ge=1, le=50),
+    seed: int = Query(default=42, ge=0),
+    _auth: dict = Depends(require_resource()),
+) -> dict:
     with connect() as conn:
         _get_project_or_404(conn, project_id)
     return pilotmod.sample_pilot(project_id, target, seed)
 
 
 @router.post("/api/projects/{project_id}/pilot-sample/save")
-def save_pilot_sample(project_id: int, page_ids: list[int]) -> dict:
+def save_pilot_sample(
+    project_id: int,
+    page_ids: list[int],
+    _auth: dict = Depends(require_resource(write=True)),
+) -> dict:
     with connect() as conn:
         project = _get_project_or_404(conn, project_id)
         placeholders = ",".join("?" for _ in page_ids) or "NULL"
@@ -410,7 +466,10 @@ def save_pilot_sample(project_id: int, page_ids: list[int]) -> dict:
 
 
 @router.get("/api/projects/{project_id}/conventions", response_model=ConventionsOut)
-def get_conventions(project_id: int) -> ConventionsOut:
+def get_conventions(
+    project_id: int,
+    _auth: dict = Depends(require_resource()),
+) -> ConventionsOut:
     with connect() as conn:
         project = _get_project_or_404(conn, project_id)
         settings = json.loads(project["settings_json"] or "{}")
@@ -423,7 +482,11 @@ def get_conventions(project_id: int) -> ConventionsOut:
 
 
 @router.put("/api/projects/{project_id}/conventions", response_model=ConventionsOut)
-def put_conventions(project_id: int, payload: ConventionsIn) -> ConventionsOut:
+def put_conventions(
+    project_id: int,
+    payload: ConventionsIn,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> ConventionsOut:
     dumped = [c.model_dump() for c in payload.conventions]
     with connect() as conn:
         project = _get_project_or_404(conn, project_id)
@@ -440,6 +503,7 @@ def put_conventions(project_id: int, payload: ConventionsIn) -> ConventionsOut:
 def delete_project(
     project_id: int,
     confirm: bool = Query(default=False, description="conferma esplicita richiesta"),
+    _auth: dict = Depends(require_resource(write=True)),
 ) -> dict:
     if not confirm:
         raise HTTPException(
@@ -447,6 +511,13 @@ def delete_project(
             detail="operazione distruttiva: passa ?confirm=true per eliminare il progetto",
         )
     with connect() as conn:
+        # Cancellare un progetto è irreversibile: solo il proprietario (o un
+        # admin, che ha livello "owner") può farlo, non un editor invitato.
+        if authsvc.require_project_access(project_id, _auth, write=True) != "owner":
+            raise HTTPException(
+                status_code=403,
+                detail="solo il proprietario del progetto può eliminarlo",
+            )
         project = _get_project_or_404(conn, project_id)
         # rimuove le thumbnails delle pagine del progetto
         for row in conn.execute(
@@ -470,7 +541,11 @@ def delete_project(
 
 
 @router.post("/api/projects/{project_id}/scan", response_model=ScanReportOut)
-def scan_project(project_id: int, request: Request) -> ScanReportOut:
+def scan_project(
+    project_id: int,
+    request: Request,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> ScanReportOut:
     lang = parse_lang(request.headers.get("accept-language"))
     with connect() as conn:
         project = _get_project_or_404(conn, project_id)
@@ -489,6 +564,7 @@ async def import_uploaded_folder(
     project_id: int,
     request: Request,
     files: list[UploadFile] = File(...),
+    _auth: dict = Depends(require_resource(write=True)),
 ) -> ScanReportOut:
     """Importa una cartella scelta dal browser senza esporre percorsi locali."""
     lang = parse_lang(request.headers.get("accept-language"))

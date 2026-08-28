@@ -2,12 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Image as KonvaImage, Layer, Line, Rect, Stage } from 'react-konva'
 import Konva from 'konva'
 import useImage from 'use-image'
-import type { Pt } from '../lib/coords'
+import { bboxPoints, type Pt } from '../lib/coords'
 import type { DisplayBlock, Tool } from './types'
 import { useViewport } from './useViewport'
 import BlockLayer from './components/BlockLayer'
-import { IconMinus, IconPlus } from '../app/icons'
+import { IconFit, IconMinus, IconPlus } from '../app/icons'
 import { useI18n } from '../i18n'
+import { clamp, clampDragDelta, clampPoints } from './canvasGeometry'
 
 interface StudioCanvasProps {
   imageUrl: string
@@ -42,26 +43,31 @@ export default function StudioCanvas({
 }: StudioCanvasProps) {
   const { t, tn } = useI18n()
   const [image] = useImage(imageUrl)
-  const vp = useViewport(imageNatural)
+  const vp = useViewport(imageNatural, imageUrl)
   const { viewport, containerSize, containerRef, stageRef } = vp
 
   const [tempRect, setTempRect] = useState<Pt[] | null>(null)
   const [polyVerts, setPolyVerts] = useState<Pt[]>([])
+  const [spacePan, setSpacePan] = useState(false)
 
   // coordinate scena dal puntatore
   const scenePoint = useCallback((): Pt | null => {
     const p = stageRef.current?.getPointerPosition()
     if (!p) return null
-    return { x: (p.x - viewport.x) / viewport.k, y: (p.y - viewport.y) / viewport.k }
-  }, [viewport, stageRef])
+    return {
+      x: clamp((p.x - viewport.x) / viewport.k, 0, imageNatural.w),
+      y: clamp((p.y - viewport.y) / viewport.k, 0, imageNatural.h),
+    }
+  }, [imageNatural.h, imageNatural.w, viewport, stageRef])
 
   // --- mouse handlers (compongono pan + disegno) ----------------------------
   const onMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
-    if (e.evt.button !== 0) return
-    if (tool === 'pan') {
+    const wantsPan = tool === 'pan' || spacePan || e.evt.button === 1
+    if (wantsPan) {
       vp.startPan(e)
       return
     }
+    if (e.evt.button !== 0) return
     const sp = scenePoint()
     if (tool === 'rect' && sp) {
       setTempRect([sp, sp])
@@ -110,6 +116,13 @@ export default function StudioCanvas({
     }
   }
 
+  useEffect(() => {
+    setTempRect(null)
+    setPolyVerts([])
+    vp.endPan()
+    // Il cambio strumento conclude il gesto corrente; endPan è stabile.
+  }, [tool]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const onStageClick = () => {
     if (tool === 'polygon') {
       const sp = scenePoint()
@@ -134,19 +147,40 @@ export default function StudioCanvas({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      if (t?.closest('input, textarea, select, button, a, [contenteditable="true"]')) return
       if (e.key === 'Delete' && selectedId) {
         e.preventDefault()
         onDeleteBlock(selectedId)
       }
       if (e.key === 'Escape') {
         setPolyVerts([])
+        setTempRect(null)
+        vp.endPan()
         onSelect(null)
       }
+      if (e.code === 'Space' && !e.repeat) {
+        e.preventDefault()
+        setSpacePan(true)
+      }
+    }
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return
+      setSpacePan(false)
+      vp.endPan()
+    }
+    const onBlur = () => {
+      setSpacePan(false)
+      vp.endPan()
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [selectedId, onDeleteBlock, onSelect])
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [selectedId, onDeleteBlock, onSelect, vp.endPan])
 
   // --- transform / drag handlers ---------------------------------------------
   const onRectTransformEnd = (id: string) => {
@@ -154,28 +188,28 @@ export default function StudioCanvas({
     if (!node) return
     const sx = node.scaleX()
     const sy = node.scaleY()
-    node.scaleX(1)
-    node.scaleY(1)
-    onUpdateBlock(id, [
+    const points = clampPoints([
       { x: node.x(), y: node.y() },
       { x: node.x() + node.width() * sx, y: node.y() + node.height() * sy },
-    ])
+    ], imageNatural)
+    node.scale({ x: 1, y: 1 })
+    onUpdateBlock(id, points)
   }
 
   const onLineTransformEnd = (id: string) => {
     const node = (stageRef.current?.findOne(`#${id}`) ?? null) as Konva.Line | null
     if (!node) return
-    const sx = node.scaleX()
-    const sy = node.scaleY()
-    node.scaleX(1)
-    node.scaleY(1)
     const arr = node.points()
+    const transform = node.getTransform().copy()
     const pts: Pt[] = []
     for (let i = 0; i < arr.length; i += 2) {
-      pts.push({ x: arr[i] * sx, y: arr[i + 1] * sy })
+      pts.push(transform.point({ x: arr[i], y: arr[i + 1] }))
     }
-    node.points(pts.flatMap((p) => [p.x, p.y]))
-    onUpdateBlock(id, pts)
+    node.position({ x: 0, y: 0 })
+    node.scale({ x: 1, y: 1 })
+    const bounded = clampPoints(pts, imageNatural)
+    node.points(bounded.flatMap((p) => [p.x, p.y]))
+    onUpdateBlock(id, bounded)
   }
 
   // La posizione del nodo al dragstart è l'unico riferimento affidabile: un
@@ -187,6 +221,16 @@ export default function StudioCanvas({
   const onDragStart = (id: string) => {
     const node = (stageRef.current?.findOne(`#${id}`) ?? null) as Konva.Node | null
     dragStartRef.current = node ? { x: node.x(), y: node.y() } : null
+  }
+
+  const onDragMove = (id: string) => {
+    const node = (stageRef.current?.findOne(`#${id}`) ?? null) as Konva.Node | null
+    const block = blocks.find((item) => item.id === id)
+    const start = dragStartRef.current
+    if (!node || !block || !start) return
+    const box = bboxPoints(block.points)
+    const delta = clampDragDelta(box, node.x() - start.x, node.y() - start.y, imageNatural)
+    node.position({ x: start.x + delta.x, y: start.y + delta.y })
   }
 
   const onDragEnd = (id: string, _kind: 'rect' | 'polygon') => {
@@ -208,6 +252,26 @@ export default function StudioCanvas({
   }
 
   const sw = 2 / viewport.k
+  const interactionTool: Tool = spacePan ? 'pan' : tool
+  const canvasCursor = vp.isPanning
+    ? 'cursor-grabbing'
+    : interactionTool === 'pan'
+      ? 'cursor-grab'
+      : interactionTool === 'select'
+        ? 'cursor-default'
+        : 'cursor-crosshair'
+  const interactionHint = interactionTool === 'pan'
+    ? t('canvas.panHint')
+    : interactionTool === 'select'
+      ? t('canvas.selectHint')
+      : interactionTool === 'rect'
+        ? t('canvas.rectHint')
+        : t('canvas.polygonHint')
+
+  useEffect(() => {
+    const container = stageRef.current?.container()
+    if (container) container.style.cursor = ''
+  }, [interactionTool, stageRef, vp.isPanning])
 
   return (
     <div
@@ -215,6 +279,7 @@ export default function StudioCanvas({
       className="lighttable relative h-full w-full overflow-hidden"
       role="img"
       aria-label={t('canvas.aria', { n: blocks.length })}
+      style={{ touchAction: 'none' }}
     >
       <Stage
         ref={stageRef}
@@ -228,9 +293,24 @@ export default function StudioCanvas({
         onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
         onMouseUp={onMouseUp}
+        onMouseLeave={() => {
+          if (vp.isPanning) vp.endPan()
+        }}
         onClick={onStageClick}
         onDblClick={onStageDblClick}
-        className="cursor-crosshair"
+        onTouchStart={(e) => {
+          vp.onTouchStart(e)
+          if (e.evt.touches.length === 1 && interactionTool === 'pan') vp.startPan(e)
+        }}
+        onTouchMove={(e) => {
+          vp.onTouchMove(e)
+          if (e.evt.touches.length === 1 && vp.isPanning) vp.updatePan()
+        }}
+        onTouchEnd={(e) => {
+          vp.onTouchEnd(e)
+          if (e.evt.touches.length === 0) vp.endPan()
+        }}
+        className={canvasCursor}
       >
         <Layer listening={false}>
           <KonvaImage
@@ -243,12 +323,13 @@ export default function StudioCanvas({
           <BlockLayer
             blocks={blocks}
             selectedId={selectedId}
-            tool={tool}
+            tool={interactionTool}
             viewportK={viewport.k}
             showFlow={showFlow}
             colorFor={colorFor}
             onSelect={onSelect}
             onDragStart={onDragStart}
+            onDragMove={onDragMove}
             onDragEnd={onDragEnd}
             onRectTransformEnd={onRectTransformEnd}
             onLineTransformEnd={onLineTransformEnd}
@@ -293,12 +374,10 @@ export default function StudioCanvas({
         </Layer>
       </Stage>
 
-      {tool === 'polygon' && (
-        <p className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)] px-2 py-1 text-[11px]">
-          {t('canvas.polygonHint')}
-          {polyVerts.length >= 3 && ` — ${tn('canvas.vertices', polyVerts.length)}`}
-        </p>
-      )}
+      <p className="pointer-events-none absolute bottom-2 left-2 hidden max-w-[calc(100%-260px)] border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)] px-2 py-1 text-[11px] text-[color:var(--color-ink-2)] sm:block">
+        {interactionHint}
+        {tool === 'polygon' && polyVerts.length >= 3 && ` — ${tn('canvas.vertices', polyVerts.length)}`}
+      </p>
 
       {/* Il livello di zoom è un'informazione, non un mistero. */}
       <div className="absolute bottom-2 right-2 flex items-stretch border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)]">
@@ -306,25 +385,28 @@ export default function StudioCanvas({
           type="button"
           onClick={() => vp.zoomBy(1 / 1.25)}
           aria-label={t('canvas.zoomOut')}
-          className="px-1.5 hover:bg-[color:var(--color-fill)]"
+          className="btn btn-sm border-0"
         >
           <IconMinus size={11} />
+          <span>{t('canvas.zoomOutShort')}</span>
         </button>
         <button
           type="button"
           onClick={vp.fit}
-          className="mono border-x border-[color:var(--color-rule)] px-2 py-1 text-[11px] hover:bg-[color:var(--color-fill)]"
+          className="btn btn-sm mono border-y-0"
           title={t('canvas.fitTitle')}
         >
-          {Math.round(viewport.k * 100)}%
+          <IconFit size={11} />
+          {t('canvas.fit')} · {Math.round(viewport.k * 100)}%
         </button>
         <button
           type="button"
           onClick={() => vp.zoomBy(1.25)}
           aria-label={t('canvas.zoomIn')}
-          className="px-1.5 hover:bg-[color:var(--color-fill)]"
+          className="btn btn-sm border-0"
         >
           <IconPlus size={11} />
+          <span>{t('canvas.zoomInShort')}</span>
         </button>
       </div>
     </div>

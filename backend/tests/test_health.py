@@ -17,4 +17,4 @@ def test_system_info():
         assert r.status_code == 200
         body = r.json()
         assert body["app"] == "Tabularium"
-        assert body["schema_version"] == "5"
+        assert body["schema_version"] == "6"

@@ -18,6 +18,16 @@ import type { Tool } from '../studio/types'
 import { emptyGrid } from '../lib/grid'
 import type { PrefillEngines, TableDetectOut, TableDetectRequest, TableGrid, TableGridOut, TableSaveOut } from '../lib/types'
 import { useI18n, tn } from '../i18n'
+import {
+  IconFlow,
+  IconHand,
+  IconPolygon,
+  IconRectangle,
+  IconRedo,
+  IconSave,
+  IconSelect,
+  IconUndo,
+} from '../app/icons'
 
 import { saveInferenceToBackend, useInference } from '../app/inference'
 
@@ -267,11 +277,11 @@ export default function AnnotationPage() {
   )
 
   // --- toolbar ----------------------------------------------------------------
-  const tools: { id: Tool; labelKey: string; key: string }[] = [
-    { id: 'select', labelKey: 'annotate.select', key: 'V' },
-    { id: 'rect', labelKey: 'annotate.rect', key: 'R' },
-    { id: 'polygon', labelKey: 'annotate.polygon', key: 'P' },
-    { id: 'pan', labelKey: 'annotate.pan', key: 'H' },
+  const tools = [
+    { id: 'select' as Tool, labelKey: 'annotate.select', key: 'V', Icon: IconSelect },
+    { id: 'rect' as Tool, labelKey: 'annotate.rect', key: 'R', Icon: IconRectangle },
+    { id: 'polygon' as Tool, labelKey: 'annotate.polygon', key: 'P', Icon: IconPolygon },
+    { id: 'pan' as Tool, labelKey: 'annotate.pan', key: 'H', Icon: IconHand },
   ]
 
   const openNextTask = () => {
@@ -313,50 +323,61 @@ export default function AnnotationPage() {
 
       {/* Centro: toolbar + canvas */}
       <main className="flex min-w-0 flex-1 flex-col">
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-900 px-3 py-2">
-          <div className="flex overflow-hidden rounded-md border border-slate-700">
+        <div className="flex flex-wrap items-center gap-2 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-2 py-1.5">
+          <div className="flex border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)]" role="toolbar" aria-label={t('annotate.toolsAria')}>
             {tools.map((tool) => (
               <button
                 key={tool.id}
+                type="button"
                 onClick={() => ann.setTool(tool.id)}
+                aria-pressed={ann.tool === tool.id}
+                title={t('annotate.toolTitle', { tool: t(tool.labelKey), key: tool.key })}
                 className={
                   ann.tool === tool.id
-                    ? 'bg-sky-600 px-3 py-1.5 text-xs font-medium text-white'
-                    : 'bg-slate-950 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800'
+                    ? 'btn btn-sm border-y-0 border-l-0 border-r-[color:var(--color-rule)] bg-[color:var(--color-sig-plate)] text-white last:border-r-0'
+                    : 'btn btn-sm border-y-0 border-l-0 border-r-[color:var(--color-rule)] last:border-r-0'
                 }
               >
-                {t(tool.labelKey)}{' '}
-                <span className={`ml-1 text-[10px] ${ann.tool === tool.id ? 'text-sky-100' : 'text-slate-500'}`}>
+                <tool.Icon size={13} />
+                {t(tool.labelKey)}
+                <kbd className={`mono ml-1 border px-1 text-[10px] ${ann.tool === tool.id ? 'border-white/60 text-white' : 'border-[color:var(--color-rule)] text-[color:var(--color-ink-3)]'}`}>
                   {tool.key}
-                </span>
+                </kbd>
               </button>
             ))}
           </div>
           <div className="flex items-center gap-1">
             <button
+              type="button"
               onClick={ann.undo}
               disabled={!ann.canUndo}
               title={t('annotate.undoTitle')}
-              className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+              className="btn btn-sm"
             >
+              <IconUndo size={12} />
               {t('annotate.undo')}
             </button>
             <button
+              type="button"
               onClick={ann.redo}
               disabled={!ann.canRedo}
               title={t('annotate.redoTitle')}
-              className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+              className="btn btn-sm"
             >
+              <IconRedo size={12} />
               {t('annotate.redo')}
             </button>
             <button
+              type="button"
               onClick={() => setShowFlow((v) => !v)}
-              className={`rounded border px-2 py-1 text-xs ${
+              aria-pressed={showFlow}
+              className={`btn btn-sm ${
                 showFlow
-                  ? 'border-red-800 bg-red-950 text-red-300'
-                  : 'border-slate-700 text-slate-300 hover:bg-slate-800'
+                  ? 'border-[color:var(--color-sig)] bg-[color:var(--color-sig-wash)] text-[color:var(--color-sig-text)]'
+                  : ''
               }`}
             >
+              <IconFlow size={12} />
               {showFlow ? t('annotate.showFlow') : t('annotate.viewFlow')}
             </button>
           </div>
@@ -473,9 +494,11 @@ export default function AnnotationPage() {
             </button>
           </div>
           <button
+            type="button"
             onClick={() => void ann.saveNow()}
-            className="rounded border border-sky-700 bg-sky-950 px-2 py-1 text-xs text-sky-300 hover:bg-sky-900"
+            className="btn btn-primary btn-sm"
           >
+            <IconSave size={12} />
             {t('annotate.save')}
           </button>
           {readiness && (

@@ -14,6 +14,7 @@ import { apiGet } from '../lib/api'
 import type { HealthResponse } from '../lib/types'
 import { LOCALES, LOCALE_LABELS, useI18n } from '../i18n'
 import type { Locale } from '../i18n'
+import { useAuth } from './auth'
 import {
   IconAnnotate,
   IconArchive,
@@ -84,6 +85,41 @@ function BackendState() {
   )
 }
 
+/**
+ * Chi è connesso: nome, ruolo, e i comandi dell'istanza. Le pagine
+ * Impostazioni e Utenti esistono solo per l'amministratore; il logout valido
+ * per tutti. Nascosto finché non c'è un utente (modalità locale).
+ */
+function UserMenu() {
+  const { t } = useI18n()
+  const { user, logout } = useAuth()
+  if (!user) return null
+  const roleKey = `users.role${user.role.charAt(0).toUpperCase()}${user.role.slice(1)}`
+  return (
+    <div className="flex items-center gap-1.5">
+      {user.role === 'admin' && (
+        <NavLink to="/utenti" className="btn btn-sm">
+          {t('nav.users')}
+        </NavLink>
+      )}
+      {user.role === 'admin' && (
+        <NavLink to="/impostazioni" className="btn btn-sm">
+          {t('nav.settings')}
+        </NavLink>
+      )}
+      <span className="flex min-w-0 items-baseline gap-1.5">
+        <span className="max-w-[14ch] truncate text-[12px] font-semibold text-[color:var(--color-ink)]">
+          {user.username}
+        </span>
+        <span className="badge">{t(roleKey)}</span>
+      </span>
+      <button type="button" onClick={() => void logout()} className="btn btn-sm">
+        {t('layout.logout')}
+      </button>
+    </div>
+  )
+}
+
 export default function Layout() {
   const { t } = useI18n()
   return (
@@ -105,6 +141,7 @@ export default function Layout() {
             {t('app.tagline')}
           </span>
           <div className="ml-auto flex items-center gap-2">
+            <UserMenu />
             <LocaleSwitch />
             <BackendState />
           </div>

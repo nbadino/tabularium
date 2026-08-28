@@ -3,15 +3,20 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..db import connect
 from ..services import dataset_builder as builder
 from ..services import export_formats
 from ..services.i18n import parse_lang
+from ..services import auth as authsvc
+from .deps import require_resource
 
-router = APIRouter(tags=["datasets"])
+router = APIRouter(
+    tags=["datasets"],
+    dependencies=[Depends(authsvc.get_current_user)],
+)
 
 
 class BuildRequest(BaseModel):
@@ -34,7 +39,12 @@ def _require_project(project_id: int) -> None:
 
 
 @router.post("/api/projects/{project_id}/datasets/build")
-def build_dataset(project_id: int, payload: BuildRequest, request: Request) -> dict:
+def build_dataset(
+    project_id: int,
+    payload: BuildRequest,
+    request: Request,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> dict:
     lang = parse_lang(request.headers.get("accept-language"))
     _require_project(project_id)
     try:
@@ -56,7 +66,10 @@ def build_dataset(project_id: int, payload: BuildRequest, request: Request) -> d
 
 
 @router.get("/api/projects/{project_id}/datasets")
-def get_dataset(project_id: int) -> dict:
+def get_dataset(
+    project_id: int,
+    _auth: dict = Depends(require_resource(write=False)),
+) -> dict:
     _require_project(project_id)
     report_path = builder._project_dir(project_id) / "dataset" / "report.json"  # noqa: SLF001
     if not report_path.exists():
@@ -69,7 +82,11 @@ def get_dataset(project_id: int) -> dict:
 
 
 @router.post("/api/projects/{project_id}/datasets/export/{format_name}")
-def export_dataset_format(project_id: int, format_name: str) -> dict:
+def export_dataset_format(
+    project_id: int,
+    format_name: str,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> dict:
     """Esporta il medesimo ground truth in un formato non legato a ms-swift."""
     _require_project(project_id)
     if format_name not in {"internal", "coco", "html", "page", "alto"}:

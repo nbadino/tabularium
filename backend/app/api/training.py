@@ -4,15 +4,20 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from ..db import connect
 from ..schemas import TrainConfig
 from ..services import trainer
 from ..services.i18n import parse_lang
+from ..services import auth as authsvc
+from .deps import require_resource
 
-router = APIRouter(tags=["training"])
+router = APIRouter(
+    tags=["training"],
+    dependencies=[Depends(authsvc.get_current_user)],
+)
 
 
 def _require_project(project_id: int) -> None:
@@ -28,7 +33,11 @@ def system_gpu() -> dict:
 
 
 @router.post("/api/projects/{project_id}/training/start")
-def training_start(project_id: int, payload: TrainConfig) -> dict:
+def training_start(
+    project_id: int,
+    payload: TrainConfig,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> dict:
     _require_project(project_id)
     try:
         return trainer.start_run(project_id, payload.model_dump(exclude_unset=True))
@@ -37,7 +46,12 @@ def training_start(project_id: int, payload: TrainConfig) -> dict:
 
 
 @router.post("/api/projects/{project_id}/training/preflight")
-def training_preflight(project_id: int, payload: TrainConfig, request: Request) -> dict:
+def training_preflight(
+    project_id: int,
+    payload: TrainConfig,
+    request: Request,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> dict:
     """Verifica dataset, repo/env e GPU prima dell'avvio."""
     _require_project(project_id)
     lang = parse_lang(request.headers.get("accept-language"))
@@ -45,19 +59,28 @@ def training_preflight(project_id: int, payload: TrainConfig, request: Request) 
 
 
 @router.get("/api/projects/{project_id}/training/status")
-def training_status(project_id: int) -> dict:
+def training_status(
+    project_id: int,
+    _auth: dict = Depends(require_resource(write=False)),
+) -> dict:
     _require_project(project_id)
     return trainer._status(project_id)  # noqa: SLF001
 
 
 @router.post("/api/projects/{project_id}/training/stop")
-def training_stop(project_id: int) -> dict:
+def training_stop(
+    project_id: int,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> dict:
     _require_project(project_id)
     return trainer.stop_run(project_id)
 
 
 @router.get("/api/projects/{project_id}/training/stream")
-def training_stream(project_id: int) -> StreamingResponse:
+def training_stream(
+    project_id: int,
+    _auth: dict = Depends(require_resource(write=False)),
+) -> StreamingResponse:
     _require_project(project_id)
 
     async def gen():

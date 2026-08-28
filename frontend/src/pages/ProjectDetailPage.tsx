@@ -53,6 +53,17 @@ export default function ProjectDetailPage() {
   const [pilot, setPilot] = useState<{ pages: Array<{ id: number; rel_path: string }>; target: number } | null>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
+  const [domainProfiles, setDomainProfiles] = useState<Array<{ id: string; name: string }>>([])
+  const [modelAdapters, setModelAdapters] = useState<Array<{ adapter_id: string; display_name: string }>>([])
+
+  useEffect(() => {
+    apiGet<{ items: Array<{ id: string; name: string }> }>('/system/domain-profiles')
+      .then((r) => setDomainProfiles(r.items))
+      .catch(() => setDomainProfiles([]))
+    apiGet<{ items: Array<{ adapter_id: string; display_name: string }> }>('/system/model-adapters')
+      .then((r) => setModelAdapters(r.items))
+      .catch(() => setModelAdapters([]))
+  }, [])
 
   useEffect(() => {
     setReport(loadReport(projectId))
@@ -277,7 +288,28 @@ export default function ProjectDetailPage() {
                 <Field label={t('project.to')}><input type="date" value={protocol.time_end ?? ''} onChange={(e) => setProtocol((p) => p ? { ...p, time_end: e.target.value || null } : p)} className="fld" /></Field>
               </div>
               <Field label={t('project.domainProfile')}>
-                <div className="flex gap-2"><input value={protocol.domain_profile} onChange={(e) => setProtocol((p) => p ? { ...p, domain_profile: e.target.value } : p)} className="fld" /><input value={protocol.model_adapter} onChange={(e) => setProtocol((p) => p ? { ...p, model_adapter: e.target.value } : p)} className="fld" /></div>
+                <div className="flex gap-2">
+                  <select
+                    value={protocol.domain_profile}
+                    onChange={(e) => setProtocol((p) => p ? { ...p, domain_profile: e.target.value } : p)}
+                    className="fld"
+                  >
+                    {(domainProfiles.some((d) => d.id === protocol.domain_profile) || !protocol.domain_profile
+                      ? domainProfiles
+                      : [{ id: protocol.domain_profile, name: protocol.domain_profile }, ...domainProfiles]
+                    ).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+                  <select
+                    value={protocol.model_adapter}
+                    onChange={(e) => setProtocol((p) => p ? { ...p, model_adapter: e.target.value } : p)}
+                    className="fld"
+                  >
+                    {(modelAdapters.some((a) => a.adapter_id === protocol.model_adapter) || !protocol.model_adapter
+                      ? modelAdapters
+                      : [{ adapter_id: protocol.model_adapter, display_name: protocol.model_adapter }, ...modelAdapters]
+                    ).map((a) => <option key={a.adapter_id} value={a.adapter_id}>{a.display_name}</option>)}
+                  </select>
+                </div>
               </Field>
               <div className="flex items-end justify-end">
                 <button type="button" onClick={() => void saveProtocol()} disabled={protocolBusy} className="btn btn-sm btn-primary">{t('project.saveProtocol')}</button>

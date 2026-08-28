@@ -18,7 +18,13 @@ from PIL import Image
 
 from .. import config
 from . import otsl
+from .model_adapters import ModelAdapter, MonkeyOCRv2ParsingAdapter, get_adapter
 
+# Fallback usati solo se l'adapter attivo non implementa ancora il task
+# (`prompt_for` alza `NotImplementedError` o torna `None`): tengono il
+# comportamento storico per MonkeyOCRv2 anche quando `VllmClient` viene
+# costruito senza un adapter esplicito (retrocompatibilità dei chiamanti
+# esistenti, es. test che istanziano `VllmClient(url=..., api_key=...)`).
 LAYOUT_PROMPT = (
     "Please output the categories and coordinates of the document elements in reading order."
 )
@@ -28,6 +34,21 @@ END2END_PROMPT = (
     "List the document elements in reading order, including their categories, "
     "coordinates, and the content of each element."
 )
+
+
+def _prompt_for(adapter: ModelAdapter, task: str, label: str | None, fallback: str) -> str:
+    """`adapter.prompt_for` con ripiego sulla costante storica.
+
+    Stesso pattern `or fallback` già usato in `dataset_builder.py`. Un
+    adapter nuovo può non avere ancora quel task implementato
+    (`NotImplementedError`, v. gli stub in `model_adapters.py`): in quel caso
+    come quando l'adapter torna `None` si ricade sul prompt storico di
+    MonkeyOCRv2, invece di propagare l'errore fino alla richiesta HTTP.
+    """
+    try:
+        return adapter.prompt_for(task, label) or fallback
+    except NotImplementedError:
+        return fallback
 
 # Semantica identica a `load_image` di `parsing/core_runner.py` (repo ufficiale):
 #   - `min_pixels` INGRANDISCE le immagini piccole, non le riduce. Il pipeline
@@ -144,7 +165,10 @@ def _tolerant_items(text: str) -> list[dict]:
         for block in re.findall(r"\{[^{}]*\}", text):
             try:
                 d = ast.literal_eval(block)
-                if isinstance(d, dict) and "bbox" in d and "label" in d:
+                # "category" oltre a "label": alcuni adapter (es. dots.ocr, non
+                # ancora verificato contro un server reale) usano quella chiave
+                # per lo stesso campo.
+                if isinstance(d, dict) and "bbox" in d and ("label" in d or "category" in d):
                     items.append(d)
             except (SyntaxError, ValueError, TypeError):
                 continue
@@ -161,6 +185,7 @@ class VllmClient:
         extra_headers: dict[str, str] | None = None,
         timeout: int = 180,
         max_retries: int = 2,
+        adapter: ModelAdapter | None = None,
     ) -> None:
         self.url = (url or config.VLLM_URL).rstrip("/")
         self.model = model or config.VLLM_MODEL
@@ -168,6 +193,9 @@ class VllmClient:
         self.extra_headers = extra_headers if extra_headers is not None else config.VLLM_EXTRA_HEADERS
         self.timeout = timeout
         self.max_retries = max_retries
+        # Default MonkeyOCRv2: i chiamanti esistenti (test compresi) costruiscono
+        # `VllmClient` senza adapter e si aspettano il comportamento storico.
+        self.adapter: ModelAdapter = adapter or MonkeyOCRv2ParsingAdapter()
         self.last_trace: dict = {}
         self.last_text = ""
 
@@ -310,11 +338,12 @@ class VllmClient:
             min_pixels=LAYOUT_MIN_PIXELS,
             max_pixels=config.VLLM_MAX_PIXELS or LAYOUT_MAX_PIXELS,
         )
-        raw = self._chat(prepared, LAYOUT_PROMPT, max_tokens=4096)
+        prompt = _prompt_for(self.adapter, "layout", None, LAYOUT_PROMPT)
+        raw = self._chat(prepared, prompt, max_tokens=4096)
         cleaned = []
         for item in _tolerant_items(raw):
             bbox = item.get("bbox")
-            label = item.get("label")
+            label = item.get("label") or item.get("category")
             if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
                 continue
             try:
@@ -342,9 +371,10 @@ class VllmClient:
             min_pixels=LAYOUT_MIN_PIXELS,
             max_pixels=max_pixels or config.VLLM_MAX_PIXELS or LAYOUT_MAX_PIXELS,
         )
+        prompt = _prompt_for(self.adapter, "end2end", None, END2END_PROMPT)
         raw = self._chat(
             prepared,
-            END2END_PROMPT,
+            prompt,
             max_tokens=max_tokens,
             total_timeout=total_timeout,
             stop_when_complete_list=True,
@@ -352,7 +382,7 @@ class VllmClient:
         cleaned = []
         for item in _tolerant_items(raw):
             bbox = item.get("bbox")
-            label = item.get("label")
+            label = item.get("label") or item.get("category")
             if not isinstance(bbox, (list, tuple)) or len(bbox) != 4 or not label:
                 continue
             try:
@@ -365,15 +395,29 @@ class VllmClient:
                 {
                     "bbox": values,
                     "label": str(label),
-                    "content": str(item.get("content") or "").strip(),
+                    # "text" oltre a "content": v. nota su "category" per label.
+                    "content": str(item.get("content") or item.get("text") or "").strip(),
                 }
             )
         return cleaned
 
     def recognize(self, image: Image.Image, label: str) -> str:
-        prompt = TABLE_PROMPT if label == "Table" else TEXT_PROMPT
+        task = "table" if label == "Table" else "text"
+        fallback = TABLE_PROMPT if label == "Table" else TEXT_PROMPT
+        prompt = _prompt_for(self.adapter, task, label, fallback)
         raw = self._chat(image, prompt, max_tokens=3072)
         return (raw or "").strip()
+
+    def _table_text_to_grid(self, raw: str) -> dict:
+        """Testo di una tabella nel formato nativo dell'adapter attivo → griglia
+        interna (celle + span). OTSL è il formato di riferimento; un adapter
+        HTML passa prima da `otsl.html_to_otsl()`, così la griglia rimane
+        sempre lo stesso schema indipendentemente dal modello che l'ha emessa.
+        """
+        text = (raw or "").strip()
+        if self.adapter.capabilities.table_format == "html":
+            text = otsl.html_to_otsl(text)
+        return otsl.otsl_to_grid(text)
 
     def table_grid(
         self,
@@ -408,6 +452,7 @@ class VllmClient:
             else 0
         )
         header = image.crop((0, 0, image.width, header_h)) if header_h > 4 else None
+        prompt = _prompt_for(self.adapter, "table", "Table", TABLE_PROMPT)
 
         rows: list[list[dict]] = []
         for index, (top, bottom) in enumerate(bands):
@@ -417,8 +462,8 @@ class VllmClient:
                 stitched.paste(header.convert("RGB"), (0, 0))
                 stitched.paste(band.convert("RGB"), (0, header.height))
                 band = stitched
-            raw = self._chat(band, TABLE_PROMPT, max_tokens=max_tokens)
-            grid = otsl.otsl_to_grid((raw or "").strip())
+            raw = self._chat(band, prompt, max_tokens=max_tokens)
+            grid = self._table_text_to_grid(raw)
             by_row: dict[int, list[dict]] = {}
             for cell in grid.get("cells", []):
                 by_row.setdefault(cell["r"], []).append(cell)
@@ -610,6 +655,11 @@ def get_inference_config() -> dict:
         else config.VLLM_MAX_PIXELS
     )
 
+    # Quale adapter interpreta prompt/formato tabella per l'endpoint servito.
+    # Default MonkeyOCRv2: nessuna installazione esistente deve ricalibrare
+    # nulla per continuare a funzionare come prima di questa configurazione.
+    adapter_id = rows.get("inference_adapter_id") or "monkeyocrv2-parsing"
+
     return {
         "enabled": enabled,
         "url": url,
@@ -618,6 +668,7 @@ def get_inference_config() -> dict:
         "extra_headers": extra_headers,
         "timeout": timeout,
         "max_pixels": max_pixels,
+        "adapter_id": adapter_id,
     }
 
 
@@ -651,6 +702,10 @@ def save_inference_config(cfg: dict) -> None:
                 str(int(cfg["max_pixels"])) if cfg["max_pixels"] is not None else "",
             )
         )
+    if "adapter_id" in cfg:
+        adapter_id = str(cfg["adapter_id"]).strip() or "monkeyocrv2-parsing"
+        get_adapter(adapter_id)  # ValueError esplicito se sconosciuto, non salvato a metà
+        items.append(("inference_adapter_id", adapter_id))
 
     with connect() as conn:
         for key, value in items:
@@ -671,6 +726,12 @@ def get_vllm_client(
     """Crea un VllmClient con la configurazione runtime persistita o gli override forniti."""
     cfg = get_inference_config()
     try:
+        adapter = get_adapter(cfg.get("adapter_id") or "monkeyocrv2-parsing")
+    except ValueError:
+        # Adapter salvato ma non più registrato (es. rinominato): meglio
+        # ripiegare su MonkeyOCRv2 che rifiutare la richiesta di inferenza.
+        adapter = MonkeyOCRv2ParsingAdapter()
+    try:
         return VllmClient(
             url=url or cfg["url"],
             model=model or cfg["model"],
@@ -679,10 +740,11 @@ def get_vllm_client(
                 extra_headers if extra_headers is not None else cfg.get("extra_headers")
             ),
             timeout=timeout if timeout is not None else cfg.get("timeout", 180),
+            adapter=adapter,
         )
     except TypeError:
         try:
-            return VllmClient(url=url or cfg["url"], model=model or cfg["model"])
+            return VllmClient(url=url or cfg["url"], model=model or cfg["model"], adapter=adapter)
         except TypeError:
             return VllmClient()
 

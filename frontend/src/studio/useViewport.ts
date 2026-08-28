@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Konva from 'konva'
 import type { ViewState } from './types'
+import { clamp, clampViewport } from './canvasGeometry'
+
+type PanEvent = Konva.KonvaEventObject<MouseEvent | PointerEvent | TouchEvent>
 
 interface UseViewportReturn {
   viewport: ViewState
@@ -8,106 +11,162 @@ interface UseViewportReturn {
   containerRef: React.RefObject<HTMLDivElement | null>
   stageRef: React.RefObject<Konva.Stage | null>
   isPanning: boolean
-  /** Riporta l'immagine all'inquadratura iniziale. */
   fit: () => void
-  /** Zoom a passi dal centro del contenitore, per i controlli e la tastiera. */
   zoomBy: (factor: number) => void
   onWheel: (e: Konva.KonvaEventObject<WheelEvent>) => void
-  startPan: (e: Konva.KonvaEventObject<MouseEvent>) => void
+  startPan: (e: PanEvent) => void
   updatePan: () => void
   endPan: () => void
+  onTouchStart: (e: Konva.KonvaEventObject<TouchEvent>) => void
+  onTouchMove: (e: Konva.KonvaEventObject<TouchEvent>) => void
+  onTouchEnd: (e: Konva.KonvaEventObject<TouchEvent>) => void
 }
 
-export function useViewport(imageNatural: { w: number; h: number }): UseViewportReturn {
+const MIN_ZOOM = 0.03
+const MAX_ZOOM = 24
+
+export function useViewport(imageNatural: { w: number; h: number }, resetKey = ''): UseViewportReturn {
   const containerRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<Konva.Stage>(null)
-  const [viewport, setViewport] = useState<ViewState>({ x: 0, y: 0, k: 1 })
-  const [containerSize, setContainerSize] = useState({ w: 960, h: 640 })
-  const [panPos, setPanPos] = useState<{ sx: number; sy: number; vx: number; vy: number } | null>(null)
+  const viewportRef = useRef<ViewState>({ x: 0, y: 0, k: 1 })
+  const [viewport, setViewportState] = useState<ViewState>(viewportRef.current)
+  const [containerSize, setContainerSize] = useState({ w: 0, h: 0 })
+  const panRef = useRef<{ sx: number; sy: number; vx: number; vy: number } | null>(null)
+  const pinchRef = useRef<{ center: { x: number; y: number }; distance: number } | null>(null)
+  const [isPanning, setIsPanning] = useState(false)
 
-  // dimensioni contenitore + resize observer
-  useEffect(() => {
-    if (!containerRef.current) return
-    const el = containerRef.current
-    const update = () => setContainerSize({ w: el.clientWidth, h: el.clientHeight })
-    update()
-    const ro = new ResizeObserver(update)
-    ro.observe(el)
-    return () => ro.disconnect()
+  const setViewport = useCallback((next: ViewState | ((current: ViewState) => ViewState)) => {
+    const value = typeof next === 'function' ? next(viewportRef.current) : next
+    viewportRef.current = value
+    setViewportState(value)
   }, [])
 
-  // fit iniziale immagine
-  const imageRef = useRef(imageNatural)
-  imageRef.current = imageNatural
   useEffect(() => {
-    const iw = imageNatural.w
-    const ih = imageNatural.h
-    if (iw <= 0 || ih <= 0) return
-    const k = Math.min(containerSize.w / iw, containerSize.h / ih) * 0.96
-    setViewport({ k, x: (containerSize.w - iw * k) / 2, y: (containerSize.h - ih * k) / 2 })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageNatural.w, imageNatural.h, containerSize.w, containerSize.h])
+    const el = containerRef.current
+    if (!el) return
+    const update = () => setContainerSize({ w: el.clientWidth, h: el.clientHeight })
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   const fit = useCallback(() => {
-    const { w: iw, h: ih } = imageRef.current
-    if (iw <= 0 || ih <= 0) return
-    const k = Math.min(containerSize.w / iw, containerSize.h / ih) * 0.96
-    setViewport({ k, x: (containerSize.w - iw * k) / 2, y: (containerSize.h - ih * k) / 2 })
-  }, [containerSize.w, containerSize.h])
+    if (imageNatural.w <= 0 || imageNatural.h <= 0) return
+    const k = Math.min(containerSize.w / imageNatural.w, containerSize.h / imageNatural.h) * 0.96
+    setViewport({
+      k,
+      x: (containerSize.w - imageNatural.w * k) / 2,
+      y: (containerSize.h - imageNatural.h * k) / 2,
+    })
+  }, [containerSize.h, containerSize.w, imageNatural.h, imageNatural.w, setViewport])
 
-  const zoomBy = useCallback(
-    (factor: number) => {
-      setViewport((v) => {
-        const k = Math.min(24, Math.max(0.03, v.k * factor))
-        // Lo zoom tiene fermo il centro del contenitore, non l'angolo.
-        const cx = containerSize.w / 2
-        const cy = containerSize.h / 2
-        const mx = (cx - v.x) / v.k
-        const my = (cy - v.y) / v.k
-        return { k, x: cx - mx * k, y: cy - my * k }
-      })
-    },
-    [containerSize.w, containerSize.h],
-  )
+  // Una nuova pagina parte interamente visibile. I successivi resize non
+  // azzerano invece il lavoro di zoom/pan dell'annotatore.
+  const fittedImageRef = useRef('')
+  useEffect(() => {
+    const key = `${resetKey}:${imageNatural.w}x${imageNatural.h}`
+    if (!containerSize.w || !containerSize.h || fittedImageRef.current === key) return
+    fittedImageRef.current = key
+    fit()
+  }, [containerSize.h, containerSize.w, fit, imageNatural.h, imageNatural.w, resetKey])
 
-  const onWheel = useCallback(
-    (e: Konva.KonvaEventObject<WheelEvent>) => {
-      e.evt.preventDefault()
-      const pointer = stageRef.current?.getPointerPosition()
-      if (!pointer) return
-      const oldK = viewport.k
-      const factor = e.evt.deltaY < 0 ? 1.1 : 0.9
-      const k = Math.min(24, Math.max(0.03, oldK * factor))
-      const mx = (pointer.x - viewport.x) / oldK
-      const my = (pointer.y - viewport.y) / oldK
-      setViewport({ k, x: pointer.x - mx * k, y: pointer.y - my * k })
-    },
-    [viewport],
-  )
+  useEffect(() => {
+    if (!containerSize.w || !containerSize.h || !imageNatural.w || !imageNatural.h) return
+    setViewport((current) => clampViewport(current, containerSize, imageNatural))
+  }, [containerSize, imageNatural, setViewport])
 
-  const startPan = useCallback(
-    (e: Konva.KonvaEventObject<MouseEvent>) => {
-      if (e.evt.button !== 0) return
-      const p = stageRef.current?.getPointerPosition()
-      if (!p) return
-      setPanPos({ sx: p.x, sy: p.y, vx: viewport.x, vy: viewport.y })
-    },
-    [viewport],
-  )
+  const zoomAt = useCallback((factor: number, focus?: { x: number; y: number }) => {
+    setViewport((current) => {
+      const point = focus ?? { x: containerSize.w / 2, y: containerSize.h / 2 }
+      const k = clamp(current.k * factor, MIN_ZOOM, MAX_ZOOM)
+      const sceneX = (point.x - current.x) / current.k
+      const sceneY = (point.y - current.y) / current.k
+      return clampViewport(
+        { k, x: point.x - sceneX * k, y: point.y - sceneY * k },
+        containerSize,
+        imageNatural,
+      )
+    })
+  }, [containerSize, imageNatural, setViewport])
+
+  const zoomBy = useCallback((factor: number) => zoomAt(factor), [zoomAt])
+
+  const onWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
+    e.evt.preventDefault()
+    const pointer = stageRef.current?.getPointerPosition()
+    if (!pointer) return
+    const factor = Math.exp(-e.evt.deltaY * 0.0015)
+    zoomAt(clamp(factor, 0.75, 1.33), pointer)
+  }, [zoomAt])
+
+  const startPan = useCallback((e: PanEvent) => {
+    const pointer = stageRef.current?.getPointerPosition()
+    if (!pointer) return
+    e.evt.preventDefault()
+    const current = viewportRef.current
+    panRef.current = { sx: pointer.x, sy: pointer.y, vx: current.x, vy: current.y }
+    setIsPanning(true)
+  }, [])
 
   const updatePan = useCallback(() => {
-    if (!panPos) return
-    const p = stageRef.current?.getPointerPosition()
-    if (!p) return
-    setViewport({
-      k: viewport.k,
-      x: panPos.vx + (p.x - panPos.sx),
-      y: panPos.vy + (p.y - panPos.sy),
-    })
-  }, [panPos, viewport.k])
+    const start = panRef.current
+    const pointer = stageRef.current?.getPointerPosition()
+    if (!start || !pointer) return
+    setViewport((current) => clampViewport({
+      k: current.k,
+      x: start.vx + pointer.x - start.sx,
+      y: start.vy + pointer.y - start.sy,
+    }, containerSize, imageNatural))
+  }, [containerSize, imageNatural, setViewport])
 
   const endPan = useCallback(() => {
-    setPanPos(null)
+    panRef.current = null
+    setIsPanning(false)
+  }, [])
+
+  const touchPoint = useCallback((touch: Touch) => {
+    const rect = stageRef.current?.container().getBoundingClientRect()
+    return rect ? { x: touch.clientX - rect.left, y: touch.clientY - rect.top } : null
+  }, [])
+
+  const onTouchStart = useCallback((e: Konva.KonvaEventObject<TouchEvent>) => {
+    if (e.evt.touches.length !== 2) return
+    e.evt.preventDefault()
+    endPan()
+    const a = touchPoint(e.evt.touches[0])
+    const b = touchPoint(e.evt.touches[1])
+    if (!a || !b) return
+    pinchRef.current = {
+      center: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      distance: Math.hypot(b.x - a.x, b.y - a.y),
+    }
+  }, [endPan, touchPoint])
+
+  const onTouchMove = useCallback((e: Konva.KonvaEventObject<TouchEvent>) => {
+    const previous = pinchRef.current
+    if (!previous || e.evt.touches.length !== 2) return
+    e.evt.preventDefault()
+    const a = touchPoint(e.evt.touches[0])
+    const b = touchPoint(e.evt.touches[1])
+    if (!a || !b) return
+    const center = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+    const distance = Math.max(1, Math.hypot(b.x - a.x, b.y - a.y))
+    setViewport((current) => {
+      const sceneX = (previous.center.x - current.x) / current.k
+      const sceneY = (previous.center.y - current.y) / current.k
+      const k = clamp(current.k * distance / Math.max(1, previous.distance), MIN_ZOOM, MAX_ZOOM)
+      return clampViewport(
+        { k, x: center.x - sceneX * k, y: center.y - sceneY * k },
+        containerSize,
+        imageNatural,
+      )
+    })
+    pinchRef.current = { center, distance }
+  }, [containerSize, imageNatural, setViewport, touchPoint])
+
+  const onTouchEnd = useCallback((e: Konva.KonvaEventObject<TouchEvent>) => {
+    if (e.evt.touches.length < 2) pinchRef.current = null
   }, [])
 
   return {
@@ -115,12 +174,15 @@ export function useViewport(imageNatural: { w: number; h: number }): UseViewport
     containerSize,
     containerRef,
     stageRef,
-    isPanning: panPos !== null,
+    isPanning,
     fit,
     zoomBy,
     onWheel,
     startPan,
     updatePan,
     endPan,
+    onTouchStart,
+    onTouchMove,
+    onTouchEnd,
   }
 }

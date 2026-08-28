@@ -1,10 +1,16 @@
-"""Endpoint di sistema: health e informazioni ambiente."""
+"""Endpoint di sistema: health e informazioni ambiente.
+
+Pubblici: `health`, `info` (usati da script e dalla barra di stato prima del
+login). Riservati (richiedono login): catalogo modelli/profili/plugin e la
+configurazione di inferenza — che è globale all'istanza e la scrive solo l'admin.
+Gli endpoint cloud (tunnel, Vast.ai) vivono in `api/cloud.py`.
+"""
 from __future__ import annotations
 
 import platform
 import sys
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from ..services.model_adapters import list_adapters
 from ..services.domain_profiles import list_profiles
@@ -12,22 +18,23 @@ from ..services.pipeline import list_plugins
 
 from .. import config
 from ..db import connect
+from ..services import auth as authsvc
 
 router = APIRouter(tags=["system"])
 
 
-@router.get("/api/system/model-adapters")
+@router.get("/api/system/model-adapters", dependencies=[Depends(authsvc.get_current_user)])
 def model_adapters() -> dict:
     """Elenco delle capacità modello disponibili per il wizard."""
     return {"items": list_adapters()}
 
 
-@router.get("/api/system/domain-profiles")
+@router.get("/api/system/domain-profiles", dependencies=[Depends(authsvc.get_current_user)])
 def domain_profiles() -> dict:
     return {"items": list_profiles()}
 
 
-@router.get("/api/system/plugins")
+@router.get("/api/system/plugins", dependencies=[Depends(authsvc.get_current_user)])
 def plugins() -> dict:
     return {"items": list_plugins()}
 
@@ -58,7 +65,7 @@ def system_info() -> dict:
     }
 
 
-@router.get("/api/system/prefill-engines")
+@router.get("/api/system/prefill-engines", dependencies=[Depends(authsvc.get_current_user)])
 def prefill_engines() -> dict:
     """Motori di prefill disponibili, e quale conviene usare di default."""
     from ..services import inference
@@ -103,7 +110,7 @@ def prefill_engines() -> dict:
     }
 
 
-@router.get("/api/system/inference")
+@router.get("/api/system/inference", dependencies=[Depends(authsvc.get_current_user)])
 def get_inference_settings() -> dict:
     """Restituisce la configurazione runtime di inferenza con stato di connessione."""
     from ..services import inference
@@ -153,15 +160,19 @@ def get_inference_settings() -> dict:
 
 
 @router.put("/api/system/inference")
-def update_inference_settings(payload: dict) -> dict:
-    """Aggiorna e salva la configurazione di inferenza nel database SQLite meta."""
+def update_inference_settings(
+    payload: dict,
+    user: dict = Depends(authsvc.get_current_user),
+) -> dict:
+    """Aggiorna e salva la configurazione di inferenza (globale: solo admin)."""
+    authsvc.require_admin(user)
     from ..services import inference
 
     inference.save_inference_config(payload)
     return get_inference_settings()
 
 
-@router.post("/api/system/inference/test")
+@router.post("/api/system/inference/test", dependencies=[Depends(authsvc.get_current_user)])
 def test_inference_endpoint(payload: dict) -> dict:
     """Testa un endpoint di inferenza generico (locale o cloud) senza salvare."""
     from ..services import inference
@@ -180,108 +191,5 @@ def test_inference_endpoint(payload: dict) -> dict:
         timeout=int(timeout),
     )
     return client.test_connection(timeout=timeout)
-
-
-# --- Gestione Tunnel SSH da UI ------------------------------------------------
-@router.get("/api/system/cloud/tunnel")
-def get_cloud_tunnel() -> dict:
-    """Restituisce lo stato del tunnel SSH gestito dal backend."""
-    from ..services import cloud_manager
-
-    st = cloud_manager.get_tunnel_status()
-    return {
-        "running": st.running,
-        "host": st.host,
-        "port": st.port,
-        "user": st.user,
-        "local_port": st.local_port,
-        "remote_port": st.remote_port,
-        "pid": st.pid,
-        "error": st.error,
-    }
-
-
-@router.post("/api/system/cloud/tunnel/start")
-def start_cloud_tunnel(payload: dict) -> dict:
-    """Avvia un tunnel SSH in background."""
-    from fastapi import HTTPException
-    from ..services import cloud_manager
-
-    host = payload.get("host", "").strip()
-    port = payload.get("port")
-    user = payload.get("user", "root").strip() or "root"
-    key_path = payload.get("key_path")
-    local_port = int(payload.get("local_port", 8888))
-    remote_port = int(payload.get("remote_port", 8888))
-
-    if not host or not port:
-        raise HTTPException(status_code=400, detail="Host e porta SSH obbligatori.")
-
-    try:
-        st = cloud_manager.start_ssh_tunnel(
-            host=host,
-            port=int(port),
-            user=user,
-            key_path=key_path,
-            local_port=local_port,
-            remote_port=remote_port,
-        )
-        return {
-            "ok": True,
-            "running": st.running,
-            "host": st.host,
-            "port": st.port,
-            "local_port": st.local_port,
-            "pid": st.pid,
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.post("/api/system/cloud/tunnel/stop")
-def stop_cloud_tunnel() -> dict:
-    """Ferma il tunnel SSH in background."""
-    from ..services import cloud_manager
-
-    st = cloud_manager.stop_ssh_tunnel()
-    return {"ok": True, "running": st.running}
-
-
-# --- Gestione Istanze Vast.ai da UI -------------------------------------------
-@router.post("/api/system/cloud/vast/instances")
-def get_vast_instances(payload: dict) -> dict:
-    """Recupera le istanze dell'account Vast.ai."""
-    from fastapi import HTTPException
-    from ..services import cloud_manager
-
-    api_key = payload.get("api_key", "").strip()
-    if not api_key:
-        raise HTTPException(status_code=400, detail="API Key di Vast.ai obbligatoria.")
-
-    try:
-        items = cloud_manager.list_vast_instances(api_key)
-        return {"items": items}
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.post("/api/system/cloud/vast/control")
-def control_vast(payload: dict) -> dict:
-    """Avvia o mette in pausa un'istanza Vast.ai da UI."""
-    from fastapi import HTTPException
-    from ..services import cloud_manager
-
-    api_key = payload.get("api_key", "").strip()
-    instance_id = payload.get("instance_id")
-    action = payload.get("action", "stop").strip()
-
-    if not api_key or not instance_id:
-        raise HTTPException(status_code=400, detail="API Key e ID istanza obbligatori.")
-
-    try:
-        res = cloud_manager.control_vast_instance(api_key, int(instance_id), action)
-        return res
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

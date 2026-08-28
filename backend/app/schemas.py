@@ -3,7 +3,81 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+# --- Autenticazione & utenti (self-hosted) ---------------------------------------
+class LoginIn(BaseModel):
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=500)
+
+
+class SetupIn(BaseModel):
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=500)
+    email: str | None = Field(default=None, max_length=300)
+
+
+class RegisterIn(BaseModel):
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=500)
+    email: str | None = Field(default=None, max_length=300)
+
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    email: str | None = None
+    role: str
+    active: bool = True
+    created_at: str
+    last_login_at: str | None = None
+
+
+class UserCreate(BaseModel):
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=500)
+    email: str | None = Field(default=None, max_length=300)
+    role: str = "editor"
+    active: bool = True
+
+
+class UserUpdate(BaseModel):
+    email: str | None = None
+    role: str | None = None
+    active: bool | None = None
+
+
+class ResetPasswordIn(BaseModel):
+    password: str = Field(min_length=1, max_length=500)
+
+
+class AuthStatusOut(BaseModel):
+    auth_enabled: bool
+    needs_setup: bool = False
+    allow_registration: bool = False
+    instance_name: str = "Tabularium"
+    user: UserOut | None = None
+
+
+class SettingsOut(BaseModel):
+    instance_name: str
+    allow_registration: bool
+    default_new_user_role: str
+
+
+class SettingsIn(BaseModel):
+    instance_name: str | None = Field(default=None, max_length=100)
+    allow_registration: bool | None = None
+    default_new_user_role: Literal["editor", "viewer"] | None = None
+
+    @field_validator("instance_name")
+    @classmethod
+    def _name_not_blank(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError("nome istanza vuoto")
+        return v
+
 
 
 # --- Progetti ----------------------------------------------------------------

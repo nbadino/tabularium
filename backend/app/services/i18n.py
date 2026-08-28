@@ -127,6 +127,20 @@ _IT: dict[str, str] = {
     "disk_unknown_w": "impossibile verificare lo spazio disco",
     # --- OCR / prelabel ------------------------------------------------------------
     "image_not_available": "immagine non disponibile",
+    # --- autenticazione & utenti ----------------------------------------------------
+    "auth_required": "autenticazione richiesta",
+    "admin_required": "servono privilegi di amministratore",
+    "permission_denied": "permessi insufficienti",
+    "project_permission_denied": "permessi insufficienti sul progetto",
+    "invalid_credentials": "credenziali non valide",
+    "registration_closed": "la registrazione è chiusa dall'amministratore",
+    "setup_done": "il primo avvio è già stato completato",
+    "username_invalid": "nome utente non valido (3-40 caratteri, lettere, cifre, . _ -)",
+    "password_short": "password troppo corta (minimo 8 caratteri)",
+    "role_invalid": "ruolo non valido: {role}",
+    "username_taken": "nome utente già esistente",
+    "user_not_found": "utente non trovato",
+    "last_admin": "non si può eliminare o declassare l'ultimo amministratore",
 }
 
 _EN: dict[str, str] = {
@@ -229,6 +243,19 @@ _EN: dict[str, str] = {
     "low_disk": "low remaining disk space: {gb} GB",
     "disk_unknown_w": "cannot check the disk space",
     "image_not_available": "image not available",
+    "auth_required": "authentication required",
+    "admin_required": "administrator privileges required",
+    "permission_denied": "insufficient permissions",
+    "project_permission_denied": "insufficient permissions on this project",
+    "invalid_credentials": "invalid credentials",
+    "registration_closed": "registration is closed by the administrator",
+    "setup_done": "first-run setup has already been completed",
+    "username_invalid": "invalid username (3-40 characters, letters, digits, . _ -)",
+    "password_short": "password too short (minimum 8 characters)",
+    "role_invalid": "invalid role: {role}",
+    "username_taken": "username already exists",
+    "user_not_found": "user not found",
+    "last_admin": "you cannot delete or demote the last administrator",
 }
 
 _FR: dict[str, str] = {
@@ -331,6 +358,19 @@ _FR: dict[str, str] = {
     "low_disk": "espace disque résiduel faible : {gb} Go",
     "disk_unknown_w": "impossible de vérifier l'espace disque",
     "image_not_available": "image indisponible",
+    "auth_required": "authentification requise",
+    "admin_required": "privilèges d'administrateur requis",
+    "permission_denied": "permissions insuffisantes",
+    "project_permission_denied": "permissions insuffisantes sur ce projet",
+    "invalid_credentials": "identifiants invalides",
+    "registration_closed": "l'inscription est fermée par l'administrateur",
+    "setup_done": "la configuration initiale a déjà été effectuée",
+    "username_invalid": "nom d'utilisateur invalide (3-40 caractères, lettres, chiffres, . _ -)",
+    "password_short": "mot de passe trop court (8 caractères minimum)",
+    "role_invalid": "rôle invalide : {role}",
+    "username_taken": "ce nom d'utilisateur existe déjà",
+    "user_not_found": "utilisateur introuvable",
+    "last_admin": "vous ne pouvez pas supprimer ou rétrograder le dernier administrateur",
 }
 
 CATALOG: dict[str, dict[str, str]] = {"it": _IT, "en": _EN, "fr": _FR}

@@ -1,5 +1,31 @@
 /** Tipi condivisi tra frontend e API backend. */
 
+// --- Autenticazione & utenti (self-hosted) -----------------------------------
+
+export interface User {
+  id: number
+  username: string
+  email: string | null
+  role: 'admin' | 'editor' | 'viewer'
+  active: boolean
+  created_at: string
+  last_login_at: string | null
+}
+
+export interface AuthStatus {
+  auth_enabled: boolean
+  needs_setup: boolean
+  allow_registration: boolean
+  instance_name: string
+  user: User | null
+}
+
+export interface InstanceSettings {
+  instance_name: string
+  allow_registration: boolean
+  default_new_user_role: 'editor' | 'viewer'
+}
+
 export interface HealthResponse {
   status: string
   app: string

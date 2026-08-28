@@ -73,6 +73,10 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<T> 
     throw new ApiError(method, path, null, e instanceof Error ? e.message : String(e))
   }
   if (!res.ok) {
+    if (res.status === 401 && typeof window !== 'undefined') {
+      // Sessione assente o scaduta: il gate di autenticazione riporta al login.
+      window.dispatchEvent(new Event('tabularium:unauthorized'))
+    }
     throw new ApiError(method, path, res.status, await res.text())
   }
   return res.json() as Promise<T>
