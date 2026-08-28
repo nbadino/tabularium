@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useI18n } from '../i18n'
 import { IconCloud, IconCopy } from './icons'
 
 interface CloudGuideModalProps {
@@ -6,8 +7,11 @@ interface CloudGuideModalProps {
   onClose: () => void
 }
 
+type Tab = 'vast_ssh' | 'runpod' | 'vast_direct' | 'serverless' | 'costs'
+
 export function CloudGuideModal({ open, onClose }: CloudGuideModalProps) {
-  const [tab, setTab] = useState<'vast_ssh' | 'runpod' | 'vast_direct' | 'costs'>('vast_ssh')
+  const { t } = useI18n()
+  const [tab, setTab] = useState<Tab>('vast_ssh')
   const [copied, setCopied] = useState<string | null>(null)
 
   if (!open) return null
@@ -22,6 +26,14 @@ export function CloudGuideModal({ open, onClose }: CloudGuideModalProps) {
     }
   }
 
+  const tabs: { id: Tab; label: string }[] = [
+    { id: 'vast_ssh', label: t('cloud.guide.tabVastSsh') },
+    { id: 'runpod', label: t('cloud.guide.tabRunpod') },
+    { id: 'vast_direct', label: t('cloud.guide.tabVastDirect') },
+    { id: 'serverless', label: t('cloud.guide.tabServerless') },
+    { id: 'costs', label: t('cloud.guide.tabCosts') },
+  ]
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
@@ -35,65 +47,35 @@ export function CloudGuideModal({ open, onClose }: CloudGuideModalProps) {
           <div className="flex items-center gap-2">
             <IconCloud size={16} />
             <h2 id="cloud-guide-title" className="text-[15px] font-bold">
-              Guida Rapida: Offloading Inferenza su Cloud GPU
+              {t('cloud.guide.title')}
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="btn btn-sm"
-            aria-label="Chiudi guida"
+            aria-label={t('cloud.guide.close')}
           >
-            ✕ Chiudi
+            {t('cloud.guide.close')}
           </button>
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex border-b border-[color:var(--color-rule)] bg-[color:var(--color-sheet-dim)] px-4 pt-2">
-          <button
-            type="button"
-            onClick={() => setTab('vast_ssh')}
-            className={`border-b-2 px-3 py-1.5 text-[12px] font-medium transition-colors ${
-              tab === 'vast_ssh'
-                ? 'border-[color:var(--color-ink)] text-[color:var(--color-ink)] font-semibold'
-                : 'border-transparent text-[color:var(--color-ink-2)] hover:text-[color:var(--color-ink)]'
-            }`}
-          >
-            1. Vast.ai + Tunnel SSH (Consigliato)
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('runpod')}
-            className={`border-b-2 px-3 py-1.5 text-[12px] font-medium transition-colors ${
-              tab === 'runpod'
-                ? 'border-[color:var(--color-ink)] text-[color:var(--color-ink)] font-semibold'
-                : 'border-transparent text-[color:var(--color-ink-2)] hover:text-[color:var(--color-ink)]'
-            }`}
-          >
-            2. RunPod (Proxy HTTPS)
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('vast_direct')}
-            className={`border-b-2 px-3 py-1.5 text-[12px] font-medium transition-colors ${
-              tab === 'vast_direct'
-                ? 'border-[color:var(--color-ink)] text-[color:var(--color-ink)] font-semibold'
-                : 'border-transparent text-[color:var(--color-ink-2)] hover:text-[color:var(--color-ink)]'
-            }`}
-          >
-            3. IP Diretto + API Key
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('costs')}
-            className={`border-b-2 px-3 py-1.5 text-[12px] font-medium transition-colors ${
-              tab === 'costs'
-                ? 'border-[color:var(--color-ink)] text-[color:var(--color-ink)] font-semibold'
-                : 'border-transparent text-[color:var(--color-ink-2)] hover:text-[color:var(--color-ink)]'
-            }`}
-          >
-            4. Costi & GPU
-          </button>
+        <div className="flex flex-wrap border-b border-[color:var(--color-rule)] bg-[color:var(--color-sheet-dim)] px-4 pt-2">
+          {tabs.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setTab(item.id)}
+              className={`border-b-2 px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                tab === item.id
+                  ? 'border-[color:var(--color-ink)] text-[color:var(--color-ink)] font-semibold'
+                  : 'border-transparent text-[color:var(--color-ink-2)] hover:text-[color:var(--color-ink)]'
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
         </div>
 
         {/* Content Body */}
@@ -101,23 +83,23 @@ export function CloudGuideModal({ open, onClose }: CloudGuideModalProps) {
           {tab === 'vast_ssh' && (
             <div className="space-y-4">
               <div className="rounded border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
-                <h3 className="font-bold text-[14px]">Perché è il metodo migliore?</h3>
+                <h3 className="font-bold text-[14px]">{t('cloud.guide.vastSshWhyTitle')}</h3>
                 <p className="mt-1 text-[12px] text-[color:var(--color-ink-2)]">
-                  Crea un tunnel cifrato punto-punto. Nessuna porta aperta su internet, massima sicurezza e costi minimi ($0.25/h per RTX 4090).
+                  {t('cloud.guide.vastSshWhyBody')}
                 </p>
               </div>
 
               <div>
-                <h4 className="font-semibold">Passo 1: Noleggia una GPU su Vast.ai</h4>
+                <h4 className="font-semibold">{t('cloud.guide.vastSshStep1Title')}</h4>
                 <p className="text-[12px] text-[color:var(--color-ink-2)]">
-                  Vai su <a href="https://vast.ai" target="_blank" rel="noreferrer" className="underline font-mono">vast.ai</a> e seleziona <strong>1x RTX 4090 o RTX 3090</strong> (template PyTorch / CUDA, 40GB disco).
+                  {t('cloud.guide.vastSshStep1Body')}
                 </p>
               </div>
 
               <div>
-                <h4 className="font-semibold">Passo 2: Avvia vLLM sull'istanza Vast.ai</h4>
+                <h4 className="font-semibold">{t('cloud.guide.vastSshStep2Title')}</h4>
                 <p className="text-[12px] text-[color:var(--color-ink-2)]">
-                  Connettiti via SSH all'istanza ed esegui questo comando di setup automatico:
+                  {t('cloud.guide.vastSshStep2Body')}
                 </p>
                 <div className="mt-1.5 flex items-center gap-2 rounded border border-[color:var(--color-rule-strong)] bg-neutral-900 p-2 text-neutral-100 font-mono text-[11px]">
                   <code className="flex-1 overflow-x-auto">
@@ -134,15 +116,15 @@ export function CloudGuideModal({ open, onClose }: CloudGuideModalProps) {
                     className="btn btn-sm !bg-neutral-800 !text-neutral-200"
                   >
                     <IconCopy size={12} />
-                    {copied === 'c1' ? 'Copiato' : 'Copia'}
+                    {copied === 'c1' ? t('cloud.guide.copied') : t('cloud.guide.copy')}
                   </button>
                 </div>
               </div>
 
               <div>
-                <h4 className="font-semibold">Passo 3: Apri il Tunnel SSH sul tuo PC locale</h4>
+                <h4 className="font-semibold">{t('cloud.guide.vastSshStep3Title')}</h4>
                 <p className="text-[12px] text-[color:var(--color-ink-2)]">
-                  Sul tuo PC (nel terminale locale), lancia l'helper di tunneling indicando host e porta forniti da Vast.ai:
+                  {t('cloud.guide.vastSshStep3Body')}
                 </p>
                 <div className="mt-1.5 flex items-center gap-2 rounded border border-[color:var(--color-rule-strong)] bg-neutral-900 p-2 text-neutral-100 font-mono text-[11px]">
                   <code className="flex-1 overflow-x-auto">
@@ -156,15 +138,15 @@ export function CloudGuideModal({ open, onClose }: CloudGuideModalProps) {
                     className="btn btn-sm !bg-neutral-800 !text-neutral-200"
                   >
                     <IconCopy size={12} />
-                    {copied === 'c2' ? 'Copiato' : 'Copia'}
+                    {copied === 'c2' ? t('cloud.guide.copied') : t('cloud.guide.copy')}
                   </button>
                 </div>
               </div>
 
               <div>
-                <h4 className="font-semibold">Passo 4: Salva in Tabularium</h4>
+                <h4 className="font-semibold">{t('cloud.guide.vastSshStep4Title')}</h4>
                 <p className="text-[12px] text-[color:var(--color-ink-2)]">
-                  Lascia l'URL impostato su <code className="font-mono bg-neutral-100 dark:bg-neutral-800 px-1 py-0.5 rounded">http://127.0.0.1:8888/v1</code> e clicca <strong>Test Connessione</strong>.
+                  {t('cloud.guide.vastSshStep4Body')}
                 </p>
               </div>
             </div>
@@ -173,23 +155,23 @@ export function CloudGuideModal({ open, onClose }: CloudGuideModalProps) {
           {tab === 'runpod' && (
             <div className="space-y-4">
               <div className="rounded border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
-                <h3 className="font-bold text-[14px]">Proxy HTTPS Senza Tunnel Locale</h3>
+                <h3 className="font-bold text-[14px]">{t('cloud.guide.runpodWhyTitle')}</h3>
                 <p className="mt-1 text-[12px] text-[color:var(--color-ink-2)]">
-                  RunPod fornisce un indirizzo HTTPS pubblico protetto da certificato SSL. Non serve tenere aperto un terminale per il tunnel SSH sul proprio PC.
+                  {t('cloud.guide.runpodWhyBody')}
                 </p>
               </div>
 
               <div>
-                <h4 className="font-semibold">Passo 1: Crea un Pod su RunPod</h4>
+                <h4 className="font-semibold">{t('cloud.guide.runpodStep1Title')}</h4>
                 <p className="text-[12px] text-[color:var(--color-ink-2)]">
-                  Scegli 1x RTX 4090 o A5000 con template PyTorch. Nella configurazione delle porte esponi la porta HTTP <strong>8888</strong>.
+                  {t('cloud.guide.runpodStep1Body')}
                 </p>
               </div>
 
               <div>
-                <h4 className="font-semibold">Passo 2: Avvia vLLM con API Key</h4>
+                <h4 className="font-semibold">{t('cloud.guide.runpodStep2Title')}</h4>
                 <p className="text-[12px] text-[color:var(--color-ink-2)]">
-                  Nel Web Terminal di RunPod esegui:
+                  {t('cloud.guide.runpodStep2Body')}
                 </p>
                 <div className="mt-1.5 flex items-center gap-2 rounded border border-[color:var(--color-rule-strong)] bg-neutral-900 p-2 text-neutral-100 font-mono text-[11px]">
                   <code className="flex-1 overflow-x-auto">
@@ -206,15 +188,15 @@ export function CloudGuideModal({ open, onClose }: CloudGuideModalProps) {
                     className="btn btn-sm !bg-neutral-800 !text-neutral-200"
                   >
                     <IconCopy size={12} />
-                    {copied === 'c3' ? 'Copiato' : 'Copia'}
+                    {copied === 'c3' ? t('cloud.guide.copied') : t('cloud.guide.copy')}
                   </button>
                 </div>
               </div>
 
               <div>
-                <h4 className="font-semibold">Passo 3: Inserisci l'URL Proxy in Tabularium</h4>
+                <h4 className="font-semibold">{t('cloud.guide.runpodStep3Title')}</h4>
                 <p className="text-[12px] text-[color:var(--color-ink-2)]">
-                  Dalla dashboard RunPod copia l'URL proxy (formato: <code className="font-mono text-[11px]">https://&lt;POD_ID&gt;-8888.proxy.runpod.net/v1</code>) e incollalo nel campo Server vLLM insieme alla tua chiave API.
+                  {t('cloud.guide.runpodStep3Body')}
                 </p>
               </div>
             </div>
@@ -223,14 +205,14 @@ export function CloudGuideModal({ open, onClose }: CloudGuideModalProps) {
           {tab === 'vast_direct' && (
             <div className="space-y-4">
               <div className="rounded border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
-                <h3 className="font-bold text-[14px]">Connessione Diretta IP:Porta</h3>
+                <h3 className="font-bold text-[14px]">{t('cloud.guide.vastDirectWhyTitle')}</h3>
                 <p className="mt-1 text-[12px] text-[color:var(--color-ink-2)]">
-                  Utile per VPS GPU dedicate o istanze Vast.ai con porte pubbliche mappate direttamente.
+                  {t('cloud.guide.vastDirectWhyBody')}
                 </p>
               </div>
 
               <div>
-                <h4 className="font-semibold">Avvio con porta pubblica e API Key</h4>
+                <h4 className="font-semibold">{t('cloud.guide.vastDirectStep1Title')}</h4>
                 <div className="mt-1.5 flex items-center gap-2 rounded border border-[color:var(--color-rule-strong)] bg-neutral-900 p-2 text-neutral-100 font-mono text-[11px]">
                   <code className="flex-1 overflow-x-auto">
                     bash setup_cloud_vllm.sh --port 8888 --api-key "tua_chiave_segreta"
@@ -243,43 +225,132 @@ export function CloudGuideModal({ open, onClose }: CloudGuideModalProps) {
                     className="btn btn-sm !bg-neutral-800 !text-neutral-200"
                   >
                     <IconCopy size={12} />
-                    {copied === 'c4' ? 'Copiato' : 'Copia'}
+                    {copied === 'c4' ? t('cloud.guide.copied') : t('cloud.guide.copy')}
                   </button>
                 </div>
                 <p className="mt-2 text-[12px] text-[color:var(--color-ink-2)]">
-                  In Tabularium inserisci <code className="font-mono">http://&lt;IP_PUBBLICO&gt;:&lt;PORTA_MAPPATA&gt;/v1</code> e la relativa API Key.
+                  {t('cloud.guide.vastDirectStep1Body')}
                 </p>
+              </div>
+            </div>
+          )}
+
+          {tab === 'serverless' && (
+            <div className="space-y-4">
+              <div className="rounded border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
+                <h3 className="font-bold text-[14px]">{t('cloud.guide.serverlessIntroTitle')}</h3>
+                <p className="mt-1 text-[12px] text-[color:var(--color-ink-2)]">
+                  {t('cloud.guide.serverlessIntroBody')}
+                </p>
+              </div>
+
+              <div>
+                <h4 className="font-semibold">{t('cloud.guide.modalTitle')}</h4>
+                <div className="mt-2 space-y-3">
+                  <div>
+                    <p className="text-[12px] font-medium">{t('cloud.guide.modalStep1Title')}</p>
+                    <p className="text-[12px] text-[color:var(--color-ink-2)]">
+                      {t('cloud.guide.modalStep1Body')}
+                    </p>
+                    <div className="mt-1.5 flex items-center gap-2 rounded border border-[color:var(--color-rule-strong)] bg-neutral-900 p-2 text-neutral-100 font-mono text-[11px]">
+                      <code className="flex-1 overflow-x-auto">
+                        pip install modal && modal setup
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() => copy('pip install modal && modal setup', 'c5')}
+                        className="btn btn-sm !bg-neutral-800 !text-neutral-200"
+                      >
+                        <IconCopy size={12} />
+                        {copied === 'c5' ? t('cloud.guide.copied') : t('cloud.guide.copy')}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-[12px] font-medium">{t('cloud.guide.modalStep2Title')}</p>
+                    <p className="text-[12px] text-[color:var(--color-ink-2)]">
+                      {t('cloud.guide.modalStep2Body')}
+                    </p>
+                    <div className="mt-1.5 flex items-center gap-2 rounded border border-[color:var(--color-rule-strong)] bg-neutral-900 p-2 text-neutral-100 font-mono text-[11px]">
+                      <code className="flex-1 overflow-x-auto">
+                        modal deploy scripts/cloud/modal_vllm.py
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() => copy('modal deploy scripts/cloud/modal_vllm.py', 'c6')}
+                        className="btn btn-sm !bg-neutral-800 !text-neutral-200"
+                      >
+                        <IconCopy size={12} />
+                        {copied === 'c6' ? t('cloud.guide.copied') : t('cloud.guide.copy')}
+                      </button>
+                    </div>
+                    <p className="mt-1.5 text-[12px] text-[color:var(--color-ink-2)]">
+                      {t('cloud.guide.modalStep3Body')}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded border border-[color:var(--color-rule)] bg-[color:var(--color-sheet-dim)] p-3 text-[12px]">
+                <h4 className="font-semibold text-[13px]">{t('cloud.guide.runpodSlsTitle')}</h4>
+                <p className="mt-1 text-[color:var(--color-ink-2)]">
+                  {t('cloud.guide.runpodSlsBody')}
+                </p>
+              </div>
+
+              <div className="rounded border border-[color:var(--color-rule)] bg-[color:var(--color-sheet-dim)] p-3 text-[12px]">
+                <h4 className="font-semibold text-[13px]">{t('cloud.guide.modalWarmNote')}</h4>
+              </div>
+
+              <div className="rounded border border-amber-600/50 bg-amber-950/20 p-3 text-[12px]">
+                <h4 className="font-semibold text-[13px] text-amber-600 dark:text-amber-400">
+                  {t('cloud.guide.t4Title')}
+                </h4>
+                <p className="mt-1 text-[color:var(--color-ink-2)]">{t('cloud.guide.t4Body')}</p>
               </div>
             </div>
           )}
 
           {tab === 'costs' && (
             <div className="space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2">
+              <p className="text-[11px] text-[color:var(--color-ink-3)]">
+                {t('cloud.guide.costsVerified')}
+              </p>
+              <div className="grid gap-3 sm:grid-cols-3">
                 <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
-                  <span className="lbl !mb-0 text-[11px]">NVIDIA RTX 4090 (24 GB)</span>
-                  <p className="text-[18px] font-bold mt-1 text-[color:var(--color-sig)]">
-                    ~$0.28 / ora
+                  <span className="lbl !mb-0 text-[11px]">{t('cloud.guide.costs4090')}</span>
+                  <p className="text-[16px] font-bold mt-1 text-[color:var(--color-sig)]">
+                    {t('cloud.guide.costs4090Price')}
                   </p>
                   <p className="text-[12px] text-[color:var(--color-ink-2)] mt-1">
-                    Scelta raccomandata. Inferenza &lt; 400ms a ritaglio, ~100 token/s.
+                    {t('cloud.guide.costs4090Note')}
                   </p>
                 </div>
                 <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
-                  <span className="lbl !mb-0 text-[11px]">NVIDIA RTX 3090 (24 GB)</span>
-                  <p className="text-[18px] font-bold mt-1 text-[color:var(--color-sig)]">
-                    ~$0.20 / ora
+                  <span className="lbl !mb-0 text-[11px]">{t('cloud.guide.costs3090')}</span>
+                  <p className="text-[16px] font-bold mt-1 text-[color:var(--color-sig)]">
+                    {t('cloud.guide.costs3090Price')}
                   </p>
                   <p className="text-[12px] text-[color:var(--color-ink-2)] mt-1">
-                    Massimo risparmio. Inferenza ~600ms a ritaglio, ~70 token/s.
+                    {t('cloud.guide.costs3090Note')}
+                  </p>
+                </div>
+                <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
+                  <span className="lbl !mb-0 text-[11px]">{t('cloud.guide.costsL4')}</span>
+                  <p className="text-[16px] font-bold mt-1 text-[color:var(--color-sig)]">
+                    {t('cloud.guide.costsL4Price')}
+                  </p>
+                  <p className="text-[12px] text-[color:var(--color-ink-2)] mt-1">
+                    {t('cloud.guide.costsL4Note')}
                   </p>
                 </div>
               </div>
 
               <div className="rounded border border-[color:var(--color-rule)] bg-[color:var(--color-sheet-dim)] p-3 text-[12px]">
-                <h4 className="font-semibold text-[13px]">💡 Suggerimento Risparmio</h4>
+                <h4 className="font-semibold text-[13px]">{t('cloud.guide.costsTipTitle')}</h4>
                 <p className="mt-1 text-[color:var(--color-ink-2)]">
-                  Puoi preparare le scansioni offline in locale. Quando vuoi annotare o lanciare prefill e valutazioni, avvii la GPU cloud per 1 o 2 ore (costo: ~0.50$), fai il lavoro e poi metti l'istanza in <strong>Stop/Pause</strong>.
+                  {t('cloud.guide.costsTipBody')}
                 </p>
               </div>
             </div>
@@ -289,10 +360,10 @@ export function CloudGuideModal({ open, onClose }: CloudGuideModalProps) {
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-[color:var(--color-rule)] bg-[color:var(--color-panel)] px-4 py-2.5">
           <span className="mono text-[11px] text-[color:var(--color-ink-3)]">
-            Guida completa: docs/CLOUD_INFERENCE_GUIDE.md
+            {t('cloud.guide.footerDoc')}
           </span>
           <button type="button" onClick={onClose} className="btn btn-primary btn-sm">
-            Ho capito
+            {t('cloud.guide.understood')}
           </button>
         </div>
       </div>

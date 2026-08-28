@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { apiGet, apiPost } from '../lib/api'
+import { useI18n } from '../i18n'
 import { IconCloud } from './icons'
 import { Badge, Field } from './ui'
 import { saveInferenceToBackend, testInferenceConnection, useInference } from './inference'
@@ -31,6 +32,7 @@ interface VastInstance {
 }
 
 export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
+  const { t } = useI18n()
   const inf = useInference()
   const [tab, setTab] = useState<'tunnel' | 'vast' | 'direct'>('tunnel')
 
@@ -67,7 +69,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
   // --- SSH Tunnel Handlers ---
   const handleStartTunnel = async () => {
     if (!sshHost.trim() || !sshPort.trim()) {
-      setTunnelNotice('Inserisci sia l\'host che la porta SSH.')
+      setTunnelNotice(t('cloud.control.missingHostPort'))
       return
     }
     setTunnelBusy(true)
@@ -81,7 +83,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
         remote_port: 8888,
       })
       setTunnelState(res)
-      setTunnelNotice(`Tunnel SSH avviato con successo su 127.0.0.1:8888 (PID: ${res.pid})!`)
+      setTunnelNotice(t('cloud.control.started', { pid: String(res.pid) }))
 
       // Auto-salva la configurazione locale e testa la connessione
       await saveInferenceToBackend({
@@ -91,7 +93,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
       })
       await testInferenceConnection({ url: 'http://127.0.0.1:8888/v1' })
     } catch (e) {
-      setTunnelNotice(`Errore avvio tunnel: ${e}`)
+      setTunnelNotice(t('cloud.control.startError', { error: String(e) }))
     } finally {
       setTunnelBusy(false)
     }
@@ -102,9 +104,9 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
     try {
       await apiPost('/system/cloud/tunnel/stop', {})
       setTunnelState({ running: false })
-      setTunnelNotice('Tunnel SSH terminato.')
+      setTunnelNotice(t('cloud.control.stopped'))
     } catch (e) {
-      setTunnelNotice(`Errore arresto tunnel: ${e}`)
+      setTunnelNotice(t('cloud.control.stopError', { error: String(e) }))
     } finally {
       setTunnelBusy(false)
     }
@@ -113,7 +115,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
   // --- Vast.ai Handlers ---
   const handleLoadVast = async () => {
     if (!vastApiKey.trim()) {
-      setVastNotice('Inserisci la tua API Key di Vast.ai.')
+      setVastNotice(t('cloud.control.missingKey'))
       return
     }
     setVastBusy(true)
@@ -125,12 +127,12 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
       })
       setVastInstances(res.items)
       if (res.items.length === 0) {
-        setVastNotice('Nessuna istanza attiva trovata sul tuo account Vast.ai.')
+        setVastNotice(t('cloud.control.noneFound'))
       } else {
-        setVastNotice(`Trovate ${res.items.length} istanze su Vast.ai.`)
+        setVastNotice(t('cloud.control.found', { count: res.items.length }))
       }
     } catch (e) {
-      setVastNotice(`Errore caricamento Vast.ai: ${e}`)
+      setVastNotice(t('cloud.control.loadError', { error: String(e) }))
     } finally {
       setVastBusy(false)
     }
@@ -144,10 +146,14 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
         instance_id: instanceId,
         action,
       })
-      setVastNotice(`Comando "${action === 'start' ? 'Avvia' : 'Metti in pausa'}" inviato con successo!`)
+      setVastNotice(
+        t('cloud.control.commandSent', {
+          action: action === 'start' ? t('cloud.control.actionStart') : t('cloud.control.actionPause'),
+        }),
+      )
       await handleLoadVast()
     } catch (e) {
-      setVastNotice(`Errore comando Vast.ai: ${e}`)
+      setVastNotice(t('cloud.control.commandError', { error: String(e) }))
     } finally {
       setVastBusy(false)
     }
@@ -155,13 +161,13 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
 
   const handleConnectToVastInstance = (inst: VastInstance) => {
     if (!inst.ssh_host || !inst.ssh_port) {
-      setVastNotice('Questa istanza non ha ancora un host/porta SSH assegnati (forse è in fase di avvio).')
+      setVastNotice(t('cloud.control.noSsh'))
       return
     }
     setSshHost(inst.ssh_host)
     setSshPort(String(inst.ssh_port))
     setTab('tunnel')
-    setTunnelNotice(`Dati di connessione dell'istan #${inst.id} caricati! Clicca su "Avvia Tunnel da UI".`)
+    setTunnelNotice(t('cloud.control.connected', { id: inst.id }))
   }
 
   if (!open) return null
@@ -178,11 +184,11 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
           <div className="flex items-center gap-2">
             <IconCloud size={16} />
             <h2 className="text-[15px] font-bold">
-              Gestione Cloud & Connessione GPU 100% da UI
+              {t('cloud.control.title')}
             </h2>
           </div>
           <button type="button" onClick={onClose} className="btn btn-sm">
-            ✕ Chiudi
+            {t('cloud.control.close')}
           </button>
         </div>
 
@@ -197,7 +203,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                 : 'border-transparent text-[color:var(--color-ink-2)] hover:text-[color:var(--color-ink)]'
             }`}
           >
-            🔌 Tunnel SSH Automatico (1 Click)
+            {t('cloud.control.tabTunnel')}
           </button>
           <button
             type="button"
@@ -208,7 +214,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                 : 'border-transparent text-[color:var(--color-ink-2)] hover:text-[color:var(--color-ink)]'
             }`}
           >
-            ☁️ Gestione Istanze Vast.ai
+            {t('cloud.control.tabVast')}
           </button>
           <button
             type="button"
@@ -219,7 +225,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                 : 'border-transparent text-[color:var(--color-ink-2)] hover:text-[color:var(--color-ink)]'
             }`}
           >
-            🌐 Endpoint Diretto / RunPod Proxy
+            {t('cloud.control.tabDirect')}
           </button>
         </div>
 
@@ -230,15 +236,15 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
               <div className="rounded border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="font-bold text-[14px]">Tunnel SSH Locale Automatizzato</h3>
+                    <h3 className="font-bold text-[14px]">{t('cloud.control.tunnelTitle')}</h3>
                     <p className="mt-0.5 text-[12px] text-[color:var(--color-ink-2)]">
-                      Inoltra la porta 8888 della tua GPU remota su <code className="mono">http://127.0.0.1:8888/v1</code> senza toccare il terminale.
+                      {t('cloud.control.tunnelBody')}
                     </p>
                   </div>
                   {tunnelState.running ? (
-                    <Badge tone="ok">🟢 Tunnel Attivo (PID {tunnelState.pid})</Badge>
+                    <Badge tone="ok">🟢 {t('cloud.control.tunnelActive', { pid: String(tunnelState.pid) })}</Badge>
                   ) : (
-                    <Badge tone="neutral">⚪ Tunnel Inattivo</Badge>
+                    <Badge tone="neutral">⚪ {t('cloud.control.tunnelInactive')}</Badge>
                   )}
                 </div>
               </div>
@@ -251,8 +257,8 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field
-                  label="Host Remoto SSH"
-                  hint="Fornito dal provider (es. ssh5.vast.ai o 192.168.1.100)"
+                  label={t('cloud.control.hostLabel')}
+                  hint={t('cloud.control.hostHint')}
                 >
                   <input
                     value={sshHost}
@@ -264,8 +270,8 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                 </Field>
 
                 <Field
-                  label="Porta SSH"
-                  hint="Porta SSH remota assegnata (es. 38291 o 22)"
+                  label={t('cloud.control.portLabel')}
+                  hint={t('cloud.control.portHint')}
                 >
                   <input
                     value={sshPort}
@@ -276,7 +282,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                   />
                 </Field>
 
-                <Field label="Utente SSH" hint="Default: root">
+                <Field label={t('cloud.control.userLabel')} hint={t('cloud.control.userHint')}>
                   <input
                     value={sshUser}
                     onChange={(e) => setSshUser(e.target.value)}
@@ -294,7 +300,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                       disabled={tunnelBusy}
                       className="btn !border-red-700 !bg-red-950 !text-red-300 w-full"
                     >
-                      {tunnelBusy ? 'Arresto in corso…' : '⏹️ Arresta Tunnel'}
+                      {tunnelBusy ? t('cloud.control.stopping') : t('cloud.control.stop')}
                     </button>
                   ) : (
                     <button
@@ -303,7 +309,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                       disabled={tunnelBusy}
                       className="btn btn-primary w-full"
                     >
-                      {tunnelBusy ? 'Connessione in corso…' : '🔌 Avvia Tunnel da UI'}
+                      {tunnelBusy ? t('cloud.control.starting') : t('cloud.control.start')}
                     </button>
                   )}
                 </div>
@@ -314,9 +320,9 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
           {tab === 'vast' && (
             <div className="space-y-4">
               <div className="rounded border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
-                <h3 className="font-bold text-[14px]">Gestione Istanze Vast.ai</h3>
+                <h3 className="font-bold text-[14px]">{t('cloud.control.vastTitle')}</h3>
                 <p className="mt-0.5 text-[12px] text-[color:var(--color-ink-2)]">
-                  Inserisci la tua API Key di Vast.ai per vedere le tue GPU, avviarle, metterle in pausa quando non le usi e connetterti con un click.
+                  {t('cloud.control.vastBody')}
                 </p>
               </div>
 
@@ -329,14 +335,14 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
               <div className="flex gap-2">
                 <div className="flex-1">
                   <Field
-                    label="Vast.ai API Key"
-                    hint="Trova la tua chiave su vast.ai ➔ Account ➔ API Keys"
+                    label={t('cloud.control.apiKeyLabel')}
+                    hint={t('cloud.control.apiKeyHint')}
                   >
                     <input
                       type="password"
                       value={vastApiKey}
                       onChange={(e) => setVastApiKey(e.target.value)}
-                      placeholder="Incolla la tua API Key di Vast.ai"
+                      placeholder={t('cloud.control.apiKeyPlaceholder')}
                       className="fld fld-mono"
                     />
                   </Field>
@@ -348,14 +354,14 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                     disabled={vastBusy}
                     className="btn btn-primary"
                   >
-                    {vastBusy ? 'Caricamento…' : '🔄 Carica Istanze'}
+                    {vastBusy ? t('cloud.control.loading') : t('cloud.control.load')}
                   </button>
                 </div>
               </div>
 
               {vastInstances.length > 0 && (
                 <div className="space-y-2">
-                  <span className="lbl">Istanze trovate sul tuo account:</span>
+                  <span className="lbl">{t('cloud.control.instancesLabel')}</span>
                   <div className="divide-y divide-[color:var(--color-rule)] border border-[color:var(--color-rule)]">
                     {vastInstances.map((inst) => (
                       <div
@@ -370,7 +376,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                             </Badge>
                             {inst.dph_total && (
                               <span className="mono text-[11px] text-[color:var(--color-sig)] font-semibold">
-                                ${inst.dph_total.toFixed(3)}/ora
+                                ${inst.dph_total.toFixed(3)}/h
                               </span>
                             )}
                           </div>
@@ -387,16 +393,16 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                                 onClick={() => handleConnectToVastInstance(inst)}
                                 className="btn btn-sm btn-primary"
                               >
-                                🔌 Connetti Tunnel
+                                {t('cloud.control.connect')}
                               </button>
                               <button
                                 type="button"
                                 onClick={() => void handleControlVast(inst.id, 'stop')}
                                 disabled={vastBusy}
                                 className="btn btn-sm"
-                                title="Metti in pausa l'istanza per interrompere il costo orario"
+                                title={t('cloud.control.pauseTitle')}
                               >
-                                ⏸️ Pausa
+                                {t('cloud.control.pause')}
                               </button>
                             </>
                           ) : (
@@ -406,7 +412,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                               disabled={vastBusy}
                               className="btn btn-sm btn-primary"
                             >
-                              ▶️ Riattiva Istanza
+                              {t('cloud.control.resume')}
                             </button>
                           )}
                         </div>
@@ -421,15 +427,15 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
           {tab === 'direct' && (
             <div className="space-y-4">
               <div className="rounded border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
-                <h3 className="font-bold text-[14px]">Connessione Diretta (RunPod Proxy / VPS)</h3>
+                <h3 className="font-bold text-[14px]">{t('cloud.control.directTitle')}</h3>
                 <p className="mt-0.5 text-[12px] text-[color:var(--color-ink-2)]">
-                  Se hai già un URL HTTPS pubblico fornito da RunPod (o un IP pubblico diretto), inseriscilo qui per connetterti direttamente senza tunnel.
+                  {t('cloud.control.directBody')}
                 </p>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="sm:col-span-2">
-                  <Field label="URL Server vLLM" hint="Es: https://<POD_ID>-8888.proxy.runpod.net/v1">
+                  <Field label={t('cloud.control.urlLabel')} hint={t('cloud.control.urlHint')}>
                     <input
                       defaultValue={inf.url}
                       id="direct-url-input"
@@ -439,12 +445,12 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                   </Field>
                 </div>
                 <div className="sm:col-span-2">
-                  <Field label="API Key (Opzionale)">
+                  <Field label={t('cloud.control.directKeyLabel')}>
                     <input
                       type="password"
                       defaultValue={inf.apiKey}
                       id="direct-apikey-input"
-                      placeholder="Chiave segreta"
+                      placeholder={t('cloud.control.directKeyPlaceholder')}
                       className="fld fld-mono"
                     />
                   </Field>
@@ -461,7 +467,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                     }}
                     className="btn btn-primary"
                   >
-                    💾 Salva e Applica
+                    {t('cloud.control.saveApply')}
                   </button>
                 </div>
               </div>
@@ -472,10 +478,10 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-[color:var(--color-rule)] bg-[color:var(--color-panel)] px-4 py-2.5">
           <span className="mono text-[11px] text-[color:var(--color-ink-3)]">
-            Tutti i comandi vengono eseguiti dal backend locale
+            {t('cloud.control.footer')}
           </span>
           <button type="button" onClick={onClose} className="btn btn-sm">
-            Chiudi
+            {t('cloud.control.close')}
           </button>
         </div>
       </div>

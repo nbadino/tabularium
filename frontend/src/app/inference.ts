@@ -43,34 +43,52 @@ const EMPTY: InferenceCfg = {
   error: null,
 }
 
+/**
+ * Preset di connessione: le etichette sono chiavi i18n (`cloud.presets.*`),
+ * tradotte dalla UI al momento dell'uso.
+ */
 export const INFERENCE_PRESETS = [
   {
     id: 'local',
-    label: 'Locale (GPU su questa macchina)',
+    labelKey: 'cloud.presets.local',
+    hintKey: 'cloud.presets.localHint',
     url: 'http://127.0.0.1:8888/v1',
     model: 'MonkeyOCRv2',
-    hint: 'Richiede GPU NVIDIA locale avviata con ./scripts/serve_model.sh',
   },
   {
     id: 'vast_ssh',
-    label: 'Vast.ai (Tunnel SSH Sicuro)',
+    labelKey: 'cloud.presets.vastSsh',
+    hintKey: 'cloud.presets.vastSshHint',
     url: 'http://127.0.0.1:8888/v1',
     model: 'MonkeyOCRv2',
-    hint: 'Collega la GPU remota via ./scripts/cloud/ssh_tunnel.sh',
   },
   {
     id: 'runpod_proxy',
-    label: 'RunPod (Proxy HTTPS Diretto)',
+    labelKey: 'cloud.presets.runpodProxy',
+    hintKey: 'cloud.presets.runpodProxyHint',
     url: 'https://<POD_ID>-8888.proxy.runpod.net/v1',
     model: 'MonkeyOCRv2',
-    hint: 'Endpoint HTTPS fornito direttamente dalla dashboard di RunPod',
   },
   {
     id: 'vast_direct',
-    label: 'Vast.ai / Cloud VPS (Porta Pubblica)',
+    labelKey: 'cloud.presets.vastDirect',
+    hintKey: 'cloud.presets.vastDirectHint',
     url: 'http://<IP_PUBBLICO>:<PORTA>/v1',
     model: 'MonkeyOCRv2',
-    hint: 'Connessione diretta tramite IP pubblico e porta esposta',
+  },
+  {
+    id: 'modal_serverless',
+    labelKey: 'cloud.presets.modalServerless',
+    hintKey: 'cloud.presets.modalServerlessHint',
+    url: 'https://<WORKSPACE>--tabularium-vllm-serve.modal.run/v1',
+    model: 'MonkeyOCRv2',
+  },
+  {
+    id: 'runpod_serverless',
+    labelKey: 'cloud.presets.runpodServerless',
+    hintKey: 'cloud.presets.runpodServerlessHint',
+    url: 'https://api.runpod.ai/v2/<ENDPOINT_ID>/openai/v1',
+    model: 'MonkeyOCRv2',
   },
 ] as const
 

@@ -20,7 +20,7 @@ Questa guida spiega come eseguire **Tabularium interamente sul tuo PC locale** (
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
 │             CLOUD GPU INSTANCE (Vast.ai / RunPod)           │
-│  - GPU NVIDIA RTX 4090 (24 GB VRAM) ~ $0.25 - $0.35 / ora   │
+│  - GPU NVIDIA RTX 4090 (24 GB VRAM) ~ $0.13 - $0.37 / ora   │
 │  - Server vLLM OpenAI-compatibile con MonkeyOCRv2-B-Parsing │
 │  - Risposta in streaming sub-secondo (>80 token/sec)        │
 └─────────────────────────────────────────────────────────────┘
@@ -29,13 +29,14 @@ Questa guida spiega come eseguire **Tabularium interamente sul tuo PC locale** (
 I vantaggi:
 - **Zero requisiti hardware locali**: puoi annotare e usare il modello da un MacBook Air, un PC portatile senza scheda video dedicata o un mini-PC.
 - **Velocità massima**: una RTX 4090 remota genera layout e tabelle istantaneamente.
-- **Costo irrisorio**: ~0.25$ all'ora. Per 100 pagine di annotazione spendi pochi centesimi, e quando finisci spegni o fermi l'istanza.
+- **Costo irrisorio**: da ~0,07$ all'ora (RTX 3090). Per 100 pagine di annotazione spendi pochi centesimi, e quando finisci spegni o fermi l'istanza.
 
 ---
 
 ## 2. Metodo 1: Vast.ai con Tunnel SSH (Scelta Consigliata)
 
-Vast.ai è il marketplace GPU più economico al mondo ($0.20–$0.35/h per RTX 3090/4090).
+Vast.ai è il marketplace GPU più economico al mondo (verificato 2026-08: RTX 3090 da 0,07 $/h
+con mediana 0,15 $/h; RTX 4090 da 0,13 $/h con mediana 0,36 $/h).
 
 ### Passo 1: Noleggia un'istanza su Vast.ai
 1. Crea un account su [vast.ai](https://vast.ai/) e ricarica $5.
@@ -115,7 +116,50 @@ Se preferisci non usare SSH Tunnel e avere una porta aperta su internet:
 
 ---
 
-## 5. Verifica Rapida da Terminale (CLI Test)
+## 5. Metodo 4: Modal Serverless (inferenza a chiamata)
+
+Il metodo **pay-per-second**: la GPU si accende quando arriva una richiesta e si spegne dopo.
+Costo a riposo: **0 €**. Il repo include una template pronta (`scripts/cloud/modal_vllm.py`)
+che costruisce il container (repo ufficiale + vLLM), scarica i pesi su un volume persistente
+ed espone `parsing/serve.py` esattamente come lo script locale `serve_model.sh`.
+
+1. Installa e autentica Modal (una sola volta):
+   ```bash
+   pip install modal
+   modal setup
+   ```
+2. Fai il deploy della template:
+   ```bash
+   modal deploy scripts/cloud/modal_vllm.py
+   ```
+3. Copia l'URL stampato (forma `https://<WORKSPACE>--tabularium-vllm-serve.modal.run`) e
+   usa `.../v1` nella card di inferenza di Tabularium. Il preset **Modal (Serverless a chiamata)**
+   precompila il formato.
+
+Note operative:
+- **GPU**: la template usa **L4** di default (≈ 0,80 $/h attiva; A10 ≈ 1,10 $/h) e **non la T4**:
+  vLLM gira in bfloat16 e rifiuta le GPU con compute capability < 8.0
+  (`ValueError: Bfloat16 is only supported on GPUs with compute capability of at least 8.0` —
+  T4 = 7.5, V100 = 7.0). Le alternative serverless valide sono Ampere o successive.
+- **Cold start**: il primo caricamento del modello richiede alcuni minuti. La template tiene il
+  container caldo 15 minuti dopo ogni richiesta (`scaledown_window=900`); per lavoro continuativo
+  conviene un'istanza a ore (Vast.ai), per chiamate sporadiche il serverless.
+- **Crediti**: il piano Starter Modal include **30 $ di crediti ogni mese** (verificato 2026-08).
+- **API key** opzionale: `TABULARIUM_VLLM_API_KEY=... modal deploy ...` e imposta la stessa
+  chiave nella card di inferenza.
+
+## 6. Metodo 5: RunPod Serverless
+
+Analogo a Modal ma con template Docker gestita da RunPod: serve un container che esponga
+l'API OpenAI-compatibile di vLLM. L'endpoint ha formato
+`https://api.runpod.ai/v2/<ENDPOINT_ID>/openai/v1` (preset **RunPod Serverless** in Tabularium).
+Billing al secondo di worker attivo; **il cold start è fatturato a tariffa piena** —
+con poco traffico Modal (crediti gratuiti) è in genere più economico; per orari attivi
+lunghi conviene un Pod on-demand.
+
+---
+
+## 7. Verifica Rapida da Terminale (CLI Test)
 
 Puoi testare qualsiasi endpoint remoto con il nostro strumento CLI:
 
@@ -144,11 +188,26 @@ Output di esempio:
 
 ---
 
-## 6. Ottimizzazione Costi: Come Risparmiare
+## 8. Ottimizzazione Costi: Come Risparmiare
 
-- **Ferma l'istanza quando non annoti**: sia su Vast.ai che su RunPod puoi mettere in pausa l'istanza. In pausa paghi solo lo storage (~0.05$/giorno).
+- **Ferma l'istanza quando non annoti**: sia su Vast.ai che su RunPod puoi mettere in pausa l'istanza. In pausa paghi solo lo storage (~0.05$/giorno). La **Gestione Cloud da UI** (pulsante 🎛️ nella card di inferenza) avvia/ferma tunnel e istanze Vast.ai senza terminale.
 - **Batch di annotazione**: prepara prima le pagine scansionate (scan locale), poi avvia la GPU cloud, annota tutte le pagine in un blocco di 1 o 2 ore (costo totale ~$0.50), ed infine arresta la GPU.
-- **GPU consigliate**:
-  - **NVIDIA RTX 4090** (24GB VRAM): massima velocità, ~$0.30/h.
-  - **NVIDIA RTX 3090** (24GB VRAM): eccellente rapporto qualità/prezzo, ~$0.20/h.
-  - **NVIDIA A5000 / A6000**: ideali per sessioni prolungate nei datacenter.
+- **Prezzi verificati (agosto 2026)** — vast.ai/pricing, runpod.io/pricing, modal.com/pricing:
+
+| GPU | Vast.ai on-demand | Serverless |
+|---|---|---|
+| RTX 3090 (24 GB) | da 0,07 $/h · mediana 0,15 $/h | — |
+| RTX 4090 (24 GB) | da 0,13 $/h · mediana 0,36 $/h | — |
+| L4 (24 GB) | — | ≈ 0,80 $/h attiva (Modal), 0 $ a riposo |
+| A10 (24 GB) | — | ≈ 1,10 $/h attiva (Modal), 0 $ a riposo |
+| T4 (16 GB) | — | ❌ **non utilizzabile**: vLLM rifiuta bfloat16 su compute capability < 8.0 |
+
+  Su Vast.ai le istanze **spot/interruptible** costano ulteriormente il 40–70% in meno,
+  adatte al fine-tuning con checkpoint frequenti (il training center di Tabularium salva
+  checkpoint ricaricabili). Attenzione: i default ufficiali di fine-tuning (batch 4,
+  16384 token) chiedono ~26 GiB di VRAM e non entrano in una 24 GB — usa il preset a
+  batch ridotto con gradiente accumulato (v. §2.6.1 di AGENTS.md).
+- **Fine-tuning**: non serve una GPU serverless; 2–3 ore di RTX 3090/4090 su Vast.ai
+  (da ~0,07–0,13 $/h) bastano per una run LoRA su questo corpus.
+- **Strategia consigliata**: Vast.ai a ore per annotazione/prefill/training;
+  Modal serverless per playground e valutazioni sporadiche.

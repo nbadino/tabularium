@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useI18n } from '../i18n'
 import {
   INFERENCE_PRESETS,
   saveInferenceToBackend,
@@ -11,8 +12,10 @@ import { Badge, Field } from './ui'
 import { IconCloud, IconEnv } from './icons'
 import { CloudGuideModal } from './CloudGuideModal'
 import { CloudControlModal } from './CloudControlModal'
+import { ModelsModal } from './ModelsModal'
 
 export function InferenceCard() {
+  const { t } = useI18n()
   const inf = useInference()
   const [url, setUrl] = useState(inf.url)
   const [model, setModel] = useState(inf.model)
@@ -20,6 +23,7 @@ export function InferenceCard() {
   const [showKey, setShowKey] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
   const [controlOpen, setControlOpen] = useState(false)
+  const [modelsOpen, setModelsOpen] = useState(false)
   const [testing, setTesting] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testResult, setTestResult] = useState<{
@@ -47,7 +51,9 @@ export function InferenceCard() {
     setUrl(preset.url)
     setModel(preset.model)
     setTestResult(null)
-    setNotice(`Preset "${preset.label}" selezionato. Ricorda di verificare la connessione prima di salvare.`)
+    setNotice(
+      t('cloud.card.presetSelected', { name: t(preset.labelKey) }),
+    )
   }
 
   const runTest = async () => {
@@ -68,14 +74,17 @@ export function InferenceCard() {
       })
       if (res.ok) {
         setNotice(
-          `Connessione riuscita! Latenza: ${res.latency_ms ?? '?'} ms (${res.is_cloud ? 'Cloud GPU' : 'Locale'})`,
+          t('cloud.card.connOk', {
+            latency: String(res.latency_ms ?? '?'),
+            where: res.is_cloud ? t('cloud.card.whereCloud') : t('cloud.card.whereLocal'),
+          }),
         )
       } else {
-        setNotice(`Connessione fallita: ${res.error}`)
+        setNotice(t('cloud.card.connFail', { error: String(res.error) }))
       }
     } catch (e) {
       setTestResult({ ok: false, error: String(e) })
-      setNotice(`Errore durante il test: ${e}`)
+      setNotice(t('cloud.card.testError', { error: String(e) }))
     } finally {
       setTesting(false)
     }
@@ -91,10 +100,10 @@ export function InferenceCard() {
         model: model.trim() || 'MonkeyOCRv2',
         apiKey: apiKey.trim(),
       })
-      setNotice('Configurazione inferenza salvata e applicata con successo!')
+      setNotice(t('cloud.card.saved'))
       setInference(updated)
     } catch (e) {
-      setNotice(`Errore salvataggio: ${e}`)
+      setNotice(t('cloud.card.saveError', { error: String(e) }))
     } finally {
       setSaving(false)
     }
@@ -103,7 +112,7 @@ export function InferenceCard() {
   const toggleEnabled = async () => {
     const next = !inf.enabled
     await saveInferenceToBackend({ enabled: next })
-    setNotice(next ? 'Inferenza GPU/Cloud attivata.' : 'Inferenza GPU/Cloud disattivata.')
+    setNotice(next ? t('cloud.card.enabledOn') : t('cloud.card.enabledOff'))
   }
 
   const isOnline = inf.enabled && (testResult ? testResult.ok : inf.available)
@@ -116,9 +125,7 @@ export function InferenceCard() {
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--color-rule)] pb-3">
         <div className="flex items-center gap-2">
           {isCloud ? <IconCloud size={16} /> : <IconEnv size={16} />}
-          <h3 className="text-[14px] font-bold">
-            Inferenza Modello & Cloud Offloading (vLLM)
-          </h3>
+          <h3 className="text-[14px] font-bold">{t('cloud.card.title')}</h3>
         </div>
 
         <div className="flex items-center gap-2">
@@ -130,25 +137,25 @@ export function InferenceCard() {
                 ? '!border-emerald-600 !bg-emerald-950 !text-emerald-300'
                 : '!border-neutral-600 !bg-neutral-800 !text-neutral-300'
             }`}
-            title={inf.enabled ? 'Clicca per disattivare tutte le chiamate GPU/Cloud' : 'Clicca per attivare l\'inferenza GPU/Cloud'}
+            title={inf.enabled ? t('cloud.card.gpuOnTitle') : t('cloud.card.gpuOffTitle')}
           >
-            {inf.enabled ? '✓ GPU/Cloud Attiva' : '✕ GPU/Cloud Disattivata'}
+            {inf.enabled ? `✓ ${t('cloud.card.gpuOn')}` : `✕ ${t('cloud.card.gpuOff')}`}
           </button>
 
           {inf.enabled ? (
             isOnline ? (
               <Badge tone="ok">
-                🟢 {isCloud ? 'Cloud Remoto Connesso' : 'Locale Connesso'}
+                🟢 {isCloud ? t('cloud.card.onlineCloud') : t('cloud.card.onlineLocal')}
                 {latency != null && ` (${latency} ms)`}
               </Badge>
             ) : (
               <Badge tone="neutral">
-                ⚪ Non raggiungibile (offline)
+                ⚪ {t('cloud.card.offline')}
               </Badge>
             )
           ) : (
             <Badge tone="neutral">
-              ⚪ Disattivata dall'utente
+              ⚪ {t('cloud.card.disabled')}
             </Badge>
           )}
 
@@ -156,9 +163,18 @@ export function InferenceCard() {
             type="button"
             onClick={() => setControlOpen(true)}
             className="btn btn-sm text-[11px] !border-sky-600 !bg-sky-950 !text-sky-300 font-medium"
-            title="Gestisci tunnel SSH e istanze Vast.ai / RunPod senza usare il terminale"
+            title={t('cloud.card.manageTitle')}
           >
-            🎛️ Gestione Cloud da UI
+            🎛️ {t('cloud.card.manage')}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setModelsOpen(true)}
+            className="btn btn-sm text-[11px] !border-violet-600 !bg-violet-950 !text-violet-300 font-medium"
+            title={t('cloud.card.modelsTitle')}
+          >
+            📦 {t('cloud.card.models')}
           </button>
 
           <button
@@ -166,7 +182,7 @@ export function InferenceCard() {
             onClick={() => setGuideOpen(true)}
             className="btn btn-sm text-[11px]"
           >
-            📖 Guida Rapida
+            📖 {t('cloud.card.guide')}
           </button>
         </div>
       </div>
@@ -180,7 +196,7 @@ export function InferenceCard() {
 
       {/* Presets Bar */}
       <div className="mt-3">
-        <span className="lbl !mb-1">Preset di connessione rapida:</span>
+        <span className="lbl !mb-1">{t('cloud.card.presetsLabel')}</span>
         <div className="flex flex-wrap gap-1.5">
           {INFERENCE_PRESETS.map((p) => (
             <button
@@ -188,9 +204,9 @@ export function InferenceCard() {
               type="button"
               onClick={() => applyPreset(p.id)}
               className="btn btn-sm text-[11px]"
-              title={p.hint}
+              title={t(p.hintKey)}
             >
-              {p.label}
+              {t(p.labelKey)}
             </button>
           ))}
         </div>
@@ -200,8 +216,8 @@ export function InferenceCard() {
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="sm:col-span-2">
           <Field
-            label="Endpoint Server vLLM"
-            hint="Es: http://127.0.0.1:8888/v1 (Tunnel SSH) oppure https://<POD>-8888.proxy.runpod.net/v1"
+            label={t('cloud.card.endpointLabel')}
+            hint={t('cloud.card.endpointHint')}
           >
             <input
               value={url}
@@ -212,7 +228,7 @@ export function InferenceCard() {
           </Field>
         </div>
 
-        <Field label="Modello Servito" hint="Default: MonkeyOCRv2">
+        <Field label={t('cloud.card.modelLabel')} hint={t('cloud.card.modelHint')}>
           <input
             value={model}
             onChange={(e) => setModel(e.target.value)}
@@ -223,15 +239,15 @@ export function InferenceCard() {
 
         <div className="sm:col-span-2">
           <Field
-            label="API Key / Bearer Token (Opzionale)"
-            hint="Necessario se il server vLLM cloud è avviato con flag --api-key"
+            label={t('cloud.card.apiKeyLabel')}
+            hint={t('cloud.card.apiKeyHint')}
           >
             <div className="flex gap-1.5">
               <input
                 type={showKey ? 'text' : 'password'}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Lascia vuoto se non richiesta autenticazione"
+                placeholder={t('cloud.card.apiKeyPlaceholder')}
                 className="fld fld-mono flex-1"
               />
               <button
@@ -239,7 +255,7 @@ export function InferenceCard() {
                 onClick={() => setShowKey(!showKey)}
                 className="btn btn-sm px-2 text-[11px]"
               >
-                {showKey ? 'Nascondi' : 'Mostra'}
+                {showKey ? t('cloud.card.hide') : t('cloud.card.show')}
               </button>
             </div>
           </Field>
@@ -252,7 +268,7 @@ export function InferenceCard() {
             disabled={testing}
             className="btn btn-sm flex-1"
           >
-            {testing ? 'Test in corso…' : '⚡ Test Connessione'}
+            {testing ? t('cloud.card.testing') : t('cloud.card.test')}
           </button>
           <button
             type="button"
@@ -260,13 +276,14 @@ export function InferenceCard() {
             disabled={saving}
             className="btn btn-primary btn-sm flex-1"
           >
-            {saving ? 'Salvataggio…' : '💾 Salva'}
+            {saving ? t('cloud.card.saving') : t('cloud.card.save')}
           </button>
         </div>
       </div>
 
       <CloudGuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
       <CloudControlModal open={controlOpen} onClose={() => setControlOpen(false)} />
+      <ModelsModal open={modelsOpen} onClose={() => setModelsOpen(false)} />
     </div>
   )
 }
