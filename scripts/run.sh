@@ -4,7 +4,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# Configurazioni locali (LLOYDS_TRAIN_REPO, LLOYDS_TRAIN_ENV, ...) opzionali.
+# Configurazioni locali (TABULARIUM_TRAIN_REPO, TABULARIUM_TRAIN_ENV, ...) opzionali.
 if [ -f "$ROOT/.env" ]; then
   set -a
   # shellcheck disable=SC1091
@@ -19,11 +19,11 @@ fi
 
 cd "$ROOT/backend" || exit 1
 # shellcheck disable=SC1091
-BACKEND_ENV="${LLOYDS_BACKEND_ENV:-$ROOT/backend/.venv}"
+BACKEND_ENV="${TABULARIUM_BACKEND_ENV:-$ROOT/backend/.venv}"
 # Se è stato installato il runtime UVDoc dedicato, usalo automaticamente.
 # L'ambiente base Python 3.14 non ha una wheel PaddlePaddle compatibile.
-if [ -z "${LLOYDS_BACKEND_ENV:-}" ] && [ -x "$ROOT/.venv-uvdoc/bin/uvicorn" ]; then
+if [ -z "${TABULARIUM_BACKEND_ENV:-}" ] && [ -x "$ROOT/.venv-uvdoc/bin/uvicorn" ]; then
   BACKEND_ENV="$ROOT/.venv-uvdoc"
 fi
 source "$BACKEND_ENV/bin/activate"
-exec uvicorn app.main:app --host "${LLOYDS_HOST:-127.0.0.1}" --port "${LLOYDS_PORT:-8787}"
+exec uvicorn app.main:app --host "${TABULARIUM_HOST:-127.0.0.1}" --port "${TABULARIUM_PORT:-8787}"

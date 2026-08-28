@@ -1,6 +1,6 @@
 """Rilevamento della struttura di tabelle *senza filetti* (whitespace-aligned).
 
-I registri navali Lloyd's non hanno righe di riquadro: le colonne sono tenute
+I registri navali Historic Shipping Index non hanno righe di riquadro: le colonne sono tenute
 insieme dalla composizione tipografica (allineamenti costanti) e i campi sono
 collegati da puntini di guida. I modelli di struttura tabellare addestrati su
 tabelle moderne riquadrate (PubTabNet & simili) qui rendono male, mentre la
@@ -96,6 +96,9 @@ _WORD_GAP_FRAC = 0.35      # gap fra parole della stessa cella, frazione del pas
 _DOT_W_FRAC = 0.20         # larghezza massima di un puntino, frazione del passo
 _DOT_H_FRAC = 0.20         # altezza massima di un puntino, frazione del passo
 _PEAK_TOL_FRAC = 0.15      # tolleranza di clustering dei bordi, frazione del passo
+_SNAP_SEARCH = 1.5         # quanto lontano cercare il varco di una riga, in passi
+_SNAP_DISTANCE_COST = 0.5  # quanto costa allontanarsi dal prior, in px di varco
+_MIN_GAP_PX = 3            # larghezza minima di un tratto di bianco credibile
 
 
 @dataclass
@@ -629,6 +632,99 @@ def _column_bounds(
     return xs, support, diagnostics
 
 
+def _row_gaps(
+    ink: np.ndarray,
+    band: tuple[int, int],
+    pitch: int,
+    shear: float,
+    y_mid: float,
+    suppress_leaders: bool,
+) -> list[tuple[int, int]]:
+    """Varchi di bianco di una riga: `(centro, larghezza)`, nel sistema raddrizzato.
+
+    Deliberatamente **non** si raggruppano prima le parole. La soglia di fusione
+    (`_WORD_GAP_FRAC`, 0,35 passi ≈ 14 px) serve a decidere cosa è una parola,
+    ma un varco fra due colonne di questi registri è largo una quindicina di
+    pixel: usarla qui cancella proprio il varco che si sta cercando, prima di
+    cercarlo. Si prendono quindi i tratti di bianco grezzi e sarà il punteggio
+    a preferire quelli larghi.
+    """
+    profile = _shear_row_profile(ink, band[0], band[1], shear, y_mid)
+    if suppress_leaders:
+        profile, _ = _suppress_leaders(profile, pitch)
+    return [
+        ((start + end) // 2, end - start)
+        for start, end in _runs(profile <= 0, _MIN_GAP_PX)
+    ]
+
+
+def snap_boundaries(
+    ink: np.ndarray,
+    bands: list[tuple[int, int]],
+    vlines_px: list[float],
+    pitch: int,
+    shear: float,
+    *,
+    search: float = _SNAP_SEARCH,
+    suppress_leaders: bool = True,
+) -> tuple[list[list[int]], list[list[bool]]]:
+    """Porta ogni confine, riga per riga, nel **varco di bianco** più adatto.
+
+    Una colonna di questi registri non sta ferma: composta a mano e ripresa da
+    una pagina curva, deriva scendendo. Misurato sul campione, ogni confine
+    interno si sposta fra 25 e 77 px dall'alto al basso della pagina, cioè fra
+    0,6 e 2,0 passi tipografici. Una cifra è larga una ventina di pixel: un
+    taglio *dritto* alla mediana finisce dentro un numero su molte righe, e il
+    valore si spezza fra due celle.
+
+    Il rimedio non è una linea più precisa — nessuna retta può seguire una
+    deriva — ma un confine che **piega**. Il confine dritto resta il prior, e
+    su ogni riga si sposta nel varco migliore entro `search` passi, dove
+    «migliore» pesa la larghezza contro la distanza dal prior: il varco fra due
+    colonne è largo, quello fra due lettere no, e prendere semplicemente il più
+    vicino finirebbe spesso dentro una parola.
+
+    Ritorna, per ogni banda, i confini in pixel e un flag per confine che dice
+    se un varco è stato davvero trovato. Dove non c'è (due colonne che su
+    quella riga si toccano) il prior resta, e il flag lo dichiara `False`
+    invece di far finta che sia una misura.
+    """
+    width = ink.shape[1]
+    y_mid = ink.shape[0] / 2.0
+    reach = max(pitch, int(round(search * pitch)))
+
+    all_bounds: list[list[int]] = []
+    all_found: list[list[bool]] = []
+    for band in bands:
+        gaps = _row_gaps(ink, band, pitch, shear, y_mid, suppress_leaders)
+
+        bounds: list[int] = []
+        found: list[bool] = []
+        previous = 0
+        for i in range(1, len(vlines_px) - 1):
+            prior = int(round(vlines_px[i]))
+            candidates = [
+                (centre, gap_width)
+                for centre, gap_width in gaps
+                if abs(centre - prior) <= reach and centre > previous
+            ]
+            if candidates:
+                chosen = max(
+                    candidates,
+                    key=lambda g: g[1] - _SNAP_DISTANCE_COST * abs(g[0] - prior),
+                )[0]
+                found.append(True)
+            else:
+                chosen = max(prior, previous + 1)
+                found.append(False)
+            chosen = min(width - 1, max(previous + 1, chosen))
+            bounds.append(chosen)
+            previous = chosen
+        all_bounds.append(bounds)
+        all_found.append(found)
+    return all_bounds, all_found
+
+
 # --------------------------------------------------------------------------
 # Ingresso pubblico
 # --------------------------------------------------------------------------
@@ -687,9 +783,26 @@ def detect_grid(
     # I bordi esterni non sono "attestati": marcali con il numero di righe piene.
     column_support = [len(bands), *support, len(bands)]
 
+    # Confini piegati: dove passa davvero il taglio su ciascuna riga. Servono a
+    # disegnarli e a riempire le celle senza spezzare valori; non sono ancora
+    # persistiti (il grid salvato porta solo le rette), quindi vivono nella
+    # diagnostica della bozza.
+    if len(vlines_px) > 2:
+        row_bounds, row_proven = snap_boundaries(ink, bands, vlines_px, pitch, shear)
+    else:
+        row_bounds, row_proven = [], []
+    unproven = sum(1 for flags in row_proven for f in flags if not f)
+
     warnings: list[str] = []
     if abs(shear) > _SHEAR_REPORT:
         warnings.append("skewed")
+    # Nessun avviso «la colonna deriva»: deriva su tutte e quattro le pagine del
+    # campione (dal 7% al 41% di tagli senza varco), quindi scatterebbe sempre e
+    # si imparerebbe a ignorarlo — lo stesso motivo per cui non c'è
+    # `multi_column`. La deriva non è una condizione della scansione, è una
+    # proprietà per cella: `row_columns_unproven` la conta e `fill_cells` marca
+    # le singole celle, così l'annotatore va dove serve invece di leggere un
+    # allarme che vale per ogni pagina.
 
     diagnostics.update(
         {
@@ -699,6 +812,11 @@ def detect_grid(
             "glyphs": int(len(glyphs)),
             "otsu": int(threshold),
             "shear": round(float(shear), 5),
+            "row_columns": [
+                [round(x / width, 6) for x in bounds] for bounds in row_bounds
+            ],
+            "row_columns_proven": [list(flags) for flags in row_proven],
+            "row_columns_unproven": int(unproven),
             "skew_deg": round(float(np.degrees(np.arctan(shear))), 3),
             "image_size": [int(width), int(height)],
         }
@@ -741,12 +859,23 @@ def fill_cells(
     pitch: int,
     min_score: float = 0.0,
     skip_blank: bool = True,
+    shear: float = 0.0,
+    snap: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Riempie le celle della griglia con l'OCR, una cella alla volta.
+    """Riempie le celle con l'OCR, **assegnando i valori** invece di tagliare a x fisso.
 
     È il punto in cui l'OCR di riga smette di essere controproducente: il
     riquadro arriva dalla griglia, quindi il motore non può più fondere colonne
     diverse in una stringa sola e ogni errore resta confinato alla sua cella.
+
+    Ma il riquadro non può essere un rettangolo. Una colonna di questi registri
+    deriva orizzontalmente scendendo — misurato: da 25 a 77 px, cioè fino a due
+    passi tipografici — e una cifra è larga una ventina di pixel, quindi un
+    taglio dritto finisce dentro un numero e ne manda metà nella cella accanto.
+    Con `snap` il confine si sposta, riga per riga, nel varco fra parole più
+    vicino: sul campione, dove un varco esiste (86% dei tagli) **nessuno dei
+    1486 tagli spezza un valore**; dove non esiste il confine dritto resta e la
+    cella viene contata fra le `uncertain`, perché è lì che va guardata.
 
     Le celle senza inchiostro non vengono nemmeno passate al motore: sono celle
     vuote legittime (`ecel` in OTSL) e interrogarle produrrebbe solo rumore.
@@ -758,14 +887,38 @@ def fill_cells(
     pad = max(2, int(_CELL_PAD_FRAC * pitch))
     target_h = max(24, int(_CELL_TARGET_H * pitch))
 
+    hlines_px = [round(v * height) for v in hlines]
+    bands = [(a, b) for a, b in zip(hlines_px, hlines_px[1:])]
+    vlines_px = [v * width for v in vlines]
+    if snap and cols > 1 and bands:
+        row_bounds, row_proven = snap_boundaries(
+            ink, bands, vlines_px, pitch, shear
+        )
+    else:
+        straight = [int(round(v)) for v in vlines_px[1:-1]]
+        row_bounds = [straight for _ in bands]
+        row_proven = [[True] * len(straight) for _ in bands]
+
     cells: list[dict[str, Any]] = []
-    filled = blank = low = 0
+    filled = blank = low = uncertain = 0
     scores: list[float] = []
 
     for r in range(rows):
-        y0, y1 = round(hlines[r] * height), round(hlines[r + 1] * height)
+        y0, y1 = hlines_px[r], hlines_px[r + 1]
+        edges = [0, *row_bounds[r], width] if r < len(row_bounds) else [
+            int(round(v)) for v in vlines_px
+        ]
+        # I bordi esterni restano quelli globali: delimitano il contenuto, non
+        # separano due colonne, quindi non c'è varco da cercare.
+        edges[0] = int(round(vlines_px[0]))
+        edges[-1] = int(round(vlines_px[-1]))
+        proven = row_proven[r] if r < len(row_proven) else [True] * max(0, cols - 1)
+
         for c in range(cols):
-            x0, x1 = round(vlines[c] * width), round(vlines[c + 1] * width)
+            x0, x1 = edges[c], edges[c + 1]
+            # Una cella è incerta se uno dei suoi due confini interni non è
+            # stato provato da un varco su questa riga.
+            sure = (c == 0 or proven[c - 1]) and (c == cols - 1 or proven[c])
             text, score = "", 0.0
             if x1 - x0 >= 2 and y1 - y0 >= 2:
                 has_ink = bool(ink[y0:y1, x0:x1].any())
@@ -792,15 +945,27 @@ def fill_cells(
                     elif text:
                         filled += 1
                         scores.append(score)
-            cells.append(
-                {"r": r, "c": c, "rowspan": 1, "colspan": 1, "text": text}
-            )
+                        if not sure:
+                            uncertain += 1
+            cell: dict[str, Any] = {
+                "r": r,
+                "c": c,
+                "rowspan": 1,
+                "colspan": 1,
+                "text": text,
+            }
+            if text and not sure:
+                # Il confine di questa cella non è provato: va guardato.
+                cell["uncertain"] = True
+            cells.append(cell)
 
     stats = {
         "cells": rows * cols,
         "filled": filled,
         "blank": blank,
         "below_threshold": low,
+        "uncertain": uncertain,
+        "snapped": bool(snap and cols > 1),
         "mean_score": round(sum(scores) / len(scores), 4) if scores else 0.0,
     }
     return cells, stats

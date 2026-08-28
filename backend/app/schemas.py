@@ -31,7 +31,7 @@ class StudyProtocolIn(BaseModel):
     time_start: str | None = None
     time_end: str | None = None
     objective: str = Field(default="", max_length=4000)
-    domain_profile: str = "lloyds-list-1900s"
+    domain_profile: str = "tabularium-list-1900s"
     model_adapter: str = "monkeyocrv2-parsing"
     gold_pages: list[int] = Field(default_factory=list, max_length=500)
 

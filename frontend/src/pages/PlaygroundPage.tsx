@@ -4,7 +4,7 @@ import type { PageItem, PlaygroundResult } from '../lib/types'
 import { blocks } from '../lib/vocab'
 import { ErrorNotice, Field, Module } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
-import { useInference } from '../app/inference'
+import { toggleInferenceEnabled, useInference } from '../app/inference'
 import { IconCopy, IconPlayground } from '../app/icons'
 import { useI18n, tn } from '../i18n'
 
@@ -69,9 +69,9 @@ export default function PlaygroundPage() {
     try {
       await navigator.clipboard.writeText(md)
       setCopied(true)
-      setTimeout(() => setCopied(false), 2500)
-    } catch (e) {
-      setError(e)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      /* clipboard fallback */
     }
   }
 
@@ -88,6 +88,19 @@ export default function PlaygroundPage() {
           {t('playground.intro')}
         </p>
       </div>
+
+      {!inference.enabled && (
+        <div className="mb-3 flex items-center justify-between rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-[12px] text-neutral-300">
+          <span>⚪ L'inferenza GPU/Cloud è attualmente disattivata nelle impostazioni.</span>
+          <button
+            type="button"
+            onClick={() => void toggleInferenceEnabled(true)}
+            className="btn btn-sm !border-emerald-600 !bg-emerald-950 !text-emerald-300"
+          >
+            Attiva Inferenza GPU
+          </button>
+        </div>
+      )}
 
       {error != null && (
         <div className="mb-3">

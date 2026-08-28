@@ -28,7 +28,7 @@ export const LOCALE_LABELS: Record<Locale, string> = {
 
 export const dicts: Record<Locale, Dict> = { it, en, fr }
 
-const KEY = 'lloyds.locale'
+const KEY = 'tabularium.locale'
 
 function load(): Locale {
   try {

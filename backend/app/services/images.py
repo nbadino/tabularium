@@ -141,3 +141,105 @@ def deskew(image: Image.Image, min_line_len: int = 60) -> tuple[Image.Image, flo
         borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255),
     )
     return Image.fromarray(rotated), angle
+
+
+def perspective_rectify(
+    image: Image.Image,
+    points: list[tuple[float, float]] | list[list[float]],
+) -> Image.Image:
+    """Rettifica un quadrilatero sulla tela originale.
+
+    ``points`` è ordinato TL, TR, BR, BL ed espresso in pixel sorgente. La
+    tela resta invariata: tutte le coordinate successive continuano quindi a
+    usare ``pages.width``/``pages.height``.
+    """
+    import cv2
+    import numpy as np
+
+    if len(points) != 4:
+        raise ValueError("perspective_requires_four_points")
+    src = np.asarray(points, dtype=np.float32)
+    if src.shape != (4, 2) or not np.isfinite(src).all():
+        raise ValueError("perspective_points_invalid")
+    width, height = image.size
+    if (
+        (src[:, 0] < 0).any()
+        or (src[:, 0] > width - 1).any()
+        or (src[:, 1] < 0).any()
+        or (src[:, 1] > height - 1).any()
+    ):
+        raise ValueError("perspective_points_outside")
+    # Un quadrilatero concavo o autointersecante produrrebbe una pagina
+    # ripiegata: OpenCV lo accetta, ma non è un risultato utile per l'OCR.
+    if not cv2.isContourConvex(src.reshape((-1, 1, 2))):
+        raise ValueError("perspective_points_not_convex")
+    if abs(float(cv2.contourArea(src.reshape((-1, 1, 2))))) < width * height * 0.05:
+        raise ValueError("perspective_area_too_small")
+    dst = np.asarray(
+        [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
+        dtype=np.float32,
+    )
+    matrix = cv2.getPerspectiveTransform(src, dst)
+    out = cv2.warpPerspective(
+        np.asarray(image.convert("RGB")),
+        matrix,
+        (width, height),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255, 255, 255),
+    )
+    return Image.fromarray(out)
+
+
+def mesh_rectify(
+    image: Image.Image,
+    grid: list[list[list[float]]] | list[list[tuple[float, float]]],
+) -> Image.Image:
+    """Rettifica una griglia manuale normalizzata con celle quadrilatere.
+
+    I punti sorgente sono normalizzati 0–1; la destinazione è una griglia
+    uniforme sull'intera tela. È lo stesso principio della mesh manuale di
+    strumenti di digitalizzazione: l'utente fa seguire le righe della griglia
+    alla carta curva, poi ogni cella viene riportata a rettangolo.
+    """
+    import numpy as np
+
+    if len(grid) < 2 or any(len(row) < 2 for row in grid):
+        raise ValueError("mesh_grid_too_small")
+    cols = len(grid[0])
+    if any(len(row) != cols for row in grid):
+        raise ValueError("mesh_grid_ragged")
+    arr = np.asarray(grid, dtype=float)
+    if arr.shape != (len(grid), cols, 2) or not np.isfinite(arr).all():
+        raise ValueError("mesh_points_invalid")
+    if (arr < 0).any() or (arr > 1).any():
+        raise ValueError("mesh_points_outside")
+    # Le righe e le colonne non possono invertirsi: impedisce celle piegate o
+    # sovrapposte che Pillow trasformerebbe senza segnalare l'errore.
+    if (np.diff(arr[:, :, 0], axis=1) <= 0).any() or (np.diff(arr[:, :, 1], axis=0) <= 0).any():
+        raise ValueError("mesh_points_crossed")
+
+    width, height = image.size
+    px = arr.copy()
+    px[:, :, 0] *= width - 1
+    px[:, :, 1] *= height - 1
+    rows = len(grid)
+    mesh: list[tuple[tuple[int, int, int, int], tuple[float, ...]]] = []
+    for r in range(rows - 1):
+        top = round(r * height / (rows - 1))
+        bottom = round((r + 1) * height / (rows - 1))
+        for c in range(cols - 1):
+            left = round(c * width / (cols - 1))
+            right = round((c + 1) * width / (cols - 1))
+            tl, tr = px[r, c], px[r, c + 1]
+            bl, br = px[r + 1, c], px[r + 1, c + 1]
+            # Pillow QUAD: UL, LL, LR, UR.
+            quad = (*tl, *bl, *br, *tr)
+            mesh.append(((left, top, right, bottom), tuple(float(v) for v in quad)))
+    return image.convert("RGB").transform(
+        (width, height),
+        Image.Transform.MESH,
+        mesh,
+        resample=Image.Resampling.BICUBIC,
+        fillcolor="white",
+    )

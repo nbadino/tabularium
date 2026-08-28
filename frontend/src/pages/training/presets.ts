@@ -39,6 +39,27 @@ export interface Preset {
 
 export const PRESETS: Preset[] = [
   {
+    // Misurato, non scelto: a `max_length` 16384 i soli logit chiedono
+    // B x 16384 x 151936 x 2 byte, cioè 4,6 GiB per campione. Con batch 1 e
+    // 8192 token la stima completa è ~5,4 GiB e sta in una scheda da 8 GB;
+    // `grad_accum 4` tiene il batch effettivo del preset ufficiale.
+    // v. `backend/app/services/vram.py` e AGENTS.md §2.6.1.
+    id: 'gpu8',
+    nomeKey: 'training.preset8gbName',
+    percheKey: 'training.preset8gbWhy',
+    cfg: {
+      train_type: 'lora',
+      epochs: 1,
+      learning_rate: 1e-5,
+      batch_size: 1,
+      grad_accum: 4,
+      lora_rank: 8,
+      lora_alpha: 32,
+      max_length: 8192,
+      eval_steps: 200,
+    },
+  },
+  {
     id: 'rapido',
     nomeKey: 'training.presetQuickName',
     percheKey: 'training.presetQuickWhy',

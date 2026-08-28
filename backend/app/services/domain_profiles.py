@@ -1,4 +1,4 @@
-"""Profili di dominio caricabili senza legare il core a Lloyd's List."""
+"""Profili di dominio caricabili senza legare il core a Historic Shipping Index."""
 from __future__ import annotations
 
 import json

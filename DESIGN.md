@@ -2,7 +2,7 @@
 
 <!-- impeccable:design-schema 1 -->
 
-Sistema visivo di Lloyds Lab, registrato dal codice costruito (non dalle intenzioni).
+Sistema visivo di Tabularium, registrato dal codice costruito (non dalle intenzioni).
 Direzione: **alta densità giapponese**, sfidante vincente del registro *bolder*, seed `f6d9f98e`.
 Modo: **Operate**. Sorgente della verità: `frontend/src/index.css` e `frontend/src/app/`.
 

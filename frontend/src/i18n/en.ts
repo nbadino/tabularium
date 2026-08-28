@@ -8,7 +8,7 @@ import type { Dict } from './it'
 
 export const en: Dict = {
   app: {
-    title: 'Lloyds Lab — Fine-tuning MonkeyOCRv2',
+    title: 'Tabularium — Fine-tuning MonkeyOCRv2',
     tagline: 'Fine-tuning MonkeyOCRv2-Parsing on historical corpora',
     skipToContent: 'Skip to content',
     navSections: 'Sections',
@@ -182,7 +182,7 @@ export const en: Dict = {
     intro: 'Each project points to an archive folder (scans or PDFs). Pages are registered with a scan, which never modifies the source files.',
     new: 'New project',
     name: 'Name',
-    namePlaceholder: 'E.g. Lloyd’s List 1904',
+    namePlaceholder: 'E.g. Historic Shipping Index 1904',
     archiveDir: 'Archive folder',
     archiveDirHint: 'Absolute path on the machine running the backend.',
     archiveDirPlaceholder: '/path/to/scans',
@@ -337,6 +337,34 @@ export const en: Dict = {
     alignApplied: 'Page aligned ({level}, {angle}°): now run Prefill OCR or annotate.',
     alignEngineUvdoc: 'Engine: UVDoc.',
     alignEngineFallback: 'UVDoc unavailable: safe rotation only was used.',
+    transformOpen: 'Align and compare',
+    transformTitle: 'Page rectification — proposal and comparison',
+    transformEngine: 'Method',
+    transformEngine_deskew: 'Rotation',
+    transformEngine_deskewHint: 'Corrects only the global tilt of text lines.',
+    transformEngine_uvdoc: 'UVDoc',
+    transformEngine_uvdocHint: 'Neural dewarping for perspective and curved paper; recommended.',
+    transformEngine_docscanner: 'DocScanner-L',
+    transformEngine_docscannerHint: 'Experimental engine: inspect crops and waves carefully.',
+    transformEngine_perspective: 'Four corners',
+    transformEngine_perspectiveHint: 'Drag TL, TR, BR and BL onto the page edges.',
+    transformEngine_mesh: 'Manual mesh',
+    transformEngine_meshHint: 'Make the grid follow curved lines and paper edges.',
+    transformGenerate: 'Generate proposal',
+    transformGenerating: 'Generating…',
+    transformResetPoints: 'Reset points',
+    transformOriginal: 'Original',
+    transformOriginalAlt: 'Original scan before rectification',
+    transformCandidate: 'Proposal',
+    transformCandidateAlt: 'Preview of the proposed rectification',
+    transformMovePoints: 'Original — drag points',
+    transformAccept: 'Accept as master',
+    transformReject: 'Reject proposal',
+    transformAcceptConfirm: 'Accepting the rectification will delete annotated blocks because coordinates change. Continue?',
+    transformAcceptedNotice: 'Rectification accepted: canvas, Prefill, crops and export now use the same lossless master.',
+    transformActive: 'Active master: {engine}',
+    transformError: 'Proposal not generated',
+    transformUnavailable: 'Unavailable in the active environment.',
     reset: 'Reset transform',
     resetBusy: 'Resetting…',
     resetTitle: 'Return to the original scan and remove rotation/dewarp',
@@ -370,6 +398,8 @@ export const en: Dict = {
       other:
         'OCR {engine}: {count} drafts generated (replaced). Fix them — they are your dataset.',
     },
+    ocrTableNotice:
+      'The register was promoted to a Table block with {grids} pre-filled grid: open the table editor and verify the cells — they are not confirmed transcriptions.',
     saveFirstBlock:
       'Save the blocks first (autosave) to open the table editor.',
     blockNotSaved: 'Block not saved yet (wait for autosave).',
@@ -460,7 +490,6 @@ export const en: Dict = {
     separate: 'Separate',
     separateTitle: 'Restore the merged cell to its original cells',
     notDone: 'Operation not performed',
-    origCrop: 'Original crop',
     cropAlt: 'Table crop from the page',
     zoomOut: 'Zoom out',
     zoomIn: 'Zoom in',
@@ -474,9 +503,6 @@ export const en: Dict = {
     cellAria: 'Row {r}, column {c} cell',
     phantomNote:
       'Phantom columns: present in the structure but with no header in the original.',
-    rulesTop: 'Adjustable ruling lines',
-    vertical: 'Vertical',
-    horizontal: 'Horizontal',
     vlineAria: 'Vertical ruling line {n}',
     hlineAria: 'Horizontal ruling line {n}',
     otslNote: 'OTSL generated — the format training receives',
@@ -502,6 +528,24 @@ export const en: Dict = {
     detectOcrSummary: 'OCR {engine}: {filled} cells filled, {blank} blank, mean confidence {score}%',
     detectWeak:
       '{n} weakly attested boundaries: check them against the crop before transcribing.',
+    overlayTitle: 'Crop and proposed grid',
+    overlayIdle: 'Drag a boundary to move it. Select one to read its support or reject it.',
+    overlayArmV: 'Click the crop where the new column boundary runs.',
+    overlayArmH: 'Click the crop where the new row boundary runs.',
+    overlayAddColumn: 'Add column',
+    overlayAddRow: 'Add row',
+    overlayReject: 'Reject boundary',
+    overlayColumnLine: 'Column boundary {n} of {total}',
+    overlayRowLine: 'Row boundary {n} of {total}',
+    overlayEdge: 'content edge: it moves, it is not rejected',
+    overlaySupport: 'attested on {n} of {rows} rows',
+    overlayWeak: 'weakly attested, check it against the ink',
+    boundaryInsertRefused:
+      'A boundary here separates nothing: it falls outside the content or onto an existing one.',
+    boundaryDropRefused:
+      'Ambiguous merge: this boundary has merged cells with different extents. Split them before rejecting it.',
+    detectDrift:
+      '{n} cuts with no gap to prove them: the column drifts there and the boundary stayed on the straight line. The grey polyline shows where it actually runs.',
     detectWarnTitle: 'The scan limits detection',
     detectWarnSkewed:
       'Page skewed by {deg}°: row boundaries are horizontal and cannot follow the '
@@ -612,6 +656,9 @@ export const en: Dict = {
       'The checkpoint remains partial. Press again within a few seconds to confirm.',
     envNote:
       'Requires the dedicated GPU environment {env} and the checkout of the official repo (variable {repo}).',
+    preset8gbName: '8 GB GPU',
+    preset8gbWhy:
+      'Batch 1 over 8192 tokens with accumulation 4: same effective batch as the official preset, ~5.4 GB of VRAM instead of 26. The other presets do not fit an 8 GB card.',
     presetQuickName: 'Quick test',
     presetQuickWhy:
       'A short run to verify that the pipeline runs and the dataset is accepted. Do not expect quality: it is meant to surface errors in minutes instead of hours.',

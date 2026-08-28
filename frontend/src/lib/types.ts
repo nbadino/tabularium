@@ -62,6 +62,36 @@ export interface PageItem {
   created_at: string
 }
 
+export type TransformEngine = 'deskew' | 'uvdoc' | 'docscanner' | 'perspective' | 'mesh'
+
+export interface TransformMetadata {
+  version: number
+  level: string
+  engine: string
+  requested_engine?: string
+  actual_engine?: string
+  size: [number, number]
+  angle?: number
+  warnings?: string[]
+  error?: string | null
+  diagnostics?: Record<string, unknown>
+  created_at?: string
+  accepted?: boolean
+}
+
+export interface TransformState {
+  page_id: number
+  active: TransformMetadata | null
+  candidate: TransformMetadata | null
+  original_preview_url: string
+  active_preview_url: string | null
+  candidate_preview_url: string | null
+  engines?: Partial<Record<TransformEngine, { available: boolean; reason?: string }>>
+  generated?: TransformMetadata
+  accepted?: boolean
+  rejected?: boolean
+}
+
 export interface ScanReport {
   found_files: number
   registered: number
@@ -135,6 +165,10 @@ export interface TableCell {
   rowspan: number
   colspan: number
   text: string
+  /** Chi ha scritto il testo: `manual` dopo una modifica umana, altrimenti il prefill. */
+  source?: 'manual' | 'ocr' | 'model'
+  /** Falso finché un annotatore non conferma il testo proposto dal prefill. */
+  verified?: boolean
 }
 
 export interface TableGrid {
@@ -162,6 +196,13 @@ export interface PrefillEngines {
   recommended: 'ocr' | 'model' | null
 }
 
+/** Risposta del ri-riconoscimento di una singola cella (non persiste nulla). */
+export interface TableCellRecognizeOut {
+  text: string
+  score: number
+  engine: string
+}
+
 export interface TableDetectRequest {
   min_support?: number
   suppress_leaders?: boolean
@@ -175,8 +216,12 @@ export interface TableDetectOut {
   grid: TableGrid
   /** Su quante righe è attestato ciascun confine verticale (len = cols + 1). */
   column_support: number[]
-  /** Condizioni misurate che limitano la proposta: codici stabili, tradotti a video. */
-  warnings: string[]
+  /**
+   * Condizioni misurate che limitano la proposta: codici stabili, tradotti a
+   * video. Facoltativo perché un backend avviato prima di questo campo non lo
+   * manda affatto, e l'editor non deve rompersi per una risposta più vecchia.
+   */
+  warnings?: string[]
   diagnostics: {
     pitch_px?: number
     row_bands?: number
@@ -185,6 +230,12 @@ export interface TableDetectOut {
     otsu?: number
     shear?: number
     skew_deg?: number
+    /** Confini interni riga per riga, 0–1: dove il taglio passa davvero. */
+    row_columns?: number[][]
+    /** Per ciascun confine di ciascuna riga, se un varco è stato provato. */
+    row_columns_proven?: boolean[][]
+    /** Quanti tagli sono rimasti sul prior perché nessun varco li provava. */
+    row_columns_unproven?: number
     leader_dots_suppressed?: number
     gutters?: number[]
     content_x?: [number, number]
@@ -195,6 +246,8 @@ export interface TableDetectOut {
     filled?: number
     blank?: number
     below_threshold?: number
+    uncertain?: number
+    snapped?: boolean
     mean_score?: number
   } | null
 }
@@ -370,6 +423,7 @@ export interface PlaygroundResult {
 }
 
 export interface InferenceConfig {
+  enabled?: boolean
   url: string
   model: string
   has_api_key?: boolean
@@ -393,4 +447,3 @@ export interface InferenceTestResult {
   is_cloud?: boolean
   error?: string | null
 }
-

@@ -16,7 +16,7 @@ identità autenticata).
 
 ## Product Purpose
 
-Lloyds Lab accompagna l'utente dall'archivio di scansioni al modello affinato: registra le
+Tabularium accompagna l'utente dall'archivio di scansioni al modello affinato: registra le
 pagine dell'archivio (immagini/PDF) con metadati, guida l'annotazione super-dettagliata
 (blocchi semantici, tabelle con celle unite, ordine di lettura, trascrizione con convenzioni),
 esporta il dataset nel formato ufficiale ms-swift (JSONL, coordinate 0–1000, tabelle OTSL),
@@ -61,18 +61,18 @@ del pipeline.
   (`Issue-header, Column, Headline, Byline, Advertisement, Note`).
 - Backend senza PyTorch: training/inferenza girano in processi/env separati (subprocess, vLLM,
   SSE per i log); il dashboard non dipende mai dal training in esecuzione.
-- Storage: SQLite + filesystem; percorsi mai hard-coded (env var `LLOYDS_ROOT`).
+- Storage: SQLite + filesystem; percorsi mai hard-coded (env var `TABULARIUM_ROOT`).
 - In decisamente deciso: destinazione del rilascio pubblico (licenza, repo pubblico, momento).
 
 ## Brand Commitments
 
-- Nome: **Lloyds Lab**, legato al corpus di riferimento "Lloyd's List" (1900s).
+- Nome: **Tabularium**, legato al corpus di riferimento "Historic Shipping Index" (1900s).
 - Il prodotto è candidato a rilascio pubblico/open source: naming, UX e documentazione devono
   reggere l'esposizione a un pubblico esterno.
 
 ## Evidence on Hand
 
-- Corpus corrente: progetto "Lloyd Smoke" con 3 pagine registrate in `data/lloyds.db`;
+- Corpus corrente: progetto "Tabularium Smoke" con 3 pagine registrate in `data/tabularium.db`;
   thumbnails in `data/thumbs/`.
 - Fonte di verità tecnica: `AGENTS.md` (contesto ufficiale MonkeyOCRv2, convenzioni dati,
   iperparametri, roadmap, regole operative).

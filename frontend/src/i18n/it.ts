@@ -7,7 +7,7 @@
 
 export const it = {
   app: {
-    title: 'Lloyds Lab — Fine-tuning MonkeyOCRv2',
+    title: 'Tabularium — Fine-tuning MonkeyOCRv2',
     tagline: 'Fine-tuning MonkeyOCRv2-Parsing su corpus storici',
     skipToContent: 'Salta al contenuto',
     navSections: 'Sezioni',
@@ -182,7 +182,7 @@ export const it = {
     intro: 'Ogni progetto punta a una cartella archivio (scansioni o PDF). Le pagine vengono registrate con una scansione, che non modifica mai i file sorgente.',
     new: 'Nuovo progetto',
     name: 'Nome',
-    namePlaceholder: 'Es. Lloyd’s List 1904',
+    namePlaceholder: 'Es. Historic Shipping Index 1904',
     archiveDir: 'Cartella archivio',
     archiveDirHint: 'Percorso assoluto sulla macchina che esegue il backend.',
     archiveDirPlaceholder: '/percorso/alle/scansioni',
@@ -337,6 +337,34 @@ export const it = {
     alignApplied: 'Pagina allineata ({level}, {angle}°): ora Prefill OCR o annota.',
     alignEngineUvdoc: 'Motore: UVDoc.',
     alignEngineFallback: 'UVDoc non disponibile: usata solo la rotazione sicura.',
+    transformOpen: 'Allinea e confronta',
+    transformTitle: 'Rettifica pagina — proposta e confronto',
+    transformEngine: 'Metodo',
+    transformEngine_deskew: 'Rotazione',
+    transformEngine_deskewHint: 'Corregge solo l’inclinazione globale delle righe.',
+    transformEngine_uvdoc: 'UVDoc',
+    transformEngine_uvdocHint: 'Dewarp neurale per prospettiva e carta curva; scelta consigliata.',
+    transformEngine_docscanner: 'DocScanner-L',
+    transformEngine_docscannerHint: 'Motore sperimentale: verificare attentamente crop e onde.',
+    transformEngine_perspective: 'Quattro angoli',
+    transformEngine_perspectiveHint: 'Trascina TL, TR, BR e BL sui bordi della pagina.',
+    transformEngine_mesh: 'Mesh manuale',
+    transformEngine_meshHint: 'Fai seguire la griglia alle righe curve e ai bordi del foglio.',
+    transformGenerate: 'Genera proposta',
+    transformGenerating: 'Generazione…',
+    transformResetPoints: 'Ripristina punti',
+    transformOriginal: 'Originale',
+    transformOriginalAlt: 'Scansione originale prima della rettifica',
+    transformCandidate: 'Proposta',
+    transformCandidateAlt: 'Anteprima della rettifica proposta',
+    transformMovePoints: 'Originale — trascina i punti',
+    transformAccept: 'Accetta come master',
+    transformReject: 'Rifiuta proposta',
+    transformAcceptConfirm: 'Accettare la rettifica eliminerà i blocchi annotati perché cambiano le coordinate. Continuare?',
+    transformAcceptedNotice: 'Rettifica accettata: canvas, Prefill, crop ed export ora usano lo stesso master lossless.',
+    transformActive: 'Master attivo: {engine}',
+    transformError: 'Proposta non generata',
+    transformUnavailable: 'Non disponibile nell’ambiente attivo.',
     reset: 'Reset trasformazione',
     resetBusy: 'Ripristino…',
     resetTitle: 'Torna alla scansione originale e rimuovi rotazione/dewarp',
@@ -370,6 +398,8 @@ export const it = {
       other:
         'OCR {engine}: {count} bozze generate (sostituite). Correggile, sono il tuo dataset.',
     },
+    ocrTableNotice:
+      'Il registro è stato promosso a blocco Table con {grids} griglia precompilata: apri l’editor tabella e verifica le celle, non sono trascrizioni confermate.',
     saveFirstBlock:
       'Salva prima i blocchi (autosave) per aprire l’editor tabella.',
     blockNotSaved: 'Blocco non ancora salvato (attendi autosave).',
@@ -460,7 +490,6 @@ export const it = {
     separate: 'Separa',
     separateTitle: 'Riporta la cella unita alle celle originali',
     notDone: 'Operazione non eseguita',
-    origCrop: 'Ritaglio originale',
     cropAlt: 'Ritaglio della tabella sulla pagina',
     zoomOut: 'Riduci zoom',
     zoomIn: 'Aumenta zoom',
@@ -474,9 +503,6 @@ export const it = {
     cellAria: 'Cella riga {r}, colonna {c}',
     phantomNote:
       'Colonne fantasma: presenti nella struttura ma senza intestazione nell’originale.',
-    rulesTop: 'Filetti regolabili',
-    vertical: 'Verticali',
-    horizontal: 'Orizzontali',
     vlineAria: 'Filetto verticale {n}',
     hlineAria: 'Filetto orizzontale {n}',
     otslNote: 'OTSL generato — il formato che il training riceve',
@@ -502,6 +528,24 @@ export const it = {
     detectOcrSummary: 'OCR {engine}: {filled} celle riempite, {blank} vuote, confidenza media {score}%',
     detectWeak:
       '{n} confini poco attestati: controllali sul ritaglio prima di trascrivere.',
+    overlayTitle: 'Ritaglio e griglia proposta',
+    overlayIdle: 'Trascina un confine per spostarlo. Selezionalo per leggerne il supporto o rifiutarlo.',
+    overlayArmV: 'Clicca sul ritaglio dove passa il nuovo confine di colonna.',
+    overlayArmH: 'Clicca sul ritaglio dove passa il nuovo confine di riga.',
+    overlayAddColumn: 'Aggiungi colonna',
+    overlayAddRow: 'Aggiungi riga',
+    overlayReject: 'Rifiuta confine',
+    overlayColumnLine: 'Confine di colonna {n} di {total}',
+    overlayRowLine: 'Confine di riga {n} di {total}',
+    overlayEdge: 'bordo del contenuto: si sposta, non si rifiuta',
+    overlaySupport: 'attestato su {n} righe di {rows}',
+    overlayWeak: 'poco attestato, verificalo sull inchiostro',
+    boundaryInsertRefused:
+      'Qui un confine non separa niente: cade fuori dal contenuto o sopra uno esistente.',
+    boundaryDropRefused:
+      'Fusione ambigua: su questo confine ci sono celle unite con estensioni diverse. Separale prima di rifiutarlo.',
+    detectDrift:
+      '{n} tagli senza un varco che li provi: lì la colonna deriva e il confine è restato sulla retta. La spezzata grigia mostra dove passa davvero.',
     detectWarnTitle: 'La scansione limita il rilevamento',
     detectWarnSkewed:
       'Pagina inclinata di {deg}°: i confini di riga sono orizzontali e non possono '
@@ -612,6 +656,9 @@ export const it = {
       'Il checkpoint resta parziale. Premi di nuovo entro pochi secondi per confermare.',
     envNote:
       'Richiede l’ambiente GPU dedicato {env} e il checkout del repo ufficiale (variabile {repo}).',
+    preset8gbName: 'GPU da 8 GB',
+    preset8gbWhy:
+      'Batch 1 su 8192 token con accumulo 4: stesso batch effettivo del preset ufficiale, ~5,4 GB di VRAM invece di 26. Gli altri preset non entrano in una scheda da 8 GB.',
     presetQuickName: 'Prova rapida',
     presetQuickWhy:
       'Un giro breve per verificare che la pipeline giri e che il dataset sia accettato. Non aspettarti qualità: serve a scoprire gli errori in minuti invece che in ore.',

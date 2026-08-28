@@ -1,6 +1,6 @@
 # Guida all'Offloading dell'Inferenza su Cloud (Vast.ai, RunPod, Modal)
 
-Questa guida spiega come eseguire **Lloyds Lab interamente sul tuo PC locale** (scansioni, annotazioni, database SQLite, interfaccia web) **delegando tutta l'inferenza pesante (layout, tabelle OTSL, OCR e playground)** a una potente **GPU remota nel Cloud** (es. NVIDIA RTX 4090 / 3090 / A5000 / A100).
+Questa guida spiega come eseguire **Tabularium interamente sul tuo PC locale** (scansioni, annotazioni, database SQLite, interfaccia web) **delegando tutta l'inferenza pesante (layout, tabelle OTSL, OCR e playground)** a una potente **GPU remota nel Cloud** (es. NVIDIA RTX 4090 / 3090 / A5000 / A100).
 
 ---
 
@@ -11,7 +11,7 @@ Questa guida spiega come eseguire **Lloyds Lab interamente sul tuo PC locale** (
 │                    TUO PC LOCALE (Laptop / Desktop)         │
 │  - FastAPI Backend (porta 8787)                             │
 │  - React UI nel browser                                     │
-│  - Scansioni storiche e Database SQLite (lloyds.db)         │
+│  - Scansioni storiche e Database SQLite (tabularium.db)         │
 │  - Zero uso di GPU locale (CPU fredda, ventole spente)      │
 └──────────────────────────────┬──────────────────────────────┘
                                │
@@ -53,7 +53,7 @@ Vast.ai è il marketplace GPU più economico al mondo ($0.20–$0.35/h per RTX 3
    ```
 3. Scarica ed esegui il nostro script di setup automatico:
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/cappannonno/lloyds-lab/main/scripts/cloud/setup_cloud_vllm.sh | bash
+   curl -fsSL https://raw.githubusercontent.com/cappannonno/tabularium/main/scripts/cloud/setup_cloud_vllm.sh | bash
    # Oppure se hai clonato il repo:
    bash setup_cloud_vllm.sh --port 8888
    ```
@@ -66,8 +66,8 @@ Sul tuo computer locale, esegui il nostro helper dedicato:
 ```
 Ora la porta remota `8888` è inoltrata in modo sicuro e cifrato al tuo `http://127.0.0.1:8888/v1` locale!
 
-### Passo 4: Collega Lloyds Lab
-1. Apri la Home di **Lloyds Lab** nel browser.
+### Passo 4: Collega Tabularium
+1. Apri la Home di **Tabularium** nel browser.
 2. Nel pannello **"Inferenza Cloud & Locale"**, seleziona il preset **"Vast.ai (Tunnel SSH)"** (oppure URL `http://127.0.0.1:8888/v1`).
 3. Clicca su **"Test Connessione"**: vedrai la spia verde con la latenza in millisecondi.
 4. Clicca su **"Salva Configurazione"**.
@@ -90,14 +90,14 @@ RunPod offre proxy HTTPS integrati senza bisogno di aprire tunnel SSH da termina
 1. Apri la **Web Terminal** o connettiti via SSH.
 2. Esegui lo script:
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/cappannonno/lloyds-lab/main/scripts/cloud/setup_cloud_vllm.sh | bash -s -- --port 8888 --api-key "chiave-segreta-tua"
+   curl -fsSL https://raw.githubusercontent.com/cappannonno/tabularium/main/scripts/cloud/setup_cloud_vllm.sh | bash -s -- --port 8888 --api-key "chiave-segreta-tua"
    ```
 
-### Passo 3: Collega Lloyds Lab con l'URL HTTPS di RunPod
+### Passo 3: Collega Tabularium con l'URL HTTPS di RunPod
 RunPod assegna automaticamente un URL pubblico protetto da SSL:
 `https://<POD_ID>-8888.proxy.runpod.net/v1`
 
-1. Inserisci l'URL in Lloyds Lab: `https://<POD_ID>-8888.proxy.runpod.net/v1`
+1. Inserisci l'URL in Tabularium: `https://<POD_ID>-8888.proxy.runpod.net/v1`
 2. Inserisci la tua **API Key** segreta.
 3. Clicca **"Test Connessione"** e poi **"Salva Configurazione"**.
 
@@ -111,7 +111,7 @@ Se preferisci non usare SSH Tunnel e avere una porta aperta su internet:
    ```bash
    bash setup_cloud_vllm.sh --port 8888 --api-key "IL_TUO_TOKEN_SEGRETO"
    ```
-3. In Lloyds Lab, inserisci l'URL pubblico di Vast.ai (es. `http://198.51.100.24:34567/v1`) e la chiave API.
+3. In Tabularium, inserisci l'URL pubblico di Vast.ai (es. `http://198.51.100.24:34567/v1`) e la chiave API.
 
 ---
 
@@ -129,7 +129,7 @@ python3 scripts/cloud/test_cloud_connection.py --url http://127.0.0.1:8888/v1 --
 
 Output di esempio:
 ```
->> [Lloyds Lab] Verifica Connessione Cloud / Remote vLLM
+>> [Tabularium] Verifica Connessione Cloud / Remote vLLM
 >> Target URL: http://127.0.0.1:8888/v1
 ============================================================
 [1/2] Test disponibilità endpoint (/models)...
@@ -139,7 +139,7 @@ Output di esempio:
 [2/2] Esecuzione inferenza di test con ritaglio sintetico...
   ✓ Inferenza completata in 410.5 ms!
   ✓ Token generati: 48 (~117.0 token/s)
->> [SUCCESS] Il server Cloud è pronto e compatibile con Lloyds Lab!
+>> [SUCCESS] Il server Cloud è pronto e compatibile con Tabularium!
 ```
 
 ---

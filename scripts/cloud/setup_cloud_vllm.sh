@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Lloyds Lab — Cloud GPU Inference Setup (Vast.ai / RunPod / Cloud VM)
+# Tabularium — Cloud GPU Inference Setup (Vast.ai / RunPod / Cloud VM)
 # ==============================================================================
 # Questo script si esegue sull'istanza cloud (es. Vast.ai con PyTorch/CUDA) per:
 # 1. Configurare l'ambiente Python/CUDA e le dipendenze vLLM
@@ -43,7 +43,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "=========================================================="
-echo ">> [Lloyds Lab Cloud Setup] Avvio configurazione vLLM GPU"
+echo ">> [Tabularium Cloud Setup] Avvio configurazione vLLM GPU"
 echo ">> Host: $HOST | Port: $PORT | GPU Mem Util: $GPU_MEM_UTIL"
 echo "=========================================================="
 
@@ -122,7 +122,7 @@ if [ -n "$API_KEY" ]; then
 fi
 
 echo "=========================================================="
-echo ">> [Lloyds Lab Cloud Server] Avvio vLLM su $HOST:$PORT..."
+echo ">> [Tabularium Cloud Server] Avvio vLLM su $HOST:$PORT..."
 echo ">> Endpoint: http://$HOST:$PORT/v1"
 echo "=========================================================="
 

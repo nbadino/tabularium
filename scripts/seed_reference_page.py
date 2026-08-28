@@ -7,7 +7,7 @@ DB reale invece che su una tabella sintetica.
 
 L'annotazione è quella discussa: **cinque blocchi**, non trecentosettanta.
 
-    Title          LLOYD'S SHIPPING INDEX     (testata, solo dove compare)
+    Title          HISTORIC SHIPPING INDEX     (testata, solo dove compare)
     Issue-number   No. 17,186
     Issue-date     MONDAY, MAY 14, 1973.
     Page-header    A. E. S-ADA                (indice a pollice, cambia a ogni pagina)
@@ -144,7 +144,7 @@ def build_blocks(image: Image.Image) -> list[dict]:
     body = ink_bbox(ink, running[3] + 4, height, density=0.005, min_run=20)
 
     return [
-        {"label": "Title", "bbox": title, "content": "LLOYD'S SHIPPING INDEX"},
+        {"label": "Title", "bbox": title, "content": "HISTORIC SHIPPING INDEX"},
         {"label": "Issue-number", "bbox": number, "content": "No. 17,186"},
         {"label": "Issue-date", "bbox": date, "content": "MONDAY, MAY 14, 1973."},
         {"label": "Page-header", "bbox": running, "content": "A. E. S-ADA"},

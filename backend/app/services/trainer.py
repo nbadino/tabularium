@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .. import config
 from .dataset_builder import _project_dir
+from . import vram
 from .trainer_metrics import _log_tail, _metrics, gpu_snapshot, parse_metrics_line
 from .trainer_script import (
     FAMILIES,
@@ -127,6 +128,50 @@ def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dic
                         "gpu_low_vram_w",
                         lang,
                         index=gpu["index"],
+                        free=f"{free_mb / 1024:.1f}",
+                    )
+                )
+
+            # La VRAM libera da sola non dice niente: quello che conta è se la
+            # *configurazione* ci sta. Il preset ufficiale (batch 4, 16384
+            # token) chiede ~26 GB perché i logit sono B×S×151936×2 byte, e su
+            # una scheda da 8 GB va in OOM dopo aver scaricato i pesi e
+            # costruito il dataset. Meglio saperlo adesso.
+            need = vram.estimate(cfg, model_path=str(cfg.get("model_path") or ""))
+            gpu["vram_estimate"] = need.to_dict()
+            if not vram.fits(need.total_mib, free_mb):
+                suggested = vram.largest_fitting_length(
+                    cfg, free_mb, model_path=str(cfg.get("model_path") or "")
+                )
+                if suggested <= 0:
+                    warnings.append(
+                        msg(
+                            "vram_no_length_fits_w",
+                            lang,
+                            index=gpu["index"],
+                            free=f"{free_mb / 1024:.1f}",
+                        )
+                    )
+                else:
+                    errors.append(
+                        msg(
+                            "vram_too_small",
+                            lang,
+                            index=gpu["index"],
+                            need=f"{need.total_mib / 1024:.1f}",
+                            free=f"{free_mb / 1024:.1f}",
+                            logits=f"{need.terms['logits'] / 1024:.1f}",
+                            vocab=need.assumptions["vocab_size"],
+                            suggest=suggested,
+                        )
+                    )
+            elif need.total_mib * 1.5 > free_mb:
+                warnings.append(
+                    msg(
+                        "vram_tight_w",
+                        lang,
+                        index=gpu["index"],
+                        need=f"{need.total_mib / 1024:.1f}",
                         free=f"{free_mb / 1024:.1f}",
                     )
                 )

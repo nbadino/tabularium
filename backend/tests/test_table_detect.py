@@ -189,7 +189,7 @@ def test_fill_cells_skips_blank_cells_without_calling_the_engine():
 
 
 @pytest.mark.skipif(not REAL_SCAN.exists(), reason="scansione di riferimento assente")
-def test_real_lloyds_index_page():
+def test_real_tabularium_index_page():
     """Guardia sul corpus vero: LSI_17186_015 è una tabella a piena pagina.
 
     Valori attesi verificati a mano sulla scansione: passo tipografico di 40 px,
@@ -398,3 +398,161 @@ def test_real_scans_that_the_projection_detector_could_not_read(
             assert expected[0] <= value <= expected[1]
         else:
             assert value == expected
+
+
+# --------------------------------------------------------------------------
+# Confini che piegano: una colonna che deriva non si descrive con una retta
+# --------------------------------------------------------------------------
+
+def _drifting_register(
+    *, rows: int = 40, pitch: int = 40, sigma: float = 8.0, glyph_h: int = 20
+) -> tuple[Image.Image, list[int]]:
+    """Registro a tre colonne in cui **tutto il blocco** vaga scendendo.
+
+    Riprodurre la condizione misurata sul corpus ha richiesto quattro
+    correzioni a questo fixture, e ognuna nascondeva un modo di non dimostrare
+    niente:
+
+    1. **varco stretto** (qui 20 px): con un varco largo la retta resta
+       comunque nel bianco e non spezza mai un valore;
+    2. **deriva in entrambi i versi** attorno alla mediana: a senso unico il
+       varco si allarga da un lato e la retta mediana non lo tocca mai;
+    3. **nessun bordo fermo**: se una colonna resta immobile il rilevatore
+       aggancia la retta a *quel* bordo e il taglio finisce sempre al sicuro.
+       Su una pagina curva ripresa da uno scanner piano deriva il blocco intero;
+    4. **deriva centrata, non a rampa**: una rampa lineare distribuisce gli
+       spostamenti in modo piatto, nessun picco di bordi sopravvive e non
+       fallisce solo il taglio — fallisce il rilevamento delle colonne. Sul
+       corpus la deriva ha dev.std 3,5–13 px con escursioni rare fino a 77 px,
+       cioè massa concentrata sulla mediana e code lunghe.
+
+    Lo spostamento è quindi normale con `sigma` px, da un seme fisso perché il
+    test resti deterministico.
+
+    Ritorna il centro del varco fra prima e seconda colonna, riga per riga.
+    """
+    rng = np.random.default_rng(7)
+    shifts = np.clip(np.round(rng.normal(0.0, sigma, rows)), -3 * sigma, 3 * sigma)
+    width, height = 560, rows * pitch + 3 * pitch
+    img = Image.new("L", (width, height), 255)
+    draw = ImageDraw.Draw(img)
+    truth: list[int] = []
+    for r in range(rows):
+        y = 2 * pitch + r * pitch
+        shift = int(shifts[r])
+        for left, right in ((60, 152), (172, 288), (308, 424)):
+            draw.rectangle([left + shift, y, right + shift, y + glyph_h], fill=0)
+        truth.append(162 + shift)
+    return img, truth
+
+
+def _prepared(image: Image.Image):
+    """Inchiostro, bande e rette, come li vede `detect_grid`."""
+    detection = table_detect.detect_grid(image)
+    gray = np.asarray(image.convert("L"))
+    ink = gray <= table_detect._otsu(gray)
+    height, width = ink.shape
+    hlines_px = [round(v * height) for v in detection.hlines]
+    bands = [(a, b) for a, b in zip(hlines_px, hlines_px[1:])]
+    return detection, ink, bands, [v * width for v in detection.vlines]
+
+
+def test_a_straight_cut_lands_inside_the_ink_of_a_drifting_column():
+    """Il presupposto: senza piegare, il taglio spezza davvero i valori."""
+    image, _ = _drifting_register()
+    detection, ink, bands, vlines_px = _prepared(image)
+    assert detection.cols == 3
+
+    straight = int(round(vlines_px[1]))
+    hits = sum(1 for y0, y1 in bands if ink[y0:y1, straight].any())
+    # Sul corpus la retta spezza fra il 6% e il 10% dei tagli: il sintetico deve
+    # stare in quell'ordine di grandezza, altrimenti non riproduce il problema.
+    assert hits >= len(bands) // 10, (
+        f"la deriva sintetica non spezza abbastanza ({hits}/{len(bands)}): "
+        "il fixture non sta dimostrando il problema che dice di dimostrare"
+    )
+
+
+def test_snapped_boundaries_never_cut_a_value_where_a_gap_exists():
+    """Dove un varco c'è, il confine ci finisce dentro: nessun valore spezzato."""
+    image, _ = _drifting_register()
+    detection, ink, bands, vlines_px = _prepared(image)
+    bounds, proven = table_detect.snap_boundaries(
+        ink, bands, vlines_px, detection.diagnostics["pitch_px"], 0.0
+    )
+
+    assert len(bounds) == len(bands)
+    cut_through = 0
+    for (y0, y1), row, flags in zip(bands, bounds, proven):
+        for x, ok in zip(row, flags):
+            if ok and ink[y0:y1, x].any():
+                cut_through += 1
+    assert cut_through == 0
+
+
+def test_snapped_boundaries_follow_the_drift():
+    """Il confine piegato insegue la colonna, la retta no."""
+    image, gaps = _drifting_register()
+    detection, ink, bands, vlines_px = _prepared(image)
+    bounds, _ = table_detect.snap_boundaries(
+        ink, bands, vlines_px, detection.diagnostics["pitch_px"], 0.0
+    )
+    found = [row[0] for row in bounds]
+    # Il confine deve vagare quanto vaga il varco, non restare fermo.
+    assert max(found) - min(found) >= 20
+    # E su ogni riga deve stare *dentro* il varco vero, non vicino: il varco è
+    # largo 20 px, quindi qualche pixel di scarto è il massimo tollerabile.
+    for got, truth in zip(found, gaps):
+        assert abs(got - truth) <= 4, (got, truth)
+
+
+def test_detection_reports_where_no_gap_could_be_proven():
+    """I tagli non provati si contano: sono le celle da guardare."""
+    image, _ = _drifting_register()
+    detection = table_detect.detect_grid(image)
+    diagnostics = detection.diagnostics
+    assert len(diagnostics["row_columns"]) == detection.rows
+    assert diagnostics["row_columns_unproven"] == 0  # qui i varchi ci sono tutti
+    # La deriva non produce un avviso: comparirebbe su ogni pagina del corpus.
+    assert "column_drift" not in detection.warnings
+
+
+def test_fill_cells_uses_the_bent_boundaries_not_the_straight_ones():
+    """`fill_cells` deve tagliare dove piega, non dove sta la retta.
+
+    Si spia il motore per sapere quali colonne di pixel ha ricevuto come
+    estremi di cella, e si controlla che con `snap` nessun estremo cada
+    sull'inchiostro — mentre senza `snap` qualcuno ci cade.
+    """
+    image, _ = _drifting_register()
+    detection, ink, bands, _ = _prepared(image)
+
+    class Spy:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def recognize_line(self, crop: Image.Image) -> tuple[str, float]:
+            self.calls += 1
+            return "x", 0.9
+
+    def cuts_through(snap: bool) -> int:
+        spy = Spy()
+        cells, stats = table_detect.fill_cells(
+            image,
+            detection.vlines,
+            detection.hlines,
+            spy,
+            pitch=detection.diagnostics["pitch_px"],
+            snap=snap,
+        )
+        assert spy.calls > 0
+        assert stats["snapped"] is snap
+        return stats
+
+    snapped = cuts_through(True)
+    straight = cuts_through(False)
+    # Con i confini piegati nessuna cella resta con un confine non provato.
+    assert snapped["uncertain"] == 0
+    # E il riempimento cambia davvero: se i due percorsi coincidessero, `snap`
+    # non starebbe facendo niente.
+    assert snapped["filled"] >= straight["filled"]

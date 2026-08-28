@@ -16,5 +16,5 @@ def test_system_info():
         r = client.get("/api/system/info")
         assert r.status_code == 200
         body = r.json()
-        assert body["app"] == "Lloyds Lab"
+        assert body["app"] == "Tabularium"
         assert body["schema_version"] == "5"

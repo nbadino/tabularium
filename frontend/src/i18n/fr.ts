@@ -8,7 +8,7 @@ import type { Dict } from './it'
 
 export const fr: Dict = {
   app: {
-    title: 'Lloyds Lab — Fine-tuning MonkeyOCRv2',
+    title: 'Tabularium — Fine-tuning MonkeyOCRv2',
     tagline: 'Fine-tuning de MonkeyOCRv2-Parsing sur corpus historiques',
     skipToContent: 'Aller au contenu',
     navSections: 'Sections',
@@ -182,7 +182,7 @@ export const fr: Dict = {
     intro: 'Chaque projet pointe vers un dossier d’archive (numérisations ou PDF). Les pages sont enregistrées lors d’une numérisation, qui ne modifie jamais les fichiers sources.',
     new: 'Nouveau projet',
     name: 'Nom',
-    namePlaceholder: 'Ex. Lloyd’s List 1904',
+    namePlaceholder: 'Ex. Historic Shipping Index 1904',
     archiveDir: 'Dossier d’archive',
     archiveDirHint: 'Chemin absolu sur la machine qui exécute le backend.',
     archiveDirPlaceholder: '/chemin/vers/les/numérisations',
@@ -337,6 +337,34 @@ export const fr: Dict = {
     alignApplied: 'Page alignée ({level}, {angle}°) : lancez le Prefill OCR ou annotez.',
     alignEngineUvdoc: 'Moteur : UVDoc.',
     alignEngineFallback: 'UVDoc indisponible : seule la rotation sûre a été utilisée.',
+    transformOpen: 'Aligner et comparer',
+    transformTitle: 'Rectification de page — proposition et comparaison',
+    transformEngine: 'Méthode',
+    transformEngine_deskew: 'Rotation',
+    transformEngine_deskewHint: 'Corrige uniquement l’inclinaison globale des lignes.',
+    transformEngine_uvdoc: 'UVDoc',
+    transformEngine_uvdocHint: 'Dewarp neuronal pour perspective et papier courbé ; recommandé.',
+    transformEngine_docscanner: 'DocScanner-L',
+    transformEngine_docscannerHint: 'Moteur expérimental : vérifiez attentivement recadrage et ondulations.',
+    transformEngine_perspective: 'Quatre angles',
+    transformEngine_perspectiveHint: 'Faites glisser TL, TR, BR et BL sur les bords de la page.',
+    transformEngine_mesh: 'Maillage manuel',
+    transformEngine_meshHint: 'Faites suivre la grille aux lignes courbes et aux bords du papier.',
+    transformGenerate: 'Générer la proposition',
+    transformGenerating: 'Génération…',
+    transformResetPoints: 'Réinitialiser les points',
+    transformOriginal: 'Original',
+    transformOriginalAlt: 'Scan original avant rectification',
+    transformCandidate: 'Proposition',
+    transformCandidateAlt: 'Aperçu de la rectification proposée',
+    transformMovePoints: 'Original — déplacez les points',
+    transformAccept: 'Accepter comme master',
+    transformReject: 'Refuser la proposition',
+    transformAcceptConfirm: 'Accepter la rectification supprimera les blocs annotés car les coordonnées changent. Continuer ?',
+    transformAcceptedNotice: 'Rectification acceptée : canevas, pré-remplissage, crops et export utilisent le même master sans perte.',
+    transformActive: 'Master actif : {engine}',
+    transformError: 'Proposition non générée',
+    transformUnavailable: 'Indisponible dans l’environnement actif.',
     reset: 'Réinitialiser la transformation',
     resetBusy: 'Réinitialisation…',
     resetTitle: 'Revenir au scan original et supprimer la rotation/le redressement',
@@ -370,6 +398,8 @@ export const fr: Dict = {
       other:
         'OCR {engine} : {count} brouillons générés (remplacés). Corrigez-les, ce sont vos données de training.',
     },
+    ocrTableNotice:
+      'Le registre a été promu en bloc Table avec {grids} grille pré-remplie : ouvrez l’éditeur de tableau et vérifiez les cellules — ce ne sont pas des transcriptions confirmées.',
     saveFirstBlock:
       'Enregistrez d’abord les blocs (autosave) pour ouvrir l’éditeur de tableau.',
     blockNotSaved: 'Bloc pas encore enregistré (attendez l’autosave).',
@@ -460,7 +490,6 @@ export const fr: Dict = {
     separate: 'Séparer',
     separateTitle: 'Ramène la cellule fusionnée aux cellules d’origine',
     notDone: 'Opération non effectuée',
-    origCrop: 'Coupure d’origine',
     cropAlt: 'Coupure du tableau sur la page',
     zoomOut: 'Réduire le zoom',
     zoomIn: 'Augmenter le zoom',
@@ -474,9 +503,6 @@ export const fr: Dict = {
     cellAria: 'Cellule ligne {r}, colonne {c}',
     phantomNote:
       'Colonnes fantômes : présentes dans la structure mais sans en-tête dans l’original.',
-    rulesTop: 'Filets réglables',
-    vertical: 'Verticales',
-    horizontal: 'Horizontales',
     vlineAria: 'Filet vertical {n}',
     hlineAria: 'Filet horizontal {n}',
     otslNote: 'OTSL généré — le format que reçoit le training',
@@ -502,6 +528,24 @@ export const fr: Dict = {
     detectOcrSummary: 'OCR {engine} : {filled} cellules remplies, {blank} vides, confiance moyenne {score} %',
     detectWeak:
       '{n} limites peu attestées : vérifiez-les sur le rognage avant de transcrire.',
+    overlayTitle: 'Rognage et grille proposée',
+    overlayIdle: 'Faites glisser une limite pour la déplacer. Sélectionnez-la pour lire son appui ou la rejeter.',
+    overlayArmV: 'Cliquez sur le rognage a l endroit de la nouvelle limite de colonne.',
+    overlayArmH: 'Cliquez sur le rognage a l endroit de la nouvelle limite de ligne.',
+    overlayAddColumn: 'Ajouter une colonne',
+    overlayAddRow: 'Ajouter une ligne',
+    overlayReject: 'Rejeter la limite',
+    overlayColumnLine: 'Limite de colonne {n} sur {total}',
+    overlayRowLine: 'Limite de ligne {n} sur {total}',
+    overlayEdge: 'bord du contenu : il se deplace, il ne se rejette pas',
+    overlaySupport: 'attestee sur {n} lignes sur {rows}',
+    overlayWeak: 'peu attestee, verifiez-la sur l encre',
+    boundaryInsertRefused:
+      'Ici une limite ne separe rien : elle tombe hors du contenu ou sur une limite existante.',
+    boundaryDropRefused:
+      'Fusion ambigue : cette limite porte des cellules fusionnees d etendues differentes. Separez-les avant de la rejeter.',
+    detectDrift:
+      '{n} coupes sans intervalle qui les prouve : la colonne y dérive et la limite est restée sur la droite. La polyligne grise montre son tracé réel.',
     detectWarnTitle: 'La numérisation limite la détection',
     detectWarnSkewed:
       'Page inclinée de {deg}° : les limites de ligne sont horizontales et ne peuvent '
@@ -612,6 +656,9 @@ export const fr: Dict = {
       'Le checkpoint reste partiel. Appuyez à nouveau dans les secondes qui suivent pour confirmer.',
     envNote:
       'Nécessite l’environnement GPU dédié {env} et le checkout du repo officiel (variable {repo}).',
+    preset8gbName: 'GPU de 8 Go',
+    preset8gbWhy:
+      'Lot 1 sur 8192 jetons avec accumulation 4 : même lot effectif que le préréglage officiel, ~5,4 Go de VRAM au lieu de 26. Les autres préréglages ne tiennent pas dans une carte de 8 Go.',
     presetQuickName: 'Essai rapide',
     presetQuickWhy:
       'Un court passage pour vérifier que le pipeline tourne et que le dataset est accepté. N’attendez pas de qualité : il sert à découvrir les erreurs en quelques minutes au lieu de quelques heures.',

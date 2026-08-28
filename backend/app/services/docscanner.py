@@ -1,7 +1,7 @@
 """Optional DocScanner-L inference adapter.
 
 DocScanner is kept out of the base environment because the upstream project
-ships as a PyTorch/GPU research implementation.  Set ``LLOYDS_DOCSCANNER_ROOT``
+ships as a PyTorch/GPU research implementation.  Set ``TABULARIUM_DOCSCANNER_ROOT``
 to a checkout of the official repository and provide ``seg.pth`` plus
 ``DocScanner-L.pth`` in its ``model_pretrained`` directory.
 """
@@ -19,7 +19,11 @@ _torch = None
 
 
 def _root() -> Path:
-    return Path(os.environ.get("LLOYDS_DOCSCANNER_ROOT", ""))
+    configured = os.environ.get("TABULARIUM_DOCSCANNER_ROOT", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    # Checkout installato dallo script ufficiale di Tabularium.
+    return Path(__file__).resolve().parents[3] / "vendor" / "DocScanner"
 
 
 def available() -> bool:
@@ -67,7 +71,7 @@ def _load():
                 bm = self.bm(x, iters=12, test_mode=True)
                 return (2 * (bm / 286.8) - 1) * 0.99
 
-        device_name = os.environ.get("LLOYDS_DOCSCANNER_DEVICE", "cpu")
+        device_name = os.environ.get("TABULARIUM_DOCSCANNER_DEVICE", "cpu")
         device = torch.device(device_name if device_name.startswith("cuda") and torch.cuda.is_available() else "cpu")
         net = Net().to(device)
         seg_state = torch.load(root / "model_pretrained" / "seg.pth", map_location=device)

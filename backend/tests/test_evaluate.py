@@ -103,7 +103,7 @@ def _setup(tmp_path: Path) -> tuple[int, int]:
             f"/api/pages/{page['id']}/annotations",
             json={
                 "items": [
-                    {"label": "Title", "kind": "rect", "points": [[10, 10], [890, 90]], "content": "LLOYD'S LIST", "order_idx": 1},
+                    {"label": "Title", "kind": "rect", "points": [[10, 10], [890, 90]], "content": "HISTORIC SHIPPING INDEX", "order_idx": 1},
                     {"label": "Text", "kind": "rect", "points": [[10, 100], [890, 900]], "content": "Maritime intelligence.", "order_idx": 2},
                 ]
             },
@@ -127,7 +127,7 @@ class FakeClient:
         ]
 
     def recognize(self, image, label):
-        return "LLOYD'S LIST" if label == "Title" else "Maritime intelligence."
+        return "HISTORIC SHIPPING INDEX" if label == "Title" else "Maritime intelligence."
 
 
 def test_evaluate_project(tmp_path: Path, monkeypatch):
@@ -198,7 +198,7 @@ def test_min_pixels_upscales_and_never_shrinks():
 def test_layout_caps_oversized_archive_scans():
     """Il layout impone un tetto che il codice ufficiale non ha.
 
-    Una pagina Lloyd's è 11.3 MP e a quella taglia il modello restituisce due
+    Una pagina Historic Shipping Index è 11.3 MP e a quella taglia il modello restituisce due
     riquadri sovrapposti; a 2 MP restituisce Title, numero, data e corpo. Il
     tetto vale solo per il layout: sui ritagli di testo e tabella ridurre
     perderebbe i caratteri.

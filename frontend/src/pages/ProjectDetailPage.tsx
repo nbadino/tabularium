@@ -22,7 +22,7 @@ type StudyProtocol = {
 }
 
 /** Il referto di scansione sopravvive alla navigazione: è un risultato, non un lampo. */
-const reportKey = (id: number) => `lloyds.scanReport.${id}`
+const reportKey = (id: number) => `tabularium.scanReport.${id}`
 
 function loadReport(id: number): ScanReport | null {
   try {

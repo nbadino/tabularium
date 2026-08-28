@@ -15,7 +15,7 @@ import requests
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Test vLLM Cloud Inference Endpoint for Lloyds Lab")
+    parser = argparse.ArgumentParser(description="Test vLLM Cloud Inference Endpoint for Tabularium")
     parser.add_argument("--url", default="http://127.0.0.1:8888/v1", help="vLLM endpoint URL (default: http://127.0.0.1:8888/v1)")
     parser.add_argument("--api-key", default="", help="Optional API key / Bearer token")
     parser.add_argument("--model", default="MonkeyOCRv2", help="Model name (default: MonkeyOCRv2)")
@@ -28,7 +28,7 @@ def make_sample_image() -> Image.Image:
     img = Image.new("RGB", (800, 400), color=(250, 248, 245))
     d = ImageDraw.Draw(img)
     d.rectangle([(20, 20), (780, 80)], outline=(50, 50, 50), width=2)
-    d.text((40, 40), "LLOYD'S SHIPPING INDEX — CLOUD TEST", fill=(0, 0, 0))
+    d.text((40, 40), "HISTORIC SHIPPING INDEX — CLOUD TEST", fill=(0, 0, 0))
     d.rectangle([(20, 100), (780, 360)], outline=(100, 100, 100), width=1)
     d.text((40, 120), "Vessel: Antigravity | Port: London | Status: Arrived", fill=(0, 0, 0))
     return img
@@ -42,7 +42,7 @@ def main():
         headers["Authorization"] = f"Bearer {args.api_key}"
 
     print("=" * 60)
-    print(">> [Lloyds Lab] Verifica Connessione Cloud / Remote vLLM")
+    print(">> [Tabularium] Verifica Connessione Cloud / Remote vLLM")
     print(f">> Target URL: {url}")
     if args.api_key:
         print(f">> API Key:    {'*' * (len(args.api_key) - 4) + args.api_key[-4:] if len(args.api_key) > 4 else '***'}")
@@ -116,7 +116,7 @@ def main():
             sys.exit(1)
 
     print("\n" + "=" * 60)
-    print(">> [SUCCESS] Il server Cloud è pronto e compatibile con Lloyds Lab!")
+    print(">> [SUCCESS] Il server Cloud è pronto e compatibile con Tabularium!")
     print("=" * 60)
 
 

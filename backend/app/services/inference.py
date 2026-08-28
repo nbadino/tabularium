@@ -33,7 +33,7 @@ END2END_PROMPT = (
 #   - `min_pixels` INGRANDISCE le immagini piccole, non le riduce. Il pipeline
 #     ufficiale passa 1003520 alla chiamata di layout, come *minimo*.
 #   - un tetto superiore esiste solo se richiesto: là è la env `MOCR2_MAX_PIXELS`,
-#     qui `LLOYDS_VLLM_MAX_PIXELS`. Di default nessuno dei due riduce nulla.
+#     qui `TABULARIUM_VLLM_MAX_PIXELS`. Di default nessuno dei due riduce nulla.
 # Attenzione a non confondere questo con `max_pixels 1003520` degli iperparametri
 # di *training* (AGENTS.md §2.6): sono due cose diverse, e usare quel valore come
 # tetto in inferenza non è ciò che fa il codice ufficiale.
@@ -41,7 +41,7 @@ LAYOUT_MIN_PIXELS = 1_003_520
 
 # Tetto applicato **alla sola chiamata di layout**. Il codice ufficiale non ne
 # impone uno, ma è pensato per pagine di dimensioni ordinarie: una scansione
-# d'archivio Lloyd's è 11.3 MP e a quella taglia il layout collassa. Misurato
+# d'archivio Historic Shipping Index è 11.3 MP e a quella taglia il layout collassa. Misurato
 # sulla stessa pagina (LSI_17186_015), a parità di tutto il resto:
 #
 #     11.3 MP → 2 blocchi sovrapposti e inutili
@@ -52,7 +52,7 @@ LAYOUT_MIN_PIXELS = 1_003_520
 #
 # Il tetto NON si applica al riconoscimento di testo e tabelle: lì il ritaglio
 # è già piccolo e ridurlo perderebbe i caratteri. Override con
-# `LLOYDS_VLLM_MAX_PIXELS`, equivalente di `MOCR2_MAX_PIXELS` del repo ufficiale.
+# `TABULARIUM_VLLM_MAX_PIXELS`, equivalente di `MOCR2_MAX_PIXELS` del repo ufficiale.
 LAYOUT_MAX_PIXELS = 2_000_000
 
 # Righe per banda nel riconoscimento tabella. Misurato su LSI_17186_015, tabella
@@ -335,7 +335,7 @@ class VllmClient:
 
         È il percorso ufficiale ``ALL_PROMPT['END2END']``. Come per il layout
         applichiamo il tetto sperimentale di 2 MP che evita la frammentazione
-        osservata sulle scansioni Lloyd's ad alta risoluzione.
+        osservata sulle scansioni Historic Shipping Index ad alta risoluzione.
         """
         prepared = _fit_pixels(
             image,
@@ -387,7 +387,7 @@ class VllmClient:
         """Riconosce una tabella e restituisce la griglia (celle + span).
 
         Il riconoscimento va fatto **a bande orizzontali**, non sull'intera
-        tabella: un registro Lloyd's a piena pagina è ~8 MP e il modello, dovendo
+        tabella: un registro Historic Shipping Index a piena pagina è ~8 MP e il modello, dovendo
         comprimerlo, fonde colonne adiacenti (`Flg Reg` e `Blt Gross` finiscono
         in una cella sola). Sulle stesse righe date in bande da ~25 il modello
         tiene le colonne separate e legge correttamente anche le celle di uno o
@@ -399,7 +399,7 @@ class VllmClient:
         """
         bands = self._band_boxes(image, row_bounds, rows_per_band)
         # Non assumere che la prima riga sia un'intestazione: nei registri
-        # Lloyd's spesso è già la prima nave (es. ``Abidjan``). La ripetizione
+        # Historic Shipping Index spesso è già la prima nave (es. ``Abidjan``). La ripetizione
         # è consentita solo quando l'annotazione dichiara esplicitamente quante
         # righe iniziali costituiscono header.
         header_h = (
@@ -578,6 +578,9 @@ def get_inference_config() -> dict:
     except Exception:
         rows = {}
 
+    enabled_raw = rows.get("inference_enabled")
+    enabled = (enabled_raw != "0") if enabled_raw is not None else True
+
     url = rows.get("inference_url") or config.VLLM_URL
     model = rows.get("inference_model") or config.VLLM_MODEL
     api_key = rows.get("inference_api_key", config.VLLM_API_KEY)
@@ -608,6 +611,7 @@ def get_inference_config() -> dict:
     )
 
     return {
+        "enabled": enabled,
         "url": url,
         "model": model,
         "api_key": api_key,
@@ -622,6 +626,8 @@ def save_inference_config(cfg: dict) -> None:
     from ..db import connect  # noqa: PLC0415
 
     items = []
+    if "enabled" in cfg:
+        items.append(("inference_enabled", "1" if cfg["enabled"] else "0"))
     if "url" in cfg:
         items.append(("inference_url", str(cfg["url"]).strip()))
     if "model" in cfg:

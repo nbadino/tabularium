@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Lloyds Lab — Local SSH Tunnel for Cloud Inference (Vast.ai / RunPod)
+# Tabularium — Local SSH Tunnel for Cloud Inference (Vast.ai / RunPod)
 # ==============================================================================
 # Crea un tunnel SSH sicuro e cifrato tra il tuo PC locale e l'istanza GPU cloud.
-# In questo modo il backend Lloyds Lab invia le richieste a http://127.0.0.1:8888/v1
+# In questo modo il backend Tabularium invia le richieste a http://127.0.0.1:8888/v1
 # senza dover esporre porte pubbliche non protette su internet.
 #
 # Esempi d'uso:
@@ -58,7 +58,7 @@ else
 fi
 
 echo "=========================================================="
-echo ">> [Lloyds Lab SSH Tunnel]"
+echo ">> [Tabularium SSH Tunnel]"
 echo ">> Target Cloud: $TARGET ${SSH_ARGS[*]:-}"
 echo ">> Inoltro locale: http://127.0.0.1:$LOCAL_PORT -> Remoto: $REMOTE_PORT"
 echo "=========================================================="

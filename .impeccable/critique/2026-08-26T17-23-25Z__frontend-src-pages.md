@@ -8,7 +8,7 @@ p1_count: 3
 timestamp: 2026-08-26T17-23-25Z
 slug: frontend-src-pages
 ---
-# Critique — frontend/src/pages (Lloyds Lab, superficie M1 + studio M2)
+# Critique — frontend/src/pages (Tabularium, superficie M1 + studio M2)
 
 Method: dual-agent (A: design review · B: detector CLI evidence). Browser non disponibile; evidenza B da detector con validazione fixture. Detector: 0 findings su 20 file (regex-engine scope; regole DOM/computed-style non valutate).
 

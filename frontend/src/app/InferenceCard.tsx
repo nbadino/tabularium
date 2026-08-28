@@ -10,6 +10,7 @@ import {
 import { Badge, Field } from './ui'
 import { IconCloud, IconEnv } from './icons'
 import { CloudGuideModal } from './CloudGuideModal'
+import { CloudControlModal } from './CloudControlModal'
 
 export function InferenceCard() {
   const inf = useInference()
@@ -18,6 +19,7 @@ export function InferenceCard() {
   const [apiKey, setApiKey] = useState(inf.apiKey)
   const [showKey, setShowKey] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
+  const [controlOpen, setControlOpen] = useState(false)
   const [testing, setTesting] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testResult, setTestResult] = useState<{
@@ -84,6 +86,7 @@ export function InferenceCard() {
     setNotice(null)
     try {
       const updated = await saveInferenceToBackend({
+        enabled: inf.enabled,
         url: url.trim(),
         model: model.trim() || 'MonkeyOCRv2',
         apiKey: apiKey.trim(),
@@ -97,13 +100,19 @@ export function InferenceCard() {
     }
   }
 
-  const isOnline = testResult ? testResult.ok : inf.available
+  const toggleEnabled = async () => {
+    const next = !inf.enabled
+    await saveInferenceToBackend({ enabled: next })
+    setNotice(next ? 'Inferenza GPU/Cloud attivata.' : 'Inferenza GPU/Cloud disattivata.')
+  }
+
+  const isOnline = inf.enabled && (testResult ? testResult.ok : inf.available)
   const isCloud = testResult ? testResult.isCloud : inf.isCloud
   const latency = testResult ? testResult.latencyMs : inf.latencyMs
 
   return (
     <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] p-4">
-      {/* Header with Title and Live Status Badge */}
+      {/* Header with Title, On/Off Toggle, and Status Badge */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--color-rule)] pb-3">
         <div className="flex items-center gap-2">
           {isCloud ? <IconCloud size={16} /> : <IconEnv size={16} />}
@@ -113,23 +122,51 @@ export function InferenceCard() {
         </div>
 
         <div className="flex items-center gap-2">
-          {isOnline ? (
-            <Badge tone="ok">
-              🟢 {isCloud ? 'Cloud Remoto Connesso' : 'Locale Connesso'}
-              {latency != null && ` (${latency} ms)`}
-            </Badge>
+          <button
+            type="button"
+            onClick={() => void toggleEnabled()}
+            className={`btn btn-sm text-[11px] font-semibold ${
+              inf.enabled
+                ? '!border-emerald-600 !bg-emerald-950 !text-emerald-300'
+                : '!border-neutral-600 !bg-neutral-800 !text-neutral-300'
+            }`}
+            title={inf.enabled ? 'Clicca per disattivare tutte le chiamate GPU/Cloud' : 'Clicca per attivare l\'inferenza GPU/Cloud'}
+          >
+            {inf.enabled ? '✓ GPU/Cloud Attiva' : '✕ GPU/Cloud Disattivata'}
+          </button>
+
+          {inf.enabled ? (
+            isOnline ? (
+              <Badge tone="ok">
+                🟢 {isCloud ? 'Cloud Remoto Connesso' : 'Locale Connesso'}
+                {latency != null && ` (${latency} ms)`}
+              </Badge>
+            ) : (
+              <Badge tone="neutral">
+                ⚪ Non raggiungibile (offline)
+              </Badge>
+            )
           ) : (
             <Badge tone="neutral">
-              ⚪ Non raggiungibile (offline)
+              ⚪ Disattivata dall'utente
             </Badge>
           )}
+
+          <button
+            type="button"
+            onClick={() => setControlOpen(true)}
+            className="btn btn-sm text-[11px] !border-sky-600 !bg-sky-950 !text-sky-300 font-medium"
+            title="Gestisci tunnel SSH e istanze Vast.ai / RunPod senza usare il terminale"
+          >
+            🎛️ Gestione Cloud da UI
+          </button>
 
           <button
             type="button"
             onClick={() => setGuideOpen(true)}
             className="btn btn-sm text-[11px]"
           >
-            📖 Guida Vast.ai / RunPod
+            📖 Guida Rapida
           </button>
         </div>
       </div>
@@ -229,6 +266,7 @@ export function InferenceCard() {
       </div>
 
       <CloudGuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
+      <CloudControlModal open={controlOpen} onClose={() => setControlOpen(false)} />
     </div>
   )
 }

@@ -269,10 +269,17 @@ def deskew_page(
     desk = pagesvc.deskew_path(page_id)
     if abs(angle) < 0.3:
         desk.unlink(missing_ok=True)
+        pagesvc.legacy_deskew_path(page_id).unlink(missing_ok=True)
         return {"page_id": page_id, "deskewed": False, "angle": 0.0}
     desk.parent.mkdir(parents=True, exist_ok=True)
-    out.convert("RGB").save(desk, "JPEG", quality=92)
-    pagesvc.mark_transform(page_id, "basic", out.size)
+    out.convert("RGB").save(desk, "PNG", compress_level=4)
+    pagesvc.legacy_deskew_path(page_id).unlink(missing_ok=True)
+    pagesvc.mark_transform(
+        page_id,
+        "deskew",
+        out.size,
+        details={"requested_engine": "deskew", "actual_engine": "deskew", "angle": angle},
+    )
     return {"page_id": page_id, "deskewed": True, "angle": angle}
 
 
@@ -296,7 +303,9 @@ def deskew_remove(
         if confirm:
             conn.execute("DELETE FROM blocks WHERE page_id=?", (page_id,))
     pagesvc.deskew_path(page_id).unlink(missing_ok=True)
+    pagesvc.legacy_deskew_path(page_id).unlink(missing_ok=True)
     pagesvc.transform_meta_path(page_id).unlink(missing_ok=True)
+    pagesvc.clear_candidate(page_id)
     _invalidate_page_cache(page_id)
     return {"page_id": page_id, "deskewed": False, "reset": True}
 
@@ -304,6 +313,12 @@ def deskew_remove(
 class AlignRequest(BaseModel):
     level: str = Field(default="medium", pattern="^(basic|medium|high)$")
     strength: float = Field(default=1.0, ge=0.0, le=2.0)
+
+
+class TransformCandidateRequest(BaseModel):
+    engine: str = Field(pattern="^(deskew|uvdoc|docscanner|perspective|mesh)$")
+    perspective_points: list[list[float]] | None = None
+    mesh_grid: list[list[list[float]]] | None = None
 
 
 @router.post("/api/pages/{page_id}/align")
@@ -343,9 +358,168 @@ def align_page_endpoint(
         desk.unlink(missing_ok=True)
         return {"page_id": page_id, "applied": False, "angle": 0.0, "level": "basic"}
     desk.parent.mkdir(parents=True, exist_ok=True)
-    aligned.convert("RGB").save(desk, "JPEG", quality=92)
-    pagesvc.mark_transform(page_id, payload.level, aligned.size)
+    aligned.convert("RGB").save(desk, "PNG", compress_level=4)
+    pagesvc.legacy_deskew_path(page_id).unlink(missing_ok=True)
+    pagesvc.mark_transform(
+        page_id,
+        payload.level,
+        aligned.size,
+        details={
+            "requested_engine": payload.level,
+            "actual_engine": dewarp.last_engine(),
+            "angle": angle,
+            "diagnostics": dewarp.last_diagnostics(),
+        },
+    )
     return {"page_id": page_id, "applied": True, "angle": angle, "level": payload.level, "engine": dewarp.last_engine()}
+
+
+def _transform_state(page_id: int) -> dict:
+    import importlib.util
+
+    from ..services import docscanner
+
+    active = pagesvc.read_transform_meta(page_id)
+    candidate = pagesvc.read_transform_meta(page_id, candidate=True)
+    return {
+        "page_id": page_id,
+        "active": active,
+        "candidate": candidate,
+        "original_preview_url": f"/api/pages/{page_id}/transform-preview/original",
+        "active_preview_url": f"/api/pages/{page_id}/preview" if active else None,
+        "candidate_preview_url": (
+            f"/api/pages/{page_id}/transform-preview/candidate" if candidate else None
+        ),
+        "engines": {
+            "deskew": {"available": importlib.util.find_spec("cv2") is not None},
+            "perspective": {"available": importlib.util.find_spec("cv2") is not None},
+            "mesh": {"available": True},
+            "uvdoc": {
+                "available": (
+                    importlib.util.find_spec("paddleocr") is not None
+                    and importlib.util.find_spec("paddle") is not None
+                ),
+            },
+            "docscanner": {"available": docscanner.available()},
+        },
+    }
+
+
+@router.get("/api/pages/{page_id}/transform")
+def transform_state(page_id: int) -> dict:
+    with connect() as conn:
+        _get_page_or_404(conn, page_id)
+    return _transform_state(page_id)
+
+
+@router.get("/api/pages/{page_id}/transform-preview/{kind}")
+def transform_preview(page_id: int, kind: str) -> FileResponse:
+    with connect() as conn:
+        page = _get_page_or_404(conn, page_id)
+        preview = pagesvc.ensure_transform_preview(page, kind)
+    return FileResponse(preview, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
+
+
+@router.post("/api/pages/{page_id}/transform/candidate")
+def generate_transform_candidate(page_id: int, payload: TransformCandidateRequest) -> dict:
+    """Genera una proposta lossless senza cambiare canvas, crop o annotazioni."""
+    from ..services import dewarp
+
+    with connect() as conn:
+        page = _get_page_or_404(conn, page_id)
+    image = pagesvc.load_original_source_image(page)
+    if image is None:
+        raise HTTPException(status_code=404, detail="file sorgente non presente")
+    result = dewarp.run_transform(
+        image.convert("RGB"),
+        payload.engine,
+        perspective_points=payload.perspective_points,
+        mesh_grid=payload.mesh_grid,
+    )
+    if result.actual_engine == "none":
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "transform_candidate_invalid",
+                "engine": payload.engine,
+                "error": result.error,
+                "diagnostics": result.diagnostics,
+            },
+        )
+    pagesvc.clear_candidate(page_id)
+    candidate = pagesvc.candidate_path(page_id)
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    result.image.convert("RGB").save(candidate, "PNG", compress_level=4)
+    metadata = pagesvc.mark_transform(
+        page_id,
+        result.actual_engine,
+        result.image.size,
+        path=pagesvc.candidate_meta_path(page_id),
+        details={
+            "requested_engine": result.requested_engine,
+            "actual_engine": result.actual_engine,
+            "angle": result.angle,
+            "warnings": result.warnings,
+            "error": result.error,
+            "diagnostics": result.diagnostics,
+        },
+    )
+    return _transform_state(page_id) | {"generated": metadata}
+
+
+@router.post("/api/pages/{page_id}/transform/accept")
+def accept_transform_candidate(
+    page_id: int,
+    confirm: bool = Query(default=False, description="elimina i blocchi già annotati"),
+) -> dict:
+    """Promuove atomicamente la proposta a master dopo conferma esplicita."""
+    candidate = pagesvc.candidate_path(page_id)
+    metadata = pagesvc.read_transform_meta(page_id, candidate=True)
+    if not candidate.exists() or metadata is None:
+        raise HTTPException(status_code=404, detail="transform_candidate_missing")
+    try:
+        from PIL import Image
+
+        with Image.open(candidate) as image:
+            candidate_size = image.size
+            image.verify()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"transform_candidate_corrupt: {exc}") from exc
+    with connect() as conn:
+        page = _get_page_or_404(conn, page_id)
+        if candidate_size != (int(page["width"]), int(page["height"])):
+            raise HTTPException(status_code=422, detail="transform_candidate_size_mismatch")
+        n_blocks = conn.execute(
+            "SELECT COUNT(*) AS n FROM blocks WHERE page_id=?", (page_id,)
+        ).fetchone()["n"]
+        if n_blocks and not confirm:
+            raise HTTPException(
+                status_code=409,
+                detail=f"la pagina ha {n_blocks} blocchi: accettare la trasformazione cambia le coordinate. Passa ?confirm=true.",
+            )
+        if confirm:
+            conn.execute("DELETE FROM blocks WHERE page_id=?", (page_id,))
+    active = pagesvc.deskew_path(page_id)
+    active.parent.mkdir(parents=True, exist_ok=True)
+    candidate.replace(active)
+    pagesvc.legacy_deskew_path(page_id).unlink(missing_ok=True)
+    pagesvc.mark_transform(
+        page_id,
+        str(metadata.get("actual_engine") or metadata.get("engine") or "unknown"),
+        candidate_size,
+        details={**metadata, "accepted": True},
+    )
+    pagesvc.clear_candidate(page_id)
+    _invalidate_page_cache(page_id)
+    return _transform_state(page_id) | {"accepted": True}
+
+
+@router.delete("/api/pages/{page_id}/transform/candidate")
+def reject_transform_candidate(page_id: int) -> dict:
+    with connect() as conn:
+        _get_page_or_404(conn, page_id)
+    pagesvc.clear_candidate(page_id)
+    return _transform_state(page_id) | {"rejected": True}
 
 
 @router.get("/api/pages/{page_id}/tile/{level}/{x}/{y}")

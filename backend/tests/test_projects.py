@@ -38,7 +38,7 @@ def test_project_crud_and_scan(tmp_path: Path):
         # creazione progetto
         r = client.post(
             "/api/projects",
-            json={"name": "Lloyd 1904", "archive_dir": str(archive)},
+            json={"name": "Tabularium 1904", "archive_dir": str(archive)},
         )
         assert r.status_code == 201, r.text
         project = r.json()

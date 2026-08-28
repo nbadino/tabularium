@@ -9,9 +9,10 @@ import { useSyncExternalStore } from 'react'
 import { apiGet, apiPost, apiPut } from '../lib/api'
 import type { InferenceConfig, InferenceTestResult } from '../lib/types'
 
-const KEY = 'lloyds.inference'
+const KEY = 'tabularium.inference'
 
 export interface InferenceCfg {
+  enabled: boolean
   url: string
   model: string
   apiKey: string
@@ -27,6 +28,7 @@ export interface InferenceCfg {
 }
 
 const EMPTY: InferenceCfg = {
+  enabled: true,
   url: '',
   model: '',
   apiKey: '',
@@ -80,6 +82,7 @@ function loadLocal(): InferenceCfg {
     return {
       ...EMPTY,
       ...parsed,
+      enabled: parsed.enabled ?? true,
       url: String(parsed.url ?? ''),
       model: String(parsed.model ?? ''),
       apiKey: String(parsed.apiKey ?? ''),
@@ -123,6 +126,7 @@ export async function syncInferenceFromBackend(): Promise<InferenceCfg> {
     const res = await apiGet<InferenceConfig>('/system/inference')
     current = {
       ...current,
+      enabled: res.enabled ?? true,
       url: res.url,
       model: res.model,
       hasApiKey: res.has_api_key ?? false,
@@ -144,16 +148,18 @@ export async function syncInferenceFromBackend(): Promise<InferenceCfg> {
 
 /** Salva e applica la configurazione nel backend SQLite */
 export async function saveInferenceToBackend(cfg: {
-  url: string
-  model: string
+  enabled?: boolean
+  url?: string
+  model?: string
   apiKey?: string
   extraHeaders?: Record<string, string>
   timeout?: number
 }): Promise<InferenceCfg> {
   const payload: Record<string, unknown> = {
-    url: cfg.url.trim(),
-    model: cfg.model.trim() || 'MonkeyOCRv2',
-    timeout: cfg.timeout ?? 180,
+    enabled: cfg.enabled !== undefined ? cfg.enabled : current.enabled,
+    url: (cfg.url !== undefined ? cfg.url : current.url).trim(),
+    model: (cfg.model !== undefined ? cfg.model : current.model).trim() || 'MonkeyOCRv2',
+    timeout: cfg.timeout ?? current.timeout ?? 180,
   }
   if (cfg.apiKey !== undefined) {
     payload.api_key = cfg.apiKey.trim()
@@ -165,6 +171,7 @@ export async function saveInferenceToBackend(cfg: {
   const res = await apiPut<InferenceConfig>('/system/inference', payload)
   current = {
     ...current,
+    enabled: res.enabled ?? true,
     url: res.url,
     model: res.model,
     apiKey: cfg.apiKey ?? current.apiKey,
@@ -180,6 +187,10 @@ export async function saveInferenceToBackend(cfg: {
   }
   setInference(current)
   return current
+}
+
+export async function toggleInferenceEnabled(enabled: boolean): Promise<InferenceCfg> {
+  return saveInferenceToBackend({ enabled })
 }
 
 /** Esegue un test di connessione in tempo reale verso l'endpoint specificato */

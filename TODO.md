@@ -3,7 +3,7 @@
 Backlog operativo emerso dalla review del flusso `archivio → annotazione →
 dataset → fine-tuning → valutazione`. Non sostituisce la roadmap in
 `AGENTS.md`: ne dettaglia le priorità e aggiunge la direzione multi-dominio e
-multi-modello. Lloyd's List e MonkeyOCRv2 restano il primo profilo di dominio
+multi-modello. Historic Shipping Index e MonkeyOCRv2 restano il primo profilo di dominio
 e il primo adapter modello, non limiti architetturali.
 
 ## P0 — Integrità e riproducibilità
@@ -35,7 +35,7 @@ e il primo adapter modello, non limiti architetturali.
 
 - [x] Correggere il quoting del training: sostituire `shutil.quote` con
   `shlex.quote` in `services/trainer.py`.
-  - Verifica: script valido con `LLOYDS_TRAIN_PYTHON` contenente spazi.
+  - Verifica: script valido con `TABULARIUM_TRAIN_PYTHON` contenente spazi.
 
 - [x] Rendere l'export atomico, versionato e immutabile.
   - Scrivere in directory temporanea, validare, poi pubblicare snapshot
@@ -91,9 +91,19 @@ e il primo adapter modello, non limiti architetturali.
 - [x] Rendere espliciti i passaggi pagina: struttura, contenuto, tabella,
   revisione; consentire il salto dei passaggi non applicabili.
 
-- [x] Trasformare l'editor tabellare in vista di lavoro dedicata.
-  - Immagine e griglia sincronizzate; zoom locale; linee trascinabili;
-    filetti visibili/dedotti/fantasma; header multi-riga, note, totali e merge.
+- [~] Trasformare l'editor tabellare in vista di lavoro dedicata.
+  - **Fatto**: immagine e griglia sovrapposte e sincronizzate, zoom locale,
+    linee trascinabili con la tastiera come alternativa, supporto per confine
+    leggibile dalla forma (continuo = attestato, tratteggiato = da guardare),
+    e accettazione confine per confine — «Aggiungi colonna/riga» e «Rifiuta
+    confine», con `dropBoundary`/`insertBoundary` che rifiutano i casi ambigui
+    invece di indovinare (`lib/grid.ts`, `studio/components/TableGridOverlay.tsx`).
+    La voce era segnata come completata ma il codice aveva ancora cursori
+    numerici accanto all'immagine: su un ritaglio da 2600 px un cursore largo
+    80 px sposta la linea di ~32 px per pixel, quindi la correzione fine non
+    era possibile.
+  - **Da fare**: colonne fantasma raggiungibili dall'overlay, `header_rows`
+    esposto nel modale, note e totali come ruoli di riga dichiarabili.
   - OTSL/HTML restano strumenti avanzati.
 
 - [x] Introdurre tile pyramid per scansioni grandi.
@@ -121,6 +131,16 @@ e il primo adapter modello, non limiti architetturali.
 - [x] Trasformare i fallimenti in azioni: “aggiungi esempi simili”, “rivedi
   queste tabelle”, “copri questa label”.
 
+- [x] Rendere il rilevatore di griglia affidabile su tutto il campione.
+  - Righe dalle linee di base dei glifi (componenti connesse) invece che
+    dall'autocorrelazione del profilo, soglia di Otsu, inclinazione stimata e
+    compensata senza ruotare l'immagine, avviso `skewed` esposto e tradotto.
+  - Da 1 pagina su 4 a 4 su 4 sul campione reale; le tre rotture sono fissate
+    da test di regressione che falliscono sulla versione precedente.
+  - Resta noto e documentato (AGENTS.md §2.3.4): su una pagina a più colonne di
+    giornale il rilevatore non sa di essere fuori dominio, e le due ipotesi per
+    accorgersene sono state misurate e respinte.
+
 - [x] Prelabel assistito e active learning.
   - Bozze da modello/OCR restano non confermate, conservano provenienza e
     confidenza, e la coda privilegia le pagine a bassa confidenza o con errori eval.
@@ -136,6 +156,26 @@ e il primo adapter modello, non limiti architetturali.
     verificate, non attraversano rowspan e sono conteggiate separatamente.
   - Nessuna prima riga viene assunta automaticamente come intestazione.
 
+- [x] Assegnare i valori alle celle invece di tagliare a x fisso.
+  - Le colonne derivano di 25–77 px scendendo (0,6–2,0 passi) mentre una cifra
+    è larga ~20 px: nessuna retta descrive la tabella. `snap_boundaries()`
+    porta ogni confine nel varco di bianco della sua riga; dove un varco esiste
+    (86–96% dei tagli) nessun valore viene spezzato, dove non esiste il taglio
+    è marcato non provato e la cella entra fra le `uncertain`.
+  - Da 5,7% a 0,5% di valori spezzati sul campione reale.
+  - L'overlay disegna la spezzata reale sotto la retta modificabile.
+  - **Da fare**: persistere i confini piegati (oggi il grid salvato porta solo
+    le rette, quelli piegati vivono nella diagnostica della bozza).
+
+- [x] Far sapere al preflight se la configurazione entra nella GPU.
+  - Il controllo guardava la VRAM libera in assoluto e passava sempre su una
+    scheda scarica; poi `swift sft` andava in OOM dopo aver scaricato i pesi.
+  - `services/vram.py` stima i termini reali: su 8 GB il preset ufficiale
+    (batch 4, 16384) chiede 26 GB, e il termine dominante sono i **logit**
+    (vocabolario da 151936 su hidden 1024), non i pesi.
+  - Tutti e tre i preset spediti non entravano in 8 GB: aggiunto `gpu8`
+    (batch 1, 8192, grad_accum 4 → ~5,4 GB, stesso batch effettivo).
+
 - [ ] Eseguire un pilot: 30–50 pagine rappresentative, gold set protetto,
   prima LoRA, analisi errori, poi scala a 150–300 pagine.
   - Il campionatore deterministico 30–50 pagine è disponibile e salvabile nel
@@ -145,7 +185,7 @@ e il primo adapter modello, non limiti architetturali.
     150–300 pagine: `scripts/prepare_pilot.py` automatizza la preparazione e il
     preflight, ma dati annotati e una GPU dell’utente restano necessari.
 
-## P2 — Generalizzazione oltre Lloyd's e MonkeyOCRv2
+## P2 — Generalizzazione oltre Historic Shipping Index e MonkeyOCRv2
 
 - [x] Definire un **core annotation schema** indipendente dal modello.
   - Pagine, regioni, poligoni/bbox, reading order, trascrizioni, tabelle
@@ -154,7 +194,7 @@ e il primo adapter modello, non limiti architetturali.
     JSONL ms-swift o prompt come verità primaria.
 
 - [x] Introdurre i **domain profiles** configurabili.
-  - `lloyds-list-1900s` iniziale: label, colori, convenzioni, campionamento,
+  - `tabularium-list-1900s` iniziale: label, colori, convenzioni, campionamento,
     prompt, regole QA e metriche preferite.
   - Profili futuri: registri, quotidiani moderni, manoscritti, fatture,
     moduli, libri, mappe o documenti tecnici.
@@ -183,7 +223,7 @@ e il primo adapter modello, non limiti architetturali.
   - Configurazioni YAML/JSON validate, versionate e portabili.
 
 - [x] Conservare il focus iniziale.
-  - Non implementare adapter generici prima che il workflow Lloyd's sia
+  - Non implementare adapter generici prima che il workflow Historic Shipping Index sia
     validato end-to-end; creare ora solo i confini e le interfacce.
 
 ## P3 — Test, documentazione e usabilità

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -15,7 +16,7 @@ from . import scan as scanmod
 THUMB_SIDE = 512
 PREVIEW_SIDE = 1600
 TILE_SIZE = 512
-TRANSFORM_VERSION = 3
+TRANSFORM_VERSION = 4
 
 
 def thumb_dir() -> Path:
@@ -30,31 +31,82 @@ def preview_path(page_id: int) -> Path:
     return thumb_dir() / f"p{page_id}_preview.jpg"
 
 
+def original_preview_path(page_id: int) -> Path:
+    return thumb_dir() / f"p{page_id}_original_preview.jpg"
+
+
+def candidate_preview_path(page_id: int) -> Path:
+    return thumb_dir() / f"p{page_id}_candidate_preview.jpg"
+
+
 def deskew_path(page_id: int) -> Path:
-    """Immagine raddrizzata (deskew) della pagina; se presente sostituisce l'originale
-    in preview/thumbnail/crop/dataset export."""
+    """Master trasformato lossless usato da canvas, OCR, crop ed export."""
+    return thumb_dir() / f"p{page_id}_transform.png"
+
+
+def legacy_deskew_path(page_id: int) -> Path:
     return thumb_dir() / f"p{page_id}_deskew.jpg"
+
+
+def candidate_path(page_id: int) -> Path:
+    return thumb_dir() / f"p{page_id}_candidate.png"
 
 
 def transform_meta_path(page_id: int) -> Path:
     return thumb_dir() / f"p{page_id}_deskew.json"
 
 
-def mark_transform(page_id: int, level: str, size: tuple[int, int]) -> None:
-    path = transform_meta_path(page_id)
+def candidate_meta_path(page_id: int) -> Path:
+    return thumb_dir() / f"p{page_id}_candidate.json"
+
+
+def mark_transform(
+    page_id: int,
+    level: str,
+    size: tuple[int, int],
+    *,
+    path: Path | None = None,
+    details: dict | None = None,
+) -> dict:
+    path = path or transform_meta_path(page_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"version": TRANSFORM_VERSION, "level": level, "size": list(size)}), encoding="utf-8")
+    metadata = {
+        "version": TRANSFORM_VERSION,
+        "level": level,
+        "engine": level,
+        "size": list(size),
+        "created_at": datetime.now(UTC).isoformat(),
+        **(details or {}),
+    }
+    path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    return metadata
+
+
+def read_transform_meta(page_id: int, *, candidate: bool = False) -> dict | None:
+    path = candidate_meta_path(page_id) if candidate else transform_meta_path(page_id)
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _active_transform_path(page_id: int) -> Path | None:
+    current = deskew_path(page_id)
+    if current.exists():
+        return current
+    legacy = legacy_deskew_path(page_id)
+    return legacy if legacy.exists() else None
 
 
 def _has_invalid_transform(page: sqlite3.Row) -> bool:
     """Riconosce trasformazioni derivate da una tela diversa dall'originale."""
-    transformed = deskew_path(page["id"])
+    transformed = _active_transform_path(page["id"])
     metadata = transform_meta_path(page["id"])
-    if not transformed.exists() or page["source_kind"] == "pdf":
+    if transformed is None:
         return False
     try:
         details = json.loads(metadata.read_text(encoding="utf-8"))
-        if details.get("version") != TRANSFORM_VERSION:
+        if details.get("version") not in {3, TRANSFORM_VERSION}:
             return True
         with Image.open(transformed) as img:
             return img.size != (int(page["width"]), int(page["height"]))
@@ -67,6 +119,7 @@ def _purge_invalid_transform(page: sqlite3.Row) -> None:
     if not _has_invalid_transform(page):
         return
     deskew_path(page["id"]).unlink(missing_ok=True)
+    legacy_deskew_path(page["id"]).unlink(missing_ok=True)
     transform_meta_path(page["id"]).unlink(missing_ok=True)
     thumb_path(page["id"]).unlink(missing_ok=True)
     preview_path(page["id"]).unlink(missing_ok=True)
@@ -79,8 +132,8 @@ def _load_source_image(page: sqlite3.Row, use_deskew: bool = True) -> Image.Imag
     """Ritorna l'immagine sorgente della pagina (deskewata se attiva, altrimenti
     image originale o pdf+indice)."""
     if use_deskew:
-        d = deskew_path(page["id"])
-        if d.exists() and not _has_invalid_transform(page):
+        d = _active_transform_path(page["id"])
+        if d is not None and not _has_invalid_transform(page):
             return Image.open(d)
     src = page["abs_path"]
     if not Path(src).exists():
@@ -105,12 +158,18 @@ def load_original_source_image(page: sqlite3.Row) -> Image.Image | None:
 
 
 def maybe_auto_deskew(page: sqlite3.Row, threshold: float = 0.10) -> tuple[Image.Image, float]:
-    """Raddrizza la pagina se serve (rotazione >= soglia), salva il deskew e
-    invalida thumb/preview/tiles. Ritorna (immagine allineata, angolo applicato)."""
+    """Usa il master accettato; solo in sua assenza applica l'auto-deskew.
+
+    È intenzionale non ripartire mai dall'originale quando esiste un dewarp:
+    prefill, crop ed export devono osservare gli stessi pixel del canvas.
+    """
     import shutil
 
     from . import images as imgmod
 
+    active = _active_transform_path(page["id"])
+    if active is not None and not _has_invalid_transform(page):
+        return Image.open(active), 0.0
     img = _load_source_image(page, use_deskew=False)
     if img is None:
         raise HTTPException(status_code=404, detail="file sorgente non presente")
@@ -118,8 +177,13 @@ def maybe_auto_deskew(page: sqlite3.Row, threshold: float = 0.10) -> tuple[Image
     if abs(angle) >= threshold:
         desk = deskew_path(page["id"])
         desk.parent.mkdir(parents=True, exist_ok=True)
-        aligned.convert("RGB").save(desk, "JPEG", quality=92)
-        mark_transform(page["id"], "auto", aligned.size)
+        aligned.convert("RGB").save(desk, "PNG", compress_level=4)
+        mark_transform(
+            page["id"],
+            "deskew",
+            aligned.size,
+            details={"requested_engine": "auto", "actual_engine": "deskew", "angle": angle},
+        )
         for p in (thumb_path(page["id"]), preview_path(page["id"])):
             if p.exists():
                 p.unlink(missing_ok=True)
@@ -127,6 +191,34 @@ def maybe_auto_deskew(page: sqlite3.Row, threshold: float = 0.10) -> tuple[Image
         if tiles.exists():
             shutil.rmtree(tiles, ignore_errors=True)
     return aligned, angle
+
+
+def ensure_transform_preview(page: sqlite3.Row, kind: str) -> Path:
+    """Anteprima JPEG derivata; i master originali/trasformati restano lossless."""
+    if kind == "original":
+        expected = original_preview_path(page["id"])
+        image = load_original_source_image(page)
+    elif kind == "candidate":
+        expected = candidate_preview_path(page["id"])
+        source = candidate_path(page["id"])
+        image = Image.open(source) if source.exists() else None
+    else:
+        raise HTTPException(status_code=400, detail="transform_preview_kind_invalid")
+    if expected.exists():
+        return expected
+    if image is None:
+        raise HTTPException(status_code=404, detail="transform_preview_missing")
+    expected.parent.mkdir(parents=True, exist_ok=True)
+    preview = image.convert("RGB")
+    preview.thumbnail((PREVIEW_SIDE, PREVIEW_SIDE), Image.Resampling.LANCZOS)
+    preview.save(expected, "JPEG", quality=90)
+    return expected
+
+
+def clear_candidate(page_id: int) -> None:
+    candidate_path(page_id).unlink(missing_ok=True)
+    candidate_meta_path(page_id).unlink(missing_ok=True)
+    candidate_preview_path(page_id).unlink(missing_ok=True)
 
 
 def ensure_thumbnail(conn: sqlite3.Connection, page: sqlite3.Row) -> Path:

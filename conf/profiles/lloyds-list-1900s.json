@@ -1,6 +1,6 @@
 {
-  "id": "lloyds-list-1900s",
-  "name": "Lloyd's List — giornali marittimi 1900s",
+  "id": "tabularium-list-1900s",
+  "name": "Historic Shipping Index — giornali marittimi 1900s",
   "description": "Profilo per giornali storici inglesi con più colonne, registri navali e tabelle dense. Il corpus contiene generi diversi: le pagine indice (LSI) sono un'unica tabella larga senza filetti, quelle del Voyage Supplement (LSIVS) sono colonne parallele di schede-nave.",
   "labels": [
     "Title", "Page-header", "Issue-number", "Issue-date",
@@ -9,7 +9,7 @@
   ],
   "page_types": {
     "index": {
-      "description": "Lloyd's Shipping Index: una tabella a piena pagina senza filetti.",
+      "description": "Historic Shipping Index Shipping Index: una tabella a piena pagina senza filetti.",
       "recipe": ["Title", "Issue-number", "Issue-date", "Page-header", "Table"],
       "table_format": "otsl"
     },

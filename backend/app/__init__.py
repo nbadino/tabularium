@@ -1,1 +1,1 @@
-"""Lloyds Lab — backend package."""
+"""Tabularium — backend package."""

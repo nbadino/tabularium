@@ -3,8 +3,8 @@
 # Uso:  ./scripts/serve_model.sh [port]  (default 8888)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-REPO="${LLOYDS_TRAIN_REPO:-/home/cappannonno/MonkeyOCRv2}"
-ENV_DIR="${LLOYDS_TRAIN_PYTHON:+$(dirname "$(dirname "$LLOYDS_TRAIN_PYTHON")")}"
+REPO="${TABULARIUM_TRAIN_REPO:-/home/cappannonno/MonkeyOCRv2}"
+ENV_DIR="${TABULARIUM_TRAIN_PYTHON:+$(dirname "$(dirname "$TABULARIUM_TRAIN_PYTHON")")}"
 ENV_DIR="${ENV_DIR:-/home/cappannonno/anaconda3/envs/MonkeyOCRv2Parsing}"
 MODEL="${1:-$REPO/model_weight/MonkeyOCRv2-B-Parsing}"
 PORT="${2:-8888}"
@@ -21,8 +21,9 @@ export CC="${CC:-gcc-13}" CXX="${CXX:-g++-13}"
 export NVCC_PREPEND_FLAGS="-allow-unsupported-compiler"
 export MAX_JOBS=2
 
+# NOTA: le versioni recenti di serve.py non accettano --generation-config; il
+# file generation_config.json del checkpoint viene letto da vllm comunque.
 echo ">> Servo $MODEL su :$PORT"
 exec "$ENV_DIR/bin/python" serve.py -m "$MODEL" -p "$PORT" \
   --host 127.0.0.1 --gpu-memory-utilization 0.9 \
-  --max-model-len 24576 --max-num-batched-tokens 24576 --max-num-seqs 8 \
-  --generation-config vllm
+  --max-model-len 24576 --max-num-batched-tokens 24576 --max-num-seqs 8

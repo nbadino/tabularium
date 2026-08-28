@@ -121,13 +121,13 @@ export function CloudGuideModal({ open, onClose }: CloudGuideModalProps) {
                 </p>
                 <div className="mt-1.5 flex items-center gap-2 rounded border border-[color:var(--color-rule-strong)] bg-neutral-900 p-2 text-neutral-100 font-mono text-[11px]">
                   <code className="flex-1 overflow-x-auto">
-                    curl -fsSL https://raw.githubusercontent.com/cappannonno/lloyds-lab/main/scripts/cloud/setup_cloud_vllm.sh | bash
+                    curl -fsSL https://raw.githubusercontent.com/cappannonno/tabularium/main/scripts/cloud/setup_cloud_vllm.sh | bash
                   </code>
                   <button
                     type="button"
                     onClick={() =>
                       copy(
-                        'curl -fsSL https://raw.githubusercontent.com/cappannonno/lloyds-lab/main/scripts/cloud/setup_cloud_vllm.sh | bash',
+                        'curl -fsSL https://raw.githubusercontent.com/cappannonno/tabularium/main/scripts/cloud/setup_cloud_vllm.sh | bash',
                         'c1',
                       )
                     }
@@ -162,7 +162,7 @@ export function CloudGuideModal({ open, onClose }: CloudGuideModalProps) {
               </div>
 
               <div>
-                <h4 className="font-semibold">Passo 4: Salva in Lloyds Lab</h4>
+                <h4 className="font-semibold">Passo 4: Salva in Tabularium</h4>
                 <p className="text-[12px] text-[color:var(--color-ink-2)]">
                   Lascia l'URL impostato su <code className="font-mono bg-neutral-100 dark:bg-neutral-800 px-1 py-0.5 rounded">http://127.0.0.1:8888/v1</code> e clicca <strong>Test Connessione</strong>.
                 </p>
@@ -193,13 +193,13 @@ export function CloudGuideModal({ open, onClose }: CloudGuideModalProps) {
                 </p>
                 <div className="mt-1.5 flex items-center gap-2 rounded border border-[color:var(--color-rule-strong)] bg-neutral-900 p-2 text-neutral-100 font-mono text-[11px]">
                   <code className="flex-1 overflow-x-auto">
-                    curl -fsSL https://raw.githubusercontent.com/cappannonno/lloyds-lab/main/scripts/cloud/setup_cloud_vllm.sh | bash -s -- --port 8888 --api-key "CHIAVE_SEGRETA"
+                    curl -fsSL https://raw.githubusercontent.com/cappannonno/tabularium/main/scripts/cloud/setup_cloud_vllm.sh | bash -s -- --port 8888 --api-key "CHIAVE_SEGRETA"
                   </code>
                   <button
                     type="button"
                     onClick={() =>
                       copy(
-                        'curl -fsSL https://raw.githubusercontent.com/cappannonno/lloyds-lab/main/scripts/cloud/setup_cloud_vllm.sh | bash -s -- --port 8888 --api-key "CHIAVE_SEGRETA"',
+                        'curl -fsSL https://raw.githubusercontent.com/cappannonno/tabularium/main/scripts/cloud/setup_cloud_vllm.sh | bash -s -- --port 8888 --api-key "CHIAVE_SEGRETA"',
                         'c3',
                       )
                     }
@@ -212,7 +212,7 @@ export function CloudGuideModal({ open, onClose }: CloudGuideModalProps) {
               </div>
 
               <div>
-                <h4 className="font-semibold">Passo 3: Inserisci l'URL Proxy in Lloyds Lab</h4>
+                <h4 className="font-semibold">Passo 3: Inserisci l'URL Proxy in Tabularium</h4>
                 <p className="text-[12px] text-[color:var(--color-ink-2)]">
                   Dalla dashboard RunPod copia l'URL proxy (formato: <code className="font-mono text-[11px]">https://&lt;POD_ID&gt;-8888.proxy.runpod.net/v1</code>) e incollalo nel campo Server vLLM insieme alla tua chiave API.
                 </p>
@@ -247,7 +247,7 @@ export function CloudGuideModal({ open, onClose }: CloudGuideModalProps) {
                   </button>
                 </div>
                 <p className="mt-2 text-[12px] text-[color:var(--color-ink-2)]">
-                  In Lloyds Lab inserisci <code className="font-mono">http://&lt;IP_PUBBLICO&gt;:&lt;PORTA_MAPPATA&gt;/v1</code> e la relativa API Key.
+                  In Tabularium inserisci <code className="font-mono">http://&lt;IP_PUBBLICO&gt;:&lt;PORTA_MAPPATA&gt;/v1</code> e la relativa API Key.
                 </p>
               </div>
             </div>

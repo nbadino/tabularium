@@ -1,7 +1,7 @@
-# AGENTS.md — Lloyds Lab
+# AGENTS.md — Tabularium
 
 Dashboard locale multipiattaforma per il **fine-tuning guidato di MonkeyOCRv2-Parsing**
-su **giornali storici "Lloyd's List" (1900s)**, focalizzato su **layout multi-colonna complesso
+su **giornali storici "Historic Shipping Index" (1900s)**, focalizzato su **layout multi-colonna complesso
 e forma tabulare densa** (registri di movimenti navali, *casualties*, *maritime intelligence*).
 
 Questo documento è la fonte di verità per chiunque (umano o agente IA) lavori su questo repo:
@@ -68,7 +68,7 @@ non vuol dire che il modello non sappia leggere le tabelle.** Basta ritagliare q
 interrogarlo con il prompt Tabella per ottenere OTSL corretto — colonne separate, celle di uno o due
 caratteri incluse. Le due cose vanno valutate separatamente.
 
-Sul corpus Lloyd's END2END a 2 MP ha già corretto testata, titolo e sottotitolo della pagina `_014`
+Sul corpus Historic Shipping Index END2END a 2 MP ha già corretto testata, titolo e sottotitolo della pagina `_014`
 rispetto al percorso a due stadi, ma produce output molto lungo (~9k token) e il comportamento sul
 registro OTSL completo deve ancora essere misurato. La UI espone entrambi: nessuno dei due diventa
 default sulla base di una sola pagina.
@@ -94,7 +94,7 @@ degrada. Misurato su `LSI_17186_015` (2864×3952 = 11.3 MP), a parità di tutto 
 | 1.0 MP | 4 | corretto, meno granulare |
 
 Perciò `services/inference.py` impone un tetto di 2 MP **alla sola chiamata di layout**
-(`LAYOUT_MAX_PIXELS`, override con `LLOYDS_VLLM_MAX_PIXELS`). Sui ritagli di testo e tabella non si
+(`LAYOUT_MAX_PIXELS`, override con `TABULARIUM_VLLM_MAX_PIXELS`). Sui ritagli di testo e tabella non si
 riduce: sono già piccoli e ridurli cancellerebbe i caratteri.
 
 ### 2.3.3 Tabelle grandi: intero come verità, bande come esperimento
@@ -143,6 +143,31 @@ restano nel sistema di riferimento del ritaglio. Ma un `hline` è orizzontale pe
 ~0,2° non può più seguire la riga di testo, e il rilevatore emette `skewed` perché la pagina va
 raddrizzata con *⇱ Deskew* prima di annotare. L'avviso è un limite dichiarato, non un errore.
 
+**I confini piegano.** Una colonna di questi registri non sta ferma: composta a mano e ripresa
+da una pagina curva, deriva orizzontalmente scendendo. Misurato sul campione, ogni confine
+interno si sposta fra 25 e 77 px dall'alto al basso, cioè fra 0,6 e 2,0 passi tipografici,
+mentre una cifra è larga una ventina di pixel — quindi **nessuna retta può descrivere la
+tabella**: un taglio dritto alla mediana finisce dentro un numero e ne manda metà nella cella
+accanto. Su `LSI_8447_014` succedeva sul 10% dei tagli.
+
+`snap_boundaries()` porta perciò ogni confine, riga per riga, nel varco di bianco migliore
+entro 1,5 passi, pesando la larghezza del varco contro la distanza dalla retta. Dove un varco
+esiste — l'86–96% dei tagli sul campione — **nessuno dei tagli spezza un valore**; dove non
+esiste, la retta resta e il taglio è marcato non provato. Complessivamente da 5,7% a 0,5% di
+valori spezzati.
+
+Due conseguenze di contratto:
+- `diagnostics.row_columns` porta i confini piegati (0–1, per riga) e `row_columns_proven` dice
+  quali sono attestati da un varco; `row_columns_unproven` li conta. Servono a **disegnarli** e
+  a riempire le celle, e non sono ancora persistiti: il grid salvato porta solo le rette.
+- `fill_cells(..., snap=True)` usa i confini piegati e marca `uncertain` le celle il cui
+  confine non è provato. Vanno passati anche `shear`, altrimenti i varchi si cercano nel
+  sistema di riferimento sbagliato.
+
+Non c'è un avviso «la colonna deriva»: deriva su tutte e quattro le pagine del campione (dal 7%
+al 41% di tagli non provati), quindi scatterebbe sempre. La deriva non è una condizione della
+scansione ma una proprietà per cella, e come tale viene contata e marcata.
+
 **Dominio d'uso.** Vale su un ritaglio che è **una sola tabella allineata a spazi**. Su una pagina
 a più colonne di giornale (`LSIVS_11652_006`, supplemento a cinque colonne) restituisce una griglia
 priva di senso, e **non sa accorgersene**: entrambe le ipotesi verificabili sono state misurate e
@@ -183,6 +208,49 @@ per_device_train_batch_size 4 | gradient_accumulation_steps 1 | save_steps 500 |
 ```
 - `eval_steps` ufficiale è enorme (= non si valuta in training); noi aggiungeremo un val split.
 - Lo script di resume (ricerca ultimo `checkpoint-N` in `output_dir`) va preservato.
+
+### 2.6.1 Quanta VRAM chiede davvero (e perché il preset ufficiale non basta)
+Gli iperparametri di §2.6 sono quelli canonici del repo e restano il riferimento, ma sono
+scritti per la scheda su cui è stato addestrato il modello, non per una qualunque. Il conto,
+implementato e testato in `services/vram.py`:
+
+| Termine | Formula | batch 1, 16384 token |
+|---|---|---|
+| **Logit** | `B × S × vocab × 2` | **4,6 GiB** |
+| Pesi (bf16, dal disco) | — | 2,0 GiB |
+| Attivazioni salvate (checkpointing) | `L × B × S × H × 2` | 0,9 GiB |
+| Ricalcolo di uno strato | `B × S × (H + 3·I) × 2` | 0,3 GiB |
+| LoRA + Adam (rank 8) | fp32 sugli adattatori | ~0,1 GiB |
+
+Il termine dominante è il **vocabolario**, non i pesi: `MonkeyOCRv2-B-Parsing` ha
+`vocab_size` 151936 su `hidden_size` 1024, quindi la matrice dei logit è 148 volte più larga
+dello stato nascosto. «È un modello da 0,7B, ci sta comodo» è quindi un'intuizione sbagliata:
+ci stanno comodi i pesi, non la testa di uscita a lunghezza piena.
+
+Conseguenza su una GPU da 8 GB (RTX 4060 Laptop, il caso di riferimento):
+
+| Configurazione | Stima | Esito |
+|---|---|---|
+| Ufficiale: batch 4, 16384 | 26,2 GiB | non entra |
+| batch 1, 16384 | 8,3 GiB | non entra |
+| **batch 1, 8192, grad_accum 4** | **5,4 GiB** | **entra** (preset `gpu8`) |
+| batch 1, 4096 | 3,9 GiB | entra |
+| Full-SFT, batch 1, 4096 | 15,5 GiB | non entra |
+
+Full-SFT non è una strada su 8 GB e non lo diventa accorciando la sequenza: sono gli stati
+dell'ottimizzatore su tutti i pesi a non entrare. LoRA resta comunque la scelta giusta ai
+volumi di dati previsti.
+
+`trainer.preflight()` calcola la stima e **blocca** la run quando non entra, indicando la
+`max_length` più grande che entra davvero (bisezione sulla stessa stima, così il consiglio non
+può contraddirla). La stima è deliberatamente un **limite inferiore**: ignora frammentazione
+dell'allocatore, buffer DeepSpeed, il picco fp32 della cross-entropy e il contesto CUDA. Serve
+a dire «non ci sta» con sicurezza, non «ci sta» con sicurezza — perciò c'è un margine del 25%
+prima di dichiarare che va bene.
+
+Nota su `--deepspeed zero1`: su una sola GPU non partiziona niente e aggiunge dipendenza e
+buffer. Resta nello script per fedeltà al repo ufficiale, ma non è ciò che rende eseguibile
+una run da 8 GB.
 
 ### 2.7 Label pubbliche del parsing
 `Caption, Footnote, List-item, Page-footer, Page-header, Section-header, Text, Title, Formula, Table, Picture`
@@ -268,7 +336,7 @@ PyTorch nel processo dashboard (il training gira in env separati).
 ## 5. Struttura repository (obiettivo finale)
 
 ```
-lloyds-lab/
+tabularium/
   AGENTS.md
   README.md
   backend/
@@ -290,7 +358,7 @@ lloyds-lab/
         images.py           # thumbnails/tiles/EXIF/deskew
         pages.py            # anteprime/thumbnail on-demand per pagina
         scan.py             # scansione archivio (immagini + PDF lazy)
-        labeling.py         # tassonomia label Lloyd's + prompt
+        labeling.py         # tassonomia label Historic Shipping Index + prompt
         blocks.py           # CRUD blocchi + reading order
         tables.py           # CRUD grid tabelle (cells/merges) + HTML preview
         otsl.py             # grid → OTSL (+ test contro otsl_to_html)
@@ -360,7 +428,7 @@ Regole:
 
 ---
 
-## 8. Tassonomia Lloyd's & mappa prompt (default di progetto)
+## 8. Tassonomia Historic Shipping Index & mappa prompt (default di progetto)
 
 | Label (interna) | Esportata | Prompt riconoscimento (classe non-layout) |
 |---|---|---|
@@ -383,7 +451,7 @@ Regole:
 **Perché numero e data sono classi separate** (e perché non esiste una classe `Date`): la data del
 fascicolo è il campo più importante del corpus — ogni movimento nave è relativo a essa — e il corpus
 attraversa almeno tre formati di testata fra il 1940 e il 1973 (masthead grande con numero a sinistra
-e data al centro; riga unica «LLOYD'S SHIPPING INDEX, Mon., May 20, 1940.»; Voyage Supplement con
+e data al centro; riga unica «HISTORIC SHIPPING INDEX, Mon., May 20, 1940.»; Voyage Supplement con
 data a sinistra e indice a pollice + numero di pagina a destra). Etichettarla direttamente evita una
 regex di estrazione per ciascun formato. Una classe `Date` generica sarebbe invece incoerente: le
 date dentro le celle sono centinaia per pagina e nessuna label di layout può raggiungerle.
@@ -414,7 +482,7 @@ solo nel LAYOUT.
 
 ## 9. Convenzioni di trascrizione (config per progetto)
 
-Checklist sempre visibile nell'annotatore (esempio default Lloyd's):
+Checklist sempre visibile nell'annotatore (esempio default Historic Shipping Index):
 - Espandere i *soft hyphen* di fine riga riassemblando le parole spezzate.
 - Conservare grafia/sigle originali (`inst.`, `ult.`, `barq.`, `psgr. stmr.`, maiuscoletto).
 - Nomi di navi in corsivo → segnare `*nave*` (configurabile) o testo piano.
@@ -494,7 +562,7 @@ tabella dei fallimenti peggiori per guidare la nuova iterazione di annotazione.
   predetto, errori pagine) e Playground (layout predetto overlay SVG + blocchi/contenuto, copia md).
   Degrada con warning se il server vLLM non è attivo.
 - **M7 — Pseudo-labeling** ✅ — `services/ocr.py` (import lazy RapidOCR/PaddleOCR, config
-  `LLOYDS_OCR_ENGINE`), `POST /api/projects/{id}/prelabel`: rileva righe di testo su una pagina,
+  `TABULARIUM_OCR_ENGINE`), `POST /api/projects/{id}/prelabel`: rileva righe di testo su una pagina,
   filtra per confidenza/dimensione + NMS-lite, inserisce blocchi `Text` con `prefill_source` e
   `order_idx`, modalità replace/merge. `BlockOut` ora espone `prefill_source`. UI: pulsante
   La modalità modello espone sia `two_stage` sia l'ufficiale `end2end`; OTSL END2END valido evita
@@ -524,7 +592,7 @@ Ogni milestone termina con la sezione "Verifica": cosa lanciare per testare (ved
    normalizzazione coordinate); frontend con un build `tsc --noEmit` + `vite build` senza errori.
 6. **Esecuzione**: backend `uvicorn app.main:app --port 8787`; frontend dev `vite` con proxy verso
    il backend; MAI far dipendere l'app dal training in esecuzione.
-7. **Percorsi**: mai hard-coded; tutto da `config.py` (env var `LLOYDS_ROOT`).
+7. **Percorsi**: mai hard-coded; tutto da `config.py` (env var `TABULARIUM_ROOT`).
 8. **Data safety**: i progetti creati dall'utente sono dati reali; nessuna distruzione automatica
    di dati; ogni operazione distruttiva richiede conferma esplicita nella UI e nel codice.
 9. I merge/coordinate delle tabelle devono essere validati: fare riferimento all'algoritmo
@@ -536,7 +604,7 @@ Ogni milestone termina con la sezione "Verifica": cosa lanciare per testare (ved
     (`frontend/src/i18n/it.ts` = sorgente di verità della struttura; `en.ts`/`fr.ts` identici,
     tipati come `Dict`). Segnaposto `{var}` identici nelle tre lingue; plurali come `{one, other}`
     (il francese usa il singolare per 0 e 1). Lo switch di lingua è nel rail (persistito in
-    `localStorage['lloyds.locale']`). Il backend localizza i messaggi che finiscono in UI
+    `localStorage['tabularium.locale']`). Il backend localizza i messaggi che finiscono in UI
     (dettagli HTTPException, warnings dataset/eval, errori readiness, reason della coda,
     preflight training) tramite `Accept-Language` e `backend/app/services/i18n.py`
     (default italiano; `localize_detail` riconosce i dettagli esistenti dal catalogo inverso).

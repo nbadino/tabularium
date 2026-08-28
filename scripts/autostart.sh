@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Avvio automatico di Lloyds Lab al login dell'utente.
+# Avvio automatico di Tabularium al login dell'utente.
 # Avvia backend + frontend buildato una sola volta e apre la dashboard quando pronta.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-HOST="${LLOYDS_HOST:-127.0.0.1}"
-PORT="${LLOYDS_PORT:-8787}"
+HOST="${TABULARIUM_HOST:-127.0.0.1}"
+PORT="${TABULARIUM_PORT:-8787}"
 URL="http://${HOST}:${PORT}"
-LOG_FILE="${LLOYDS_AUTOSTART_LOG:-/tmp/lloyds-lab-autostart.log}"
-LOCK_FILE="${LLOYDS_AUTOSTART_LOCK:-/tmp/lloyds-lab-autostart.lock}"
+LOG_FILE="${TABULARIUM_AUTOSTART_LOG:-/tmp/tabularium-autostart.log}"
+LOCK_FILE="${TABULARIUM_AUTOSTART_LOCK:-/tmp/tabularium-autostart.lock}"
 
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
@@ -23,8 +23,8 @@ if [ -f .env ]; then
   # shellcheck disable=SC1091
   . ./.env
   set +a
-  HOST="${LLOYDS_HOST:-127.0.0.1}"
-  PORT="${LLOYDS_PORT:-8787}"
+  HOST="${TABULARIUM_HOST:-127.0.0.1}"
+  PORT="${TABULARIUM_PORT:-8787}"
   URL="http://${HOST}:${PORT}"
 fi
 
@@ -42,7 +42,7 @@ if ! curl -fsS --max-time 2 "${URL}/api/health" >/dev/null 2>&1; then
   done
 
   if [ "$ready" -ne 1 ]; then
-    echo "[$(date -Is)] Lloyds Lab non pronto dopo 30 secondi (PID ${SERVER_PID})." >>"$LOG_FILE"
+    echo "[$(date -Is)] Tabularium non pronto dopo 30 secondi (PID ${SERVER_PID})." >>"$LOG_FILE"
     exit 1
   fi
 fi

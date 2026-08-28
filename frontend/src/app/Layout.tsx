@@ -99,7 +99,7 @@ export default function Layout() {
         {/* riga 1 — identità e stato globale */}
         <div className="flex items-center gap-3 border-b border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-3 py-1.5">
           <span className="text-[13px] font-bold tracking-[-0.02em]">
-            Lloyds<span className="text-[color:var(--color-sig-text)]">Lab</span>
+            Tabularium<span className="text-[color:var(--color-sig-text)]">Lab</span>
           </span>
           <span className="text-[11px] text-[color:var(--color-ink-3)]">
             {t('app.tagline')}

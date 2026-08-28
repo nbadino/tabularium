@@ -1,7 +1,7 @@
 """Metadati di pagina dedotti dal nome file dell'archivio.
 
-Le scansioni Lloyd's arrivano con un nome che codifica già testata, numero di
-fascicolo e pagina — `LSI_17186_015.tif` = Lloyd's Shipping Index, n. 17.186,
+Le scansioni Historic Shipping Index arrivano con un nome che codifica già testata, numero di
+fascicolo e pagina — `LSI_17186_015.tif` = Historic Shipping Index Shipping Index, n. 17.186,
 pagina 15 — cioè esattamente i campi che il registro pagine tiene in `issue_no`,
 `page_no` e `page_type`.
 

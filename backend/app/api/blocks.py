@@ -300,6 +300,9 @@ def block_table_detect(
                 engine,
                 pitch=int(detection.diagnostics.get("pitch_px", 20)),
                 min_score=payload.min_score,
+                # Lo scorrimento serve anche qui: senza, i varchi fra parole si
+                # cercano nel sistema sbagliato e il confine non piega dove deve.
+                shear=float(detection.diagnostics.get("shear", 0.0)),
             )
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(

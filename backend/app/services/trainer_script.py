@@ -80,7 +80,7 @@ def prepare_training_files(
 def cd_line(repo_train_dir: str) -> str:
     if repo_train_dir:
         return f'cd "{repo_train_dir}"\n'
-    return "# (LLOYDS_TRAIN_REPO non configurato: lo script gira dalla cartella corrente)\n"
+    return "# (TABULARIUM_TRAIN_REPO non configurato: lo script gira dalla cartella corrente)\n"
 
 
 def generate_script(cfg: dict, run_dir: Path, train_file: Path, val_file: Path) -> str:

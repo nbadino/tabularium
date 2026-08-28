@@ -1,4 +1,4 @@
-"""Lloyds Lab — entry point FastAPI.
+"""Tabularium — entry point FastAPI.
 
 Avvio:  uvicorn app.main:app --port 8787
 """

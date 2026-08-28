@@ -16,7 +16,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
-BASE = os.environ.get("LLOYDS_E2E_URL", "http://127.0.0.1:8787").rstrip("/")
+BASE = os.environ.get("TABULARIUM_E2E_URL", "http://127.0.0.1:8787").rstrip("/")
 
 
 def wait_for(driver, condition, timeout: float = 15):
@@ -24,7 +24,7 @@ def wait_for(driver, condition, timeout: float = 15):
 
 
 def main() -> int:
-    root = Path(tempfile.mkdtemp(prefix="lloyds-lab-e2e-"))
+    root = Path(tempfile.mkdtemp(prefix="tabularium-e2e-"))
     project_id: int | None = None
     driver = None
     stage = "bootstrap"
@@ -32,7 +32,7 @@ def main() -> int:
         Image.new("RGB", (900, 1300), (230, 230, 230)).save(root / "page.png")
         options = Options()
         options.binary_location = os.environ.get(
-            "LLOYDS_CHROMIUM",
+            "TABULARIUM_CHROMIUM",
             "/snap/chromium/3335/usr/lib/chromium-browser/chrome",
         )
         for flag in (
@@ -42,7 +42,7 @@ def main() -> int:
         ):
             options.add_argument(flag)
         driver = webdriver.Chrome(
-            service=Service(os.environ.get("LLOYDS_CHROMEDRIVER", "/usr/bin/chromedriver")),
+            service=Service(os.environ.get("TABULARIUM_CHROMEDRIVER", "/usr/bin/chromedriver")),
             options=options,
         )
         driver.set_window_size(1440, 1000)

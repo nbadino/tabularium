@@ -125,3 +125,135 @@ export function emptyGrid(rows: number, cols: number): TableGrid {
     hlines: Array.from({ length: rows + 1 }, (_, i) => i / rows),
   }
 }
+
+/** Asse su cui agire: confini verticali (colonne) od orizzontali (righe). */
+export type Axis = 'v' | 'h'
+
+/**
+ * Rifiuta il confine interno `index`, fondendo le due tracce che separa.
+ *
+ * È la controparte di «questo confine il rilevatore se l'è inventato»: la
+ * proposta si corregge togliendo una linea, non ridisegnando la griglia.
+ *
+ * Il testo delle due celle fuse si concatena, perché è quello che è successo
+ * fisicamente sulla pagina: due colonne che il rilevatore aveva separato erano
+ * una sola. Ritorna `null` quando la fusione sarebbe **ambigua** — due celle
+ * unite con estensione diversa sull'altro asse — invece di scegliere al posto
+ * dell'utente: lì va prima separata la cella unita.
+ */
+export function dropBoundary(grid: TableGrid, axis: Axis, index: number): TableGrid | null {
+  const count = axis === 'v' ? grid.cols : grid.rows
+  if (index < 1 || index > count - 1 || count < 2) return null
+
+  const start = (c: TableCell) => (axis === 'v' ? c.c : c.r)
+  const span = (c: TableCell) => (axis === 'v' ? c.colspan : c.rowspan)
+  const cross = (c: TableCell) => (axis === 'v' ? c.r : c.c)
+  const crossSpan = (c: TableCell) => (axis === 'v' ? c.rowspan : c.colspan)
+  // Le due tracce fuse collassano entrambe su `index - 1`.
+  const remap = (j: number) => (j < index ? j : j - 1)
+
+  const moved = grid.cells.map((cell) => {
+    const from = remap(start(cell))
+    const to = remap(start(cell) + span(cell) - 1)
+    const next = { ...cell, [axis === 'v' ? 'c' : 'r']: from } as TableCell
+    return { ...next, [axis === 'v' ? 'colspan' : 'rowspan']: to - from + 1 } as TableCell
+  })
+
+  // Sola collisione possibile: due celle distinte finite entrambe su index-1.
+  const out: TableCell[] = []
+  const pending = new Map<string, TableCell>()
+  for (const cell of moved) {
+    if (start(cell) !== index - 1) {
+      out.push(cell)
+      continue
+    }
+    const key = `${cross(cell)}:${crossSpan(cell)}`
+    const twin = pending.get(key)
+    if (!twin) {
+      pending.set(key, cell)
+      continue
+    }
+    const text = [twin.text, cell.text].map((s) => s.trim()).filter(Boolean).join(' ')
+    pending.set(key, {
+      ...twin,
+      text,
+      [axis === 'v' ? 'colspan' : 'rowspan']: Math.max(span(twin), span(cell)),
+    } as TableCell)
+  }
+  const anchored = [...pending.values()]
+  // Due celle sull'altro asse con estensione diversa non si sanno fondere.
+  const seen = new Set<number>()
+  for (const cell of anchored) {
+    if (seen.has(cross(cell))) return null
+    for (let k = cross(cell); k < cross(cell) + crossSpan(cell); k++) seen.add(k)
+  }
+
+  const lines = axis === 'v' ? grid.vlines : grid.hlines
+  const kept = (lines ?? []).filter((_, i) => i !== index)
+  return {
+    ...grid,
+    rows: axis === 'h' ? grid.rows - 1 : grid.rows,
+    cols: axis === 'v' ? grid.cols - 1 : grid.cols,
+    cells: [...out, ...anchored],
+    phantom_cols:
+      axis === 'v'
+        ? grid.phantom_cols.filter((i) => i !== index - 1).map((i) => (i >= index ? i - 1 : i))
+        : grid.phantom_cols,
+    vlines: axis === 'v' ? kept : grid.vlines,
+    hlines: axis === 'h' ? kept : grid.hlines,
+  }
+}
+
+/**
+ * Inserisce un confine alla posizione normalizzata `at`, spezzando la traccia
+ * che lo contiene. È il gesto «qui il rilevatore una colonna non l'ha vista».
+ *
+ * Il testo resta nella traccia di sinistra (o in alto): spostarlo a metà
+ * sarebbe un'ipotesi, e l'annotatore lo sposta dove va. Ritorna `null` se `at`
+ * cade fuori dal contenuto o su un confine già esistente.
+ */
+export function insertBoundary(grid: TableGrid, axis: Axis, at: number): TableGrid | null {
+  const lines = [...((axis === 'v' ? grid.vlines : grid.hlines) ?? [])]
+  if (lines.length < 2) return null
+  if (at <= lines[0] || at >= lines[lines.length - 1]) return null
+  const index = lines.findIndex((v) => v > at)
+  if (index < 1) return null
+  // Un confine a ridosso di un altro non separa niente e crea una traccia vuota.
+  const tooClose = Math.abs(at - lines[index]) < 1e-4 || Math.abs(at - lines[index - 1]) < 1e-4
+  if (tooClose) return null
+
+  const track = index - 1 // traccia spezzata
+  const start = (c: TableCell) => (axis === 'v' ? c.c : c.r)
+  const span = (c: TableCell) => (axis === 'v' ? c.colspan : c.rowspan)
+  const key = axis === 'v' ? 'c' : 'r'
+  const spanKey = axis === 'v' ? 'colspan' : 'rowspan'
+
+  const cells: TableCell[] = []
+  for (const cell of grid.cells) {
+    const from = start(cell)
+    const to = from + span(cell) - 1
+    if (to < track) {
+      cells.push(cell)
+    } else if (from > track) {
+      cells.push({ ...cell, [key]: from + 1 } as TableCell)
+    } else if (span(cell) > 1) {
+      // La cella attraversa la traccia spezzata: si allarga di uno.
+      cells.push({ ...cell, [spanKey]: span(cell) + 1 } as TableCell)
+    } else {
+      cells.push(cell)
+      cells.push({ ...cell, [key]: from + 1, text: '' } as TableCell)
+    }
+  }
+
+  lines.splice(index, 0, at)
+  return {
+    ...grid,
+    rows: axis === 'h' ? grid.rows + 1 : grid.rows,
+    cols: axis === 'v' ? grid.cols + 1 : grid.cols,
+    cells,
+    phantom_cols:
+      axis === 'v' ? grid.phantom_cols.map((i) => (i > track ? i + 1 : i)) : grid.phantom_cols,
+    vlines: axis === 'v' ? lines : grid.vlines,
+    hlines: axis === 'h' ? lines : grid.hlines,
+  }
+}

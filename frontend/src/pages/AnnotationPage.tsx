@@ -11,6 +11,7 @@ import Inspector from '../studio/components/Inspector'
 import LayersPanel from '../studio/components/LayersPanel'
 import PageSidebar from '../studio/components/PageSidebar'
 import TableCellsEditor from '../studio/components/TableCellsEditor'
+import PageTransformReview from '../studio/components/PageTransformReview'
 import { useAnnotationState } from '../studio/useAnnotationState'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import type { Tool } from '../studio/types'
@@ -18,8 +19,11 @@ import { emptyGrid } from '../lib/grid'
 import type { PrefillEngines, TableDetectOut, TableDetectRequest, TableGrid, TableGridOut, TableSaveOut } from '../lib/types'
 import { useI18n, tn } from '../i18n'
 
+import { saveInferenceToBackend, useInference } from '../app/inference'
+
 export default function AnnotationPage() {
   const { t } = useI18n()
+  const inf = useInference()
   const [projectId, setProjectId] = useState<number | ''>('')
   const [pages, setPages] = useState<PageItem[]>([])
   const [page, setPage] = useState<PageItem | null>(null)
@@ -32,14 +36,11 @@ export default function AnnotationPage() {
   const [tableGrid, setTableGrid] = useState<TableGrid | null>(null)
   const [prefillBusy, setPrefillBusy] = useState(false)
   const [prefillEngine, setPrefillEngine] = useState<
-    'ocr' | 'model-two-stage' | 'model-end2end'
+    'off' | 'ocr' | 'model-two-stage' | 'model-end2end'
   >('ocr')
   const [engines, setEngines] = useState<PrefillEngines | null>(null)
-  const [alignLevel, setAlignLevel] = useState<'basic' | 'medium' | 'high'>('medium')
-  const alignStrength = 1
-  const [alignBusy, setAlignBusy] = useState(false)
+  const [transformOpen, setTransformOpen] = useState(false)
   const [resetBusy, setResetBusy] = useState(false)
-  const [alignOpen, setAlignOpen] = useState(false)
   const prefillConfidence = 0.5
   const [prefillNotice, setPrefillNotice] = useState<string | null>(null)
   const [nextTask, setNextTask] = useState<{ id: number; reason: string } | null>(null)
@@ -78,7 +79,7 @@ export default function AnnotationPage() {
     setError(null)
     setPrefillNotice(null)
     try {
-      const res = await apiPost<{ engine: string; results: Array<{ page_id: number; detected: number; inserted: number; deskew_angle?: number }> }>(
+      const res = await apiPost<{ engine: string; results: Array<{ page_id: number; detected: number; inserted: number; tables?: number; grids?: number; deskew_angle?: number }> }>(
         `/projects/${projectId}/prelabel`,
         {
           page_ids: [page.id],
@@ -92,48 +93,22 @@ export default function AnnotationPage() {
       const inserted = res.results[0]?.inserted ?? 0
       const deskewAngle = res.results[0]?.deskew_angle as number | undefined
       const base = tn('annotate.ocrNotice', inserted, { engine: res.engine })
+      // La promozione a tabella cambia il lavoro da fare (si verificano celle,
+      // non si trascrivono righe): vale la pena dirlo esplicitamente.
+      const tablePart =
+        (res.results[0]?.tables ?? 0) > 0
+          ? ' ' + t('annotate.ocrTableNotice', { grids: res.results[0]?.grids ?? 0 })
+          : ''
       setPrefillNotice(
-        deskewAngle && Math.abs(deskewAngle) >= 0.05
+        (deskewAngle && Math.abs(deskewAngle) >= 0.05
           ? `${base} ${t('annotate.deskewApplied', { angle: deskewAngle.toFixed(2) })}`
-          : base,
+          : base) + tablePart,
       )
       await applyBlocks(page, ratio)
     } catch (e) {
       setError(String(e))
     } finally {
       setPrefillBusy(false)
-    }
-  }
-
-  // --- allineamento pagina (livelli basic/medium/high) --------------------------
-  const alignPage = async () => {
-    if (!page) return
-    const hasBlocks = ann.blocks.length > 0
-    if (hasBlocks && !window.confirm(t('annotate.deskewConfirm'))) return
-    setAlignBusy(true)
-    setError(null)
-    setPrefillNotice(null)
-    try {
-      const res = await apiPost<{ applied: boolean; angle: number; level: string; engine?: string }>(
-        `/pages/${page.id}/align${hasBlocks ? '?confirm=true' : ''}`,
-        { level: alignLevel, strength: alignStrength },
-      )
-      await onPageSelect(page.id)
-      setPreviewUrl(`/api/pages/${page.id}/preview?t=${Date.now()}`)
-    const label = t(
-      `annotate.level${res.level.charAt(0).toUpperCase()}${res.level.slice(1)}` as 'annotate.levelBasic',
-    )
-      setPrefillNotice(
-        res.applied
-          ? `${t('annotate.alignApplied', { level: label, angle: res.angle.toFixed(2) })} ${
-              res.engine === 'uvdoc' ? t('annotate.alignEngineUvdoc') : t('annotate.alignEngineFallback')
-            }`
-          : t('annotate.deskewNoticeNone'),
-      )
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setAlignBusy(false)
     }
   }
 
@@ -316,9 +291,6 @@ export default function AnnotationPage() {
   }
 
   // --- guida contestuale --------------------------------------------------------
-  const levelLabel = t(
-    `annotate.level${alignLevel.charAt(0).toUpperCase()}${alignLevel.slice(1)}` as 'annotate.levelBasic',
-  )
   const prefillCount = ann.blocks.filter((b) => b.prefill).length
   const guideHint = !page
     ? t('annotate.selectHint')
@@ -389,87 +361,108 @@ export default function AnnotationPage() {
             </button>
           </div>
           <div className="flex items-center gap-1.5">
+            <div className="flex items-center">
+              <button
+                onClick={() => void runPrelabel()}
+                disabled={prefillBusy || !page || prefillEngine === 'off'}
+                className={`rounded-l border px-2 py-1 text-xs transition-colors ${
+                  prefillEngine === 'off'
+                    ? 'border-slate-700 bg-slate-900 text-slate-500 cursor-not-allowed'
+                    : 'border-violet-700 bg-violet-950 text-violet-300 hover:bg-violet-900 disabled:opacity-40'
+                }`}
+                title={
+                  prefillEngine === 'off'
+                    ? 'Prefill disattivato'
+                    : prefillEngine !== 'ocr'
+                      ? t('annotate.prefillTitleModel')
+                      : t('annotate.prefillTitleOcr')
+                }
+              >
+                {prefillBusy ? t('annotate.ocrBusy') : prefillEngine === 'off' ? 'Prefill Off' : t('annotate.prefill')}
+              </button>
+              {/* I due motori non sono intercambiabili: `ocr` trova righe di testo
+                  e le etichetta tutte Text, `model` restituisce blocchi già
+                  classificati e riconosce le tabelle. Su una pagina indice la
+                  differenza è fra centinaia di blocchi Text e un blocco Table. */}
+              <select
+                value={prefillEngine}
+                onChange={(e) =>
+                  setPrefillEngine(
+                    e.target.value as 'off' | 'ocr' | 'model-two-stage' | 'model-end2end',
+                  )
+                }
+                disabled={prefillBusy}
+                aria-label={t('annotate.prefillEngine')}
+                className="rounded-r border border-l-0 border-violet-700 bg-violet-950 px-1 py-1 text-xs text-violet-300 disabled:opacity-40"
+              >
+                <option value="off">🚫 Prefill Disattivato</option>
+                <option value="ocr">📄 {t('annotate.prefillEngineOcr')} (CPU)</option>
+                <option
+                  value="model-two-stage"
+                  disabled={!inf.enabled || (engines ? !engines.model.available : false)}
+                >
+                  {!inf.enabled
+                    ? '⚡ Modello 2-Stadi (GPU Disattivata)'
+                    : engines && !engines.model.available
+                      ? t('annotate.prefillEngineModelOff')
+                      : `⚡ ${t('annotate.prefillEngineModelTwoStage')} (${inf.isCloud ? 'Cloud' : 'GPU'})`}
+                </option>
+                <option
+                  value="model-end2end"
+                  disabled={!inf.enabled || (engines ? !engines.model.available : false)}
+                >
+                  {!inf.enabled
+                    ? '⚡ Modello End2End (GPU Disattivata)'
+                    : engines && !engines.model.available
+                      ? t('annotate.prefillEngineModelOff')
+                      : `⚡ ${t('annotate.prefillEngineModelEnd2end')} (${inf.isCloud ? 'Cloud' : 'GPU'})`}
+                </option>
+              </select>
+            </div>
+
+            {/* Pulsante rapido Attiva/Disattiva GPU */}
             <button
-              onClick={() => void runPrelabel()}
-              disabled={prefillBusy || !page}
-              className="rounded-l border border-violet-700 bg-violet-950 px-2 py-1 text-xs text-violet-300 hover:bg-violet-900 disabled:opacity-40"
+              type="button"
+              onClick={async () => {
+                const next = !inf.enabled
+                await saveInferenceToBackend({ enabled: next })
+                try {
+                  const out = await apiGet<PrefillEngines>('/system/prefill-engines')
+                  setEngines(out)
+                } catch {}
+              }}
+              className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
+                inf.enabled && engines?.model.available
+                  ? 'border-emerald-700 bg-emerald-950 text-emerald-300 hover:bg-emerald-900'
+                  : inf.enabled
+                    ? 'border-amber-700 bg-amber-950 text-amber-300 hover:bg-amber-900'
+                    : 'border-slate-700 bg-slate-900 text-slate-400 hover:bg-slate-800'
+              }`}
               title={
-                prefillEngine !== 'ocr'
-                  ? t('annotate.prefillTitleModel')
-                  : t('annotate.prefillTitleOcr')
+                inf.enabled
+                  ? `GPU ${inf.isCloud ? 'Cloud' : 'Locale'} Attiva. Clicca per disattivare tutte le chiamate GPU.`
+                  : 'GPU Disattivata. Clicca per attivare l\'inferenza GPU/Cloud.'
               }
             >
-              {prefillBusy ? t('annotate.ocrBusy') : t('annotate.prefill')}
-            </button>
-            {/* I due motori non sono intercambiabili: `ocr` trova righe di testo
-                e le etichetta tutte Text, `model` restituisce blocchi già
-                classificati e riconosce le tabelle. Su una pagina indice la
-                differenza è fra centinaia di blocchi Text e un blocco Table. */}
-            <select
-              value={prefillEngine}
-              onChange={(e) =>
-                setPrefillEngine(
-                  e.target.value as 'ocr' | 'model-two-stage' | 'model-end2end',
+              {inf.enabled ? (
+                engines?.model.available ? (
+                  `🟢 GPU ${inf.isCloud ? 'Cloud' : 'On'}`
+                ) : (
+                  '🟡 GPU Offline'
                 )
-              }
-              disabled={prefillBusy}
-              aria-label={t('annotate.prefillEngine')}
-              className="rounded-r border border-l-0 border-violet-700 bg-violet-950 px-1 py-1 text-xs text-violet-300 disabled:opacity-40"
-            >
-              <option value="ocr">{t('annotate.prefillEngineOcr')}</option>
-              <option value="model-two-stage" disabled={engines ? !engines.model.available : false}>
-                {engines && !engines.model.available
-                  ? t('annotate.prefillEngineModelOff')
-                  : t('annotate.prefillEngineModelTwoStage')}
-              </option>
-              <option value="model-end2end" disabled={engines ? !engines.model.available : false}>
-                {engines && !engines.model.available
-                  ? t('annotate.prefillEngineModelOff')
-                  : t('annotate.prefillEngineModelEnd2end')}
-              </option>
-            </select>
-            <span className="relative">
-              <button
-                onClick={() => void alignPage()}
-                disabled={alignBusy || !page}
-                className="rounded-l border border-cyan-700 bg-cyan-950 px-2 py-1 text-xs text-cyan-300 hover:bg-cyan-900 disabled:opacity-40"
-              >
-                {alignBusy ? t('annotate.alignBusy') : `${t('annotate.alignBtn')}: ${levelLabel}`}
-              </button>
-              <button
-                onClick={() => setAlignOpen((o) => !o)}
-                disabled={!page}
-                aria-label={t('annotate.alignTitle')}
-                title={t('annotate.alignTitle')}
-                className="rounded-r border border-l-0 border-cyan-700 bg-cyan-950 px-1.5 py-1 text-xs text-cyan-300 hover:bg-cyan-900 disabled:opacity-40"
-              >
-                ▾
-              </button>
-              {alignOpen && (
-                <div className="absolute right-0 top-full z-20 mt-1 w-56 rounded border border-slate-700 bg-slate-900 p-2 shadow-xl">
-                  <p className="mb-1 px-1 text-[10px] uppercase tracking-wide text-slate-400">
-                    {t('annotate.alignTitle')}
-                  </p>
-                  {(['basic', 'medium', 'high'] as const).map((lv) => (
-                    <label
-                      key={lv}
-                      className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs text-slate-200 hover:bg-slate-800"
-                    >
-                      <input
-                        type="radio"
-                        name="alignLevel"
-                        checked={alignLevel === lv}
-                        onChange={() => setAlignLevel(lv)}
-                        className="accent-cyan-500"
-                      />
-                      {t(
-                        `annotate.level${lv.charAt(0).toUpperCase()}${lv.slice(1)}` as 'annotate.levelBasic',
-                      )}
-                    </label>
-                  ))}
-                </div>
+              ) : (
+                '⚪ GPU Off'
               )}
-            </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTransformOpen(true)}
+              disabled={!page}
+              className="rounded border border-cyan-700 bg-cyan-950 px-2 py-1 text-xs text-cyan-300 hover:bg-cyan-900 disabled:opacity-40"
+              title={t('annotate.transformTitle')}
+            >
+              {t('annotate.transformOpen')}
+            </button>
             <button
               onClick={() => void resetTransforms()}
               disabled={resetBusy || !page}
@@ -638,6 +631,21 @@ export default function AnnotationPage() {
           </button>
         )}
       </aside>
+
+      {transformOpen && page && (
+        <PageTransformReview
+          pageId={page.id}
+          width={page.width}
+          height={page.height}
+          hasBlocks={ann.blocks.length > 0}
+          onClose={() => setTransformOpen(false)}
+          onAccepted={async () => {
+            await onPageSelect(page.id)
+            setPreviewUrl(`/api/pages/${page.id}/preview?t=${Date.now()}`)
+            setPrefillNotice(t('annotate.transformAcceptedNotice'))
+          }}
+        />
+      )}
 
       {tableGrid && tableBlock?.serverId && (
         <TableCellsEditor

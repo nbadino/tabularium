@@ -44,7 +44,7 @@ _IT: dict[str, str] = {
     "vllm_unreachable": "vLLM non raggiungibile ({url}): {exc}",
     "ocr_unavailable": (
         "Nessun motore OCR disponibile: installare rapidocr-onnxruntime o paddleocr "
-        "(o impostare LLOYDS_OCR_ENGINE)."
+        "(o impostare TABULARIUM_OCR_ENGINE)."
     ),
     "model_unavailable": (
         "Modello base non raggiungibile su {url}: avvia il server di inferenza "
@@ -53,7 +53,7 @@ _IT: dict[str, str] = {
     "ocr_engine_failed": (
         "Il motore OCR «{engine}» è installato ma non riesce a partire: {exc}. "
         "Installa rapidocr-onnxruntime nell'ambiente che esegue il backend, "
-        "oppure forza il motore con LLOYDS_OCR_ENGINE."
+        "oppure forza il motore con TABULARIUM_OCR_ENGINE."
     ),
     "deskew_has_blocks": (
         "la pagina ha {n} blocchi: il deskew cambia le coordinate. "
@@ -111,14 +111,17 @@ _IT: dict[str, str] = {
     "empty_val": "validation vuota: serve almeno un campione indipendente prima del training",
     "empty_val_w": "validation vuota: le metriche di generalizzazione non saranno affidabili",
     "no_table_train_w": "nessun campione tabella nel training: il run non migliorerà l'estrazione OTSL",
-    "repo_not_configured": "LLOYDS_TRAIN_REPO non configurato",
+    "repo_not_configured": "TABULARIUM_TRAIN_REPO non configurato",
     "repo_invalid": "repo MonkeyOCRv2 non valido: {path}",
     "python_not_found": "python di training non trovato: {path}",
-    "conda_not_found": "conda non trovato e LLOYDS_TRAIN_PYTHON non configurato",
+    "conda_not_found": "conda non trovato e TABULARIUM_TRAIN_PYTHON non configurato",
     "no_gpu_w": "nessuna GPU NVIDIA rilevata: il training MonkeyOCRv2 richiede CUDA",
     "gpu_missing": "GPU richieste non disponibili: {list}",
     "gpu_busy": "GPU {index} occupata: liberi {free} GB su {total} GB; arresta vLLM o gli altri processi CUDA",
     "gpu_low_vram_w": "GPU {index}: solo {free} GB liberi; riduci batch/pixel o libera la GPU",
+    "vram_too_small": "la configurazione chiede ~{need} GB di VRAM ma la GPU {index} ne ha {free} GB liberi: il termine dominante sono i logit ({logits} GB, vocabolario da {vocab} token). Metti batch_size 1 e max_length {suggest}, e alza grad_accum per non cambiare il batch effettivo",
+    "vram_no_length_fits_w": "nemmeno max_length minima entra negli {free} GB liberi della GPU {index}: libera la GPU (vLLM acceso?) o addestra su ritagli invece che su pagine intere",
+    "vram_tight_w": "la configurazione chiede ~{need} GB dei {free} GB liberi sulla GPU {index}: ci sta ma senza margine, e la stima non conta la frammentazione",
     "disk_blocking": "spazio disco insufficiente per un run riproducibile: {gb} GB liberi",
     "low_disk": "spazio disco residuo basso: {gb} GB",
     "disk_unknown_w": "impossibile verificare lo spazio disco",
@@ -150,7 +153,7 @@ _EN: dict[str, str] = {
     "vllm_unreachable": "vLLM unreachable ({url}): {exc}",
     "ocr_unavailable": (
         "No OCR engine available: install rapidocr-onnxruntime or paddleocr "
-        "(or set LLOYDS_OCR_ENGINE)."
+        "(or set TABULARIUM_OCR_ENGINE)."
     ),
     "model_unavailable": (
         "Base model unreachable at {url}: start the inference server "
@@ -159,7 +162,7 @@ _EN: dict[str, str] = {
     "ocr_engine_failed": (
         "The OCR engine “{engine}” is installed but fails to start: {exc}. "
         "Install rapidocr-onnxruntime in the environment running the backend, "
-        "or force the engine with LLOYDS_OCR_ENGINE."
+        "or force the engine with TABULARIUM_OCR_ENGINE."
     ),
     "deskew_has_blocks": (
         "the page has {n} blocks: deskew changes the coordinates. "
@@ -211,14 +214,17 @@ _EN: dict[str, str] = {
     "empty_val": "validation is empty: at least one independent sample is required before training",
     "empty_val_w": "empty validation: generalization metrics will be unreliable",
     "no_table_train_w": "no table samples in training: this run will not improve OTSL extraction",
-    "repo_not_configured": "LLOYDS_TRAIN_REPO is not configured",
+    "repo_not_configured": "TABULARIUM_TRAIN_REPO is not configured",
     "repo_invalid": "invalid MonkeyOCRv2 repo: {path}",
     "python_not_found": "training python not found: {path}",
-    "conda_not_found": "conda not found and LLOYDS_TRAIN_PYTHON is not configured",
+    "conda_not_found": "conda not found and TABULARIUM_TRAIN_PYTHON is not configured",
     "no_gpu_w": "no NVIDIA GPU detected: MonkeyOCRv2 training requires CUDA",
     "gpu_missing": "requested GPUs not available: {list}",
     "gpu_busy": "GPU {index} is busy: {free} GB free out of {total} GB; stop vLLM or other CUDA processes",
     "gpu_low_vram_w": "GPU {index}: only {free} GB free; reduce batch/pixels or free the GPU",
+    "vram_too_small": "this configuration needs ~{need} GB of VRAM but GPU {index} has {free} GB free: the dominant term is the logits ({logits} GB, {vocab}-token vocabulary). Set batch_size 1 and max_length {suggest}, and raise grad_accum to keep the effective batch",
+    "vram_no_length_fits_w": "not even the smallest max_length fits in the {free} GB free on GPU {index}: free the GPU (is vLLM running?) or train on crops instead of full pages",
+    "vram_tight_w": "this configuration needs ~{need} GB of the {free} GB free on GPU {index}: it fits but with no margin, and the estimate ignores allocator fragmentation",
     "disk_blocking": "insufficient disk space for a reproducible run: {gb} GB free",
     "low_disk": "low remaining disk space: {gb} GB",
     "disk_unknown_w": "cannot check the disk space",
@@ -249,7 +255,7 @@ _FR: dict[str, str] = {
     "vllm_unreachable": "vLLM injoignable ({url}) : {exc}",
     "ocr_unavailable": (
         "Aucun moteur OCR disponible : installez rapidocr-onnxruntime ou "
-        "paddleocr (ou définissez LLOYDS_OCR_ENGINE)."
+        "paddleocr (ou définissez TABULARIUM_OCR_ENGINE)."
     ),
     "model_unavailable": (
         "Modèle de base injoignable sur {url} : démarrez le serveur d'inférence "
@@ -258,7 +264,7 @@ _FR: dict[str, str] = {
     "ocr_engine_failed": (
         "Le moteur OCR « {engine} » est installé mais ne démarre pas : {exc}. "
         "Installez rapidocr-onnxruntime dans l'environnement qui exécute le "
-        "backend, ou forcez le moteur avec LLOYDS_OCR_ENGINE."
+        "backend, ou forcez le moteur avec TABULARIUM_OCR_ENGINE."
     ),
     "deskew_has_blocks": (
         "la page contient {n} blocs : le redressement change les coordonnées. "
@@ -310,14 +316,17 @@ _FR: dict[str, str] = {
     "empty_val": "validation vide : au moins un échantillon indépendant est requis avant l'entraînement",
     "empty_val_w": "validation vide : les métriques de généralisation ne seront pas fiables",
     "no_table_train_w": "aucun échantillon de tableau dans l'entraînement : ce run n'améliorera pas l'extraction OTSL",
-    "repo_not_configured": "LLOYDS_TRAIN_REPO n'est pas configuré",
+    "repo_not_configured": "TABULARIUM_TRAIN_REPO n'est pas configuré",
     "repo_invalid": "dépôt MonkeyOCRv2 invalide : {path}",
     "python_not_found": "python d'entraînement introuvable : {path}",
-    "conda_not_found": "conda introuvable et LLOYDS_TRAIN_PYTHON non configuré",
+    "conda_not_found": "conda introuvable et TABULARIUM_TRAIN_PYTHON non configuré",
     "no_gpu_w": "aucune GPU NVIDIA détectée : l'entraînement MonkeyOCRv2 nécessite CUDA",
     "gpu_missing": "GPU demandées indisponibles : {list}",
     "gpu_busy": "GPU {index} occupée : {free} Go libres sur {total} Go ; arrêtez vLLM ou les autres processus CUDA",
     "gpu_low_vram_w": "GPU {index} : seulement {free} Go libres ; réduisez le batch/les pixels ou libérez la GPU",
+    "vram_too_small": "cette configuration demande ~{need} Go de VRAM alors que la GPU {index} en a {free} Go libres : le terme dominant est celui des logits ({logits} Go, vocabulaire de {vocab} jetons). Mettez batch_size 1 et max_length {suggest}, et augmentez grad_accum pour garder le lot effectif",
+    "vram_no_length_fits_w": "même la plus petite max_length ne tient pas dans les {free} Go libres de la GPU {index} : libérez la GPU (vLLM actif ?) ou entraînez sur des rognages plutôt que des pages entières",
+    "vram_tight_w": "cette configuration demande ~{need} Go des {free} Go libres sur la GPU {index} : cela tient mais sans marge, et l'estimation ignore la fragmentation",
     "disk_blocking": "espace disque insuffisant pour un run reproductible : {gb} Go libres",
     "low_disk": "espace disque résiduel faible : {gb} Go",
     "disk_unknown_w": "impossible de vérifier l'espace disque",

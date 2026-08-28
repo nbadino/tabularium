@@ -6,6 +6,6 @@ if (-not (Test-Path (Join-Path $root "frontend\dist\index.html"))) {
     & (Join-Path $PSScriptRoot "build_frontend.ps1")
 }
 Set-Location (Join-Path $root "backend")
-$hostAddr = if ($env:LLOYDS_HOST) { $env:LLOYDS_HOST } else { "127.0.0.1" }
-$port = if ($env:LLOYDS_PORT) { $env:LLOYDS_PORT } else { "8787" }
+$hostAddr = if ($env:TABULARIUM_HOST) { $env:TABULARIUM_HOST } else { "127.0.0.1" }
+$port = if ($env:TABULARIUM_PORT) { $env:TABULARIUM_PORT } else { "8787" }
 & ".venv\Scripts\uvicorn.exe" app.main:app --host $hostAddr --port $port

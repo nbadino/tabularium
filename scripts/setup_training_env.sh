@@ -2,11 +2,11 @@
 # Setup automatico dell'ambiente di TRAINING per MonkeyOCRv2 (ms-swift + torch cu126)
 # e download dei pesi del modello di parsing.
 #
-# Uso:  LLOYDS_REPO=/percorso/MonkeyOCRv2 ./scripts/setup_training_env.sh
+# Uso:  TABULARIUM_REPO=/percorso/MonkeyOCRv2 ./scripts/setup_training_env.sh
 set -euo pipefail
 
-REPO="${LLOYDS_REPO:-/home/cappannonno/MonkeyOCRv2}"
-ENV_NAME="${LLOYDS_TRAIN_ENV:-monkeyocrv2-train}"
+REPO="${TABULARIUM_REPO:-/home/cappannonno/MonkeyOCRv2}"
+ENV_NAME="${TABULARIUM_TRAIN_ENV:-monkeyocrv2-train}"
 CUDA_INDEX="https://download.pytorch.org/whl/cu126"
 
 if [ ! -d "$REPO/parsing/train/ms-swift" ]; then
@@ -41,7 +41,7 @@ echo ">> verifica CUDA/GPU..."
 
 cat <<EOF
 
-Setup completato. Configura il dashboard nel file lloyds-lab/.env:
-  LLOYDS_TRAIN_REPO=$REPO
-  LLOYDS_TRAIN_ENV=$ENV_NAME
+Setup completato. Configura il dashboard nel file tabularium/.env:
+  TABULARIUM_TRAIN_REPO=$REPO
+  TABULARIUM_TRAIN_ENV=$ENV_NAME
 EOF

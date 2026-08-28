@@ -1,4 +1,4 @@
-"""Tassonomia etichette predefinita (schema Lloyd's).
+"""Tassonomia etichette predefinita (schema Historic Shipping Index).
 
 M2: schema fisso di default; dalla milestone del dataset builder la mappa
 prompt/classi diventerà configurabile per progetto (settings_json).

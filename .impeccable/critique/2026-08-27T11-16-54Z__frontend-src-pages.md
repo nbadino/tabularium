@@ -12,7 +12,7 @@ slug: frontend-src-pages
 
 **Modalità:** Operate  
 **Provenienza:** dual-agent assessment; A ha esaminato UX e sorgente senza vedere B, B ha eseguito detector e browser senza vedere A.  
-**Target:** `/home/cappannonno/lloyds-lab/frontend/src/pages` e studio di annotazione.
+**Target:** `/home/cappannonno/tabularium/frontend/src/pages` e studio di annotazione.
 
 ## Verdetto
 

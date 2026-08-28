@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from 'react'
 import { apiGet } from '../lib/api'
 import type { Project } from '../lib/types'
 
-const KEY = 'lloyds.activeProject'
+const KEY = 'tabularium.activeProject'
 
 export function readActiveProject(): number | null {
   try {

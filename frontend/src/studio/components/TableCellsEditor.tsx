@@ -1,9 +1,20 @@
 import { useRef, useState } from 'react'
-import { mergeRange, ownerMap, resizeGrid, sortedCells, splitCell } from '../../lib/grid'
+import type { Axis } from '../../lib/grid'
+import {
+  dropBoundary,
+  insertBoundary,
+  mergeRange,
+  ownerMap,
+  resizeGrid,
+  sortedCells,
+  splitCell,
+} from '../../lib/grid'
 import type { TableDetectOut, TableDetectRequest, TableGrid } from '../../lib/types'
 import { Modal, WarnNotice } from '../../app/ui'
 import { IconCopy, IconMinus, IconPlus, IconSave } from '../../app/icons'
+import { useInference } from '../../app/inference'
 import { useI18n } from '../../i18n'
+import TableGridOverlay from './TableGridOverlay'
 
 interface TableCellsEditorProps {
   grid: TableGrid
@@ -39,6 +50,7 @@ export default function TableCellsEditor({
   onClose,
 }: TableCellsEditorProps) {
   const { t } = useI18n()
+  const inf = useInference()
   const [grid, setGrid] = useState<TableGrid>(initialGrid)
   const [detecting, setDetecting] = useState(false)
   const [detectFill, setDetectFill] = useState<'none' | 'ocr' | 'model'>('none')
@@ -50,7 +62,6 @@ export default function TableCellsEditor({
   const [saving, setSaving] = useState(false)
   const [otsl, setOtsl] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [imageZoom, setImageZoom] = useState(1)
   const textareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
 
   const map = ownerMap(grid)
@@ -68,6 +79,35 @@ export default function TableCellsEditor({
       const values = [...(g[axis] ?? [])]
       values[index] = value
       return { ...g, [axis]: values }
+    })
+
+  const moveBoundary = (axis: Axis, index: number, value: number) =>
+    setLine(axis === 'v' ? 'vlines' : 'hlines', index, value)
+
+  // Inserire o rifiutare un confine cambia il numero di tracce e quindi le
+  // celle: le due primitive rifiutano i casi ambigui invece di indovinare, e
+  // qui il rifiuto diventa un avviso, non un silenzio.
+  const addBoundary = (axis: Axis, at: number) =>
+    setGrid((g) => {
+      const next = insertBoundary(g, axis, at)
+      if (!next) {
+        setNotice(t('table.boundaryInsertRefused'))
+        return g
+      }
+      setNotice(null)
+      return next
+    })
+
+  const rejectBoundary = (axis: Axis, index: number) =>
+    setGrid((g) => {
+      const next = dropBoundary(g, axis, index)
+      if (!next) {
+        setNotice(t('table.boundaryDropRefused'))
+        return g
+      }
+      setNotice(null)
+      setSelectedCell(null)
+      return next
     })
 
   const onSaveClick = async () => {
@@ -260,11 +300,21 @@ export default function TableCellsEditor({
                 onChange={(e) => setDetectFill(e.target.value as 'none' | 'ocr' | 'model')}
                 disabled={detecting}
                 aria-label={t('table.detectFill')}
-                className="btn btn-sm !px-1"
+                className="btn btn-sm !px-1 text-[11px]"
               >
-                <option value="none">{t('table.detectFillNone')}</option>
-                <option value="ocr">{t('table.detectFillOcr')}</option>
-                <option value="model">{t('table.detectFillModel')}</option>
+                <option value="none">📐 {t('table.detectFillNone')}</option>
+                <option value="ocr">📄 {t('table.detectFillOcr')} (CPU)</option>
+                <option
+                  value="model"
+                  disabled={!inf.enabled || !inf.available}
+                >
+                  ⚡ {t('table.detectFillModel')}{' '}
+                  {!inf.enabled
+                    ? '(GPU Disattivata)'
+                    : !inf.available
+                      ? '(Offline)'
+                      : `(${inf.isCloud ? 'Cloud' : 'GPU'})`}
+                </option>
               </select>
             </div>
           </div>
@@ -299,13 +349,23 @@ export default function TableCellsEditor({
               {t('table.detectWeak', { n: weakBoundaries })}
             </span>
           )}
+          {/* La deriva non è un allarme — c'è su ogni pagina del corpus — ma
+              un conto: quante celle hanno un confine che nessun varco prova.
+              Sono esattamente quelle da guardare per prime. */}
+          {(detectInfo.diagnostics.row_columns_unproven ?? 0) > 0 && (
+            <span className="ml-3 text-[color:var(--color-warn,#b45309)]">
+              {t('table.detectDrift', {
+                n: detectInfo.diagnostics.row_columns_unproven ?? 0,
+              })}
+            </span>
+          )}
         </div>
       )}
 
       {/* Gli avvisi del rilevatore non sono statistica: dicono che una condizione
           misurata della scansione limita la proposta, e cosa fare per toglierla.
           Vanno quindi in una piastra d'allarme, non nella riga di riepilogo. */}
-      {detectInfo?.warnings.includes('skewed') && (
+      {detectInfo?.warnings?.includes('skewed') && (
         <div className="p-3 pb-0">
           <WarnNotice title={t('table.detectWarnTitle')}>
             {t('table.detectWarnSkewed', {
@@ -323,19 +383,19 @@ export default function TableCellsEditor({
 
       <div className="flex min-h-0 gap-3 p-3">
         {cropUrl && (
-          <figure className="m-0 w-2/5 shrink-0">
-            <div className="mb-1 flex items-center justify-between">
-              <span className="lbl !mb-0">{t('table.origCrop')}</span>
-              <div className="flex items-center gap-1">
-                <button type="button" onClick={() => setImageZoom((z) => Math.max(0.5, z - 0.25))} className="btn btn-sm" aria-label={t('table.zoomOut')}>−</button>
-                <span className="mono text-[10px]">{Math.round(imageZoom * 100)}%</span>
-                <button type="button" onClick={() => setImageZoom((z) => Math.min(4, z + 0.25))} className="btn btn-sm" aria-label={t('table.zoomIn')}>+</button>
-                <button type="button" onClick={() => setImageZoom(1)} className="btn btn-sm">{t('table.resetZoom')}</button>
-              </div>
-            </div>
-            <div className="lighttable max-h-[52vh] overflow-auto border border-[color:var(--color-rule)]" onWheel={(e) => { if (e.ctrlKey) { e.preventDefault(); setImageZoom((z) => Math.max(0.5, Math.min(4, z + (e.deltaY < 0 ? 0.1 : -0.1)))) } }}>
-              <img src={cropUrl} alt={t('table.cropAlt')} className="max-w-none origin-top-left" style={{ width: `${imageZoom * 100}%` }} />
-            </div>
+          <figure className="m-0 flex w-1/2 shrink-0 flex-col">
+            <TableGridOverlay
+              cropUrl={cropUrl}
+              vlines={grid.vlines ?? []}
+              hlines={grid.hlines ?? []}
+              columnSupport={detectInfo?.column_support}
+              rowColumns={detectInfo?.diagnostics.row_columns}
+              rowColumnsProven={detectInfo?.diagnostics.row_columns_proven}
+              rows={grid.rows}
+              onMove={moveBoundary}
+              onInsert={addBoundary}
+              onDrop={rejectBoundary}
+            />
           </figure>
         )}
         <div className="min-w-0 flex-1">
@@ -419,23 +479,6 @@ export default function TableCellsEditor({
               {t('table.phantomNote')}
             </p>
           )}
-          <div className="mt-3 border-t border-[color:var(--color-rule)] pt-2">
-            <span className="lbl">{t('table.rulesTop')}</span>
-            <div className="grid gap-1 text-[10px] text-[color:var(--color-ink-2)] sm:grid-cols-2">
-              <div>
-                <span>{t('table.vertical')}</span>
-                <div className="flex flex-wrap gap-1">
-                  {Array.from({ length: grid.cols + 1 }, (_, i) => <input key={`v${i}`} aria-label={t('table.vlineAria', { n: i + 1 })} type="range" min="0" max="1" step="0.001" value={grid.vlines?.[i] ?? i / grid.cols} onChange={(e) => setLine('vlines', i, Number(e.target.value))} className="w-20 accent-[color:var(--color-sig)]" />)}
-                </div>
-              </div>
-              <div>
-                <span>{t('table.horizontal')}</span>
-                <div className="flex flex-wrap gap-1">
-                  {Array.from({ length: grid.rows + 1 }, (_, i) => <input key={`h${i}`} aria-label={t('table.hlineAria', { n: i + 1 })} type="range" min="0" max="1" step="0.001" value={grid.hlines?.[i] ?? i / grid.rows} onChange={(e) => setLine('hlines', i, Number(e.target.value))} className="w-20 accent-[color:var(--color-sig)]" />)}
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
 

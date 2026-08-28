@@ -6,7 +6,7 @@ import { ErrorNotice, Field, Module, WarnNotice } from '../app/ui'
 import { PipelineStrip } from '../app/Pipeline'
 import { buildPipeline, usePipelineState } from '../app/pipeline'
 import { useProjects, writeActiveProject } from '../app/activeProject'
-import { useInference } from '../app/inference'
+import { toggleInferenceEnabled, useInference } from '../app/inference'
 import { IconEvaluate, IconPlayground } from '../app/icons'
 import { useI18n, tn } from '../i18n'
 
@@ -100,6 +100,19 @@ export default function EvaluationPage() {
       )}
 
       {projectId !== '' && <PipelineStrip stages={stages} here="evaluate" />}
+
+      {!inference.enabled && (
+        <div className="mb-3 flex items-center justify-between rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-[12px] text-neutral-300">
+          <span>⚪ L'inferenza GPU/Cloud è attualmente disattivata nelle impostazioni.</span>
+          <button
+            type="button"
+            onClick={() => void toggleInferenceEnabled(true)}
+            className="btn btn-sm !border-emerald-600 !bg-emerald-950 !text-emerald-300"
+          >
+            Attiva Inferenza GPU
+          </button>
+        </div>
+      )}
 
       <div className="mb-3">
         <Module tab={t('evaluate.run')}>

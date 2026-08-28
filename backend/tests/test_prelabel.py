@@ -15,7 +15,7 @@ class FakeEngine:
 
     def detect(self, image):
         return [
-            {"bbox": [10.0, 20.0, 100.0, 60.0], "text": "LLOYD'S LIST", "score": 0.91},
+            {"bbox": [10.0, 20.0, 100.0, 60.0], "text": "HISTORIC SHIPPING INDEX", "score": 0.91},
             {"bbox": [10.0, 70.0, 400.0, 110.0], "text": "Maritime intelligence.", "score": 0.85},
             {"bbox": [200.0, 120.0, 500.0, 160.0], "text": "low quality", "score": 0.40},
             {"bbox": [10.0, 130.0, 60.0, 135.0], "text": "tiny", "score": 0.80},  # h=5 px < min_size
@@ -68,7 +68,7 @@ def test_prelabel_inserts_filtered_blocks(tmp_path: Path, monkeypatch):
         blocks = client.get(f"/api/pages/{page_id}/annotations").json()["items"]
         assert len(blocks) == 2
         texts = {b["content"] for b in blocks}
-        assert "LLOYD'S LIST" in texts
+        assert "HISTORIC SHIPPING INDEX" in texts
         assert "Maritime intelligence." in texts
         assert all(
             str(b.get("prefill_source") or b.get("provenance") or "").startswith("rapidocr")
@@ -107,7 +107,7 @@ def test_ocr_prelabel_promotes_register_to_table(tmp_path: Path, monkeypatch):
 
         def detect(self, image):
             lines = [
-                {"bbox": [60.0, 20.0, 500.0, 60.0], "text": "LLOYD'S LIST", "score": 0.9},
+                {"bbox": [60.0, 20.0, 500.0, 60.0], "text": "HISTORIC SHIPPING INDEX", "score": 0.9},
                 {"bbox": [60.0, 70.0, 400.0, 110.0], "text": "May 20, 1940.", "score": 0.9},
             ]
             for r in range(15):

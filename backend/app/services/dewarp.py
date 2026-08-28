@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import tempfile
 import os
+import traceback
+import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from PIL import Image
@@ -27,11 +30,29 @@ def describe_levels() -> list[dict]:
 
 _uvdoc_model = None
 _last_engine = "deskew"
+_last_diagnostics: dict = {}
+_transform_lock = threading.RLock()
 
 
 def last_engine() -> str:
     """Motore usato dall'ultima richiesta (utile per feedback diagnostico)."""
     return _last_engine
+
+
+def last_diagnostics() -> dict:
+    """Dettagli dell'ultimo tentativo, senza nascondere il fallback."""
+    return dict(_last_diagnostics)
+
+
+@dataclass
+class TransformResult:
+    image: Image.Image
+    requested_engine: str
+    actual_engine: str
+    angle: float = 0.0
+    warnings: list[str] = field(default_factory=list)
+    error: str | None = None
+    diagnostics: dict = field(default_factory=dict)
 
 
 def _looks_clipped(source: Image.Image, candidate: Image.Image) -> bool:
@@ -122,13 +143,14 @@ def _uvdoc_dewarp(image: Image.Image) -> Image.Image | None:
     global _uvdoc_model
     try:
         from paddleocr import TextImageUnwarping  # noqa: PLC0415
-    except ImportError:
+    except ImportError as exc:
+        _last_diagnostics["uvdoc_error"] = f"ImportError: {exc}"
         return None
 
     tmp = Path(tempfile.mkdtemp(prefix="uvdoc_"))
     try:
         if _uvdoc_model is None:
-            device = os.environ.get("LLOYDS_UVDOC_DEVICE", "cpu")
+            device = os.environ.get("TABULARIUM_UVDOC_DEVICE", "cpu")
             _uvdoc_model = TextImageUnwarping(model_name="UVDoc", device=device)
         # UVDoc tende a usare il bordo della foto come bordo della pagina.
         # Una cornice bianca evita che la curvatura venga risolta tagliando il
@@ -177,8 +199,17 @@ def _uvdoc_dewarp(image: Image.Image) -> Image.Image | None:
         # introdurrebbe margini bianchi visibili. Rimuoviamo quindi soltanto
         # l'eccedenza geometrica della cornice, in modo simmetrico; il bordo
         # reale della pagina resta intatto.
-        return _fit_model_output(candidate, image)
-    except Exception:  # noqa: BLE001
+        fitted = _fit_model_output(candidate, image)
+        if fitted is None:
+            _last_diagnostics["uvdoc_rejected"] = "aspect_or_crop_guard"
+        return fitted
+    except Exception as exc:  # noqa: BLE001
+        _last_diagnostics.update(
+            {
+                "uvdoc_error": f"{type(exc).__name__}: {exc}",
+                "uvdoc_trace": traceback.format_exc(limit=4),
+            }
+        )
         return None
     finally:
         import shutil
@@ -187,11 +218,12 @@ def _uvdoc_dewarp(image: Image.Image) -> Image.Image | None:
 
 def align_page(image: Image.Image, level: str = "medium", strength: float = 1.0) -> tuple[Image.Image, float]:
     """Allinea la pagina; medium/high usano UVDoc solo se disponibile e valido."""
-    global _last_engine
+    global _last_engine, _last_diagnostics
     from .images import deskew
 
     aligned, angle = deskew(image)
     _last_engine = "deskew"
+    _last_diagnostics = {"requested_level": level, "deskew_angle": angle}
     strength = max(0.0, min(float(strength), 2.0))
     if level not in LEVELS or level == "basic" or strength <= 0:
         return aligned, angle
@@ -200,7 +232,7 @@ def align_page(image: Image.Image, level: str = "medium", strength: float = 1.0)
     # DocScanner è integrato ma, essendo addestrato su fotografie/documenti
     # deformati diversi da queste scansioni d'archivio, resta opt-in finché
     # non viene validato sul dataset corrente. UVDoc è il default riproducibile.
-    if level == "high" and os.environ.get("LLOYDS_DOCSCANNER_ENABLE", "0").lower() in {"1", "true", "yes"}:
+    if level == "high" and os.environ.get("TABULARIUM_DOCSCANNER_ENABLE", "0").lower() in {"1", "true", "yes"}:
         try:
             from . import docscanner
             candidate = docscanner.rectify(aligned)
@@ -221,3 +253,99 @@ def align_page(image: Image.Image, level: str = "medium", strength: float = 1.0)
         return out, angle + residual_angle
     # Fallback sicuro se il modello non trova una geometria affidabile.
     return aligned, angle
+
+
+def run_transform(
+    image: Image.Image,
+    engine: str,
+    *,
+    perspective_points: list[list[float]] | None = None,
+    mesh_grid: list[list[list[float]]] | None = None,
+) -> TransformResult:
+    """Esegue un motore esplicito e dichiara ogni fallback o fallimento."""
+    with _transform_lock:
+        return _run_transform_locked(
+            image,
+            engine,
+            perspective_points=perspective_points,
+            mesh_grid=mesh_grid,
+        )
+
+
+def _run_transform_locked(
+    image: Image.Image,
+    engine: str,
+    *,
+    perspective_points: list[list[float]] | None = None,
+    mesh_grid: list[list[list[float]]] | None = None,
+) -> TransformResult:
+    """Implementazione serializzata: Paddle/DocScanner e diagnostica sono globali."""
+    global _last_engine, _last_diagnostics
+    from .images import deskew, mesh_rectify, perspective_rectify
+
+    _last_engine = engine
+    _last_diagnostics = {"requested_engine": engine}
+    if engine == "deskew":
+        out, angle = deskew(image)
+        _last_engine = "deskew"
+        _last_diagnostics["deskew_angle"] = angle
+        return TransformResult(out, engine, "deskew", angle=angle, diagnostics=last_diagnostics())
+    if engine == "perspective":
+        try:
+            out = perspective_rectify(image, perspective_points or [])
+            return TransformResult(out, engine, "perspective", diagnostics=last_diagnostics())
+        except ValueError as exc:
+            _last_diagnostics["perspective_error"] = str(exc)
+            return TransformResult(image, engine, "none", error=str(exc), diagnostics=last_diagnostics())
+    if engine == "mesh":
+        try:
+            out = mesh_rectify(image, mesh_grid or [])
+            return TransformResult(out, engine, "mesh", diagnostics=last_diagnostics())
+        except ValueError as exc:
+            _last_diagnostics["mesh_error"] = str(exc)
+            return TransformResult(image, engine, "none", error=str(exc), diagnostics=last_diagnostics())
+    if engine not in {"uvdoc", "docscanner"}:
+        return TransformResult(image, engine, "none", error="transform_engine_invalid", diagnostics=last_diagnostics())
+
+    aligned, angle = deskew(image)
+    candidate = None
+    error = None
+    if engine == "docscanner":
+        try:
+            from . import docscanner
+
+            candidate = docscanner.rectify(aligned)
+            if candidate is not None:
+                candidate = _fit_model_output(candidate, aligned)
+            if candidate is None:
+                error = "docscanner_unavailable_or_rejected"
+        except Exception as exc:  # noqa: BLE001
+            error = f"{type(exc).__name__}: {exc}"
+            _last_diagnostics["docscanner_trace"] = traceback.format_exc(limit=4)
+    else:
+        candidate = _uvdoc_dewarp(aligned)
+        if candidate is None:
+            error = _last_diagnostics.get("uvdoc_error", "uvdoc_unavailable_or_rejected")
+
+    if candidate is None:
+        _last_engine = "deskew"
+        _last_diagnostics["fallback"] = "deskew"
+        return TransformResult(
+            aligned,
+            engine,
+            "deskew",
+            angle=angle,
+            warnings=["neural_fallback_deskew"],
+            error=error,
+            diagnostics=last_diagnostics(),
+        )
+    candidate, residual = deskew(candidate)
+    _last_engine = engine
+    _last_diagnostics.update({"deskew_angle": angle, "residual_angle": residual})
+    return TransformResult(
+        candidate,
+        engine,
+        engine,
+        angle=angle + residual,
+        diagnostics=last_diagnostics(),
+    )

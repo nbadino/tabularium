@@ -7,8 +7,9 @@ from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw, ImageFont
 
 from app.main import app
-from app.services import dewarp
-from app.services.images import deskew
+from app.services import dewarp, pages as pagesvc
+from app.services.images import deskew, mesh_rectify, perspective_rectify
+from app.db import connect
 
 
 def _make_skewed(archive: Path) -> None:
@@ -18,7 +19,7 @@ def _make_skewed(archive: Path) -> None:
         f = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 44)
     except Exception:
         f = ImageFont.load_default()
-    for i, t in enumerate(["LLOYD'S LIST", "Steam & Sailing Vessels", "Belle of the Seas"]):
+    for i, t in enumerate(["HISTORIC SHIPPING INDEX", "Steam & Sailing Vessels", "Belle of the Seas"]):
         d.text((150, 160 + i * 160), t, fill="black", font=f)
     img = img.rotate(3.5, expand=False, fillcolor="white")
     img.save(archive / "p.png")
@@ -70,7 +71,10 @@ def test_deskew_flow(tmp_path: Path):
         assert r.json()["deskewed"] is False
 
 
-def test_align_levels(tmp_path: Path):
+def test_align_levels(tmp_path: Path, monkeypatch):
+    # Il test verifica il contratto HTTP, non deve inizializzare né scaricare
+    # il modello neurale opzionale.
+    monkeypatch.setattr(dewarp, "_uvdoc_dewarp", lambda image: image)
     pid = _setup(tmp_path / "al")
     with TestClient(app) as client:
         page = client.get(f"/api/projects/{pid}/pages").json()["items"][0]
@@ -140,3 +144,64 @@ def test_fit_without_crop_rejects_content_moved_to_edge():
     candidate = Image.new("RGB", (400, 600), "white")
     ImageDraw.Draw(candidate).rectangle((0, 0, 399, 599), outline="black", width=8)
     assert dewarp._fit_without_crop(candidate, source.size, source=source) is None
+
+
+def test_manual_rectifiers_preserve_canvas_and_validate_geometry():
+    image = Image.new("RGB", (400, 600), "white")
+    ImageDraw.Draw(image).rectangle((30, 40, 370, 560), outline="black", width=5)
+    perspective = perspective_rectify(
+        image,
+        [[30, 40], [370, 40], [370, 560], [30, 560]],
+    )
+    assert perspective.size == image.size
+    identity = [
+        [[0.0, 0.0], [0.5, 0.0], [1.0, 0.0]],
+        [[0.0, 0.5], [0.5, 0.5], [1.0, 0.5]],
+        [[0.0, 1.0], [0.5, 1.0], [1.0, 1.0]],
+    ]
+    assert mesh_rectify(image, identity).size == image.size
+
+
+def test_transform_candidate_accept_is_lossless_and_protected(tmp_path: Path):
+    project_id = _setup(tmp_path / "candidate")
+    with TestClient(app) as client:
+        page = client.get(f"/api/projects/{project_id}/pages").json()["items"][0]
+        page_id = page["id"]
+        client.put(
+            f"/api/pages/{page_id}/annotations",
+            json={"items": [{"label": "Text", "kind": "rect", "points": [[0, 0], [100, 50]], "content": "x", "order_idx": 1}]},
+        )
+        response = client.post(
+            f"/api/pages/{page_id}/transform/candidate",
+            json={
+                "engine": "perspective",
+                "perspective_points": [[20, 20], [1079, 20], [1079, 1479], [20, 1479]],
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["candidate"]["actual_engine"] == "perspective"
+        # La proposta non tocca il lavoro annotato.
+        assert len(client.get(f"/api/pages/{page_id}/annotations").json()["items"]) == 1
+        assert client.post(f"/api/pages/{page_id}/transform/accept").status_code == 409
+        accepted = client.post(f"/api/pages/{page_id}/transform/accept?confirm=true")
+        assert accepted.status_code == 200, accepted.text
+        assert client.get(f"/api/pages/{page_id}/annotations").json()["items"] == []
+        with Image.open(pagesvc.deskew_path(page_id)) as transformed:
+            assert transformed.format == "PNG"
+            assert transformed.size == (page["width"], page["height"])
+
+
+def test_prefill_source_reuses_the_accepted_transform(tmp_path: Path):
+    project_id = _setup(tmp_path / "prefill-master")
+    with TestClient(app) as client:
+        page = client.get(f"/api/projects/{project_id}/pages").json()["items"][0]
+    active = Image.new("RGB", (page["width"], page["height"]), "red")
+    path = pagesvc.deskew_path(page["id"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    active.save(path, "PNG")
+    pagesvc.mark_transform(page["id"], "mesh", active.size)
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM pages WHERE id=?", (page["id"],)).fetchone()
+    image, angle = pagesvc.maybe_auto_deskew(row)
+    assert angle == 0.0
+    assert image.getpixel((10, 10)) == (255, 0, 0)

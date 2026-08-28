@@ -261,7 +261,7 @@ export default function TrainingConfigForm({
         <p className="mt-2 max-w-[80ch] text-[11px] text-[color:var(--color-ink-3)]">
           {t('training.envNote', {
             env: 'monkeyocrv2-train',
-            repo: 'LLOYDS_TRAIN_REPO',
+            repo: 'TABULARIUM_TRAIN_REPO',
           })}
         </p>
       </Module>

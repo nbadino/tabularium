@@ -44,7 +44,7 @@ def test_build_datasets(tmp_path: Path):
             client,
             p1,
             [
-                {"label": "Title", "kind": "rect", "points": [[10, 20], [900, 120]], "content": "LLOYD'S LIST", "order_idx": 1},
+                {"label": "Title", "kind": "rect", "points": [[10, 20], [900, 120]], "content": "HISTORIC SHIPPING INDEX", "order_idx": 1},
                 {"label": "Text", "kind": "rect", "points": [[10, 130], [900, 900]], "content": "Maritime intelligence report.", "order_idx": 2},
             ],
         )
@@ -138,7 +138,7 @@ def test_build_datasets(tmp_path: Path):
 
         # text_rec: i contenuti attesi sono presenti
         texts = [t["messages"][1]["content"] for t in text_lines]
-        assert "LLOYD'S LIST" in texts
+        assert "HISTORIC SHIPPING INDEX" in texts
         assert "Maritime intelligence report." in texts
 
         # GET datasets restituisce il report persistito

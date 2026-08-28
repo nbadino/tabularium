@@ -14,7 +14,7 @@ def main() -> int:
     parser.add_argument("project_id", type=int)
     parser.add_argument("--target", type=int, default=40, choices=range(30, 51))
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--url", default=os.environ.get("LLOYDS_E2E_URL", "http://127.0.0.1:8787"))
+    parser.add_argument("--url", default=os.environ.get("TABULARIUM_E2E_URL", "http://127.0.0.1:8787"))
     args = parser.parse_args()
     base = args.url.rstrip("/")
     try:
