@@ -54,9 +54,10 @@ del pipeline.
 
 ## Capabilities and Constraints
 
-- M0–M1 completati: scaffolding + CRUD progetti, scansione archivio (immagini + PDF), registro
-  pagine con metadati e anteprime; in corso M2 (studio di annotazione). Roadmap completa e
-  milestone successive in `AGENTS.md` §12.
+- M0–M8 completati e in uso quotidiano: scaffolding, progetti e pagine, studio di annotazione,
+  tabelle e reading order, dataset builder, training center, valutazione e playground,
+  pseudo-labeling, build servita dal backend. Sopra di esso il layer self-hosted (setup iniziale,
+  login, ruoli, impostazioni istanza, gestione utenti). Roadmap e dettagli in `AGENTS.md` §12.
 - Convenzioni dati non negoziabili (verificate su `core_runner.py` ufficiale): JSONL ms-swift
   con path assoluti, coordinate normalizzate 0–1000 solo in export, tabelle in OTSL, prompt
   ufficiali §2.3 di AGENTS.md.

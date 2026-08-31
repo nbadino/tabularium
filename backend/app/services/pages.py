@@ -330,3 +330,67 @@ def ensure_tile(page: sqlite3.Row, level: int, x: int, y: int) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     tile.save(out, "JPEG", quality=86, optimize=True)
     return out
+
+
+def compute_readiness(conn, page_id: int, lang: str = "it") -> dict:
+    """Passaggi di annotazione completati per una pagina e blocco all'approvazione.
+
+    È la definizione di «pagina pronta» condivisa da readiness, approvazione
+    e coda di annotazione: struttura (blocchi con geometria), contenuto
+    (trascrizioni), tabelle (griglia OTSL valida) e revisione. Il router la
+    espone via HTTP; la logica sta qui.
+    """
+    from . import otsl as otslmod  # noqa: PLC0415
+    from .i18n import msg  # noqa: PLC0415
+
+    page = conn.execute("SELECT * FROM pages WHERE id=?", (page_id,)).fetchone()
+    if page is None:
+        raise HTTPException(status_code=404, detail="pagina non trovata")
+    blocks = conn.execute("SELECT * FROM blocks WHERE page_id=? ORDER BY id", (page_id,)).fetchall()
+    errors: list[str] = []
+    warnings: list[str] = []
+    content_ok = True
+    tables_ok = True
+    geometry_ok = True
+    if not blocks:
+        errors.append(msg("no_blocks", lang))
+    for block in blocks:
+        try:
+            points = json.loads(block["points"] or "[]")
+        except (TypeError, ValueError):
+            points = []
+        if len(points) < 2:
+            geometry_ok = False
+            errors.append(msg("geometry_missing", lang, id=block["id"]))
+        if not block["confirmed"]:
+            # Una pseudo-label non confermata non è ground truth. Lasciarla
+            # come semplice warning consentiva di approvare e poi esportare
+            # direttamente predizioni grezze del modello/OCR.
+            errors.append(msg("not_confirmed", lang, id=block["id"]))
+        label = block["label"]
+        if label in {"Text", "Headline", "Byline", "Issue-header", "Advertisement", "Note/Adder"} and not (block["content"] or "").strip():
+            content_ok = False
+            errors.append(msg("empty_transcription", lang, id=block["id"]))
+        if label == "Table":
+            row = conn.execute("SELECT grid_json FROM tables WHERE block_id=?", (block["id"],)).fetchone()
+            if not row:
+                tables_ok = False
+                errors.append(msg("table_grid_missing", lang, id=block["id"]))
+            else:
+                try:
+                    grid = json.loads(row["grid_json"] or "{}")
+                    otslmod.grid_to_otsl(grid)
+                except (TypeError, ValueError) as exc:
+                    tables_ok = False
+                    errors.append(msg("table_grid_invalid", lang, id=block["id"], exc=exc))
+    structure_ok = bool(blocks) and geometry_ok
+    return {
+        "page_id": page_id, "status": page["status"], "ready": not errors,
+        "errors": errors, "warnings": warnings,
+        "stages": {
+            "structure": structure_ok,
+            "content": structure_ok and content_ok,
+            "table": structure_ok and tables_ok,
+            "review": not errors and not warnings,
+        },
+    }

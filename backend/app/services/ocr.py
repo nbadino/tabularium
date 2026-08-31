@@ -5,6 +5,8 @@ Ritorna riquadri di testo in pixel immagine (= pixel pagina) con score.
 """
 from __future__ import annotations
 
+import importlib.util
+
 from PIL import Image
 
 from .. import config
@@ -17,9 +19,15 @@ def available_engine() -> str | None:
         return forced
     for name, module in (("rapidocr", "rapidocr_onnxruntime"), ("paddleocr", "paddleocr")):
         try:
-            __import__(module)
+            # Non importare il runtime qui: questo endpoint viene interrogato
+            # all'apertura di Annotation e PaddleOCR può inizializzare plugin
+            # pesanti o bloccarsi su una installazione incompleta. Il runtime
+            # viene importato solo da OcrEngine._ensure(), quando l'utente
+            # avvia davvero il prefill.
+            if importlib.util.find_spec(module) is None:
+                continue
             return name
-        except Exception:  # noqa: BLE001
+        except (ImportError, ModuleNotFoundError, ValueError):
             continue
     return None
 

@@ -162,6 +162,13 @@ export default function StudioCanvas({
         e.preventDefault()
         setSpacePan(true)
       }
+      // Zoom da tastiera, come nei visualizzatori di sistema: Ctrl+0 rientra,
+      // Ctrl +/- avvicina e allontana. Evita il browser zoom sulla pagina.
+      if ((e.ctrlKey || e.metaKey) && (e.key === '0' || e.key === '+' || e.key === '=' || e.key === '-')) {
+        e.preventDefault()
+        if (e.key === '0') vp.fit()
+        else vp.zoomBy(e.key === '-' ? 1 / 1.25 : 1.25)
+      }
     }
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code !== 'Space') return
@@ -180,7 +187,7 @@ export default function StudioCanvas({
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onBlur)
     }
-  }, [selectedId, onDeleteBlock, onSelect, vp.endPan])
+  }, [selectedId, onDeleteBlock, onSelect, vp.endPan, vp.fit, vp.zoomBy])
 
   // --- transform / drag handlers ---------------------------------------------
   const onRectTransformEnd = (id: string) => {

@@ -11,6 +11,7 @@ from ..services import pages as pagesvc
 from ..services import otsl as otslmod
 from ..services.i18n import msg, parse_lang
 from ..services import auth as authsvc
+from ..services import audit as auditsvc
 from .deps import require_resource
 import json
 from pydantic import BaseModel, Field
@@ -73,6 +74,7 @@ def list_pages(
                 page_no=r["page_no"],
                 page_type=r["page_type"],
                 status=r["status"],
+                annotation_revision=r["annotation_revision"],
                 created_at=r["created_at"],
             )
             for r in rows
@@ -84,7 +86,7 @@ def list_pages(
 def update_page(
     page_id: int,
     payload: PageUpdate,
-    _auth: dict = Depends(require_resource(write=True)),
+    user: dict = Depends(require_resource(write=True)),
 ) -> PageOut:
     updates = payload.model_dump(exclude_unset=True)
     if not updates:
@@ -112,59 +114,12 @@ def update_page(
             issue_date=row["issue_date"], issue_no=row["issue_no"],
             page_no=row["page_no"], page_type=row["page_type"],
             status=row["status"], created_at=row["created_at"],
+            annotation_revision=row["annotation_revision"],
         )
 
 
-def _readiness(conn, page_id: int, lang: str = "it") -> dict:
-    page = _get_page_or_404(conn, page_id)
-    blocks = conn.execute("SELECT * FROM blocks WHERE page_id=? ORDER BY id", (page_id,)).fetchall()
-    errors: list[str] = []
-    warnings: list[str] = []
-    content_ok = True
-    tables_ok = True
-    geometry_ok = True
-    if not blocks:
-        errors.append(msg("no_blocks", lang))
-    for block in blocks:
-        try:
-            points = json.loads(block["points"] or "[]")
-        except (TypeError, ValueError):
-            points = []
-        if len(points) < 2:
-            geometry_ok = False
-            errors.append(msg("geometry_missing", lang, id=block["id"]))
-        if not block["confirmed"]:
-            # Una pseudo-label non confermata non è ground truth. Lasciarla
-            # come semplice warning consentiva di approvare e poi esportare
-            # direttamente predizioni grezze del modello/OCR.
-            errors.append(msg("not_confirmed", lang, id=block["id"]))
-        label = block["label"]
-        if label in {"Text", "Headline", "Byline", "Issue-header", "Advertisement", "Note/Adder"} and not (block["content"] or "").strip():
-            content_ok = False
-            errors.append(msg("empty_transcription", lang, id=block["id"]))
-        if label == "Table":
-            row = conn.execute("SELECT grid_json FROM tables WHERE block_id=?", (block["id"],)).fetchone()
-            if not row:
-                tables_ok = False
-                errors.append(msg("table_grid_missing", lang, id=block["id"]))
-            else:
-                try:
-                    grid = json.loads(row["grid_json"] or "{}")
-                    otslmod.grid_to_otsl(grid)
-                except (TypeError, ValueError) as exc:
-                    tables_ok = False
-                    errors.append(msg("table_grid_invalid", lang, id=block["id"], exc=exc))
-    structure_ok = bool(blocks) and geometry_ok
-    return {
-        "page_id": page_id, "status": page["status"], "ready": not errors,
-        "errors": errors, "warnings": warnings,
-        "stages": {
-            "structure": structure_ok,
-            "content": structure_ok and content_ok,
-            "table": structure_ok and tables_ok,
-            "review": not errors and not warnings,
-        },
-    }
+# Il calcolo di «pagina pronta» è logica di dominio condivisa: vive in
+# ``services/pages.py::compute_readiness``. Il router lo espone via HTTP.
 
 
 @router.get("/api/pages/{page_id}/readiness")
@@ -175,18 +130,18 @@ def page_readiness(
 ) -> dict:
     lang = parse_lang(request.headers.get("accept-language"))
     with connect() as conn:
-        return _readiness(conn, page_id, lang=lang)
+        return pagesvc.compute_readiness(conn, page_id, lang=lang)
 
 
 @router.post("/api/pages/{page_id}/approve")
 def approve_page(
     page_id: int,
     request: Request,
-    _auth: dict = Depends(require_resource(write=True)),
+    user: dict = Depends(require_resource(write=True)),
 ) -> dict:
     lang = parse_lang(request.headers.get("accept-language"))
     with connect() as conn:
-        readiness = _readiness(conn, page_id, lang=lang)
+        readiness = pagesvc.compute_readiness(conn, page_id, lang=lang)
         page = _get_page_or_404(conn, page_id)
         project = conn.execute("SELECT settings_json FROM projects WHERE id=?", (page["project_id"],)).fetchone()
         try:
@@ -201,6 +156,7 @@ def approve_page(
         if not readiness["ready"]:
             raise HTTPException(status_code=409, detail={"message": msg("page_not_ready", lang), **readiness})
         conn.execute("UPDATE pages SET status='approved' WHERE id=?", (page_id,))
+        auditsvc.record(conn, user, "page.approved", resource_type="page", resource_id=page_id)
         readiness["status"] = "approved"
         return readiness
 

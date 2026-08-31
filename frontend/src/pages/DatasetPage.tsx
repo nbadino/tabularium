@@ -24,14 +24,19 @@ export default function DatasetPage() {
   const [approvedOnly, setApprovedOnly] = useState(true)
   const [pilotOnly, setPilotOnly] = useState(false)
   const [adapterId, setAdapterId] = useState('monkeyocrv2-parsing')
-  const [adapters, setAdapters] = useState<Array<{ adapter_id: string; display_name: string; tasks: string[]; training_types: string[] }>>([])
+  const [adapters, setAdapters] = useState<Array<{ adapter_id: string; display_name: string; tasks: string[]; training_types: string[]; export_ready?: boolean }>>([])
   const [building, setBuilding] = useState(false)
   const [status, setStatus] = useState<DatasetStatus>({ built: false, report: null })
   const [error, setError] = useState<unknown>(null)
 
   useEffect(() => {
-    apiGet<{ items: Array<{ adapter_id: string; display_name: string; tasks: string[]; training_types: string[] }> }>('/system/model-adapters')
-      .then((r) => setAdapters(r.items))
+    apiGet<{ items: Array<{ adapter_id: string; display_name: string; tasks: string[]; training_types: string[]; export_ready?: boolean }> }>('/system/model-adapters')
+      // Solo adapter con export davvero supportato (`supports_export`, sondato
+      // lato backend come le modalità prefill): il builder chiama `prompt_for`
+      // per ogni famiglia, quindi un adapter stub o senza prompt per una
+      // famiglia (dots.ocr, PaddleOCR-VL, gli stub di sola ricetta) produrrebbe
+      // un build che finisce sempre in NotImplementedError — non va offerto.
+      .then((r) => setAdapters(r.items.filter((a) => a.export_ready !== false)))
       .catch(() => setAdapters([]))
   }, [])
 

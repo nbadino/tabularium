@@ -12,6 +12,8 @@ interface PageSidebarProps {
   currentPage: PageItem | null
   onProjectChange: (pid: number | '') => void
   onPageSelect: (pid: number) => void
+  /** Larghezza in px governata dallo splitter: se assente vale il default. */
+  width?: number
 }
 
 export default function PageSidebar({
@@ -21,6 +23,7 @@ export default function PageSidebar({
   currentPage,
   onProjectChange,
   onPageSelect,
+  width,
 }: PageSidebarProps) {
   const { t } = useI18n()
   const index = currentPage ? pages.findIndex((p) => p.id === currentPage.id) : -1
@@ -28,7 +31,10 @@ export default function PageSidebar({
   const next = index >= 0 && index < pages.length - 1 ? pages[index + 1] : null
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)]">
+    <aside
+      className="flex shrink-0 flex-col bg-[color:var(--color-sheet)]"
+      style={width !== undefined ? { width } : undefined}
+    >
       <div className="border-b border-[color:var(--color-rule)] p-2">
         <Field label={t('sidebar.project')}>
           <select

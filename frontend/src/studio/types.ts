@@ -1,5 +1,6 @@
 /** Tipi per lo studio di annotazione (spazio display/preview). */
 import type { Pt } from '../lib/coords'
+import type { TableGrid } from '../lib/types'
 
 export type Tool = 'select' | 'rect' | 'polygon' | 'pan'
 
@@ -24,6 +25,24 @@ export interface ViewState {
   k: number // scala zoom
 }
 
+/** Risultato del prefill nativo mentre viene revisionato nel pannello:
+ *  vive nel database ma NON sul canvas — sull'immagine non compare nulla
+ *  finché l'utente non lo verifica. */
+export interface PrefillDraft {
+  serverId: number
+  label: string
+  content: string
+  confirmed: boolean
+  /** Per le Table: la griglia riconosciuta dal backend — si mostra come
+   *  tabella formattata nel pannello, non come riquadro sull'immagine. */
+  grid?: TableGrid | null
+}
+
+export interface LivePrefillOutput {
+  phase: string
+  text: string
+}
+
 export interface AddBlockInput {
   kind: 'rect' | 'polygon'
   points: Pt[]
@@ -31,6 +50,6 @@ export interface AddBlockInput {
 }
 
 export interface SaveStatus {
-  state: 'idle' | 'saving' | 'saved' | 'error'
+  state: 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
   message?: string
 }

@@ -52,6 +52,12 @@ class ResetPasswordIn(BaseModel):
     password: str = Field(min_length=1, max_length=500)
 
 
+class ChangePasswordIn(BaseModel):
+    """Cambio password autonomo: richiede la password corrente."""
+    current_password: str = Field(min_length=1, max_length=500)
+    new_password: str = Field(min_length=8, max_length=500)
+
+
 class AuthStatusOut(BaseModel):
     auth_enabled: bool
     needs_setup: bool = False
@@ -79,6 +85,17 @@ class SettingsIn(BaseModel):
         return v
 
 
+class SecretIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    value: str = Field(min_length=1, max_length=10000)
+
+
+class SecretOut(BaseModel):
+    name: str
+    ref: str
+    configured: bool = True
+
+
 
 # --- Progetti ----------------------------------------------------------------
 class ProjectCreate(BaseModel):
@@ -89,6 +106,7 @@ class ProjectCreate(BaseModel):
 class ProjectOut(BaseModel):
     id: int
     name: str
+    owner_id: int | None = None
     root_dir: str
     archive_dir: str | None = None
     settings_json: dict = {}
@@ -98,6 +116,49 @@ class ProjectOut(BaseModel):
 
 class ProjectList(BaseModel):
     items: list[ProjectOut]
+
+
+class ProjectMemberIn(BaseModel):
+    user_id: int = Field(ge=1)
+    role: Literal["editor", "viewer"] = "editor"
+
+
+class ProjectOwnerIn(BaseModel):
+    user_id: int = Field(ge=1)
+
+
+class ProjectMemberOut(BaseModel):
+    user_id: int
+    username: str
+    email: str | None = None
+    role: Literal["owner", "editor", "viewer"]
+    active: bool = True
+
+
+class ComputeProfileIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    provider: Literal["local", "ssh", "vast", "runpod", "modal", "custom"] = "local"
+    purpose: Literal["inference", "training", "both"] = "inference"
+    model_adapter_id: str = Field(min_length=1, max_length=120)
+    model_revision: str | None = Field(default=None, max_length=300)
+    served_model_name: str = Field(min_length=1, max_length=300)
+    endpoint: str = Field(min_length=1, max_length=1000)
+    credential_ref: str | None = Field(default=None, max_length=300)
+    runtime_recipe_id: str | None = Field(default=None, max_length=200)
+    generation_profile_id: str | None = Field(default=None, max_length=200)
+    image_profile_id: str | None = Field(default=None, max_length=200)
+    hardware_profile: dict = Field(default_factory=dict)
+
+
+class ComputeProfileOut(ComputeProfileIn):
+    id: int
+    active: bool = False
+    has_credential: bool = False
+    last_health_check: str | None = None
+    last_health_ok: bool | None = None
+    last_health_error: str | None = None
+    created_at: str
+    updated_at: str
 
 
 class StudyProtocolIn(BaseModel):
@@ -130,6 +191,7 @@ class PageOut(BaseModel):
     page_no: str | None = None
     page_type: str | None = None
     status: str
+    annotation_revision: int = 0
     created_at: str
 
 
@@ -168,6 +230,9 @@ class BlockWrite(BaseModel):
 
 class BlockBulkWrite(BaseModel):
     items: list[BlockWrite]
+    # Optional for old API clients; new clients must send the revision from
+    # GET /annotations so stale full-page snapshots cannot overwrite work.
+    expected_revision: int | None = Field(default=None, ge=0)
 
 
 class BlockUpdate(BaseModel):
@@ -194,6 +259,7 @@ class BlockOut(BaseModel):
 
 class BlockListOut(BaseModel):
     items: list[BlockOut]
+    annotation_revision: int = 0
 
 
 # --- Tassonomia label ---------------------------------------------------------
@@ -302,6 +368,12 @@ class ConventionsIn(BaseModel):
 
 # --- Training -----------------------------------------------------------------
 class TrainConfig(BaseModel):
+    executor: Literal["local", "ssh", "vast", "runpod"] = "local"
+    ssh_host: str | None = Field(default=None, max_length=255)
+    ssh_user: str = Field(default="root", max_length=100)
+    ssh_port: int = Field(default=22, ge=1, le=65535)
+    ssh_key_path: str | None = Field(default=None, max_length=1000)
+    ssh_root: str = Field(default="/tmp/tabularium-runs", max_length=1000)
     model: str | None = None
     model_path: str | None = None
     train_type: Literal["lora", "full"] = "lora"
@@ -335,6 +407,7 @@ class InferenceConfigOut(BaseModel):
     enabled: bool = True
     url: str
     model: str
+    adapter_id: str = "monkeyocrv2-parsing"
     has_api_key: bool = False
     extra_headers: dict[str, str] = {}
     timeout: int = 180
@@ -362,4 +435,3 @@ class InferenceTestOut(BaseModel):
     latency_ms: float | None = None
     is_cloud: bool = False
     error: str | None = None
-

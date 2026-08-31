@@ -9,12 +9,13 @@ import { useSyncExternalStore } from 'react'
 import { apiGet, apiPost, apiPut } from '../lib/api'
 import type { InferenceConfig, InferenceTestResult } from '../lib/types'
 
-const KEY = 'tabularium.inference'
+const KEY = 'tabularium.inference.preferences'
 
 export interface InferenceCfg {
   enabled: boolean
   url: string
   model: string
+  adapterId: string
   apiKey: string
   hasApiKey: boolean
   extraHeaders: Record<string, string>
@@ -31,6 +32,7 @@ const EMPTY: InferenceCfg = {
   enabled: true,
   url: '',
   model: '',
+  adapterId: 'monkeyocrv2-parsing',
   apiKey: '',
   hasApiKey: false,
   extraHeaders: {},
@@ -103,7 +105,9 @@ function loadLocal(): InferenceCfg {
       enabled: parsed.enabled ?? true,
       url: String(parsed.url ?? ''),
       model: String(parsed.model ?? ''),
-      apiKey: String(parsed.apiKey ?? ''),
+      // Le credenziali non sono più persistite nel browser. Restano soltanto
+      // in memoria per la sessione corrente e il backend non le restituisce.
+      apiKey: '',
     }
   } catch {
     return EMPTY
@@ -131,7 +135,8 @@ export function getInference(): InferenceCfg {
 export function setInference(patch: Partial<InferenceCfg>): void {
   current = { ...current, ...patch }
   try {
-    localStorage.setItem(KEY, JSON.stringify(current))
+    const { apiKey: _secret, ...safe } = current
+    localStorage.setItem(KEY, JSON.stringify(safe))
   } catch {
     /* storage non disponibile */
   }
@@ -147,6 +152,7 @@ export async function syncInferenceFromBackend(): Promise<InferenceCfg> {
       enabled: res.enabled ?? true,
       url: res.url,
       model: res.model,
+      adapterId: res.adapter_id ?? current.adapterId,
       hasApiKey: res.has_api_key ?? false,
       extraHeaders: res.extra_headers ?? {},
       timeout: res.timeout ?? 180,
@@ -172,6 +178,10 @@ export async function saveInferenceToBackend(cfg: {
   apiKey?: string
   extraHeaders?: Record<string, string>
   timeout?: number
+  /** Quale adapter interpreta prompt/formato tabella per l'endpoint servito
+   *  (`monkeyocrv2-parsing`, `paddleocr-vl`, `mineru2.5`, ...). Omesso =
+   *  lascia invariato l'adapter attuale sul backend. */
+  adapterId?: string
 }): Promise<InferenceCfg> {
   const payload: Record<string, unknown> = {
     enabled: cfg.enabled !== undefined ? cfg.enabled : current.enabled,
@@ -185,6 +195,9 @@ export async function saveInferenceToBackend(cfg: {
   if (cfg.extraHeaders !== undefined) {
     payload.extra_headers = cfg.extraHeaders
   }
+  if (cfg.adapterId !== undefined) {
+    payload.adapter_id = cfg.adapterId
+  }
 
   const res = await apiPut<InferenceConfig>('/system/inference', payload)
   current = {
@@ -192,6 +205,7 @@ export async function saveInferenceToBackend(cfg: {
     enabled: res.enabled ?? true,
     url: res.url,
     model: res.model,
+    adapterId: res.adapter_id ?? current.adapterId,
     apiKey: cfg.apiKey ?? current.apiKey,
     hasApiKey: res.has_api_key ?? false,
     extraHeaders: res.extra_headers ?? {},
@@ -232,4 +246,3 @@ export async function testInferenceConnection(opts: {
 export function useInference(): InferenceCfg {
   return useSyncExternalStore(subscribe, getInference, getInference)
 }
-

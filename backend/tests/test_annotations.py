@@ -154,6 +154,11 @@ def test_block_crud_and_bulk(tmp_path: Path):
         assert r.headers["content-type"] == "image/jpeg"
         assert len(r.content) > 50
 
+        cleared = client.delete(f"/api/pages/{page_id}/annotations")
+        assert cleared.status_code == 200
+        assert cleared.json()["deleted"] == 2
+        assert client.get(f"/api/pages/{page_id}/annotations").json()["items"] == []
+
         # convenzioni: default 5, poi custom
         conv = client.get(f"/api/projects/{_pid}/conventions").json()["conventions"]
         assert len(conv) == 5 and all("id" in c for c in conv)

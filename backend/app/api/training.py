@@ -12,6 +12,7 @@ from ..schemas import TrainConfig
 from ..services import trainer
 from ..services.i18n import parse_lang
 from ..services import auth as authsvc
+from ..services import audit as auditsvc
 from .deps import require_resource
 
 router = APIRouter(
@@ -36,11 +37,14 @@ def system_gpu() -> dict:
 def training_start(
     project_id: int,
     payload: TrainConfig,
-    _auth: dict = Depends(require_resource(write=True)),
+    user: dict = Depends(require_resource(write=True)),
 ) -> dict:
     _require_project(project_id)
     try:
-        return trainer.start_run(project_id, payload.model_dump(exclude_unset=True))
+        result = trainer.start_run(project_id, payload.model_dump(exclude_unset=True), owner_id=user.get("id"))
+        with connect() as conn:
+            auditsvc.record(conn, user, "training.started", resource_type="project", resource_id=project_id, payload={"run_id": result.get("run", {}).get("run_id")})
+        return result
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -70,10 +74,13 @@ def training_status(
 @router.post("/api/projects/{project_id}/training/stop")
 def training_stop(
     project_id: int,
-    _auth: dict = Depends(require_resource(write=True)),
+    user: dict = Depends(require_resource(write=True)),
 ) -> dict:
     _require_project(project_id)
-    return trainer.stop_run(project_id)
+    result = trainer.stop_run(project_id)
+    with connect() as conn:
+        auditsvc.record(conn, user, "training.stopped", resource_type="project", resource_id=project_id)
+    return result
 
 
 @router.get("/api/projects/{project_id}/training/stream")

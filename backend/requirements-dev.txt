@@ -2,3 +2,5 @@
 pytest>=9,<10
 # Starlette 1.6 usa il fork compatibile httpx2 per TestClient.
 httpx2>=2,<3
+# Smoke E2E con browser reale (scripts/e2e_workflow.py).
+selenium>=4,<5

@@ -2,34 +2,63 @@ import { useEffect, useRef, useState } from 'react'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
 import { loadImageSize, PixelSize, scaleRatio } from '../lib/coords'
 import type { BlockOut, LabelDef, PageItem } from '../lib/types'
-import { PAGE_STATUSES } from '../lib/types'
-import { statusLabel } from '../lib/vocab'
 import StudioCanvas from '../studio/StudioCanvas'
-import ClassPalette from '../studio/components/ClassPalette'
-import ConventionsChecklist from '../studio/components/ConventionsChecklist'
-import Inspector from '../studio/components/Inspector'
-import LayersPanel from '../studio/components/LayersPanel'
 import PageSidebar from '../studio/components/PageSidebar'
-import TableCellsEditor from '../studio/components/TableCellsEditor'
-import PageTransformReview from '../studio/components/PageTransformReview'
+import ContentPane from '../studio/components/ContentPane'
+import Splitter from '../studio/components/Splitter'
+import LayersPanel from '../studio/components/LayersPanel'
+import ConventionsChecklist from '../studio/components/ConventionsChecklist'
+import { clamp } from '../studio/canvasGeometry'
 import { useAnnotationState } from '../studio/useAnnotationState'
+import { runPrelabelStream } from '../studio/prefillStream'
+import PrefillDialog from '../studio/components/PrefillDialog'
+import {
+  defaultPrefillMode,
+  summarizeForPrefill,
+  type PrefillMode,
+} from '../studio/prefill'
 import { useProjects, writeActiveProject } from '../app/activeProject'
-import type { Tool } from '../studio/types'
-import { emptyGrid } from '../lib/grid'
-import type { PrefillEngines, TableDetectOut, TableDetectRequest, TableGrid, TableGridOut, TableSaveOut } from '../lib/types'
+import type { LivePrefillOutput, PrefillDraft, Tool } from '../studio/types'
+import type { PrefillEngines, TableDetectOut, TableDetectRequest, TableGrid, TableSaveOut } from '../lib/types'
 import { useI18n, tn } from '../i18n'
 import {
+  IconNext,
   IconFlow,
   IconHand,
+  IconPrefill,
   IconPolygon,
   IconRectangle,
   IconRedo,
   IconSave,
   IconSelect,
+  IconTrash,
   IconUndo,
 } from '../app/icons'
 
-import { saveInferenceToBackend, useInference } from '../app/inference'
+import { useInference } from '../app/inference'
+
+// --- larghezze dei pannelli dello studio (splitter, persistite) --------------
+// La scelta segue l'utente tra le sessioni; un valore corrotto o assente
+// ricade sulla misura di riposo.
+const SPLIT_KEY = 'tabularium.studio.split'
+const SPLIT_DEFAULT = { sidebar: 240, content: 520 }
+const SIDEBAR_MIN = 176
+const SIDEBAR_MAX = 420
+const CONTENT_MIN = 320
+
+function loadSplit(): { sidebar: number; content: number } {
+  try {
+    const raw = localStorage.getItem(SPLIT_KEY)
+    if (!raw) return SPLIT_DEFAULT
+    const parsed = JSON.parse(raw) as { sidebar?: number; content?: number }
+    return {
+      sidebar: clamp(Number(parsed.sidebar) || SPLIT_DEFAULT.sidebar, SIDEBAR_MIN, SIDEBAR_MAX),
+      content: clamp(Number(parsed.content) || SPLIT_DEFAULT.content, CONTENT_MIN, 900),
+    }
+  } catch {
+    return SPLIT_DEFAULT
+  }
+}
 
 export default function AnnotationPage() {
   const { t } = useI18n()
@@ -41,21 +70,97 @@ export default function AnnotationPage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [previewSize, setPreviewSize] = useState<PixelSize>({ w: 0, h: 0 })
   const [error, setError] = useState<string | null>(null)
-  const [showFlow, setShowFlow] = useState(false)
-  const [tableBlockId, setTableBlockId] = useState<string | null>(null)
-  const [tableGrid, setTableGrid] = useState<TableGrid | null>(null)
+  const pageIdRef = useRef<number | null>(null)
   const [prefillBusy, setPrefillBusy] = useState(false)
+  const [prefillProgress, setPrefillProgress] = useState<{ blocks: number; last: string | null } | null>(
+    null,
+  )
+  // Istante di partenza del prefill corrente (ref: non deve causare render).
+  const workingStartedAt = useRef(Date.now())
+  // Risultati del prefill da revisionare nel pannello: testi formattati,
+  // mai riquadri sull'immagine. Restano finché revisionati o cambi pagina.
+  const [prefillDrafts, setPrefillDrafts] = useState<PrefillDraft[]>([])
+  const [liveOutput, setLiveOutput] = useState<LivePrefillOutput | null>(null)
+  const [showFlow, setShowFlow] = useState(false)
+  const prefillAbortRef = useRef<AbortController | null>(null)
+
+  /** Modifica al testo di una bozza: aggiorna il pannello subito e il
+   *  database con debounce (le bozze non sono nel canvas). */
+  const draftTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
+  const onDraftContent = (serverId: number, content: string) => {
+    setPrefillDrafts((d) => d.map((x) => (x.serverId === serverId ? { ...x, content } : x)))
+    clearTimeout(draftTimers.current[serverId])
+    draftTimers.current[serverId] = setTimeout(() => {
+      void apiPatch(`/blocks/${serverId}`, { content }).catch((e) => setError(String(e)))
+    }, 800)
+  }
+  /** Verifica una bozza: da questo momento il blocco esiste anche sul canvas
+   *  (filtro in applyBlocks) — è il gesto che trasforma output in annotazione. */
+  const onDraftConfirmed = async (serverId: number, confirmed: boolean) => {
+    setPrefillDrafts((d) => d.map((x) => (x.serverId === serverId ? { ...x, confirmed } : x)))
+    try {
+      await apiPatch(`/blocks/${serverId}`, { confirmed })
+      if (page) await applyBlocks(page, ratio)
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+  const onDraftGrid = (serverId: number, grid: TableGrid) => {
+    setPrefillDrafts((drafts) => drafts.map((draft) => (draft.serverId === serverId ? { ...draft, grid } : draft)))
+  }
+  const onSaveDraftGrid = async (serverId: number, grid: TableGrid): Promise<string> => {
+    const out = await apiPut<TableSaveOut>(`/blocks/${serverId}/table`, grid)
+    return out.otsl
+  }
+  /** Scarta una bozza non verificata: sparisce dal pannello e dal server —
+   *  non è mai stata sul canvas, quindi non c'è nulla da annullare lì. */
+  const onDraftReject = async (serverId: number) => {
+    setPrefillDrafts((d) => d.filter((x) => x.serverId !== serverId))
+    try {
+      await apiDelete(`/blocks/${serverId}`)
+    } catch (e) {
+      setError(String(e))
+    }
+  }
   const [prefillEngine, setPrefillEngine] = useState<
-    'off' | 'ocr' | 'model-two-stage' | 'model-end2end'
+    'off' | 'ocr' | 'model-native'
   >('ocr')
+  // Policy operativa: MonkeyOCRv2 parte in due stadi perché è il percorso più
+  // stabile sul corpus attuale; Unlimited/dots partono in native, il loro
+  // percorso end-to-end verificato. L'utente può comunque cambiare modalità.
+  const [modelMode, setModelMode] = useState<'native' | 'two_stage' | 'end2end'>('two_stage')
+  const modelIdentityRef = useRef<string | null>(null)
   const [engines, setEngines] = useState<PrefillEngines | null>(null)
-  const [transformOpen, setTransformOpen] = useState(false)
-  const [resetBusy, setResetBusy] = useState(false)
   const prefillConfidence = 0.5
   const [prefillNotice, setPrefillNotice] = useState<string | null>(null)
+  // Il dialog di conferma: il prefill può cancellare lavoro esistente, quindi
+  // non parte mai direttamente quando la pagina contiene blocchi.
+  const [prefillOpen, setPrefillOpen] = useState(false)
+  const [navBusy, setNavBusy] = useState(false)
   const [nextTask, setNextTask] = useState<{ id: number; reason: string } | null>(null)
-  const [readiness, setReadiness] = useState<{ ready: boolean; stages: Record<string, boolean>; warnings: string[] } | null>(null)
-  const [reviewNotice, setReviewNotice] = useState<string | null>(null)
+
+  const syncModelDefault = (out: PrefillEngines) => {
+    const identity = `${out.model.adapter_id ?? inf.adapterId}|${out.model.model}|${out.model.url}`
+    if (modelIdentityRef.current === identity) return
+    modelIdentityRef.current = identity
+    setModelMode(out.model.supports_two_stage === false ? 'native' : 'two_stage')
+  }
+
+  // --- larghezze pannelli ------------------------------------------------------
+  const [split, setSplit] = useState(loadSplit)
+  const setSplitPane = (pane: 'sidebar' | 'content', value: number) =>
+    setSplit((cur) => {
+      const next = { ...cur, [pane]: Math.round(value) }
+      try {
+        localStorage.setItem(SPLIT_KEY, JSON.stringify(next))
+      } catch {
+        // Storage bloccato (es. navigazione privata): la scelta vale per la sessione.
+      }
+      return next
+    })
+  const resetSplitPane = (pane: 'sidebar' | 'content') => setSplitPane(pane, SPLIT_DEFAULT[pane])
+  /** Il pannello contenuti non può mangiare più della metà della finestra. */
+  const contentMax = () => Math.max(CONTENT_MIN, Math.round(window.innerWidth * 0.6))
 
   const ratio =
     page && previewSize.w > 0
@@ -66,9 +171,15 @@ export default function AnnotationPage() {
 
   // --- carica blocchi dal server e li applica allo stato -----------------------
   const applyBlocks = async (p: PageItem, r: number) => {
-    const rep = await apiGet<{ items: BlockOut[] }>(`/pages/${p.id}/annotations`)
+    const rep = await apiGet<{ items: BlockOut[]; annotation_revision?: number }>(`/pages/${p.id}/annotations`)
+    const isPendingDraft = (b: BlockOut) => Boolean(b.prefill_source) && !b.confirmed
+    // Le bozze del prefill non verificate NON entrano nel canvas: sull'immagine
+    // non deve comparire nulla di generato. Vivono nel pannello contenuti
+    // (ContentPane → `drafts`) finché l'utente non le verifica.
     ann.reset(
-      rep.items.map((b) => ({
+      rep.items
+        .filter((b) => !isPendingDraft(b))
+        .map((b) => ({
         id: `srv-${b.id}`,
         serverId: b.id,
         label: b.label,
@@ -79,73 +190,197 @@ export default function AnnotationPage() {
         confirmed: b.confirmed,
         prefill: b.prefill_source ?? null,
       })),
+      rep.annotation_revision ?? p.annotation_revision ?? 0,
+    )
+    // Il backend scrive le bozze in un thread indipendente dalla connessione:
+    // un prefill avviato e poi abbandonato (cambio pagina, altra scheda) continua
+    // e finisce comunque. Ricaricandole qui, invece di fidarsi solo dello stream
+    // dal vivo, sopravvivono alla navigazione — si ritrovano al ritorno sulla
+    // pagina anche se nessuno ha guardato lo stream fino alla fine.
+    setPrefillDrafts(
+      rep.items
+        .filter(isPendingDraft)
+        .map((b) => ({ serverId: b.id, label: b.label, content: b.content, confirmed: false, grid: null })),
     )
   }
 
   // --- pseudo-labeling OCR ----------------------------------------------------
-  const runPrelabel = async () => {
+  // Streaming: ogni blocco scritto dal backend arriva come evento SSE e
+  // compare subito sul canvas e nel pannello — la risposta batch esiste
+  // ancora per chi la vuole intera, ma l'attesa cieca no.
+  const runPrelabel = async (mode: PrefillMode) => {
     if (!page || !projectId) return
+    // Se l'utente cambia pagina mentre gira, la run prosegue sul server (thread
+    // indipendente dalla connessione: v. applyBlocks) ma smette di toccare lo
+    // stato React — altrimenti i suoi eventi arriverebbero addosso a un'altra
+    // pagina, mischiando bozze e azzerando blocchi che non c'entrano nulla.
+    const targetPageId = page.id
+    const isCurrent = () => pageIdRef.current === targetPageId
+    setPrefillOpen(false)
     setPrefillBusy(true)
+    workingStartedAt.current = Date.now()
+    setPrefillProgress({ blocks: 0, last: null })
+    setPrefillDrafts([])
+    setLiveOutput(null)
     setError(null)
     setPrefillNotice(null)
+    const abortController = new AbortController()
+    prefillAbortRef.current = abortController
+    let summary: Record<string, unknown> | null = null
+    let streamError: string | null = null
     try {
-      const res = await apiPost<{ engine: string; results: Array<{ page_id: number; detected: number; inserted: number; tables?: number; grids?: number; deskew_angle?: number }> }>(
-        `/projects/${projectId}/prelabel`,
-        {
+      await runPrelabelStream({
+        projectId,
+        body: {
           page_ids: [page.id],
-          mode: 'replace',
+          mode,
           confidence: prefillConfidence,
           min_size: 10,
           engine: prefillEngine === 'ocr' ? 'ocr' : 'model',
-          model_mode: prefillEngine === 'model-end2end' ? 'end2end' : 'two_stage',
+          model_mode: modelMode,
         },
-      )
-      const inserted = res.results[0]?.inserted ?? 0
-      const deskewAngle = res.results[0]?.deskew_angle as number | undefined
-      const base = tn('annotate.ocrNotice', inserted, { engine: res.engine })
-      // La promozione a tabella cambia il lavoro da fare (si verificano celle,
-      // non si trascrivono righe): vale la pena dirlo esplicitamente.
+        signal: abortController.signal,
+        onEvent: (ev) => {
+          if (ev.type === 'start') {
+            if (!isCurrent()) return
+            // Ciò che le modalità replace hanno già cancellato lato server
+            // non deve restare disegnato: il lavoro umano resta solo in
+            // merge, e nelle bozze si mantiene ciò che non è una bozza.
+            if (mode === 'replace_all') {
+              ann.reset([])
+            } else if (mode === 'replace_drafts') {
+              ann.reset(
+                ann.blocks.filter((b) => !(b.prefill && !b.confirmed)),
+              )
+            }
+          } else if (ev.type === 'block') {
+            if (!isCurrent()) return
+            // Durante e dopo lo stream il canvas resta PULITO: l'output
+            // nativo va nel pannello come testo formattato, non come
+            // riquadri sull'immagine. Il blocco è già nel database.
+            setPrefillDrafts((d) => [
+              ...d,
+              {
+                serverId: ev.block.id,
+                label: ev.block.label,
+                content: ev.block.content,
+                confirmed: false,
+                grid: (ev.block.grid as TableGrid | null) ?? null,
+              },
+            ])
+            setPrefillProgress((p) =>
+              p ? { blocks: p.blocks + 1, last: ev.block.label } : p,
+            )
+          } else if (ev.type === 'output') {
+            if (!isCurrent()) return
+            setLiveOutput((previous) => ({
+              phase: ev.phase,
+              text: `${previous?.text ?? ''}${ev.text}`,
+            }))
+          } else if (ev.type === 'output_reset') {
+            if (!isCurrent()) return
+            setLiveOutput({ phase: ev.phase, text: '' })
+          } else if (ev.type === 'page_done') {
+            summary = ev.summary
+          } else if (ev.type === 'error') {
+            streamError = ev.message
+          }
+        },
+      })
+    } catch (e) {
+      if (isCurrent()) {
+        if (abortController.signal.aborted) {
+          setPrefillNotice(t('annotate.prefillStopped'))
+        } else {
+          setError(String(e))
+        }
+        setPrefillBusy(false)
+        setPrefillProgress(null)
+      }
+      if (prefillAbortRef.current === abortController) prefillAbortRef.current = null
+      return
+    }
+    if (prefillAbortRef.current === abortController) prefillAbortRef.current = null
+    if (!isCurrent()) return
+    if (streamError) setError(streamError)
+    const s = summary as {
+      inserted?: number
+      replaced_blocks?: number
+      deskew_angle?: number
+      tables?: number
+      grids?: number
+    } | null
+    if (s) {
+      const base = tn('annotate.ocrNotice', s.inserted ?? 0, { engine: workingEngineName() })
+      const replacedPart =
+        (s.replaced_blocks ?? 0) > 0 ? ' ' + tn('annotate.prefillReplaced', s.replaced_blocks ?? 0) : ''
       const tablePart =
-        (res.results[0]?.tables ?? 0) > 0
-          ? ' ' + t('annotate.ocrTableNotice', { grids: res.results[0]?.grids ?? 0 })
+        (s.tables ?? 0) > 0
+          ? ' ' + t('annotate.ocrTableNotice', { grids: s.grids ?? 0 })
           : ''
       setPrefillNotice(
-        (deskewAngle && Math.abs(deskewAngle) >= 0.05
-          ? `${base} ${t('annotate.deskewApplied', { angle: deskewAngle.toFixed(2) })}`
-          : base) + tablePart,
+        ((s.deskew_angle && Math.abs(s.deskew_angle) >= 0.05
+          ? `${base}${replacedPart} ${t('annotate.deskewApplied', { angle: s.deskew_angle.toFixed(2) })}`
+          : base + replacedPart) + tablePart),
       )
-      await applyBlocks(page, ratio)
+    }
+    setPrefillBusy(false)
+    setPrefillProgress(null)
+    // Le bozze RESTANO nel pannello per la revisione: sull'immagine non
+    // compare nulla (nessun applyBlocks — i blocchi non confermati non
+    // entrano nel canvas, v. applyBlocks).
+  }
+
+  const stopPrelabel = () => {
+    prefillAbortRef.current?.abort()
+  }
+
+  const clearPageAnnotations = async () => {
+    if (!page || prefillBusy) return
+    if (!window.confirm(t('annotate.clearAllConfirm'))) return
+    setError(null)
+    try {
+      await apiDelete(`/pages/${page.id}/annotations`)
+      ann.reset([])
+      setPrefillDrafts([])
+      setLiveOutput(null)
+      setPrefillNotice(t('annotate.clearAllDone'))
     } catch (e) {
       setError(String(e))
-    } finally {
-      setPrefillBusy(false)
     }
   }
 
-  const resetTransforms = async () => {
-    if (!page) return
-    const hasBlocks = ann.blocks.length > 0
-    if (!window.confirm(t('annotate.resetConfirm'))) return
-    setResetBusy(true)
-    setError(null)
-    setPrefillNotice(null)
-    try {
-      await apiDelete(`/pages/${page.id}/deskew${hasBlocks ? '?confirm=true' : ''}`)
-      await onPageSelect(page.id)
-      setPreviewUrl(`/api/pages/${page.id}/preview?t=${Date.now()}`)
-      setPrefillNotice(t('annotate.resetApplied'))
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setResetBusy(false)
+  /** Etichetta leggibile del motore scelto, per il pannello di lavoro. */
+  const workingEngineName = () =>
+    prefillEngine === 'ocr'
+      ? t('annotate.prefillEngineOcr')
+      : t('annotate.prefillEngineModelNative')
+
+  /** Il pulsante Prefill: con blocchi presenti apre il dialog di conferma,
+   *  su pagina vuota le modalità sono equivalenti e si parte subito. */
+  const onPrefillClick = () => {
+    if (!page || prefillEngine === 'off' || prefillBusy) return
+    if (ann.blocks.length > 0) {
+      setPrefillOpen(true)
+      return
     }
+    void runPrelabel(defaultPrefillMode(summarizeForPrefill(ann.blocks)))
   }
 
   // --- seleziona progetto -----------------------------------------------------
   const onProjectChange = async (pid: number | '') => {
+    // Il lavoro sporco della pagina corrente va a dormire prima di lasciarla:
+    // il cambio progetto smonta tutto lo stato, il debounce non basterebbe.
+    try {
+      await ann.flush()
+    } catch {
+      // Un salvataggio fallito non deve intrappolare l'utente qui: l'errore
+      // resta visibile e i blocchi sono ancora nel canvas storico del server.
+    }
     setProjectId(pid)
     writeActiveProject(pid === '' ? null : pid)
     setPage(null)
+    pageIdRef.current = null
     setPages([])
     setPreviewUrl(null)
     ann.reset()
@@ -175,8 +410,16 @@ export default function AnnotationPage() {
       .then((out) => {
         if (cancelled) return
         setEngines(out)
+        syncModelDefault(out)
+        setModelMode((cur) => {
+          if (cur === 'two_stage' && out.model.supports_two_stage === false) return 'native'
+          if (cur === 'end2end' && out.model.supports_end2end === false) {
+            return out.model.supports_two_stage !== false ? 'two_stage' : 'native'
+          }
+          return cur
+        })
         if (out.recommended === 'model' || out.recommended === 'ocr') {
-          setPrefillEngine(out.recommended === 'model' ? 'model-two-stage' : 'ocr')
+          setPrefillEngine(out.recommended === 'model' ? 'model-native' : 'ocr')
         }
       })
       .catch(() => {
@@ -188,6 +431,61 @@ export default function AnnotationPage() {
     }
   }, [])
 
+  // Ri-sonda quando la configurazione di inferenza cambia (deploy da Cloud,
+  // cambio endpoint/adapter nelle Impostazioni): la sondaggione sopra gira solo
+  // al montaggio e lascerebbe il menu Prefill allineato al modello di prima —
+  // es. "end2end" ancora abilitato con MinerU2.5 attivo, che poi fallirebbe
+  // lato backend con NotImplementedError. Debounce per assorbire i save multipli
+  // di una stessa configurazione; la sonda fallita lascia lo stato precedente
+  // (il chip GPU in header è la fonte della verità visibile all'utente).
+  useEffect(() => {
+    let cancelled = false
+    const timer = setTimeout(() => {
+      apiGet<PrefillEngines>('/system/prefill-engines')
+        .then((out) => {
+          if (cancelled) return
+          setEngines(out)
+          syncModelDefault(out)
+          setModelMode((cur) => {
+            if (cur === 'two_stage' && out.model.supports_two_stage === false) return 'native'
+            if (cur === 'end2end' && out.model.supports_end2end === false) {
+              return out.model.supports_two_stage !== false ? 'two_stage' : 'native'
+            }
+            return cur
+          })
+          // Se la modalità selezionata non è più supportata dall'adapter
+          // attivo si scende al due-stadi, o a off se nemmeno quello.
+          setPrefillEngine((cur) => {
+            if (cur === 'model-native' && out.model.supports_native === false) {
+              return 'off'
+            }
+            return cur
+          })
+        })
+        .catch(() => {})
+    }, 800)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [inf.url, inf.enabled, inf.model])
+
+  // --- stato GPU: ri-sonda finché il modello risulta offline -------------------
+  // Modal a freddo (o in riavvio dopo un deploy) non risponde per minuti: la
+  // sonda al mount marcarebbe "offline" per sempre. Finché il modello è
+  // abilitato ma risulta non disponibile, si ri-sonda a intervalli — il pass-
+  // aggio a online deve comparire da solo, senza costringere l'utente a
+  // ricaricare la pagina.
+  useEffect(() => {
+    if (!inf.enabled || engines?.model.available !== false) return
+    const id = setInterval(() => {
+      apiGet<PrefillEngines>('/system/prefill-engines')
+        .then(setEngines)
+        .catch(() => {})
+    }, 30_000)
+    return () => clearInterval(id)
+  }, [inf.enabled, engines?.model.available])
+
   // --- carica progetti e riapre subito quello attivo ---------------------------
   const projects = useProjects(
     (pid) => void onProjectChange(pid),
@@ -196,12 +494,35 @@ export default function AnnotationPage() {
 
   // --- seleziona pagina -------------------------------------------------------
   const onPageSelect = async (pid: number) => {
+    if (!pages.some((x) => x.id === pid)) return
+    if (navBusy) return
+    setNavBusy(true)
+    try {
+      // Prima di abbandonare la pagina si aspetta l'autosave: il timer con
+      // debounce verrebbe cancellato dal cambio pagina e le ultime modifiche
+      // resterebbero solo nel browser.
+      await ann.flush()
+    } catch {
+      // L'errore di salvataggio è già visibile nell'header: la navigazione
+      // resta possibile, non si intrappola l'utente su una pagina.
+    }
     const p = pages.find((x) => x.id === pid)
-    if (!p) return
+    if (!p) {
+      setNavBusy(false)
+      return
+    }
     setPage(p)
-    apiGet<{ ready: boolean; stages: Record<string, boolean>; warnings: string[] }>(`/pages/${pid}/readiness`)
-      .then(setReadiness)
-      .catch(() => setReadiness(null))
+    pageIdRef.current = p.id
+    pageIdRef.current = p.id
+    // Una run avviata sulla pagina precedente prosegue sul server ma non
+    // riguarda più questa vista: si azzerano gli indicatori locali, i suoi
+    // eventi restano ignorati (v. isCurrent in runPrelabel). Le bozze che
+    // ha già scritto si ricaricano da applyBlocks, qui sotto, per QUESTA
+    // pagina — non per quella abbandonata.
+    setPrefillBusy(false)
+    setPrefillProgress(null)
+    setLiveOutput(null)
+    setPrefillDrafts([])
     const url = `/api/pages/${pid}/preview`
     setPreviewUrl(url)
     try {
@@ -211,45 +532,22 @@ export default function AnnotationPage() {
       await applyBlocks(p, r)
     } catch (e) {
       setError(String(e))
+    } finally {
+      setNavBusy(false)
     }
   }
 
-  // --- editor tabella ---------------------------------------------------------
-  const openTableEditor = async (block: { id: string; serverId: number | null }) => {
-    if (!block.serverId) {
-      setError(t('annotate.saveFirstBlock'))
-      return
-    }
-    setTableBlockId(block.id)
-    try {
-      const out = await apiGet<TableGridOut>(`/blocks/${block.serverId}/table`)
-      setTableGrid(out.grid ?? emptyGrid(3, 4))
-    } catch (e) {
-      setError(String(e))
-      setTableBlockId(null)
-    }
-  }
-
-  const detectTableGrid = async (opts: TableDetectRequest): Promise<TableDetectOut> => {
-    const block = ann.blocks.find((b) => b.id === tableBlockId)
-    if (!block?.serverId) {
-      throw new Error(t('annotate.blockNotSaved'))
-    }
-    return apiPost<TableDetectOut>(`/blocks/${block.serverId}/table/detect`, opts)
-  }
-
-  const saveTableEditor = async (grid: TableGrid): Promise<string> => {
-    const block = ann.blocks.find((b) => b.id === tableBlockId)
-    if (!block?.serverId) {
-      throw new Error(t('annotate.blockNotSaved'))
-    }
-    const out = await apiPut<TableSaveOut>(`/blocks/${block.serverId}/table`, grid)
+  // --- pannello contenuto: tabelle --------------------------------------------
+  // La griglia la carica ContentPane alla selezione; qui restano solo le
+  // chiamate al server, referenziate sul blocco selezionato al momento
+  // dell'invocazione (il pannello le passa insieme al blocco).
+  const saveTable = async (serverId: number, grid: TableGrid): Promise<string> => {
+    const out = await apiPut<TableSaveOut>(`/blocks/${serverId}/table`, grid)
     return out.otsl
   }
 
-  const tableBlock = tableBlockId
-    ? (ann.blocks.find((b) => b.id === tableBlockId) ?? null)
-    : null
+  const detectTable = (serverId: number, opts: TableDetectRequest): Promise<TableDetectOut> =>
+    apiPost<TableDetectOut>(`/blocks/${serverId}/table/detect`, opts)
 
   // --- cancellazione blocco: toast con annullamento esplicito ------------------
   const [deleteToast, setDeleteToast] = useState<{ label: string } | null>(null)
@@ -288,18 +586,6 @@ export default function AnnotationPage() {
     if (nextTask) void onPageSelect(nextTask.id)
   }
 
-  const recordReview = async (reviewStatus: 'pass' | 'fail') => {
-    if (!page) return
-    try {
-      await apiPost(`/pages/${page.id}/reviews`, { reviewer: 'local', status: reviewStatus, errors: reviewStatus === 'fail' ? (readiness?.warnings ?? []) : [] })
-      setReviewNotice(reviewStatus === 'pass' ? t('annotate.qaRegistered') : t('annotate.qaFailedNotice'))
-      const next = await apiGet<{ ready: boolean; stages: Record<string, boolean>; warnings: string[] }>(`/pages/${page.id}/readiness`)
-      setReadiness(next)
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-
   // --- guida contestuale --------------------------------------------------------
   const prefillCount = ann.blocks.filter((b) => b.prefill).length
   const guideHint = !page
@@ -319,6 +605,17 @@ export default function AnnotationPage() {
         currentPage={page}
         onProjectChange={onProjectChange}
         onPageSelect={onPageSelect}
+        width={split.sidebar}
+      />
+
+      <Splitter
+        value={split.sidebar}
+        min={SIDEBAR_MIN}
+        max={SIDEBAR_MAX}
+        side="left"
+        label={t('annotate.splitSidebar')}
+        onChange={(v) => setSplitPane('sidebar', v)}
+        onReset={() => resetSplitPane('sidebar')}
       />
 
       {/* Centro: toolbar + canvas */}
@@ -334,13 +631,13 @@ export default function AnnotationPage() {
                 title={t('annotate.toolTitle', { tool: t(tool.labelKey), key: tool.key })}
                 className={
                   ann.tool === tool.id
-                    ? 'btn btn-sm border-y-0 border-l-0 border-r-[color:var(--color-rule)] bg-[color:var(--color-sig-plate)] text-white last:border-r-0'
-                    : 'btn btn-sm border-y-0 border-l-0 border-r-[color:var(--color-rule)] last:border-r-0'
+                    ? 'btn border-y-0 border-l-0 border-r-[color:var(--color-rule)] bg-[color:var(--color-sig-plate)] text-white last:border-r-0'
+                    : 'btn border-y-0 border-l-0 border-r-[color:var(--color-rule)] last:border-r-0'
                 }
               >
                 <tool.Icon size={13} />
                 {t(tool.labelKey)}
-                <kbd className={`mono ml-1 border px-1 text-[10px] ${ann.tool === tool.id ? 'border-white/60 text-white' : 'border-[color:var(--color-rule)] text-[color:var(--color-ink-3)]'}`}>
+                <kbd className={`mono ml-1 border px-1 text-[11px] ${ann.tool === tool.id ? 'border-white/60 text-white' : 'border-[color:var(--color-rule)] text-[color:var(--color-ink-3)]'}`}>
                   {tool.key}
                 </kbd>
               </button>
@@ -367,39 +664,47 @@ export default function AnnotationPage() {
               <IconRedo size={12} />
               {t('annotate.redo')}
             </button>
-            <button
-              type="button"
-              onClick={() => setShowFlow((v) => !v)}
-              aria-pressed={showFlow}
-              className={`btn btn-sm ${
-                showFlow
-                  ? 'border-[color:var(--color-sig)] bg-[color:var(--color-sig-wash)] text-[color:var(--color-sig-text)]'
-                  : ''
-              }`}
-            >
-              <IconFlow size={12} />
-              {showFlow ? t('annotate.showFlow') : t('annotate.viewFlow')}
-            </button>
           </div>
+          <button
+            type="button"
+            onClick={() => setShowFlow((value) => !value)}
+            aria-pressed={showFlow}
+            title={showFlow ? t('annotate.showFlow') : t('annotate.viewFlow')}
+            className={showFlow ? 'btn btn-sm bg-[color:var(--color-sig-wash)]' : 'btn btn-sm'}
+          >
+            <IconFlow size={12} />
+            {showFlow ? t('annotate.showFlow') : t('annotate.viewFlow')}
+          </button>
           <div className="flex items-center gap-1.5">
+            {/* La palette è ridotta a menu: serve solo per scegliere la classe
+                con cui disegnare un blocco nuovo. */}
+            <select
+              value={ann.activeLabel}
+              onChange={(e) => ann.setActiveLabel(e.target.value)}
+              aria-label={t('inspector.class')}
+              className="fld !w-auto text-xs"
+            >
+              {labels.map((l) => (
+                <option key={l.name} value={l.name}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
             <div className="flex items-center">
               <button
-                onClick={() => void runPrelabel()}
+                onClick={onPrefillClick}
                 disabled={prefillBusy || !page || prefillEngine === 'off'}
-                className={`rounded-l border px-2 py-1 text-xs transition-colors ${
-                  prefillEngine === 'off'
-                    ? 'border-slate-700 bg-slate-900 text-slate-500 cursor-not-allowed'
-                    : 'border-violet-700 bg-violet-950 text-violet-300 hover:bg-violet-900 disabled:opacity-40'
-                }`}
+                className="btn btn-sm !border-r-0"
                 title={
                   prefillEngine === 'off'
-                    ? 'Prefill disattivato'
+                    ? t('annotate.prefillOff')
                     : prefillEngine !== 'ocr'
                       ? t('annotate.prefillTitleModel')
                       : t('annotate.prefillTitleOcr')
                 }
               >
-                {prefillBusy ? t('annotate.ocrBusy') : prefillEngine === 'off' ? 'Prefill Off' : t('annotate.prefill')}
+                <IconPrefill size={12} />
+                {prefillBusy ? t('annotate.ocrBusy') : t('annotate.prefill')}
               </button>
               {/* I due motori non sono intercambiabili: `ocr` trova righe di testo
                   e le etichetta tutte Text, `model` restituisce blocchi già
@@ -407,199 +712,159 @@ export default function AnnotationPage() {
                   differenza è fra centinaia di blocchi Text e un blocco Table. */}
               <select
                 value={prefillEngine}
-                onChange={(e) =>
-                  setPrefillEngine(
-                    e.target.value as 'off' | 'ocr' | 'model-two-stage' | 'model-end2end',
-                  )
-                }
+                onChange={(e) => setPrefillEngine(e.target.value as 'off' | 'ocr' | 'model-native')}
                 disabled={prefillBusy}
                 aria-label={t('annotate.prefillEngine')}
-                className="rounded-r border border-l-0 border-violet-700 bg-violet-950 px-1 py-1 text-xs text-violet-300 disabled:opacity-40"
+                className="fld !w-auto !border-l-0 text-xs"
               >
-                <option value="off">🚫 Prefill Disattivato</option>
-                <option value="ocr">📄 {t('annotate.prefillEngineOcr')} (CPU)</option>
+                <option value="off">{t('annotate.prefillOff')}</option>
+                <option value="ocr">{t('annotate.prefillEngineOcr')} (CPU)</option>
+                {/* Un solo percorso modello: l'inferenza NATIVA — immagine
+                    com'è, prompt di default del modello, sampling suo. Il
+                    layout che chiedevamo noi al due-stadi è uscito: i
+                    risultati devono coincidere con l'uso diretto del modello. */}
                 <option
-                  value="model-two-stage"
-                  disabled={!inf.enabled || (engines ? !engines.model.available : false)}
+                  value="model-native"
+                  disabled={
+                    !inf.enabled ||
+                    (engines ? !engines.model.available || engines.model.supports_native === false : false)
+                  }
                 >
                   {!inf.enabled
-                    ? '⚡ Modello 2-Stadi (GPU Disattivata)'
+                    ? `${t('annotate.prefillEngineModelNative')} — ${t('annotate.gpuOff')}`
                     : engines && !engines.model.available
                       ? t('annotate.prefillEngineModelOff')
-                      : `⚡ ${t('annotate.prefillEngineModelTwoStage')} (${inf.isCloud ? 'Cloud' : 'GPU'})`}
-                </option>
-                <option
-                  value="model-end2end"
-                  disabled={!inf.enabled || (engines ? !engines.model.available : false)}
-                >
-                  {!inf.enabled
-                    ? '⚡ Modello End2End (GPU Disattivata)'
-                    : engines && !engines.model.available
-                      ? t('annotate.prefillEngineModelOff')
-                      : `⚡ ${t('annotate.prefillEngineModelEnd2end')} (${inf.isCloud ? 'Cloud' : 'GPU'})`}
+                      : engines && engines.model.supports_native === false
+                        ? `${t('annotate.prefillEngineModelNative')} — ${t('annotate.prefillModeUnsupported')}`
+                        : `${t('annotate.prefillEngineModelNative')} (${inf.isCloud ? 'Cloud' : 'GPU'})`}
                 </option>
               </select>
-            </div>
-
-            {/* Pulsante rapido Attiva/Disattiva GPU */}
-            <button
-              type="button"
-              onClick={async () => {
-                const next = !inf.enabled
-                await saveInferenceToBackend({ enabled: next })
-                try {
-                  const out = await apiGet<PrefillEngines>('/system/prefill-engines')
-                  setEngines(out)
-                } catch {}
-              }}
-              className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
-                inf.enabled && engines?.model.available
-                  ? 'border-emerald-700 bg-emerald-950 text-emerald-300 hover:bg-emerald-900'
-                  : inf.enabled
-                    ? 'border-amber-700 bg-amber-950 text-amber-300 hover:bg-amber-900'
-                    : 'border-slate-700 bg-slate-900 text-slate-400 hover:bg-slate-800'
-              }`}
-              title={
-                inf.enabled
-                  ? `GPU ${inf.isCloud ? 'Cloud' : 'Locale'} Attiva. Clicca per disattivare tutte le chiamate GPU.`
-                  : 'GPU Disattivata. Clicca per attivare l\'inferenza GPU/Cloud.'
-              }
-            >
-              {inf.enabled ? (
-                engines?.model.available ? (
-                  `🟢 GPU ${inf.isCloud ? 'Cloud' : 'On'}`
-                ) : (
-                  '🟡 GPU Offline'
-                )
-              ) : (
-                '⚪ GPU Off'
+              {prefillEngine === 'model-native' && (
+                <select
+                  value={modelMode}
+                  onChange={(e) => setModelMode(e.target.value as 'native' | 'two_stage' | 'end2end')}
+                  disabled={prefillBusy}
+                  aria-label={t('annotate.prefillModelMode')}
+                  className="fld !w-auto text-xs"
+                >
+                  <option value="two_stage" disabled={engines?.model.supports_two_stage === false}>
+                    {t('annotate.prefillEngineModelTwoStage')}
+                  </option>
+                  <option value="end2end" disabled={engines?.model.supports_end2end === false}>
+                    {t('annotate.prefillEngineModelEnd2end')}
+                  </option>
+                  <option value="native" disabled={engines?.model.supports_native === false}>
+                    {t('annotate.prefillEngineModelNative')}
+                  </option>
+                </select>
               )}
-            </button>
+            </div>
+          </div>
+          {/* Cluster azioni: salvataggio e navigazione della coda, separati
+              dagli strumenti con lo stesso filetto del foglio. L'a-capo avviene
+              tra cluster, mai dentro un gruppo di comandi affine. */}
+          <div className="mx-1 hidden h-5 w-px bg-[color:var(--color-rule)] sm:block" />
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
-              onClick={() => setTransformOpen(true)}
-              disabled={!page}
-              className="rounded border border-cyan-700 bg-cyan-950 px-2 py-1 text-xs text-cyan-300 hover:bg-cyan-900 disabled:opacity-40"
-              title={t('annotate.transformTitle')}
+              onClick={() => void ann.saveNow()}
+              className="btn btn-primary"
             >
-              {t('annotate.transformOpen')}
+              <IconSave size={12} />
+              {t('annotate.save')}
+            </button>
+            {prefillBusy && (
+              <button
+                type="button"
+                onClick={stopPrelabel}
+                className="btn btn-danger"
+                aria-label={t('annotate.stopInference')}
+              >
+                {t('annotate.stopInference')}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => void clearPageAnnotations()}
+              disabled={!page || prefillBusy}
+              className="btn btn-danger"
+              title={t('annotate.clearAllTitle')}
+            >
+              <IconTrash size={12} />
+              {t('annotate.clearAll')}
             </button>
             <button
-              onClick={() => void resetTransforms()}
-              disabled={resetBusy || !page}
-              className="rounded border border-slate-600 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40"
-              title={t('annotate.resetTitle')}
+              onClick={openNextTask}
+              disabled={!nextTask}
+              className="btn"
+              title={nextTask?.reason}
             >
-              {resetBusy ? t('annotate.resetBusy') : t('annotate.reset')}
+              <IconNext size={12} />
+              {t('annotate.nextTask')}
             </button>
           </div>
-          <button
-            type="button"
-            onClick={() => void ann.saveNow()}
-            className="btn btn-primary btn-sm"
-          >
-            <IconSave size={12} />
-            {t('annotate.save')}
-          </button>
-          {readiness && (
-            <div className="flex items-center gap-1 text-[10px]" title={t('annotate.stagesTitle')}>
-              {(['structure', 'content', 'table', 'review'] as const).map((stage) => (
-                <span key={stage} className={`rounded px-1.5 py-1 text-white ${readiness.stages[stage] ? 'bg-emerald-950' : 'bg-slate-800'}`}>
-                  {stage === 'structure'
-                    ? t('annotate.stageStructure')
-                    : stage === 'content'
-                      ? t('annotate.stageContent')
-                      : stage === 'table'
-                        ? t('annotate.stageTable')
-                        : t('annotate.stageReview')}
-                </span>
-              ))}
-            </div>
-          )}
-          {page && (
-            <div className="flex items-center gap-1">
-              <button onClick={() => void recordReview('pass')} className="rounded border border-emerald-700 px-2 py-1 text-[10px] text-emerald-300 hover:bg-emerald-950">{t('annotate.qaPass')}</button>
-              <button onClick={() => void recordReview('fail')} className="rounded border border-red-800 px-2 py-1 text-[10px] text-red-300 hover:bg-red-950">{t('annotate.qaFail')}</button>
-            </div>
-          )}
-          {reviewNotice && <span className="text-[10px] text-[color:var(--color-ink-2)]">{reviewNotice}</span>}
-          <button
-            onClick={openNextTask}
-            disabled={!nextTask}
-            className="rounded border border-amber-700 bg-amber-950 px-2 py-1 text-xs text-amber-300 hover:bg-amber-900 disabled:opacity-40"
-            title={nextTask?.reason}
-          >
-            {t('annotate.nextTask')}
-          </button>
-          {ann.save.state === 'saving' && (
-            <span className="text-xs text-amber-400">{t('annotate.saving')}</span>
-          )}
-          {ann.save.state === 'saved' && <span className="text-xs text-emerald-400">{t('annotate.saved')}</span>}
-          {ann.save.state === 'error' && (
-            <span className="flex items-center gap-1.5 text-xs text-red-400">
-              {t('annotate.saveFailed')}
-              <button
-                onClick={() => void ann.saveNow()}
-                className="rounded border border-red-800 px-2 py-0.5 text-red-300 hover:bg-red-950"
-              >
-                {t('annotate.retry')}
-              </button>
-            </span>
-          )}
+          <div className="flex items-center gap-2 text-xs">
+            {ann.save.state === 'saving' && (
+              <span className="text-[color:var(--color-ink-2)]">{t('annotate.saving')}</span>
+            )}
+            {ann.save.state !== 'saving' && ann.dirty && (
+              <span className="text-[color:var(--color-warn)]">{t('annotate.unsaved')}</span>
+            )}
+            {ann.save.state === 'saved' && !ann.dirty && (
+              <span className="text-[color:var(--color-ok)]">{t('annotate.saved')}</span>
+            )}
+            {ann.save.state === 'error' && (
+              <span className="flex items-center gap-1.5 text-[color:var(--color-sig-text)]">
+                {t('annotate.saveFailed')}
+                <button onClick={() => void ann.saveNow()} className="btn btn-sm">
+                  {t('annotate.retry')}
+                </button>
+              </span>
+            )}
+            {ann.save.state === 'conflict' && (
+              <span className="flex items-center gap-1.5 text-[color:var(--color-sig-text)]">
+                {t('annotate.conflictRemote')}
+                <button onClick={() => page && void applyBlocks(page, ratio)} className="btn btn-sm">
+                  {t('annotate.conflictReload')}
+                </button>
+              </span>
+            )}
+          </div>
           <div className="ml-auto flex items-center gap-2">
             {page && (
-              <>
-                <span className="font-mono text-[10px] text-slate-500">
-                  {page.rel_path} · {page.width}×{page.height}
-                </span>
-                <select
-                  value={page.status}
-                  onChange={(e) =>
-                    apiPatch(`/pages/${page.id}`, { status: e.target.value }).catch((err) =>
-                      setError(String(err)),
-                    )
-                  }
-                  className="rounded-md border border-slate-700 bg-slate-950 px-1.5 py-1 text-xs text-slate-200 focus:border-sky-500 focus:outline-none"
-                >
-                  {PAGE_STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {statusLabel(s)}
-                    </option>
-                  ))}
-                </select>
-              </>
+              <span className="mono text-[11px] text-[color:var(--color-ink-3)]">
+                {page.rel_path} · {page.width}×{page.height}
+              </span>
             )}
           </div>
         </div>
-        <div className="border-b border-slate-800 bg-slate-950/70 px-3 py-1.5 text-[11px] text-slate-400">
-          <b className="text-sky-300">{t('annotate.guideLabel')}</b> {guideHint}
+        <div className="border-b border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-3 py-1.5 text-[11px] text-[color:var(--color-ink-2)]">
+          <b className="font-semibold text-[color:var(--color-ink)]">{t('annotate.guideLabel')}</b>{' '}
+          {guideHint}
         </div>
         <div className="relative flex-1">
           {error && (
-            <div className="absolute left-3 top-3 z-10 max-w-md rounded-lg border border-red-900 bg-red-950/95 p-3 text-xs text-red-300">
+            <div className="absolute left-3 top-3 z-10 max-w-md border border-[color:var(--color-sig-plate)] bg-[color:var(--color-sig-wash)] p-3 text-xs text-[color:var(--color-sig-text)]">
               {error}
             </div>
           )}
           {prefillNotice && (
-            <div className="absolute left-3 top-16 z-10 max-w-md rounded-lg border border-violet-800 bg-violet-950/95 p-3 text-xs text-violet-200">
+            <div className="absolute left-3 top-16 z-10 max-w-md border border-[color:var(--color-ok)] bg-[color:var(--color-ok-wash)] p-3 text-xs text-[color:var(--color-ok)]">
               {prefillNotice}
             </div>
           )}
           {deleteToast && (
-            <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 rounded-md border border-slate-700 bg-slate-900/95 px-3 py-2 text-xs text-slate-200 shadow-lg">
+            <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)] px-3 py-2 text-xs text-[color:var(--color-ink)]">
               <span>
                 {t('annotate.deleteToast', { label: deleteToast.label })}
               </span>
-              <button
-                onClick={undoDelete}
-                className="rounded border border-sky-700 bg-sky-950 px-2 py-1 text-sky-300 hover:bg-sky-900"
-              >
+              <button onClick={undoDelete} className="btn btn-sm">
                 {t('common.cancel')}
               </button>
             </div>
           )}
           {!page ? (
-            <div className="flex h-full items-center justify-center text-sm text-slate-600">
+            <div className="flex h-full items-center justify-center text-sm text-[color:var(--color-ink-3)]">
               {t('annotate.selectHint')}
             </div>
           ) : (
@@ -623,63 +888,74 @@ export default function AnnotationPage() {
         </div>
       </main>
 
-      {/* Colonna strumenti */}
-      <aside className="flex w-72 shrink-0 flex-col gap-6 overflow-y-auto border-l border-slate-800 bg-slate-900 p-3">
-        {projectId !== '' && <ConventionsChecklist projectId={Number(projectId)} />}
-        <ClassPalette labels={labels} active={ann.activeLabel} onSelect={ann.setActiveLabel} />
-        <LayersPanel
+      {/* Pannello contenuto: l'intero output OCR/LLM della pagina, editabile
+          riga per riga — immagine a sinistra, testo (o foglio per le
+          tabelle) a destra, senza dover cliccare ogni riquadro uno alla
+          volta. Larghezza governata dallo splitter. */}
+      <Splitter
+        value={split.content}
+        min={CONTENT_MIN}
+        max={contentMax()}
+        side="right"
+        label={t('annotate.splitContent')}
+        onChange={(v) => setSplitPane('content', v)}
+        onReset={() => resetSplitPane('content')}
+      />
+      <section
+        aria-label={t('content.paneAria')}
+        className="flex shrink-0 flex-col overflow-y-auto bg-[color:var(--color-sheet)] p-3"
+        style={{ width: split.content }}
+      >
+        {projectId !== '' && <ConventionsChecklist projectId={projectId} />}
+        <div className="mb-3">
+          <LayersPanel
+            blocks={ann.blocks}
+            selectedId={ann.selectedId}
+            colorFor={ann.colorFor}
+            onSelect={ann.setSelectedId}
+            onMove={ann.moveBlock}
+            onDelete={handleDeleteBlock}
+            onReorderReset={ann.reorderReset}
+          />
+        </div>
+        <ContentPane
           blocks={ann.blocks}
-          selectedId={ann.selectedId}
-          colorFor={ann.colorFor}
-          onSelect={ann.setSelectedId}
-          onMove={ann.moveBlock}
-          onDelete={handleDeleteBlock}
-          onReorderReset={ann.reorderReset}
-        />
-        <Inspector
-          block={ann.selectedBlock}
+          drafts={prefillDrafts}
           labels={labels}
-          bboxPage={ann.selectedBboxPage}
-          onLabel={ann.setBlockLabel}
+          selectedId={ann.selectedId}
+          onSelect={ann.setSelectedId}
           onContent={ann.setBlockContent}
+          onLabel={ann.setBlockLabel}
           onConfirmed={ann.setBlockConfirmed}
           onDelete={handleDeleteBlock}
+          onSaveTable={saveTable}
+          onDetectTable={detectTable}
+          onDraftContent={onDraftContent}
+          onDraftGrid={onDraftGrid}
+          onSaveDraftGrid={onSaveDraftGrid}
+          onDraftConfirmed={onDraftConfirmed}
+          onDraftReject={(id) => void onDraftReject(id)}
+          liveOutput={liveOutput}
+          working={
+            prefillBusy && prefillProgress
+              ? {
+                  engine: workingEngineName(),
+                  startedAt: workingStartedAt.current,
+                  blocks: prefillProgress.blocks,
+                  last: prefillProgress.last,
+                  output: liveOutput,
+                }
+              : null
+          }
         />
-        {ann.selectedBlock?.label === 'Table' && (
-          <button
-            onClick={() => void openTableEditor(ann.selectedBlock!)}
-            className="w-full rounded-md border border-fuchsia-800 bg-fuchsia-950 px-3 py-2 text-sm text-fuchsia-300 hover:bg-fuchsia-900"
-          >
-            {t('annotate.openTableEditor')}
-          </button>
-        )}
-      </aside>
+      </section>
 
-      {transformOpen && page && (
-        <PageTransformReview
-          pageId={page.id}
-          width={page.width}
-          height={page.height}
-          hasBlocks={ann.blocks.length > 0}
-          onClose={() => setTransformOpen(false)}
-          onAccepted={async () => {
-            await onPageSelect(page.id)
-            setPreviewUrl(`/api/pages/${page.id}/preview?t=${Date.now()}`)
-            setPrefillNotice(t('annotate.transformAcceptedNotice'))
-          }}
-        />
-      )}
-
-      {tableGrid && tableBlock?.serverId && (
-        <TableCellsEditor
-          grid={tableGrid}
-          cropUrl={`/api/blocks/${tableBlock.serverId}/crop`}
-          onSave={saveTableEditor}
-          onDetect={detectTableGrid}
-          onClose={() => {
-            setTableBlockId(null)
-            setTableGrid(null)
-          }}
+      {prefillOpen && page && projectId !== '' && (
+        <PrefillDialog
+          summary={summarizeForPrefill(ann.blocks)}
+          busy={prefillBusy}
+          onRun={(mode) => void runPrelabel(mode)}
+          onClose={() => setPrefillOpen(false)}
         />
       )}
     </div>

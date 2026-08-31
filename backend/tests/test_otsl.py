@@ -7,7 +7,18 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.otsl import grid_to_otsl, normalize_cells, otsl_to_grid
+from app.services.otsl import grid_to_otsl, looks_like_otsl, normalize_cells, otsl_to_grid
+
+
+def test_otsl_trailing_newline_does_not_create_phantom_row():
+    grid = otsl_to_grid("<fcel>A<fcel>B<nl>")
+    assert grid["rows"] == 1
+    assert grid["cols"] == 2
+
+
+def test_looks_like_otsl_detects_paddle_native_output():
+    raw = "<fcel>VESSEL<lcel><fcel>Fig<nl><fcel>A.E.S.<fcel>Da"
+    assert looks_like_otsl(raw)
 
 
 def _g(rows: int, cols: int, cells: list[dict]) -> dict:

@@ -31,7 +31,7 @@ gold esistente prima di eventualmente cambiare stack.
 | **IBM Granite-Docling-258M** | 0.258B | Apache-2.0 | non nel confronto diretto | **OTSL nativo** (via DocTags, stesso schema IBM già citato in AGENTS.md §2.3) | toolchain Docling/Hugging Face, meno precedenti di fine-tuning per casi complessi | il più leggero in assoluto; rischio di capacità insufficiente su scansioni d'epoca molto degradate — da validare, non da scartare a priori |
 
 Fonti principali: [OmniDocBench (opendatalab)](https://github.com/opendatalab/OmniDocBench),
-[dots.ocr (rednote-hilab)](https://github.com/rednote-hilab/dots.ocr),
+[dots.mocr (dots-studio)](https://huggingface.co/dots-studio/dots.mocr),
 [DeepSeek-OCR fine-tuning (Unsloth docs)](https://unsloth.ai/docs/models/tutorials/deepseek-ocr-how-to-run-and-fine-tune),
 [GLM-OCR fine-tuning (LLaMA-Factory)](https://github.com/zai-org/GLM-OCR/blob/main/examples/finetune/README.md),
 [PaddleOCR-VL-1.6 paper](https://arxiv.org/pdf/2606.03264),
@@ -42,7 +42,7 @@ Fonti principali: [OmniDocBench (opendatalab)](https://github.com/opendatalab/Om
 ## Lettura dei risultati
 
 - **OTSL nativo** (requisito §2.5 del progetto) lo hanno solo **MonkeyOCR**, **MinerU2.5**
-  e **Granite-Docling**. Tutti gli altri (dots.ocr, GLM-OCR, DeepSeek-OCR, PaddleOCR-VL,
+  e **Granite-Docling**. Tutti gli altri (dots.ocr, GLM-OCR, DeepSeek-OCR-2, PaddleOCR-VL,
   Qwen-VL) producono HTML o Markdown per le tabelle: riusabili, ma richiedono un
   convertitore verso OTSL per restare nel formato dataset ms-swift, con lo stesso approccio
   già adottato per l'HTML del README ufficiale (§2.3, nota su `html2otsl.py`).

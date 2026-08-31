@@ -92,6 +92,114 @@ def test_prelabel_inserts_filtered_blocks(tmp_path: Path, monkeypatch):
         assert len(client.get(f"/api/pages/{page_id}/annotations").json()["items"]) == 2
 
 
+def test_prelabel_replace_modes_protect_human_work(tmp_path: Path, monkeypatch):
+    """replace_drafts cancella solo le bozze del prefill; replace_all tutto.
+
+    Il prefill distruttivo senza distinzione cancellava anche blocchi manuali e
+    griglie tabellari curate (ON DELETE CASCADE). Le tre modalità devono essere
+    distinguibili e la risposta deve dichiarare cosa ha rimosso.
+    """
+    from app.services import ocr as ocrmod
+
+    monkeypatch.setattr(ocrmod, "OcrEngine", FakeEngine)
+
+    with TestClient(app) as client:
+        pid, page_id = _get_page(client, tmp_path)
+
+        # Due blocchi manuali: uno Tabella con griglia curata, uno testo.
+        put = client.put(
+            f"/api/pages/{page_id}/annotations",
+            json={
+                "items": [
+                    {
+                        "label": "Table",
+                        "kind": "rect",
+                        "points": [[50, 300], [850, 1100]],
+                        "content": "",
+                        "order_idx": 1,
+                        "confirmed": True,
+                    },
+                    {
+                        "label": "Title",
+                        "kind": "rect",
+                        "points": [[10, 20], [500, 60]],
+                        "content": "HISTORIC SHIPPING INDEX",
+                        "order_idx": 2,
+                        "confirmed": True,
+                    },
+                ]
+            },
+        )
+        assert put.status_code == 200, put.text
+        table_block = next(b for b in put.json()["items"] if b["label"] == "Table")
+        grid = {
+            "rows": 2,
+            "cols": 2,
+            "cells": [
+                {"r": 0, "c": 0, "rowspan": 1, "colspan": 1, "text": "Abidjan"},
+                {"r": 0, "c": 1, "rowspan": 1, "colspan": 1, "text": "Li"},
+                {"r": 1, "c": 0, "rowspan": 1, "colspan": 1, "text": "Accra"},
+                {"r": 1, "c": 1, "rowspan": 1, "colspan": 1, "text": "Br"},
+            ],
+        }
+        assert client.put(f"/api/blocks/{table_block['id']}/table", json=grid).status_code == 200
+
+        # merge: aggiunge bozze, non tocca il lavoro umano.
+        r = client.post(
+            f"/api/projects/{pid}/prelabel",
+            json={"page_ids": [page_id], "mode": "merge", "confidence": 0.5},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["results"][0]["replaced_blocks"] == 0
+        blocks = client.get(f"/api/pages/{page_id}/annotations").json()["items"]
+        assert len(blocks) == 4
+
+        # replace_drafts: via le bozze precedenti (che il prefill reinserisce
+        # come nuove), restano i blocchi umani e la griglia.
+        r = client.post(
+            f"/api/projects/{pid}/prelabel",
+            json={"page_ids": [page_id], "mode": "replace_drafts", "confidence": 0.5},
+        )
+        assert r.status_code == 200, r.text
+        res = r.json()["results"][0]
+        assert res["replaced_blocks"] == 2
+        assert res["replaced_grids"] == 0
+        blocks = client.get(f"/api/pages/{page_id}/annotations").json()["items"]
+        assert len(blocks) == 4
+        manual = [b for b in blocks if b["prefill_source"] is None]
+        assert [b["label"] for b in manual] == ["Table", "Title"]
+        assert client.get(f"/api/blocks/{table_block['id']}/table").json()["grid"]["rows"] == 2
+
+        # Una bozza di prefill che l'utente ha confermato non è più una bozza:
+        # replace_drafts non la tocca.
+        drafts = [b for b in blocks if b["prefill_source"]]
+        assert len(drafts) == 2
+        for d in drafts:
+            assert client.patch(
+                f"/api/blocks/{d['id']}", json={"confirmed": True}
+            ).status_code == 200
+        r = client.post(
+            f"/api/projects/{pid}/prelabel",
+            json={"page_ids": [page_id], "mode": "replace_drafts", "confidence": 0.5},
+        )
+        assert r.status_code == 200
+        assert r.json()["results"][0]["replaced_blocks"] == 0
+        assert len(client.get(f"/api/pages/{page_id}/annotations").json()["items"]) == 6
+
+        # replace_all: distruttivo, ma dichiarato nella risposta.
+        r = client.post(
+            f"/api/projects/{pid}/prelabel",
+            json={"page_ids": [page_id], "mode": "replace_all", "confidence": 0.5},
+        )
+        assert r.status_code == 200, r.text
+        res = r.json()["results"][0]
+        assert res["replaced_blocks"] == 6
+        assert res["replaced_grids"] == 1
+        blocks = client.get(f"/api/pages/{page_id}/annotations").json()["items"]
+        assert len(blocks) == 2
+        assert all(b["prefill_source"] for b in blocks)
+
+
 def test_ocr_prelabel_promotes_register_to_table(tmp_path: Path, monkeypatch):
     """Su un registro allineato a spazi il prefill OCR produce una tabella.
 
@@ -188,6 +296,7 @@ def test_ocr_prelabel_promotes_register_to_table(tmp_path: Path, monkeypatch):
 
 def test_model_end2end_persists_table_without_second_call(tmp_path: Path, monkeypatch):
     from app.api import prelabel as prelabelmod
+    from app.services import prefill as prefillsvc
 
     class FakeModel:
         model = "fake-monkey"
@@ -208,7 +317,7 @@ def test_model_end2end_persists_table_without_second_call(tmp_path: Path, monkey
             raise AssertionError("OTSL END2END valido: il fallback non deve partire")
 
     monkeypatch.setattr(prelabelmod.inference, "VllmClient", FakeModel)
-    monkeypatch.setattr(prelabelmod, "_looks_like_table", lambda *_args: True)
+    monkeypatch.setattr(prefillsvc, "_looks_like_table", lambda *_args: True)
 
     with TestClient(app) as client:
         pid, page_id = _get_page(client, tmp_path / "end2end")
@@ -230,3 +339,73 @@ def test_model_end2end_persists_table_without_second_call(tmp_path: Path, monkey
         assert block["prefill_source"].endswith(":end2end")
         grid = client.get(f"/api/blocks/{block['id']}/table").json()["grid"]
         assert grid["rows"] == 2 and grid["cols"] == 2
+
+
+def test_prelabel_stream_emits_block_events(tmp_path: Path, monkeypatch):
+    """Lo stream SSE emette start → page → block… → page_done → end, e i
+    blocchi emessi esistono già nel DB: ciò che la UI mostra progressivamente
+    è ciò che esiste davvero."""
+    import json as jsonlib
+
+    from app.api import prelabel as prelabelmod
+    from app.services import ocr as ocrmod
+
+    monkeypatch.setattr(ocrmod, "OcrEngine", FakeEngine)
+
+    with TestClient(app) as client:
+        pid, page_id = _get_page(client, tmp_path)
+        with client.stream(
+            "POST",
+            f"/api/projects/{pid}/prelabel/stream",
+            json={"page_ids": [page_id], "mode": "replace", "confidence": 0.5, "min_size": 10},
+        ) as response:
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith("text/event-stream")
+            events = []
+            for line in response.iter_lines():
+                if line.startswith("data: "):
+                    events.append(jsonlib.loads(line[len("data: "):]))
+
+        types = [ev["type"] for ev in events]
+        assert types[0] == "start"
+        assert types[1] == "page"
+        assert types[-1] == "end"
+        assert types[-2] == "page_done"
+        blocks = [ev for ev in events if ev["type"] == "block"]
+        # Le due righe sopra soglia (la terza è sotto confidence, la quarta
+        # sotto min_size) arrivano come eventi separati.
+        assert [ev["block"]["label"] for ev in blocks] == ["Text", "Text"]
+        assert blocks[0]["block"]["content"] == "HISTORIC SHIPPING INDEX"
+        assert blocks[0]["block"]["order_idx"] == 1
+
+        # Ciò che è stato emesso esiste già nel DB (con lo stesso id).
+        for ev in blocks:
+            r = client.get(f"/api/blocks/{ev['block']['id']}/crop")
+            assert r.status_code == 200
+
+
+def test_prelabel_stream_summary_matches_batch(tmp_path: Path, monkeypatch):
+    """Lo stream e la risposta batch sono due consumatori della stessa
+    orchestrazione: il riepilogo finale deve coincidere."""
+    import json as jsonlib
+
+    from app.api import prelabel as prelabelmod
+    from app.services import ocr as ocrmod
+
+    monkeypatch.setattr(ocrmod, "OcrEngine", FakeEngine)
+
+    with TestClient(app) as client:
+        pid, page_id = _get_page(client, tmp_path)
+        # `merge`: nessun run cancella i blocchi dell'altro, così i due
+        # riepiloghi sono comparabili alla pari.
+        body = {"page_ids": [page_id], "mode": "merge", "confidence": 0.5, "min_size": 10}
+        batch = client.post(f"/api/projects/{pid}/prelabel", json=body).json()["results"][0]
+
+        with client.stream("POST", f"/api/projects/{pid}/prelabel/stream", json=body) as response:
+            events = [
+                jsonlib.loads(line[len("data: "):])
+                for line in response.iter_lines()
+                if line.startswith("data: ")
+            ]
+        streamed = next(ev["summary"] for ev in events if ev["type"] == "page_done")
+        assert streamed == batch

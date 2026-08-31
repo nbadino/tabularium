@@ -49,3 +49,20 @@ export function clampPoints(points: Pt[], image: Size): Pt[] {
     y: clamp(point.y, 0, image.h),
   }))
 }
+
+/** Normalizza il delta di una wheel event a pixel: i mouse (Firefox) parlano
+ *  in righe o pagine, i touchpad in pixel frazionari. */
+export function wheelDeltaPixels(
+  evt: { deltaX: number; deltaY: number; deltaMode: number },
+  viewportHeight: number,
+): Pt {
+  const unit = evt.deltaMode === 1 ? 16 : evt.deltaMode === 2 ? Math.max(1, viewportHeight) : 1
+  return { x: evt.deltaX * unit, y: evt.deltaY * unit }
+}
+
+/** Fattore di zoom per un gesto Ctrl+rotella / pinch del touchpad: esponenziale
+ *  sul delta reale (il pinch resta continuo), con clamp che limita lo scatto
+ *  discreto del mouse (~±15% per notch) senza appiattire il gesto lento. */
+export function wheelZoomFactor(dy: number): number {
+  return clamp(Math.exp(-dy * 0.0025), 0.85, 1.18)
+}

@@ -55,7 +55,7 @@ export default function ClassPalette({
               />
               <span className="min-w-0 flex-1 truncate">{l.name}</span>
               {i < 9 && (
-                <kbd className="mono shrink-0 border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-1 text-[10px] text-[color:var(--color-ink-2)]">
+                <kbd className="mono shrink-0 border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-1 text-[11px] text-[color:var(--color-ink-2)]">
                   {i + 1}
                 </kbd>
               )}

@@ -10,10 +10,18 @@ restituire l'invocazione di un proprio wrapper — MonkeyOCRv2Parsing delega a
 Stesso pattern già collaudato in `cloud_manager.py` per il tunnel SSH: un
 solo processo attivo alla volta (una GPU consumer non ne regge due), stop
 sempre prima di start, kill del gruppo di processi alla fermata.
+
+Nessun passaggio manuale richiesto all'utente: se serve un ambiente vLLM e
+non ce n'è uno già configurato (`TABULARIUM_SERVE_PYTHON`) o disponibile sul
+`PATH`, `start()` lo prepara da sé (v. `local_runtime.py`); se l'adapter è
+MonkeyOCRv2-Parsing e manca il checkout del repo ufficiale, lo clona da sé
+(v. `vendor_repos.py`). Le variabili d'ambiente restano solo un override per
+chi ha già un ambiente proprio, mai un requisito.
 """
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -22,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import config
+from . import local_runtime, vendor_repos
 from .model_adapters import get_adapter
 from .model_registry import is_installed, models_dir
 
@@ -77,7 +86,12 @@ def get_status() -> ServeStatus:
 
 
 def start(adapter_id: str, port: int = 8888) -> ServeStatus:
-    """Avvia il server locale per `adapter_id`, fermando prima quello attivo."""
+    """Avvia il server locale per `adapter_id`, fermando prima quello attivo.
+
+    Prepara da sé l'ambiente mancante (venv vLLM, checkout MonkeyOCRv2): può
+    richiedere qualche minuto alla primissima chiamata per un dato adapter,
+    è istantaneo alle successive.
+    """
     global _ACTIVE_PROC, _ACTIVE_INFO
 
     adapter = get_adapter(adapter_id)  # ValueError se sconosciuto
@@ -85,17 +99,37 @@ def start(adapter_id: str, port: int = 8888) -> ServeStatus:
         raise ValueError(f"'{adapter_id}' non è installato: scaricalo prima di servirlo")
 
     model_path = str(models_dir(adapter_id))
+    env = os.environ.copy()
+
+    if adapter_id == "monkeyocrv2-parsing":
+        # `scripts/serve_model.sh` legge queste due env var: se l'utente non
+        # le ha già impostate (uso avanzato/ambiente esistente), le
+        # prepariamo da sole. `env[...]` vale solo per questo sottoprocesso,
+        # non tocca la config globale né sovrascrive un setup esistente.
+        if not config.TRAIN_REPO:
+            env["TABULARIUM_TRAIN_REPO"] = str(vendor_repos.ensure_monkeyocrv2_repo())
+        if not config.TRAIN_PYTHON and not config.SERVE_PYTHON:
+            local_runtime.ensure_ready()
+            env["TABULARIUM_TRAIN_PYTHON"] = str(local_runtime.python_bin())
+
     argv = adapter.serve_command(model_path, port)
     if argv is None:
         raise ValueError(
             f"adapter '{adapter_id}' non ha ancora un comando di serving implementato"
         )
 
+    if argv[0] == "vllm" and not config.SERVE_PYTHON and not shutil.which("vllm"):
+        # Serve command generico (qualunque adapter con `vllm serve`,
+        # compresi i modelli custom): prepara l'ambiente condiviso la prima
+        # volta, senza alcun passaggio manuale.
+        local_runtime.ensure_ready()
+
     stop()  # stop-before-start: un solo modello servito alla volta
 
-    env = os.environ.copy()
     if config.SERVE_PYTHON:
         env["PATH"] = f"{Path(config.SERVE_PYTHON).parent}:{env.get('PATH', '')}"
+    elif argv[0] == "vllm" and local_runtime.is_ready():
+        env["PATH"] = f"{local_runtime.bin_dir()}:{env.get('PATH', '')}"
 
     log_file = _log_file(adapter_id)
     try:

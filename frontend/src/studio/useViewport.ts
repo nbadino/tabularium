@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Konva from 'konva'
 import type { ViewState } from './types'
-import { clamp, clampViewport } from './canvasGeometry'
+import { clamp, clampViewport, wheelDeltaPixels, wheelZoomFactor } from './canvasGeometry'
 
 type PanEvent = Konva.KonvaEventObject<MouseEvent | PointerEvent | TouchEvent>
 
@@ -92,13 +92,28 @@ export function useViewport(imageNatural: { w: number; h: number }, resetKey = '
 
   const zoomBy = useCallback((factor: number) => zoomAt(factor), [zoomAt])
 
+  // Convenzione universale dei visualizzatori di documenti:
+  // - rotella / due dita = PAN (lo scorrimento muove la pagina);
+  // - Ctrl+rotella = ZOOM centrato sul puntatore. È lo stesso segnale che il
+  //   pinch del touchpad invia nativamente (wheel con ctrlKey), quindi il
+  //   gesto «pizzica» funziona senza codice dedicato.
   const onWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault()
-    const pointer = stageRef.current?.getPointerPosition()
-    if (!pointer) return
-    const factor = Math.exp(-e.evt.deltaY * 0.0015)
-    zoomAt(clamp(factor, 0.75, 1.33), pointer)
-  }, [zoomAt])
+    // Firefox non converte Shift+rotella in deltaX: lo facciamo noi.
+    const raw = wheelDeltaPixels(e.evt, containerSize.h)
+    const dx = e.evt.shiftKey && raw.x === 0 ? raw.y : raw.x
+    const dy = e.evt.shiftKey && raw.x === 0 ? 0 : raw.y
+    if (e.evt.ctrlKey || e.evt.metaKey) {
+      const pointer = stageRef.current?.getPointerPosition()
+      if (pointer) zoomAt(wheelZoomFactor(dy), pointer)
+      return
+    }
+    setViewport((current) => clampViewport(
+      { k: current.k, x: current.x - dx, y: current.y - dy },
+      containerSize,
+      imageNatural,
+    ))
+  }, [containerSize, imageNatural, setViewport, stageRef, zoomAt])
 
   const startPan = useCallback((e: PanEvent) => {
     const pointer = stageRef.current?.getPointerPosition()

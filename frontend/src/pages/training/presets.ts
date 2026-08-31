@@ -11,6 +11,10 @@
 import type { TrainConfigBody } from '../../lib/types'
 
 export const BASE_CFG: TrainConfigBody = {
+  executor: 'local',
+  ssh_user: 'root',
+  ssh_port: 22,
+  ssh_root: '/tmp/tabularium-runs',
   model: 'zenosai/MonkeyOCRv2-B-Parsing',
   model_path: '',
   train_type: 'lora',

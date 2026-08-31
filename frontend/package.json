@@ -13,7 +13,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@handsontable/react-wrapper": "^18.0.0",
     "@tanstack/react-query": "^5.0.0",
+    "handsontable": "^18.0.0",
     "konva": "^10.3.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
@@ -24,9 +26,13 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.1.0",
+    "jsdom": "^29.1.1",
     "tailwindcss": "^4.0.0",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",

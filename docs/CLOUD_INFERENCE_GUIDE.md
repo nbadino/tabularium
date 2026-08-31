@@ -1,3 +1,7 @@
+> Per servire un modello sulla **GPU del tuo PC** invece che su cloud, vedi
+> `docs/LOCAL_INFERENCE_GUIDE.md` (parametri vLLM verificati per ciascun
+> modello, incluso il registro modelli "a piacere" in stile LM Studio).
+
 # Guida all'Offloading dell'Inferenza su Cloud (Vast.ai, RunPod, Modal)
 
 Questa guida spiega come eseguire **Tabularium interamente sul tuo PC locale** (scansioni, annotazioni, database SQLite, interfaccia web) **delegando tutta l'inferenza pesante (layout, tabelle OTSL, OCR e playground)** a una potente **GPU remota nel Cloud** (es. NVIDIA RTX 4090 / 3090 / A5000 / A100).
@@ -54,7 +58,7 @@ con mediana 0,15 $/h; RTX 4090 da 0,13 $/h con mediana 0,36 $/h).
    ```
 3. Scarica ed esegui il nostro script di setup automatico:
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/cappannonno/tabularium/main/scripts/cloud/setup_cloud_vllm.sh | bash
+   curl -fsSL https://raw.githubusercontent.com/nbadino/tabularium/main/scripts/cloud/setup_cloud_vllm.sh | bash
    # Oppure se hai clonato il repo:
    bash setup_cloud_vllm.sh --port 8888
    ```
@@ -91,7 +95,7 @@ RunPod offre proxy HTTPS integrati senza bisogno di aprire tunnel SSH da termina
 1. Apri la **Web Terminal** o connettiti via SSH.
 2. Esegui lo script:
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/cappannonno/tabularium/main/scripts/cloud/setup_cloud_vllm.sh | bash -s -- --port 8888 --api-key "chiave-segreta-tua"
+   curl -fsSL https://raw.githubusercontent.com/nbadino/tabularium/main/scripts/cloud/setup_cloud_vllm.sh | bash -s -- --port 8888 --api-key "chiave-segreta-tua"
    ```
 
 ### Passo 3: Collega Tabularium con l'URL HTTPS di RunPod
@@ -118,8 +122,11 @@ Se preferisci non usare SSH Tunnel e avere una porta aperta su internet:
 
 ## 5. Metodo 4: Modal Serverless (inferenza a chiamata)
 
-Il metodo **pay-per-second**: la GPU si accende quando arriva una richiesta e si spegne dopo.
-Costo a riposo: **0 €**. Il repo include una template pronta (`scripts/cloud/modal_vllm.py`)
+Il metodo **pay-per-second**. Tutte le template Modal gestite dalla UI mantengono un container
+caldo (`min_containers=1`) per eliminare il cold start e privilegiare la latenza; impostando
+`TABULARIUM_MODAL_MIN_CONTAINERS=0` si torna al comportamento a consumo, con cold start alla
+prima richiesta.
+Il repo include una template pronta (`scripts/cloud/modal_vllm.py`)
 che costruisce il container (repo ufficiale + vLLM), scarica i pesi su un volume persistente
 ed espone `parsing/serve.py` esattamente come lo script locale `serve_model.sh`.
 
@@ -137,13 +144,29 @@ ed espone `parsing/serve.py` esattamente come lo script locale `serve_model.sh`.
    precompila il formato.
 
 Note operative:
+- **Profilo performance**: per default usa il draft **MonkeyOCRv2-B-Parsing-DFlash** e la ricetta
+  ufficiale vLLM **0.25.1 + CUDA 12.9**. DFlash è supportato solo dal checkpoint B-Parsing;
+  conserva lo stesso modello target e accelera la decodifica senza cambiare il contenuto richiesto.
+  Disattivalo solo con `TABULARIUM_MODAL_DFLASH=0` quando devi usare S-Parsing o un checkpoint
+  fine-tuned diverso.
+- **Concorrenza**: `TABULARIUM_MODAL_MAX_INPUTS=4` limita le richieste simultanee sul singolo
+  container; aumentarlo migliora il throughput ma può peggiorare la latenza della singola pagina.
+- **Trasporto Modal**: gli URL `.modal.run` restano in streaming per mostrare i token live. Il client
+  continua a drenare la risposta fino a `[DONE]` anche quando il parser ha già trovato la lista completa;
+  questo evita la chiusura chunked prematura che produceva `TransferEncodingError` senza mostrare token
+  finali spuri. SSE e aggiornamento progressivo restano attivi fra backend locale e UI.
+- **Tabelle a bande**: le bande indipendenti vengono richieste in parallelo sugli endpoint cloud
+  (massimo quattro) e ricomposte nello stesso ordine; sulla macchina locale restano seriali per
+  non aumentare il picco di VRAM.
+- **Speculative decoding**: `TABULARIUM_MODAL_DFLASH_TOKENS=16` è il valore ufficiale del draft;
+  lasciarlo invariato è il preset consigliato. Ridurlo può aiutare solo in caso di pressione VRAM.
 - **GPU**: la template usa **L4** di default (≈ 0,80 $/h attiva; A10 ≈ 1,10 $/h) e **non la T4**:
   vLLM gira in bfloat16 e rifiuta le GPU con compute capability < 8.0
   (`ValueError: Bfloat16 is only supported on GPUs with compute capability of at least 8.0` —
   T4 = 7.5, V100 = 7.0). Le alternative serverless valide sono Ampere o successive.
-- **Cold start**: il primo caricamento del modello richiede alcuni minuti. La template tiene il
-  container caldo 15 minuti dopo ogni richiesta (`scaledown_window=900`); per lavoro continuativo
-  conviene un'istanza a ore (Vast.ai), per chiamate sporadiche il serverless.
+- **Cold start**: con il profilo production il primo deploy/caricamento richiede alcuni minuti,
+  poi il container resta caldo e pronto. Per risparmiare a riposo usa `MIN_CONTAINERS=0` e
+  considera il ritardo della riaccensione.
 - **Crediti**: il piano Starter Modal include **30 $ di crediti ogni mese** (verificato 2026-08).
 - **API key** opzionale: `TABULARIUM_VLLM_API_KEY=... modal deploy ...` e imposta la stessa
   chiave nella card di inferenza.

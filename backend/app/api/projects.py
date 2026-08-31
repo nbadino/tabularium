@@ -15,19 +15,21 @@ from ..schemas import (
     ConventionsIn,
     ConventionsOut,
     ProjectCreate,
+    ProjectMemberIn,
+    ProjectMemberOut,
+    ProjectOwnerIn,
     ProjectList,
     ProjectOut,
     ScanReportOut,
     StudyProtocolIn,
     StudyProtocolOut,
 )
-from ..services import images as imgmod
-from ..services import page_meta as pagemeta
 from ..services import pages as pagesvc
 from ..services import scan as scanmod
 from ..services import corpus as corpusmod
 from ..services import pilot as pilotmod
 from ..services import auth as authsvc
+from ..services import audit as auditsvc
 from ..services.i18n import msg, parse_lang
 from .deps import require_resource
 
@@ -97,6 +99,7 @@ def _project_out(conn, row) -> ProjectOut:
     return ProjectOut(
         id=row["id"],
         name=row["name"],
+        owner_id=row["owner_id"],
         root_dir=row["root_dir"],
         archive_dir=row["archive_dir"],
         settings_json=settings if isinstance(settings, dict) else {},
@@ -105,108 +108,9 @@ def _project_out(conn, row) -> ProjectOut:
     )
 
 
-def _rel_archive(path: Path, archive_dir: str | Path) -> str:
-    try:
-        return str(path.relative_to(Path(archive_dir).resolve()))
-    except ValueError:
-        return str(path)
-
-
-def _register_candidate(
-    conn,
-    project_id: int,
-    cand: scanmod.Candidate,
-    archive_dir: Path,
-    report: scanmod.ScanReport,
-    lang: str = "it",
-) -> None:
-    """Registra un candidato (immagine o PDF). Aggiorna il report."""
-    abs_path = str(cand.path.resolve())
-    rel_path = _rel_archive(cand.path, archive_dir)
-
-    if cand.source_kind == "image":
-        try:
-            width, height = imgmod.image_size(cand.path)
-        except Exception as exc:  # immagine corrotta/illeggibile
-            report.errors.append(f"{cand.path.name}: {exc}")
-            return
-        # L'EXIF porta la data di *digitalizzazione*, non quella del giornale:
-        # tenerla come issue_date falserebbe lo split per annata. Il nome file,
-        # invece, codifica testata/numero/pagina in modo affidabile.
-        meta = pagemeta.parse_filename(cand.path.name)
-        extra = {"scan_date": imgmod.exif_datetime(cand.path) or None}
-        if meta.publication:
-            extra["publication"] = meta.publication
-        cur = conn.execute(
-            """INSERT OR IGNORE INTO pages
-               (project_id, rel_path, abs_path, source_kind, width, height,
-                issue_no, page_no, page_type, meta_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (
-                project_id,
-                rel_path,
-                abs_path,
-                "image",
-                width,
-                height,
-                meta.issue_no,
-                meta.page_no,
-                meta.page_type,
-                json.dumps(extra),
-            ),
-        )
-        if cur.rowcount == 0:
-            report.duplicates += 1
-            return
-        page_id = cur.lastrowid
-        thumb = pagesvc.thumb_path(page_id)
-        imgmod.make_thumbnail(cand.path, thumb)
-        conn.execute("UPDATE pages SET thumb_path=? WHERE id=?", (str(thumb), page_id))
-        report.registered += 1
-        return
-
-    # -- PDF -----------------------------------------------------------------
-    try:
-        rendered = scanmod.render_pdf_pages(cand.path)
-    except Exception as exc:
-        report.unsupported += 1
-        report.errors.append(f"{cand.path.name}: {exc}")
-        return
-    if not rendered:
-        report.unsupported += 1
-        report.errors.append(f"{cand.path.name}: {msg('no_pages_rendered', lang)}")
-        return
-    meta = pagemeta.parse_filename(cand.path.name)
-    extra = {"publication": meta.publication} if meta.publication else {}
-    for page_idx, (pil_img, (width, height)) in enumerate(rendered):
-        cur = conn.execute(
-            """INSERT OR IGNORE INTO pages
-               (project_id, rel_path, abs_path, source_kind, pdf_page, width, height,
-                issue_no, page_no, page_type, meta_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                project_id,
-                rel_path,
-                abs_path,
-                "pdf",
-                page_idx,
-                width,
-                height,
-                meta.issue_no,
-                # In un PDF multipagina il numero di pagina è l'indice, non il
-                # suffisso del nome file (che identifica il fascicolo intero).
-                meta.page_no if len(rendered) == 1 else str(page_idx + 1),
-                meta.page_type,
-                json.dumps(extra),
-            ),
-        )
-        if cur.rowcount == 0:
-            report.duplicates += 1
-            continue
-        page_id = cur.lastrowid
-        thumb = pagesvc.save_pdf_thumb(pil_img, page_id)
-        conn.execute("UPDATE pages SET thumb_path=? WHERE id=?", (str(thumb), page_id))
-        report.registered += 1
+# La registrazione dei candidati (immagini e PDF) è logica di dominio:
+# vive in ``services/scan.py::register_candidate``, condivisa da scansione
+# e import manuale. Qui restano solo gli endpoint HTTP.
 
 
 # --- endpoints ---------------------------------------------------------------
@@ -262,6 +166,105 @@ def get_project(
         return _project_out(conn, _get_project_or_404(conn, project_id))
 
 
+def _require_project_manager(project_id: int, user: dict) -> str:
+    level = authsvc.require_project_access(project_id, user, write=True)
+    if level != "owner" and not authsvc.is_admin(user):
+        raise HTTPException(status_code=403, detail="solo il proprietario può gestire l'accesso")
+    return level
+
+
+@router.get("/api/projects/{project_id}/members", response_model=list[ProjectMemberOut])
+def list_project_members(project_id: int, user: dict = Depends(authsvc.get_current_user)) -> list[ProjectMemberOut]:
+    authsvc.require_project_access(project_id, user, write=False)
+    with connect() as conn:
+        project = _get_project_or_404(conn, project_id)
+        rows = conn.execute(
+            """SELECT u.id AS user_id, u.username, u.email, u.active, 'owner' AS role
+               FROM users u WHERE u.id=?
+               UNION ALL
+               SELECT u.id, u.username, u.email, u.active, pm.role
+               FROM project_members pm JOIN users u ON u.id=pm.user_id
+               WHERE pm.project_id=? AND u.id != COALESCE(?, -1)
+               ORDER BY role, username""",
+            (project["owner_id"], project_id, project["owner_id"]),
+        ).fetchall()
+    return [ProjectMemberOut(**dict(row)) for row in rows]
+
+
+@router.get("/api/projects/{project_id}/member-candidates", response_model=list[ProjectMemberOut])
+def project_member_candidates(project_id: int, user: dict = Depends(authsvc.get_current_user)) -> list[ProjectMemberOut]:
+    _require_project_manager(project_id, user)
+    with connect() as conn:
+        project = _get_project_or_404(conn, project_id)
+        rows = conn.execute(
+            "SELECT id AS user_id, username, email, active, 'viewer' AS role FROM users "
+            "WHERE active=1 AND id != ? AND id NOT IN "
+            "(SELECT user_id FROM project_members WHERE project_id=?) ORDER BY username",
+            (project["owner_id"], project_id),
+        ).fetchall()
+    return [ProjectMemberOut(**dict(row)) for row in rows]
+
+
+@router.put("/api/projects/{project_id}/members/{user_id}", response_model=ProjectMemberOut)
+def set_project_member(
+    project_id: int,
+    user_id: int,
+    payload: ProjectMemberIn,
+    user: dict = Depends(authsvc.get_current_user),
+) -> ProjectMemberOut:
+    _require_project_manager(project_id, user)
+    if payload.user_id != user_id:
+        raise HTTPException(status_code=400, detail="user_id incoerente")
+    with connect() as conn:
+        project = _get_project_or_404(conn, project_id)
+        target = conn.execute("SELECT id, username, email, active FROM users WHERE id=?", (user_id,)).fetchone()
+        if target is None or not target["active"]:
+            raise HTTPException(status_code=404, detail="utente attivo non trovato")
+        if project["owner_id"] == user_id:
+            raise HTTPException(status_code=400, detail="il proprietario non può essere membro")
+        conn.execute(
+            "INSERT INTO project_members(project_id,user_id,role) VALUES(?,?,?) "
+            "ON CONFLICT(project_id,user_id) DO UPDATE SET role=excluded.role",
+            (project_id, user_id, payload.role),
+        )
+        auditsvc.record(conn, user, "project.member_set", resource_type="project", resource_id=project_id, payload={"user_id": user_id, "role": payload.role})
+    return ProjectMemberOut(user_id=user_id, username=target["username"], email=target["email"], active=bool(target["active"]), role=payload.role)
+
+
+@router.delete("/api/projects/{project_id}/members/{user_id}", status_code=204)
+def remove_project_member(project_id: int, user_id: int, user: dict = Depends(authsvc.get_current_user)) -> None:
+    _require_project_manager(project_id, user)
+    with connect() as conn:
+        _get_project_or_404(conn, project_id)
+        deleted = conn.execute("DELETE FROM project_members WHERE project_id=? AND user_id=?", (project_id, user_id)).rowcount
+        if not deleted:
+            raise HTTPException(status_code=404, detail="membro non trovato")
+        auditsvc.record(conn, user, "project.member_removed", resource_type="project", resource_id=project_id, payload={"user_id": user_id})
+
+
+@router.post("/api/projects/{project_id}/owner", response_model=ProjectMemberOut)
+def transfer_project_owner(project_id: int, payload: ProjectOwnerIn, user: dict = Depends(authsvc.get_current_user)) -> ProjectMemberOut:
+    _require_project_manager(project_id, user)
+    with connect() as conn:
+        project = _get_project_or_404(conn, project_id)
+        target = conn.execute("SELECT id, username, email, active FROM users WHERE id=?", (payload.user_id,)).fetchone()
+        if target is None or not target["active"]:
+            raise HTTPException(status_code=404, detail="utente attivo non trovato")
+        old_owner = project["owner_id"]
+        if old_owner == payload.user_id:
+            return ProjectMemberOut(user_id=target["id"], username=target["username"], email=target["email"], active=True, role="owner")
+        conn.execute("UPDATE projects SET owner_id=? WHERE id=?", (payload.user_id, project_id))
+        if old_owner is not None:
+            conn.execute(
+                "INSERT INTO project_members(project_id,user_id,role) VALUES(?,?, 'editor') "
+                "ON CONFLICT(project_id,user_id) DO UPDATE SET role='editor'",
+                (project_id, old_owner),
+            )
+        conn.execute("DELETE FROM project_members WHERE project_id=? AND user_id=?", (project_id, payload.user_id))
+        auditsvc.record(conn, user, "project.owner_transferred", resource_type="project", resource_id=project_id, payload={"from_user_id": old_owner, "to_user_id": payload.user_id})
+    return ProjectMemberOut(user_id=target["id"], username=target["username"], email=target["email"], active=True, role="owner")
+
+
 @router.get("/api/projects/{project_id}/workflow")
 def project_workflow(
     project_id: int,
@@ -293,6 +296,21 @@ def project_workflow(
             "progress": approved / total if total else 0.0,
             "next_page": dict(next_page) if next_page else None,
         }
+
+
+@router.get("/api/projects/{project_id}/activity")
+def project_activity(project_id: int, limit: int = Query(default=30, ge=1, le=200), _auth: dict = Depends(require_resource())) -> dict:
+    with connect() as conn:
+        _get_project_or_404(conn, project_id)
+        rows = conn.execute(
+            "SELECT a.id, a.action, a.resource_type, a.resource_id, a.payload_json, a.created_at, u.username "
+            "FROM audit_events a LEFT JOIN users u ON u.id=a.actor_id "
+            "WHERE (a.resource_type='project' AND a.resource_id=?) OR "
+            "(a.resource_type='page' AND a.resource_id IN (SELECT id FROM pages WHERE project_id=?)) "
+            "ORDER BY a.id DESC LIMIT ?",
+            (project_id, project_id, limit),
+        ).fetchall()
+    return {"project_id": project_id, "items": [dict(row) for row in rows]}
 
 
 @router.get("/api/projects/{project_id}/annotation-queue")
@@ -555,7 +573,7 @@ def scan_project(
         candidates = scanmod.scan_archive(archive_dir)
         report = scanmod.ScanReport(found_files=len(candidates))
         for cand in candidates:
-            _register_candidate(conn, project_id, cand, Path(archive_dir), report, lang=lang)
+            scanmod.register_candidate(conn, project_id, cand, Path(archive_dir), report, lang=lang)
         return ScanReportOut(**report.to_dict())
 
 
@@ -592,5 +610,5 @@ async def import_uploaded_folder(
     report.errors.extend(errors)
     with connect() as conn:
         for candidate in scanmod.scan_archive(session_dir):
-            _register_candidate(conn, project_id, candidate, session_dir, report, lang=lang)
+            scanmod.register_candidate(conn, project_id, candidate, session_dir, report, lang=lang)
     return ScanReportOut(**report.to_dict())

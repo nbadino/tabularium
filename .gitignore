@@ -34,3 +34,8 @@ test/**/*.tif
 # Artefatti runtime
 backend/data/
 frontend/dist/
+
+# Artefatti di build TypeScript/Vite
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts

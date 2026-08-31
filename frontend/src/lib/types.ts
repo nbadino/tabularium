@@ -26,6 +26,29 @@ export interface InstanceSettings {
   default_new_user_role: 'editor' | 'viewer'
 }
 
+export interface ComputeProfile {
+  id: number
+  name: string
+  provider: 'local' | 'ssh' | 'vast' | 'runpod' | 'modal' | 'custom'
+  purpose: 'inference' | 'training' | 'both'
+  model_adapter_id: string
+  model_revision: string | null
+  served_model_name: string
+  endpoint: string
+  credential_ref: string | null
+  runtime_recipe_id: string | null
+  generation_profile_id: string | null
+  image_profile_id: string | null
+  hardware_profile: Record<string, unknown>
+  active: boolean
+  has_credential: boolean
+  last_health_check: string | null
+  last_health_ok: boolean | null
+  last_health_error: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface HealthResponse {
   status: string
   app: string
@@ -47,11 +70,20 @@ export interface SystemInfo {
 export interface Project {
   id: number
   name: string
+  owner_id: number | null
   root_dir: string
   archive_dir: string | null
   settings_json: Record<string, unknown>
   pages_count: number
   created_at: string
+}
+
+export interface ProjectMember {
+  user_id: number
+  username: string
+  email: string | null
+  role: 'owner' | 'editor' | 'viewer'
+  active: boolean
 }
 
 export interface WorkflowStatus {
@@ -85,6 +117,7 @@ export interface PageItem {
   page_no: string | null
   page_type: string | null
   status: string
+  annotation_revision?: number
   created_at: string
 }
 
@@ -160,6 +193,7 @@ export interface BlockOut {
 }
 
 export interface BlockBulkWrite {
+  expected_revision?: number
   items: Array<{
     id?: number
     label: string
@@ -217,7 +251,20 @@ export interface TableSaveOut {
 
 export interface PrefillEngines {
   ocr: { available: boolean; engine: string | null }
-  model: { available: boolean; url: string; model: string }
+  model: {
+    available: boolean
+    url: string
+    model: string
+    adapter_id?: string
+    /** Cosa sa fare DAVVERO l'adapter attivo (sondato lato backend, non
+     *  dichiarativo): un modello può servire senza supportare entrambe le
+     *  modalità (es. MinerU2.5 fa due-stadi ma non end2end). */
+    supports_two_stage?: boolean
+    supports_end2end?: boolean
+    /** Il percorso che il prefill offre oggi: inferenza nativa
+     *  (prompt di default del modello, immagine non riscalata). */
+    supports_native?: boolean
+  }
   /** Quale usare di default: il modello quando è servito. */
   recommended: 'ocr' | 'model' | null
 }
@@ -357,6 +404,12 @@ export interface TrainingPreflight {
 }
 
 export interface TrainConfigBody {
+  executor?: 'local' | 'ssh' | 'vast' | 'runpod'
+  ssh_host?: string
+  ssh_user?: string
+  ssh_port?: number
+  ssh_key_path?: string
+  ssh_root?: string
   model?: string
   model_path?: string
   train_type?: 'lora' | 'full'
@@ -452,6 +505,7 @@ export interface InferenceConfig {
   enabled?: boolean
   url: string
   model: string
+  adapter_id?: string
   has_api_key?: boolean
   api_key?: string
   extra_headers?: Record<string, string>

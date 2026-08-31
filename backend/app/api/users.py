@@ -7,6 +7,7 @@ from ..db import connect
 from ..schemas import ResetPasswordIn, UserCreate, UserOut, UserUpdate
 from ..services import auth as authsvc
 from ..services import users as usersvc
+from ..services import audit as auditsvc
 
 router = APIRouter(tags=["users"], dependencies=[Depends(authsvc.get_current_user)])
 
@@ -32,6 +33,7 @@ def create_user(payload: UserCreate, _admin: dict = Depends(_admin)) -> UserOut:
             role=payload.role,
             active=payload.active,
         )
+        auditsvc.record(conn, _admin, "user.created", resource_type="user", resource_id=user["id"], payload={"role": user["role"]})
     return UserOut(**user)
 
 
@@ -49,11 +51,21 @@ def update_user(
             raise HTTPException(status_code=400, detail="non si può declassare l'ultimo amministratore")
         if payload.active is False and admin["id"] == target["id"]:
             raise HTTPException(status_code=400, detail="non si può disattivare il proprio account")
+        if payload.active is False:
+            owned = conn.execute(
+                "SELECT COUNT(*) AS n FROM projects WHERE owner_id=?", (user_id,)
+            ).fetchone()["n"]
+            if owned:
+                raise HTTPException(
+                    status_code=409,
+                    detail="trasferisci prima la proprietà dei progetti dell’utente",
+                )
         if payload.role and payload.role != target["role"] and admin["id"] != target["id"]:
             _guard_demote(conn, target["id"])
         user = usersvc.update_user(
             conn, user_id, email=payload.email, role=payload.role, active=payload.active
         )
+        auditsvc.record(conn, admin, "user.updated", resource_type="user", resource_id=user_id, payload=payload.model_dump(exclude_unset=True))
     return UserOut(**user)
 
 
@@ -69,6 +81,7 @@ def reset_password(
         usersvc.set_password(conn, user_id, payload.password)
         # Le sessioni esistenti dell'utente decadono: la password è cambiata.
         conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+        auditsvc.record(conn, _admin, "user.password_reset", resource_type="user", resource_id=user_id)
         user = usersvc.get_user(conn, user_id)
     return UserOut(**usersvc.user_out(user))
 
@@ -83,10 +96,14 @@ def delete_user(user_id: int, admin: dict = Depends(_admin)) -> None:
             raise HTTPException(status_code=400, detail="non si può eliminare il proprio account")
         if target["role"] == "admin":
             _guard_demote(conn, target["id"])
-        # I progetti di proprietà dell'utente restano (owner_id NULL = senza
-        # proprietario: l'admin può riassegnarli o eliminarli dalla pagina progetto).
-        conn.execute("UPDATE projects SET owner_id=NULL WHERE owner_id=?", (user_id,))
+        owned = conn.execute("SELECT COUNT(*) AS n FROM projects WHERE owner_id=?", (user_id,)).fetchone()["n"]
+        if owned:
+            raise HTTPException(
+                status_code=409,
+                detail="trasferisci prima la proprietà dei progetti dell'utente",
+            )
         usersvc.delete_user(conn, user_id)
+        auditsvc.record(conn, admin, "user.deleted", resource_type="user", resource_id=user_id)
 
 
 def _guard_demote(conn, user_id: int) -> None:

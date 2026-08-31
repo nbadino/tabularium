@@ -278,7 +278,15 @@ questo motivo.
      per canvas, Prefill, crop ed export; JPEG solo per preview/tile. Metadati e API dichiarano
      motore richiesto/reale, fallback, warning ed errore diagnostico. Il Prefill non riesegue mai
      il deskew sull'originale quando esiste un master accettato;
-   - zoom/pan fluido su scansioni ad alta risoluzione (server serve tile/anteprime downsampled);
+   - zoom/pan fluido su scansioni ad alta risoluzione (server serve tile/anteprime downsampled).
+     Convenzioni gesto (allineate ai visualizzatori di documenti): rotella/due dita = pan,
+     Ctrl/Cmd+rotella (e pinch) = zoom centrato sul puntatore, Space/middle-drag = pan
+     temporaneo, Ctrl+0 = adatta, Ctrl± = zoom. I delta wheel sono normalizzati a pixel
+     (`wheelDeltaPixels`) e il fattore zoom è esponenziale con clamp (`wheelZoomFactor`,
+     testati in `canvasGeometry.test.ts`);
+   - le tre colonne dello studio (pagine | canvas | contenuti) sono ridimensionabili tramite
+     `Splitter` (drag, frecce ±16px, doppio click = reset); le larghezze sono persistite in
+     `localStorage['tabularium.studio.split']`;
    - strumenti blocco: rettangolo e poligono; palette classi con colori; edit/resize/delete;
    - **editor tabellare**: righe/colonne, **celle unite (merge)**, colonne "fantasma" dove i
      filetti sono sbiaditi, trascrizione cella-cella via tastiera, anteprima HTML live;
@@ -300,7 +308,16 @@ questo motivo.
      ogni cella/blocco precompilato nasce non verificato, e il report d'export distingue le due
      cose (`table_cells.verified` / `prefill_unverified`). Reimmettere il predetto senza correggerlo
      insegna al modello i suoi stessi errori;
-   - autosave, stato avanzamento per pagina, scorciatoie da tastiera.
+     - **modalità di sostituzione esplicite**: il prefill non cancella mai senza che l'utente
+       scelga. `merge` aggiunge; `replace_drafts` rimuove solo le bozze non confermate
+       (`prefill_source` non nullo **e** `confirmed=0`), mai il lavoro umano; `replace_all`
+       cancella tutto, griglie comprese, e richiede conferma nella UI (`replace` resta come
+       alias storico di `replace_all`). La risposta dichiara `replaced_blocks`/`replaced_grids`;
+       su pagina piena il pulsante Prefill apre un dialog di conferma (`PrefillDialog`);
+   - autosave, stato avanzamento per pagina, scorciatoie da tastiera;
+   - **autosave e navigazione**: il cambio pagina/progetto attende `flush()` dello store
+     (`useAnnotationState` espone `dirty`/`getDirty`/`flush`); lo smontaggio con lavoro
+     sporco salva in emergenza. Il debounce da solo protegge solo la chiusura del browser.
 3. **Dataset builder**: genera le 3 famiglie JSONL (§7), split **per pagina** e mai per ritaglio,
    normalizzazione 0–1000, mappa classi, stat e validazioni (box fuori pagina, classi senza prompt, ecc.).
 4. **Training center**: wizard che genera `full.sh`/`lora.sh` dalle template ufficiali, check
@@ -406,7 +423,8 @@ tabularium/
         trainer.py          # subprocess, log tail, telemetria, resume
         inference.py        # client vLLM OpenAI-compatibile
       tests/
-    requirements.txt        # split requirements-core / -prelabel / -dev
+    requirements.txt        # core; varianti opzionali: requirements-dev.txt,
+                            # requirements-uvdoc.txt, requirements-docscanner.txt
   frontend/
     src/
       app/                  # routes, layout, shell (Layout, AuthGate, auth, i18n, ui)
@@ -456,7 +474,13 @@ tabularium/
   - `project_members(project_id, user_id, role ['editor','viewer'])` — accesso
     condiviso ai progetti; `projects.owner_id` è l'altro lato (solo l'owner elimina);
   - `settings(id, instance_name, allow_registration, default_new_user_role)` — singola riga;
-  - migrazioni **additive** in `db.py::_MIGRATIONS`; i test auth girano su
+  - migrazioni: le versioni fino alla **baseline 6** restano additive per
+    presenza di colonna (`db.py::_ensure_columns`); da lì in poi ogni cambiamento
+    di schema è una migrazione **versionata e ordinata** in `db.py::_MIGRATIONS`
+    (versione → DDL), applicata una sola volta alle sole basi più indietro,
+    con versione registrata in `meta` e errore visibile all'avvio se la catena
+    è incompleta. Test di upgrade in `tests/test_db_migrations.py`. I test
+    auth girano su
     `TABULARIUM_AUTH=off` per la suite storica e `on` (fixture) per `test_auth.py`.
 
 ---
@@ -645,7 +669,11 @@ Ogni milestone termina con la sezione "Verifica": cosa lanciare per testare (ved
 4. Implementare **in ordine di milestone**; ogni MR deve aggiornare `AGENTS.md`/README se cambiano
    convenzioni o struttura.
 5. **Test**: backend con pytest (particolare cura a `otsl.py`, `dataset_builder.py`,
-   normalizzazione coordinate); frontend con un build `tsc --noEmit` + `vite build` senza errori.
+   normalizzazione coordinate); frontend con un build `tsc --noEmit` + `vite build` senza errori
+   e test Vitest (unitari + componenti con jsdom/testing-library per i flussi a rischio:
+   autosave/cambio pagina, conferma prefill). La CI (`.github/workflows/ci.yml`) esegue test
+   backend, typecheck + test + build frontend e verifica che la build non generi artefatti
+   versionati.
 6. **Esecuzione**: backend `uvicorn app.main:app --port 8787`; frontend dev `vite` con proxy verso
    il backend; MAI far dipendere l'app dal training in esecuzione.
 7. **Percorsi**: mai hard-coded; tutto da `config.py` (env var `TABULARIUM_ROOT`).

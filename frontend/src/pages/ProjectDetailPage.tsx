@@ -3,7 +3,7 @@ import type { InputHTMLAttributes } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
 import { PAGE_STATUSES, PAGE_TYPES } from '../lib/types'
-import type { PageItem, Project, ScanReport } from '../lib/types'
+import type { PageItem, Project, ProjectMember, ScanReport } from '../lib/types'
 import { pageTypeLabel, pages as pagesN, statusLabel, STATUS_TONE } from '../lib/vocab'
 import { Badge, Collapsible, ErrorNotice, Field, Modal, Module, WarnNotice } from '../app/ui'
 import { IconCheck, IconPrev, IconScan, IconTrash } from '../app/icons'
@@ -19,6 +19,15 @@ type StudyProtocol = {
   gold_pages: number[]
   version: number
   updated_at: string
+}
+
+type ProjectActivity = {
+  id: number
+  action: string
+  resource_type: string | null
+  resource_id: number | null
+  created_at: string
+  username: string | null
 }
 
 /** Il referto di scansione sopravvive alla navigazione: è un risultato, non un lampo. */
@@ -55,6 +64,11 @@ export default function ProjectDetailPage() {
   const [uploading, setUploading] = useState(false)
   const [domainProfiles, setDomainProfiles] = useState<Array<{ id: string; name: string }>>([])
   const [modelAdapters, setModelAdapters] = useState<Array<{ adapter_id: string; display_name: string }>>([])
+  const [members, setMembers] = useState<ProjectMember[]>([])
+  const [candidates, setCandidates] = useState<ProjectMember[]>([])
+  const [activity, setActivity] = useState<ProjectActivity[]>([])
+  const [memberId, setMemberId] = useState('')
+  const [memberRole, setMemberRole] = useState<'editor' | 'viewer'>('editor')
 
   useEffect(() => {
     apiGet<{ items: Array<{ id: string; name: string }> }>('/system/domain-profiles')
@@ -75,7 +89,59 @@ export default function ProjectDetailPage() {
     apiGet<StudyProtocol>(`/projects/${projectId}/study-protocol`)
       .then(setProtocol)
       .catch(() => setProtocol(null))
+    apiGet<ProjectMember[]>(`/projects/${projectId}/members`).then(setMembers).catch(() => setMembers([]))
+    apiGet<ProjectMember[]>(`/projects/${projectId}/member-candidates`).then(setCandidates).catch(() => setCandidates([]))
+    apiGet<{ items: ProjectActivity[] }>(`/projects/${projectId}/activity`).then((r) => setActivity(r.items)).catch(() => setActivity([]))
   }, [projectId])
+
+  const refreshActivity = async () => {
+    try {
+      setActivity((await apiGet<{ items: ProjectActivity[] }>(`/projects/${projectId}/activity`)).items)
+    } catch {
+      // L'attività è informativa: non deve bloccare una modifica già riuscita.
+    }
+  }
+
+  const addMember = async () => {
+    const id = Number(memberId)
+    if (!id) return
+    try {
+      const added = await apiPut<ProjectMember>(`/projects/${projectId}/members/${id}`, { user_id: id, role: memberRole })
+      setMembers((current) => [...current.filter((m) => m.user_id !== id), added])
+      setCandidates((current) => current.filter((m) => m.user_id !== id))
+      setMemberId('')
+      await refreshActivity()
+    } catch (e) { setError(e) }
+  }
+
+  const updateMemberRole = async (id: number, role: 'editor' | 'viewer') => {
+    try {
+      const updated = await apiPut<ProjectMember>(`/projects/${projectId}/members/${id}`, { user_id: id, role })
+      setMembers((current) => current.map((member) => member.user_id === id ? updated : member))
+      await refreshActivity()
+    } catch (e) { setError(e) }
+  }
+
+  const removeMember = async (id: number) => {
+    try {
+      await apiDelete(`/projects/${projectId}/members/${id}`)
+      const removed = members.find((m) => m.user_id === id)
+      setMembers((current) => current.filter((m) => m.user_id !== id))
+      if (removed) setCandidates((current) => [...current, removed].sort((a, b) => a.username.localeCompare(b.username)))
+      await refreshActivity()
+    } catch (e) { setError(e) }
+  }
+
+  const transferOwner = async (id: number) => {
+    if (!window.confirm('Trasferire la proprietà del progetto?')) return
+    try {
+      const owner = await apiPost<ProjectMember>(`/projects/${projectId}/owner`, { user_id: id })
+      setMembers((current) => [owner, ...current.filter((m) => m.user_id !== id).map((m) => m.user_id === project?.owner_id ? { ...m, role: 'editor' as const } : m)])
+      setProject((current) => current ? { ...current, owner_id: id } : current)
+      setCandidates((current) => current.filter((m) => m.user_id !== id))
+      await refreshActivity()
+    } catch (e) { setError(e) }
+  }
 
   const scan = async () => {
     setBusy(true)
@@ -318,6 +384,46 @@ export default function ProjectDetailPage() {
           </Collapsible>
         </div>
       )}
+
+      <div className="mb-3">
+        <Module tab="Accesso al progetto" quiet>
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+            <select className="fld" value={memberId} onChange={(e) => setMemberId(e.target.value)} aria-label="Utente da aggiungere">
+              <option value="">Aggiungi un collaboratore…</option>
+              {candidates.map((candidate) => <option key={candidate.user_id} value={candidate.user_id}>{candidate.username}</option>)}
+            </select>
+            <select className="fld" value={memberRole} onChange={(e) => setMemberRole(e.target.value as 'editor' | 'viewer')} aria-label="Ruolo collaboratore">
+              <option value="editor">Editor</option><option value="viewer">Viewer</option>
+            </select>
+            <button type="button" className="btn btn-primary" disabled={!memberId} onClick={() => void addMember()}>Aggiungi</button>
+          </div>
+          <div className="mt-3 divide-y divide-[color:var(--color-rule)] border-y border-[color:var(--color-rule)]">
+            {members.map((member) => <div key={member.user_id} className="flex flex-wrap items-center gap-2 py-2 text-[12px]">
+              <span className="min-w-0 max-w-full truncate font-semibold" title={member.username}>{member.username}</span>
+              {member.role === 'owner' ? <span className="badge">Proprietario</span> : <select
+                className="fld w-auto min-w-[7rem]"
+                value={member.role}
+                onChange={(e) => void updateMemberRole(member.user_id, e.target.value as 'editor' | 'viewer')}
+                aria-label={`Ruolo di ${member.username}`}
+              ><option value="editor">Editor</option><option value="viewer">Viewer</option></select>}
+              {member.role !== 'owner' && <><button type="button" className="btn btn-sm ml-auto" onClick={() => void removeMember(member.user_id)}>Rimuovi</button><button type="button" className="btn btn-sm" onClick={() => void transferOwner(member.user_id)}>Trasferisci proprietà</button></>}
+            </div>)}
+            {!members.length && <p className="py-2 text-[12px] text-[color:var(--color-ink-2)]">Nessun collaboratore assegnato.</p>}
+          </div>
+        </Module>
+      </div>
+
+      <div className="mb-3">
+        <Module tab="Attività recente" quiet>
+          <div className="divide-y divide-[color:var(--color-rule)] border-y border-[color:var(--color-rule)]">
+            {activity.map((event) => <div key={event.id} className="grid gap-1 py-2 text-[12px] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-baseline sm:gap-3">
+              <span className="min-w-0 break-words"><span className="font-semibold">{event.username || 'Sistema'}</span>{' · '}{event.action}</span>
+              <time className="mono text-[11px] text-[color:var(--color-ink-3)]" dateTime={event.created_at}>{new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(event.created_at))}</time>
+            </div>)}
+            {!activity.length && <p className="py-2 text-[12px] text-[color:var(--color-ink-2)]">Nessuna attività registrata.</p>}
+          </div>
+        </Module>
+      </div>
 
       <div className="mb-3">
         <Module tab={t('project.pilotTab')} quiet aux={<span>{t('project.pilotRange')}</span>}>

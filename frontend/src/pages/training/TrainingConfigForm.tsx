@@ -239,6 +239,36 @@ export default function TrainingConfigForm({
         </div>
       </Collapsible>
 
+      <Module tab={t('training.executor')}>
+        <Field label={t('training.executorType')} hint={t('training.executorHint')}>
+          <select
+            value={cfg.executor ?? 'local'}
+            onChange={(e) => set({ executor: e.target.value as TrainConfigBody['executor'] })}
+            className="fld"
+          >
+            <option value="local">{t('training.executorLocal')}</option>
+            <option value="ssh">{t('training.executorSsh')}</option>
+            <option value="vast">{t('training.executorVast')}</option>
+            <option value="runpod">{t('training.executorRunpod')}</option>
+          </select>
+        </Field>
+        {cfg.executor && cfg.executor !== 'local' && <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <Field label={t('training.sshHost')} hint={t('training.sshHostHint')}>
+            <input value={cfg.ssh_host ?? ''} onChange={(e) => set({ ssh_host: e.target.value })} className="fld fld-mono" placeholder="gpu.example" />
+          </Field>
+          <Field label={t('training.sshUser')}>
+            <input value={cfg.ssh_user ?? 'root'} onChange={(e) => set({ ssh_user: e.target.value })} className="fld fld-mono" />
+          </Field>
+          <NumField label={t('training.sshPort')} value={cfg.ssh_port ?? 22} onChange={(v) => set({ ssh_port: v })} />
+          <Field label={t('training.sshKey')} hint={t('training.sshKeyHint')}>
+            <input value={cfg.ssh_key_path ?? ''} onChange={(e) => set({ ssh_key_path: e.target.value })} className="fld fld-mono" placeholder="~/.ssh/id_ed25519" />
+          </Field>
+          <Field label={t('training.sshRoot')} hint={t('training.sshRootHint')}>
+            <input value={cfg.ssh_root ?? '/tmp/tabularium-runs'} onChange={(e) => set({ ssh_root: e.target.value })} className="fld fld-mono" />
+          </Field>
+        </div>}
+      </Module>
+
       <Module tab={t('training.launch')}>
         <div className="flex flex-wrap items-center gap-2">
           <button

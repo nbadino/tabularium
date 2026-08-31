@@ -97,6 +97,12 @@ SESSION_TTL_DAYS = int(os.environ.get("TABULARIUM_SESSION_TTL_DAYS", "30"))
 # Nome del cookie di sessione (HttpOnly + SameSite=Strict: la UI è same-origin,
 # quindi niente CSRF cross-site; i client API possono usare Authorization: Bearer).
 SESSION_COOKIE = os.environ.get("TABULARIUM_SESSION_COOKIE", "tab_session")
+# In HTTPS deployments set this to 1. Local HTTP development keeps it off so
+# the browser can use the cookie on 127.0.0.1.
+SESSION_COOKIE_SECURE = os.environ.get("TABULARIUM_SESSION_COOKIE_SECURE", "0").strip() != "0"
+SSH_KNOWN_HOSTS = Path(os.environ.get("TABULARIUM_SSH_KNOWN_HOSTS", "").strip() or (ROOT_DIR / "known_hosts"))
+BACKUP_RETENTION = max(1, int(os.environ.get("TABULARIUM_BACKUP_RETENTION", "10")))
+VAULT_KEY = os.environ.get("TABULARIUM_VAULT_KEY", "").strip()
 
 # Registrazione chiusa di default: un'istanza self-hosted non deve accettare
 # account da chiunque la raggiunga. L'admin la apre dalle Impostazioni.

@@ -1,162 +1,293 @@
 # Tabularium
 
-**A local, measurement-driven studio for fine-tuning document-parsing VLMs on dense-table archives.**
-Built and proven on *Historic Shipping Index* shipping registers (1900s–1970s): borderless, whitespace-aligned tables with thousands of cells per page.
+**A local-first studio for fine-tuning document-parsing models on archives of
+dense tables.**
 
-> *Tabularium* — the public archive where ancient Rome kept its *tabulae*: the records **and** the tables.
+Tabularium guides you through the complete path from a folder of page scans to
+a fine-tuned parsing checkpoint:
+
+```
+register pages → annotate → prefill (optional) → export dataset → fine-tune → evaluate → try it
+```
+
+It was built for — and proven on — historical registers (shipping indexes,
+1900s–1970s): pages whose tables have **no ruling lines**, hand-set columns
+that drift down the page, and hundreds of cells per page. Nothing in it is
+specific to that corpus: any document archive with table-heavy pages works the
+same way.
+
+> *Tabularium* — the public archive where ancient Rome kept its *tabulae*:
+> the records **and** the tables.
+
+| Home | Annotation studio | Project pages |
+|---|---|---|
+| ![Home](docs/screenshots/home.png) | ![Annotation studio](docs/screenshots/annotation-studio.png) | ![Project pages](docs/screenshots/project-pages.png) |
 
 ---
 
-## What it is
+## What it does
 
-One local process (FastAPI + React) that carries you from a folder of scans to a fine-tuned
-`MonkeyOCRv2-Parsing` checkpoint:
+### 1. Register your archive
 
-```
-register pages → guided annotation → export ms-swift JSONL → LoRA fine-tune → evaluate → playground
-```
+Point Tabularium at a folder of scans (images or multi-page PDFs). It
+registers every page with the metadata your domain needs — issue date, issue
+number, page number, page type — and generates previews on demand, however
+large the scans are.
 
-- **Register** pages (images / multi-page PDFs) with issue date, number, page type.
-- **Annotate** with a canvas studio: blocks, reading order, transcription conventions — and a
-  dedicated **table editor** for grids without ruling lines: merges, phantom columns, per-cell
-  transcription, live OTSL preview.
-- **Prefill** with pseudo-labeling: local OCR (per-cell, columns never fused) or MonkeyOCRv2 via
-  vLLM (two-stage or official END2END). Registers are auto-promoted to `Table` blocks; every
-  prefilled cell carries `source` + `verified` flags, and the export report tells you how much of
-  the dataset is still draft.
-- **Export** the only format the official training accepts: JSONL `messages` with coordinates
-  normalized to 0–1000 and tables in **OTSL**, split per page (never per crop).
-- **Train** with the official `swift sft` scripts, generated and parameterized for you, with a
-  VRAM preflight that *refuses to start* runs that cannot fit your GPU.
-- **Evaluate** on held-out pages: layout IoU, reading-order distance, per-cell CER, table
-  structure — then jump from the worst failures back into the editor.
+### 2. Annotate with a purpose-built studio
 
-## Highlights
+A zoom/pan canvas for high-resolution pages with:
 
-- **Borderless table detection, measured on real scans.** Rows come from glyph baselines
-  (connected components), not ink-profile autocorrelation — the projection approach worked on
-  1 page out of 4 and broke in three distinct ways (harmonic lock-in, saturated profile,
-  skew smearing). Shear is estimated and *compensated without rotating the image*, so
-  boundaries stay in the crop's reference frame. Internal boundaries bend row by row to follow
-  hand-set columns: on the reference scans, snapped boundaries cut **0.5 %** of values versus
-  **5.7 %** with straight cuts.
-- **The 2 MP operating point, demonstrated.** Feeding the layout model more pixels makes it
-  *worse*, measurably: 2 MP → correct structure, 4 MP → 141 fragments, 6 MP → label vocabulary
-  collapses to `Text`, 9.5 MP → degenerate duplicated output. The vision encoder emits one token
-  per 28×28 px; the model's notion of "a block" was learned at a specific tokens-per-page scale.
-  Layout runs at 2 MP; content recognition always crops from the **native-resolution** scan.
-- **VRAM honesty.** The dominant training term is not the weights (0.7 B ≈ 2 GiB) but the
-  **logits**: `batch × seq × vocab_size × 2` = 4.6 GiB at full length for a 152 k vocabulary.
-  The official preset (batch 4 × 16384 tokens) wants 26 GiB; the studio's preflight computes
-  the real requirement and suggests the largest length that fits yours.
-- **Data safety by construction.** Autosave preserves block IDs (bulk PUT never cascades away
-  your table grids); destructive actions require explicit confirmation; splits are deterministic
-  (ratio + seed) and split **by page** so crops never leak between train and val.
-- **Self-hosted multi-user.** Optional but on by default: first-run setup creates the instance
-  administrator, login/logout via HttpOnly session cookies, global roles (admin / editor /
-  viewer) and per-project sharing, instance settings and user management — passwords and
-  session tokens stored only as hashes.
+- **Blocks** — rectangles and polygons, a label palette, drag/resize, undo/redo,
+  keyboard shortcuts, autosave;
+- **Reading order** — explicit ordering of blocks with a "flow" preview that
+  walks the page the way a reader would;
+- **Transcription** — per-block text with a live conventions checklist, so the
+  dataset stays consistent across annotators;
+- **A table editor for borderless tables** — rows, columns, merged cells,
+  phantom columns where the ruling faded, cell-by-cell transcription, live
+  HTML/OTSL preview. The grid is drawn by you; the text can be pre-filled.
+
+### 3. Prefill instead of starting from zero
+
+Optional pseudo-labeling, with two engines you choose between explicitly:
+
+- **Local OCR** (RapidOCR / PaddleOCR, CPU): detects text lines and proposes
+  blocks. With table promotion on, the largest cluster of lines whose geometry
+  proves a grid becomes a `Table` block with the cells pre-filled **cell by
+  cell** — columns are never fused.
+- **The parsing model itself** (MonkeyOCRv2 via vLLM, GPU): returns blocks
+  already classified, in one official END2END pass or in two stages.
+
+Every prefilled block and cell is born `verified: false` and carries its
+provenance. The dataset export report tells you how much of your dataset is
+still draft — corrections are the training signal, not the raw model output.
+
+### 4. Export the dataset the training stack accepts
+
+One click builds the JSONL families the official ms-swift training expects:
+
+- **layout** — full page + prompt, blocks with coordinates normalized 0–1000,
+  in reading order;
+- **text recognition** — block crops + transcriptions;
+- **table recognition** — table crops + **OTSL** (the encoding the official
+  pipeline speaks), always the full table, with optional verified-row bands as
+  an augmentation.
+
+Splits are deterministic (ratio + seed) and split **by page**, never by crop,
+so no page leaks between train and validation. A health report lists counts
+per class, out-of-page boxes, missing transcriptions and unverified content.
+
+### 5. Train with the official scripts — safely
+
+Tabularium generates and launches the *official* `swift sft` scripts (LoRA or
+full SFT) from templates, in a dedicated GPU environment, with:
+
+- a **VRAM preflight** that refuses to start runs that cannot fit your GPU and
+  proposes the largest sequence length that will;
+- live log streaming, loss/learning-rate charts, GPU telemetry, stop and
+  resume from the last checkpoint;
+- immutable run recipe and SHA-256 artifact manifests, including remote
+  checkpoint download and verification. LoRA merge into a vLLM-servable
+  checkpoint is intentionally not advertised yet: it remains a tracked
+  follow-up until the official export command is integrated and tested.
+
+### 6. Evaluate, iterate, and try it live
+
+Held-out pages are scored on layout (IoU per label), reading-order distance,
+per-cell CER/WER and table structure — with a GT-vs-prediction overlay and a
+"worst failures" list that sends you back to the editor. The playground runs
+the fine-tuned (or base) model on any page, without saving results.
+
+### Multi-user, self-hosted
+
+Optional but on by default: first-run setup creates the instance
+administrator; login via HttpOnly session cookies; global roles
+(admin / editor / viewer) plus per-project sharing; instance settings and user
+management. Passwords and session tokens are stored only as hashes.
+
+---
+
+## Requirements
+
+| Component | Requirement |
+|---|---|
+| OS | Linux, macOS or Windows |
+| Python | ≥ 3.11 (backend) |
+| Node.js | any current version (only to build the frontend once) |
+| Storage | SQLite (bundled), plus disk space for your scans |
+| GPU | NVIDIA, ≥ 8 GB VRAM — **only** for model prefill / inference / fine-tuning |
+
+Annotation and local-OCR prefill run entirely on CPU. The dashboard process
+never imports PyTorch: training and model inference run in separate
+environments it orchestrates.
 
 ## Quickstart
 
-Requirements: Python ≥ 3.11, Node.js (only to build the frontend), SQLite. GPU (NVIDIA, ≥ 8 GB)
-only for fine-tuning and model inference; annotation and OCR prefill run on CPU.
+```bash
+# 1. backend (venv + dependencies)
+./scripts/setup_backend.sh          # Windows: scripts\setup_backend.ps1
+
+# 2. frontend (built once; the backend then serves it)
+./scripts/setup_frontend.sh         # Windows: scripts\setup_frontend.ps1
+
+# 3. run everything on http://localhost:8787
+./scripts/run.sh                    # Windows: scripts\run.ps1
+```
+
+On first launch the app shows the **setup screen** where you create the
+instance administrator; every later session starts at the login page.
+
+For a single-user local machine without authentication, start the backend with
+`TABULARIUM_AUTH=off`. Registration is closed by default; the administrator can
+open it from **Settings**.
+
+### Connecting a model (optional)
+
+Model-driven prefill, evaluation and the playground need a vLLM server. This
+is entirely point-and-click from the app — no shell commands, no environment
+variables, nothing to install by hand:
+
+1. Open **Registro Modelli** (Model Registry).
+2. Pick a model (`MonkeyOCRv2-Parsing`, `MinerU2.5`, `dots.mocr`,
+   `PaddleOCR-VL`, `Unlimited-OCR`, `GLM-OCR`, `DeepSeek-OCR-2`, `Qwen3-VL`,
+   or **add your own** Hugging Face repo) → **Download**.
+3. Once downloaded → **Start as local server**.
+
+The first time you start *any* model, Tabularium creates a dedicated Python
+environment and installs vLLM into it by itself (a couple of minutes,
+one-time only); for `MonkeyOCRv2-Parsing` it also clones the
+[official repo](https://github.com/Yuliang-Liu/MonkeyOCRv2) it needs for
+serving, automatically. `TABULARIUM_TRAIN_REPO` / `TABULARIUM_TRAIN_PYTHON` /
+`TABULARIUM_SERVE_PYTHON` still exist as **optional overrides** if you already
+have your own checkout or environment — they are never required.
 
 ```bash
-# backend (venv + deps)
-./scripts/setup_backend.sh
-
-# frontend (build once; the backend serves the built bundle)
-./scripts/setup_frontend.sh
-
-# run everything on http://localhost:8787
-./scripts/run.sh
+./scripts/train_on_gpu.sh    # fine-tuning helper (separate from serving)
 ```
 
-On first launch the app opens the **setup screen** and asks you to create the instance
-administrator; afterwards every session starts at the login page. To run the studio without
-any authentication (single-user local mode) start the backend with
-`TABULARIUM_AUTH=off`. Registration is closed by default; the administrator opens it from
-**Settings → Open registration**.
+Exact vLLM flags verified per model, and how the size warning works when a
+checkpoint may not fit your GPU, are documented in
+[docs/LOCAL_INFERENCE_GUIDE.md](docs/LOCAL_INFERENCE_GUIDE.md).
 
-### Page rectification (deskew, perspective, dewarp)
+A GPU can also be rented on demand — Tabularium has built-in cloud instance
+management (SSH tunnel, RunPod proxy, serverless) documented in
+[docs/CLOUD_INFERENCE_GUIDE.md](docs/CLOUD_INFERENCE_GUIDE.md).
 
-In the Annotation Studio, **Align and compare** always creates a non-destructive proposal.
-The original and the proposal stay side by side until the user accepts the result. The accepted
-master is stored as lossless PNG and becomes the single source for canvas, Prefill, crops and
-dataset export; JPEG is used only for previews and tiles.
+### Optional extras
 
-Available methods are global rotation, UVDoc, experimental DocScanner-L, manual four-corner
-perspective, and a draggable manual mesh for curved pages. Responses and metadata record the
-requested engine, actual engine, fallback, warnings and diagnostic error.
+- **Page rectification** — *Align and compare* in the studio proposes a
+  corrected page (rotation, perspective, neural dewarp) without touching your
+  annotations; you accept or reject it. The neural **UVDoc** engine needs a
+  complete PaddleOCR runtime and runs in a dedicated Python environment that
+  the run script discovers automatically:
 
-UVDoc needs a complete PaddleOCR runtime. Keep it in the dedicated Python 3.12 environment that
-`scripts/run.sh` discovers automatically:
+  ```bash
+  python3.12 -m venv .venv-uvdoc
+  source .venv-uvdoc/bin/activate       # Windows: .venv-uvdoc\Scripts\activate
+  python -m pip install -r backend/requirements.txt
+  # Install the platform-specific PaddlePaddle wheel (see the official guide), then:
+  python -m pip install -r backend/requirements-uvdoc.txt
+  ```
+
+  The experimental **DocScanner-L** engine has its own installer
+  (`scripts/setup_docscanner.sh`) and never silently replaces UVDoc.
+- **Alternative OCR engines** — see
+  [docs/OCR_MODEL_ALTERNATIVES.md](docs/OCR_MODEL_ALTERNATIVES.md).
+
+## Configuration
+
+Everything is controlled by environment variables; nothing is hard-coded.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TABULARIUM_ROOT` | `<repo>/data` | data root (projects, database, crops, runs) |
+| `TABULARIUM_HOST` / `TABULARIUM_PORT` | `127.0.0.1` / `8787` | server bind |
+| `TABULARIUM_AUTH` | `on` | `off` disables authentication (single-user local mode) |
+| `TABULARIUM_REGISTRATION_OPEN` | closed | `1` opens self-registration |
+| `TABULARIUM_SESSION_TTL_DAYS` | `30` | session lifetime |
+| `TABULARIUM_OCR_ENGINE` | `auto` | `rapidocr` or `paddleocr` |
+| `TABULARIUM_VLLM_URL` | `http://127.0.0.1:8888/v1` | inference server endpoint |
+| `TABULARIUM_VLLM_MODEL` | `MonkeyOCRv2` | served model name |
+| `TABULARIUM_VLLM_MAX_PIXELS` | unset | cap on pixels sent to the layout model |
+| `TABULARIUM_TRAIN_REPO` | unset | official MonkeyOCRv2 checkout (training) |
+| `TABULARIUM_TRAIN_ENV` | `monkeyocrv2-train` | conda/venv name for training |
+| `TABULARIUM_MODELS_DIR` | `<repo>/models` | local model checkpoints |
+
+## How it's built
+
+One backend process serves both the API and the built frontend:
+
+```
+backend  (FastAPI + SQLite + Pillow/NumPy; vLLM client; subprocess for training)
+  services/   table detection · OTSL encoding · dataset builder · vLLM client
+              trainer orchestration · VRAM preflight · auth/permissions · prefill
+
+frontend (React 19 + Vite + TypeScript + Tailwind; Konva canvas)
+  studio/     zoom/pan canvas · blocks · reading order · table editor
+  app/        auth gate · layout · i18n (English / Italiano / Français)
+```
+
+Design principles:
+
+- **The data comes first.** Annotations are stored in source pixels with full
+  provenance; the model-specific formats (0–1000 coordinates, OTSL, JSONL) are
+  produced only at export. Your annotations never get locked to one model.
+- **Nothing destructive is implicit.** Autosave preserves identifiers, and
+  every operation that can remove work requires explicit confirmation.
+- **The official stack is used, not forked.** Training scripts, prompts,
+  coordinate conventions and the OTSL encoder all match the official
+  MonkeyOCRv2 repo, which is referenced as an external checkout and never
+  modified.
+
+## Documentation
+
+- **[AGENTS.md](AGENTS.md)** — the complete product spec, data conventions and
+  the reasoning behind every design decision (Italian; the source of truth).
+- **[PRODUCT.md](PRODUCT.md)** — what the product promises and its constraints.
+- **[DESIGN.md](DESIGN.md)** — the interface design system.
+- **[docs/](docs/)** — cloud inference guide, OCR engine alternatives.
+
+## Development
 
 ```bash
-python3.12 -m venv .venv-uvdoc
-source .venv-uvdoc/bin/activate       # Windows: .venv-uvdoc\Scripts\activate
-python -m pip install -r backend/requirements.txt
-# Install the platform-specific PaddlePaddle CPU/CUDA wheel from its official guide, then:
-python -m pip install -r backend/requirements-uvdoc.txt
+# backend tests
+cd backend && python -m pytest tests -q
+
+# frontend: typecheck, unit/component tests, build
+cd frontend && npm run typecheck && npm test && npm run build
+
+# end-to-end smoke (needs a running instance and Chromium)
+npm run test:e2e
 ```
 
-Set `TABULARIUM_UVDOC_DEVICE=cpu` or `gpu:0`. DocScanner-L is a separate experimental choice; install
-its official checkout and weights with `scripts/setup_docscanner.sh`. It never silently replaces
-UVDoc.
+Continuous integration runs the backend tests, the frontend checks and the
+end-to-end workflow (see `.github/workflows/ci.yml`).
 
-To compare the installed engines without touching project data:
+## Troubleshooting
+
+**I forgot the administrator password.**
+Reset it from the terminal with the bundled tool — it uses the same hashing
+and session invalidation as the app itself:
 
 ```bash
-source .venv-uvdoc/bin/activate
-python scripts/benchmark_dewarp.py test/*.tif --output /tmp/dewarp-benchmark
+backend/.venv/bin/python scripts/reset_password.py          # list users
+backend/.venv/bin/python scripts/reset_password.py admin    # interactive (hidden input)
 ```
 
-The report's OCR coverage and confidence are proxies; final engine selection should use CER on a
-small gold transcription set.
+Pass a second argument to set the password non-interactively. The data root
+follows `TABULARIUM_ROOT` (default `<repo>/data`).
 
-For model inference / fine-tuning you also need the
-[MonkeyOCRv2](https://github.com/Yuliang-Liu/MonkeyOCRv2) checkout with the
-`MonkeyOCRv2-B-Parsing` checkpoint and a vLLM environment:
+**The app doesn't start / the page is blank.**
+Check that the frontend was built at least once (`scripts/setup_frontend.sh`,
+or `cd frontend && npm run build`): the backend serves `frontend/dist`. The
+server log printed by `scripts/run.sh` reports the health endpoint on
+`/api/health`.
 
-```bash
-export TABULARIUM_TRAIN_REPO=/path/to/MonkeyOCRv2
-export TABULARIUM_TRAIN_PYTHON=/path/to/envs/MonkeyOCRv2Parsing/bin/python
-./scripts/serve_model.sh          # vLLM on :8888
-./scripts/train_on_gpu.sh         # fine-tuning helper
-```
-
-## How it works
-
-```
-backend (FastAPI, SQLite, Pillow/NumPy, vLLM client)
-  ├── services/security.py       PBKDF2 password hashing, SHA-256 session tokens
-  ├── services/authsvc.py        login/sessions, role + per-project access checks
-  ├── services/table_detect.py   borderless grid detection (baselines, shear, snapping)
-  ├── services/otsl.py           grid ⇄ OTSL, oracle-tested against the official converter
-  ├── services/dataset_builder.py  3 JSONL families + health report (per-cell provenance)
-  ├── services/inference.py      vLLM client: layout, END2END, band-wise table recognition
-  ├── services/trainer.py        official swift sft scripts, resume, SSE logs, GPU telemetry
-  └── services/vram.py           VRAM preflight (logits dominate; bisection on max_length)
-frontend (React 19 + Vite + TS + Tailwind + React Router + Konva; state via
-          useSyncExternalStore stores, no global framework)
-  ├── app/AuthGate.tsx           setup → login → app at startup; 401 → back to login
-  └── studio/                    canvas, layers, reading order, table editor (draggable rules)
-```
-
-The full product spec, the measured constraints, the data conventions (coordinates 0–1000,
-OTSL encoding, JSONL shapes) and every design decision with its justification live in
-**[AGENTS.md](AGENTS.md)** (Italian) — treat it as the source of truth.
-
-## Status
-
-Milestones M0–M8 are implemented and in daily use on the Historic Shipping Index corpus: projects,
-annotation studio, table editor, dataset builder, training center, evaluation, playground,
-pseudo-labeling. On top of that sits the **self-hosted layer**: first-run setup, login/logout,
-role-based and per-project access, instance settings and user management. The model-facing parts
-(vLLM, training) target the
-`zenosai/MonkeyOCRv2-B-Parsing` / `-S-Parsing` checkpoints and the ms-swift fork bundled with
-the official repo.
+**Model prefill or playground says the model is unavailable.**
+Those features need the vLLM server (`scripts/serve_model.sh`); everything
+else works without it. Cloud instances are covered in
+[docs/CLOUD_INFERENCE_GUIDE.md](docs/CLOUD_INFERENCE_GUIDE.md).
 
 ## License
 
@@ -164,9 +295,10 @@ the official repo.
 
 ## Acknowledgments
 
-- [MonkeyOCRv2](https://github.com/Yuliang-Liu/MonkeyOCRv2) — the parsing model and training
-  stack this studio fine-tunes. This repository never modifies the official checkout; it only
-  drives it.
-- [ms-swift](https://github.com/modelscope/ms-swift) — training framework (official fork).
-- [RapidOCR](https://github.com/RapidAI/RapidOCR) / [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) — CPU prefill engines.
-- Transkribus — the benchmark this project measures itself against for historical archives.
+- [MonkeyOCRv2](https://github.com/Yuliang-Liu/MonkeyOCRv2) — the parsing
+  model and training stack Tabularium fine-tunes. This repository never
+  modifies the official checkout; it drives it.
+- [ms-swift](https://github.com/modelscope/ms-swift) — training framework
+  (official fork bundled with MonkeyOCRv2).
+- [RapidOCR](https://github.com/RapidAI/RapidOCR) /
+  [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) — CPU prefill engines.

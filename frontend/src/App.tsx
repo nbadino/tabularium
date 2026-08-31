@@ -79,14 +79,7 @@ export default function App() {
             <Route path="training" element={<TrainingPage />} />
             <Route path="valutazione" element={<EvaluationPage />} />
             <Route path="playground" element={<PlaygroundPage />} />
-            <Route
-              path="impostazioni"
-              element={
-                <AdminRoute>
-                  <SettingsPage />
-                </AdminRoute>
-              }
-            />
+            <Route path="impostazioni" element={<SettingsPage />} />
             <Route
               path="utenti"
               element={

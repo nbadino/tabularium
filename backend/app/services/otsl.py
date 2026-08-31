@@ -85,6 +85,12 @@ def otsl_to_grid(otsl: str) -> dict:
     grid: list[list[dict | None]] = []
 
     for row_str in otsl.split("<nl>"):
+        # Il modello chiude spesso l'ultima riga con ``<nl>``. Non trasformare
+        # quel separatore finale in una riga vuota della griglia: altrimenti
+        # la UI mostra una riga fantasma e il merge delle bande calcola una
+        # dimensione diversa da quella reale.
+        if not row_str.strip():
+            continue
         r_idx = len(grid)
         grid.append([])
         col_idx = 0
@@ -149,6 +155,19 @@ def otsl_to_grid(otsl: str) -> dict:
                     }
                 )
     return {"rows": rows, "cols": cols, "cells": cells}
+
+
+def looks_like_otsl(source: str) -> bool:
+    """Indica se ``source`` contiene OTSL nativo, anche se è troncato.
+
+    Alcuni endpoint Paddle configurati con il prompt ``Table Recognition:``
+    restituiscono OTSL senza tag di chiusura, mentre la documentazione del
+    pipeline completo descrive HTML. Il formato reale va quindi rilevato dal
+    payload, non fissato soltanto nell'adapter.
+    """
+    import re
+
+    return bool(re.search(r"<(?:fcel|ecel|lcel|ucel|xcel|nl)>", source or "", re.I))
 
 
 def normalize_cells(cells: list[dict]) -> list[dict]:

@@ -55,6 +55,13 @@
   --color-fill-2: #eceef1;
   --color-rule: #c9ccd1;
   --color-rule-strong: #111111;
+  /* Alias verso i token esistenti: `--color-panel`/`--color-sheet-dim` erano
+     referenziati in 29 punti (modali cloud/inferenza) ma mai definiti — ogni
+     header, tab bar e pannello risultava trasparente. Nessun colore nuovo:
+     riusano `--color-fill`/`--color-fill-2` per restare nel vocabolario
+     «foglio» esistente invece di introdurne uno diverso solo lì. */
+  --color-panel: var(--color-fill);
+  --color-sheet-dim: var(--color-fill-2);
 
   /* ---- inchiostro -------------------------------------------------------- */
   --color-ink: #111111;
@@ -80,6 +87,13 @@
 
   --font-ui: 'Archivo', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'Chivo Mono', ui-monospace, 'Cascadia Mono', Menlo, monospace;
+
+  /* ---- scala tipografica --------------------------------------------------
+     Strumento pro ad alta densità: il floor di leggibilità è 11px (2xs);
+     10px è vietato — le etichette decorative diventavano illeggibili. */
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
 }
 
 @layer base {
@@ -411,6 +425,14 @@
       );
     background-size: 16px 16px;
     background-position: 0 0, 8px 8px;
+  }
+
+  /* ---- foglio tabella (Handsontable) -------------------------------------- */
+  /* Colonna proposta dal rilevatore ma non attestata da nessun confine reale:
+     tratteggio d'allarme, non un filetto come gli altri. */
+  .ht-phantom-cols .ht-phantom-col {
+    background-color: var(--color-sig-wash) !important;
+    box-shadow: inset 1.5px 0 0 0 var(--color-sig), inset -1.5px 0 0 0 var(--color-sig) !important;
   }
 }
 

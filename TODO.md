@@ -6,6 +6,127 @@ dataset → fine-tuning → valutazione`. Non sostituisce la roadmap in
 multi-modello. Historic Shipping Index e MonkeyOCRv2 restano il primo profilo di dominio
 e il primo adapter modello, non limiti architetturali.
 
+## Controllo review tecnica — aggiornato 2026-08-31
+
+Checklist di controllo derivata dalla review allegata. Viene aggiornata
+progressivamente: `[x]` significa chiuso e verificato, `[ ]` significa ancora
+aperto oppure solo parzialmente coperto.
+
+### P0 — sicurezza e integrità collaborativa
+
+- [x] Autosave concorrente: revisione pagina, `expected_revision`, risposta
+  `409` con stato remoto e riconciliazione esplicita nell’annotatore.
+- [x] Condivisione progetto: membri, ruoli editor/viewer, rimozione,
+  trasferimento owner, elenco candidati e audit delle operazioni principali.
+- [ ] Segreti cloud/API: rimosso il salvataggio delle chiavi nel browser;
+  il vault server-side cifrato è implementato, ma va ancora installato e
+  verificato nel virtualenv/CI (`cryptography`, rifiutata dal sandbox di rete).
+- [x] SSRF di inferenza/playground: endpoint riservati, URL validati,
+  destinazioni private bloccate e redirect HTTP non seguiti.
+
+### P1 — operatività, compute e persistenza
+
+- [x] Profili compute atomici: adapter, endpoint, modello servito, runtime,
+  hardware, health check e attivazione senza perdere il profilo precedente.
+- [x] Job locali persistiti in SQLite, con PID/process group, log, stop e
+  riconciliazione dei processi dopo il riavvio del backend.
+- [x] Backup SQLite online, integrity check, retention, download e restore
+  amministrativo con conferma.
+- [x] Audit append-only per autenticazione amministrativa e operazioni
+  sensibili su progetti, annotazioni, utenti, compute e training.
+- [x] Cookie configurabile `Secure`, rate limiting persistente per auth, CORS
+  ristretto, security headers/CSP e verifica SSH tramite known_hosts.
+- [x] Vincolo FK reale su `projects.owner_id` e migrazione completa delle
+  invarianti di ownership: migrazione SQLite v12 con `ON DELETE RESTRICT`,
+  più regressione su foreign key, cancellazione e disattivazione dell’owner.
+- [ ] Persistenza/recovery uniforme per tutti gli orchestratori cloud e
+  training remoto; oggi il percorso persistito è quello dei job locali.
+- [ ] Executor remoto (locale/SSH/Vast/RunPod), manifest, checksum, upload,
+  checkpoint, resume, stop, cleanup, costi e riferimenti credenziali.
+- [ ] Recipe Vast/RunPod riproducibili: versioni pinnate, branch/commit
+  dichiarati, hardware verificato, manifest e test del contratto API.
+
+### P1/P2 — qualità di prodotto e verifica
+
+- [x] UI di collaborazione: accesso al progetto con aggiunta/rimozione,
+  modifica inline del ruolo, trasferimento owner e attività recente leggibile.
+- [ ] UI completa per impostazioni, accessi/attività, capability dichiarate,
+  studio responsive e componenti/modal coerenti.
+- [ ] Test auth/annotazione non bloccanti e matrice CI sulle versioni Python
+  supportate; la suite mirata passa, ma la suite completa va rieseguita nel
+  nuovo ambiente di test.
+- [ ] Pilot reale da 30–50 pagine con LoRA, gold set protetto, analisi errori
+  e successiva scala a 150–300 pagine.
+
+### Evidenze dell’ultima tranche
+
+- `ProjectDetailPage` carica `/activity`, aggiorna la cronologia dopo le
+  modifiche di accesso e mantiene i nomi lunghi leggibili senza mostrare
+  payload tecnici; `npm run build` passa e il detector UI non segnala rilievi.
+- `SettingsPage` è ora realmente universale: account, ruolo, email e lingua
+  sono disponibili anche a editor/viewer; le sezioni amministrative restano
+  condizionate dal ruolo.
+- `ModelsModal` usa la primitiva `Modal` condivisa (focus trap e ripristino del
+  focus), senza shadow/radii divergenti o glyph Unicode; build e detector UI
+  restano puliti.
+- `AnnotationPage` espone di nuovo poligono, panoramica, flow preview, ordine
+  di lettura e checklist delle convenzioni; i controlli esistenti ricevono i
+  tool e le azioni dello store reale. Build TypeScript verificata.
+- Test frontend: `10` file e `66` test passati (`npm run test -- --run`).
+- `.github/workflows/ci.yml` verifica il backend su Python 3.11, 3.12 e 3.13;
+  Python 3.14 resta esplicitamente fuori finché lo stack TestClient non è
+  compatibile e verificato.
+- La promessa README sul merge LoRA è stata resa onesta: il prodotto conserva
+  adapter, recipe e manifest verificati; resta aperta l’integrazione del merge
+- La UI del Training Center espone ora executor locale/SSH/Vast/RunPod e i
+  parametri SSH senza salvare segreti; il trainer persiste e recupera il
+  `remote_job_id` anche per Vast/RunPod. Il lifecycle remoto completo resta
+  aperto finché non sono verificati upload, checkpoint/resume, cleanup e costi
+  end-to-end.
+  ufficiale verso un checkpoint servibile, con test end-to-end.
+- La disattivazione di un utente proprietario ora restituisce `409` finché i
+  suoi progetti non vengono trasferiti; aggiunta regressione in
+  `tests/test_auth.py`.
+- Il tunnel SSH cloud persiste ora PID, process group e parametri in `jobs`;
+  dopo il riavvio il backend riconcilia il processo e lo stop verifica che il
+  PID sia ancora un processo `ssh`. Gli orchestratori cloud restano comunque
+  aperti per lifecycle remoto, costi e teardown.
+- Vast/RunPod registrano ora le risorse create in `jobs` con provider, owner,
+  stato, tariffa opzionale e stima cumulativa del costo; start/stop/delete
+  aggiornano il ciclo di vita e i test contrattuali coprono costo e chiusura.
+
+- `tests/test_compute_profiles.py`, `tests/test_db_migrations.py`,
+  `tests/test_backup.py` e `tests/test_training.py` sono i test di controllo;
+  insieme a `tests/test_rate_limit.py`, ultimo esito: `26 passed` dopo la
+  migrazione v12 e la correzione della persistenza del rate limit.
+- Il vault è stato provato con il Python di sistema (`vault probe ok`): il
+  plaintext non compare nel ciphertext; la verifica nel virtualenv resta
+  sospesa finché non è disponibile `cryptography`.
+- La suite vault passa con il Python di sistema: `2 passed`; il percorso API
+  registra anche sostituzione/rimozione del credential senza salvarne il valore;
+  sono disponibili `POST/DELETE /api/system/secrets` riservati all’admin e gli
+  endpoint Vast/RunPod/Modal accettano riferimenti vault.
+- `scripts/cloud/setup_cloud_vllm.sh` ora richiede un ref MonkeyOCRv2
+  esplicito, pinna le dipendenze principali, fallisce sui prerequisiti GPU/disco,
+  rimuove il flag incompatibile e genera `cloud-manifest.json`; `bash -n` passa.
+- L’onstart Vast quota modello e API key senza interpolazione shell non sicura;
+  la ricerca ora usa `PUT /api/v0/search/asks/` e il provisioning RunPod usa
+  `POST /pods` con schema persistente documentato; contract test mockati: `8/8`.
+  Resta da validare la forma Vast contro l’API reale e completare lifecycle,
+  teardown e costi.
+- Il training locale usa ora `TrainingRecipe` + `LocalProcessExecutor` e
+  scrive `recipe.json` con hash SHA-256 di script e dataset; test di controllo:
+  `33 passed, 2 skipped`. È disponibile anche `SshExecutor` con sync
+  `rsync --checksum` e host-key verification, con PID remoto persistito,
+  recovery e stop via process group; la riconciliazione non marca più come
+  falliti i job SSH al riavvio. Checkpoint e artefatti hanno ora manifest
+  SHA-256, download SSH e verifica prima della chiusura della run. Restano
+  aperti validazione API reale e lifecycle costi per Vast/RunPod;
+  i relativi executor sono già provider espliciti sopra SSH per istanze/pod
+  già pronti.
+- La checklist non sostituisce il backlog sottostante: le voci già presenti
+  più in basso conservano il dettaglio storico e tecnico delle implementazioni.
+
 ## P0 — Integrità e riproducibilità
 
 - [x] Rendere autorevoli i confini di qualità e riproducibilità nel backend.
@@ -42,10 +163,13 @@ e il primo adapter modello, non limiti architetturali.
     `dataset/v0001`, `v0002`, ecc. con manifest, hash e seed.
   - Verifica: un export fallito non modifica lo snapshot precedente.
 
-- [x] Riparare i test backend bloccati dal client FastAPI/Starlette/httpx e
-  usare sempre `.venv/bin/python -m pytest` negli script.
-  - `httpx2` è fissato nei requirements-dev; con esecuzione non sandboxata la
-    suite completa passa (62 test).
+- [ ] Riparare la verifica HTTP backend e usare sempre
+  `.venv/bin/python -m pytest` negli script.
+  - `httpx2` è fissato nei requirements-dev e i test unitari mirati passano;
+    la suite HTTP completa resta bloccata nel virtualenv Python 3.14 anche con
+    un’app FastAPI minimale: una route sincrona si ferma nell’adapter thread
+    di AnyIO. Serve una matrice CI su Python supportati e versioni compatibili,
+    non una workaround nel runtime.
 
 ## P1 — Protocollo di ricerca e dataset affidabile
 

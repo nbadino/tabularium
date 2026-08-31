@@ -103,6 +103,112 @@ export function resizeGrid(grid: TableGrid, rows: number, cols: number): TableGr
   }
 }
 
+/** Ridimensiona riempiendo: le posizioni nuove — o rimaste scoperte —
+ *  diventano celle 1x1 vuote. `resizeGrid` tronca ma non crea: nel foglio
+ *  di calcolo una riga o colonna aggiunta deve essere scrivibile subito,
+ *  non apparire come fila di buchi non selezionabili. */
+export function growGrid(grid: TableGrid, rows: number, cols: number): TableGrid {
+  const resized = resizeGrid(grid, rows, cols)
+  const map = ownerMap(resized)
+  const cells: TableCell[] = [...resized.cells]
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (!map[r]?.[c]) cells.push({ r, c, rowspan: 1, colspan: 1, text: '' })
+    }
+  }
+  return { ...resized, cells }
+}
+
+/** Inserisce una traccia vuota (riga o colonna) alla posizione `at`, spostando
+ *  le successive e allargando le celle unite che attraversano il punto.
+ *  `at` può essere uguale al numero di tracce: aggiunge in coda. */
+export function insertTrack(grid: TableGrid, axis: 'row' | 'col', at: number): TableGrid {
+  const isRow = axis === 'row'
+  const count = isRow ? grid.rows : grid.cols
+  const pos = Math.max(0, Math.min(at, count))
+  const start = (c: TableCell) => (isRow ? c.r : c.c)
+  const span = (c: TableCell) => (isRow ? c.rowspan : c.colspan)
+  const key = isRow ? 'r' : 'c'
+  const spanKey = isRow ? 'rowspan' : 'colspan'
+
+  const cells = grid.cells.map((cell) => {
+    const s = start(cell)
+    if (s >= pos) return { ...cell, [key]: s + 1 } as TableCell
+    if (s + span(cell) > pos) return { ...cell, [spanKey]: span(cell) + 1 } as TableCell
+    return cell
+  })
+
+  const lines = [...((isRow ? grid.hlines : grid.vlines) ?? [])]
+  if (lines.length === count + 1) {
+    // Il nuovo confine coincide con quello esistente: due tracce sovrapposte
+    // finché l'utente non la riempie — coerente, non inventa geometrie.
+    lines.splice(pos, 0, lines[pos] ?? lines[lines.length - 1])
+  }
+
+  return {
+    ...grid,
+    rows: isRow ? grid.rows + 1 : grid.rows,
+    cols: isRow ? grid.cols : grid.cols + 1,
+    cells,
+    phantom_cols: isRow
+      ? grid.phantom_cols
+      : grid.phantom_cols.map((i) => (i >= pos ? i + 1 : i)),
+    vlines: isRow ? grid.vlines : lines,
+    hlines: isRow ? lines : grid.hlines,
+  }
+}
+
+/** Elimina la traccia `at` (0-based). Il testo delle celle che stanno lì viene
+ *  PERSO: la UI chiede conferma. Le celle unite che attraversano la traccia
+ *  si restringono; le successive slittano. null se la traccia non esiste o è
+ *  l'ultima rimasta. */
+export function deleteTrack(grid: TableGrid, axis: 'row' | 'col', at: number): TableGrid | null {
+  const isRow = axis === 'row'
+  const count = isRow ? grid.rows : grid.cols
+  if (at < 0 || at >= count || count < 2) return null
+  const start = (c: TableCell) => (isRow ? c.r : c.c)
+  const span = (c: TableCell) => (isRow ? c.rowspan : c.colspan)
+  const key = isRow ? 'r' : 'c'
+  const spanKey = isRow ? 'rowspan' : 'colspan'
+
+  const cells: TableCell[] = []
+  for (const cell of grid.cells) {
+    const s = start(cell)
+    const e = s + span(cell) - 1
+    if (e < at || s > at) {
+      // Intera prima o intera dopo: solo eventuale shift.
+      cells.push(s > at ? ({ ...cell, [key]: s - 1 } as TableCell) : cell)
+      continue
+    }
+    // Attraversa la traccia eliminata: si restringe (o sposta l'ancora).
+    if (span(cell) > 1) {
+      const nextSpan = span(cell) - 1
+      if (nextSpan === 0) continue // era larga solo la traccia eliminata
+      cells.push({
+        ...cell,
+        [key]: s > at ? s - 1 : s,
+        [spanKey]: nextSpan,
+      } as TableCell)
+    }
+    // start === at && span === 1: la cella eliminata, il suo testo va perso.
+  }
+
+  const lines = [...((isRow ? grid.hlines : grid.vlines) ?? [])]
+  if (lines.length === count + 1) lines.splice(at + 1, 1)
+
+  return {
+    ...grid,
+    rows: isRow ? grid.rows - 1 : grid.rows,
+    cols: isRow ? grid.cols : grid.cols - 1,
+    cells,
+    phantom_cols: isRow
+      ? grid.phantom_cols
+      : grid.phantom_cols.filter((i) => i !== at).map((i) => (i > at ? i - 1 : i)),
+    vlines: isRow ? grid.vlines : lines,
+    hlines: isRow ? lines : grid.hlines,
+  }
+}
+
 /** Celle ordinate per (r, c), utili per render e confronti. */
 export function sortedCells(grid: TableGrid): TableCell[] {
   return [...grid.cells].sort((a, b) => a.r - b.r || a.c - b.c)

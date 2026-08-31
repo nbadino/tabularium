@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..services import auth as authsvc
+from ..services import custom_models as custom_models_svc
 from ..services import inference, model_registry, serve_manager
 from ..services.model_adapters import get_adapter
 
@@ -26,6 +27,31 @@ def _admin(user: dict = Depends(authsvc.get_current_user)) -> dict:
 @router.get("/api/models")
 def list_models() -> dict:
     return {"items": model_registry.list_models()}
+
+
+@router.post("/api/models/custom")
+def add_custom_model(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Aggiunge un modello a piacere (repo Hugging Face qualsiasi): stesso
+    principio di LM Studio, nessun blocco per dimensione — solo l'avviso di
+    `model_registry.vram_warning` una volta scaricato."""
+    try:
+        return custom_models_svc.create(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/api/models/custom/{adapter_id}")
+def remove_custom_model(adapter_id: str, _admin: dict = Depends(_admin)) -> dict:
+    """Rimuove del tutto un modello custom (definizione + pesi se scaricati).
+
+    Diverso da `DELETE /api/models/{adapter_id}`, che su un modello custom
+    cancella solo i pesi lasciando la definizione riusabile per un nuovo
+    download."""
+    try:
+        custom_models_svc.delete(adapter_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
 
 
 @router.post("/api/models/{adapter_id}/download")

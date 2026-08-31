@@ -25,6 +25,8 @@ from ..schemas import (
     TableSaveOut,
 )
 from ..services import inference, labeling, otsl, table_detect
+from ..services import blocks as blockssvc
+from ..services import audit as auditsvc
 from ..services import ocr as ocrmod
 from ..services import pages as pagesvc
 from ..services.i18n import msg, parse_lang
@@ -73,89 +75,44 @@ def list_annotations(
     page_id: int,
     _auth: dict = Depends(require_resource(write=False)),
 ) -> BlockListOut:
-    with connect() as conn:
-        _get_page_or_404(conn, page_id)
-        rows = conn.execute(
-            "SELECT * FROM blocks WHERE page_id=? "
-            "ORDER BY COALESCE(order_idx, 2147483647), id",
-            (page_id,),
-        ).fetchall()
-        return BlockListOut(items=[_block_out(r) for r in rows])
+    return blockssvc.list_page_blocks(page_id)
 
 
 @router.put("/api/pages/{page_id}/annotations", response_model=BlockListOut)
 def replace_annotations(
     page_id: int,
     payload: BlockBulkWrite,
-    _auth: dict = Depends(require_resource(write=True)),
+    user: dict = Depends(require_resource(write=True)),
 ) -> BlockListOut:
-    """Sincronizza i blocchi della pagina preservando gli ID esistenti.
+    """Sincronizza i blocchi della pagina (logica in ``services/blocks.py``)."""
+    return blockssvc.sync_annotations(page_id, payload, actor=user)
 
-    Le tabelle sono legate a ``blocks.id`` con ``ON DELETE CASCADE``. Il
-    precedente delete+insert cancellava quindi ogni griglia al successivo
-    autosave del canvas, anche quando il blocco Table era ancora presente.
-    """
+
+@router.delete("/api/pages/{page_id}/annotations")
+def delete_page_annotations(
+    page_id: int,
+    user: dict = Depends(require_resource(write=True)),
+) -> dict:
+    """Elimina tutti i blocchi della pagina, incluse le griglie collegate."""
     with connect() as conn:
         _get_page_or_404(conn, page_id)
-        existing = {
-            int(row["id"])
-            for row in conn.execute(
-                "SELECT id FROM blocks WHERE page_id=?", (page_id,)
-            ).fetchall()
-        }
-        kept: set[int] = set()
-        for item in payload.items:
-            values = (
-                item.label,
-                item.kind,
-                json.dumps(item.points),
-                item.content,
-                item.order_idx,
-                1 if item.confirmed else 0,
-            )
-            if item.id is not None:
-                if item.id not in existing:
-                    raise HTTPException(
-                        status_code=409,
-                        detail=f"blocco {item.id} non appartiene alla pagina {page_id}",
-                    )
-                conn.execute(
-                    "UPDATE blocks SET label=?, kind=?, points=?, content=?, "
-                    "order_idx=?, confirmed=?, updated_at=datetime('now') WHERE id=?",
-                    (*values, item.id),
-                )
-                kept.add(item.id)
-            else:
-                cursor = conn.execute(
-                    "INSERT INTO blocks "
-                    "(page_id, label, kind, points, content, order_idx, confirmed) "
-                    "VALUES (?,?,?,?,?,?,?)",
-                    (page_id, *values),
-                )
-                kept.add(int(cursor.lastrowid))
-        removed = existing - kept
-        if removed:
-            placeholders = ",".join("?" for _ in removed)
-            conn.execute(
-                f"DELETE FROM blocks WHERE id IN ({placeholders})", sorted(removed)
-            )
+        count = conn.execute(
+            "SELECT COUNT(*) FROM blocks WHERE page_id=?", (page_id,)
+        ).fetchone()[0]
+        conn.execute("DELETE FROM blocks WHERE page_id=?", (page_id,))
         conn.execute(
-            "UPDATE pages SET status='annotated' WHERE id=? AND status='new'",
+            "UPDATE pages SET status='new', annotation_revision=annotation_revision+1 WHERE id=?",
             (page_id,),
         )
-        rows = conn.execute(
-            "SELECT * FROM blocks WHERE page_id=? "
-            "ORDER BY COALESCE(order_idx, 2147483647), id",
-            (page_id,),
-        ).fetchall()
-        return BlockListOut(items=[_block_out(r) for r in rows])
+        auditsvc.record(conn, user, "page.annotations_deleted", resource_type="page", resource_id=page_id, payload={"deleted": int(count)})
+    return {"deleted": int(count), "page_id": page_id}
 
 
 @router.patch("/api/blocks/{block_id}", response_model=BlockOut)
 def update_block(
     block_id: int,
     payload: BlockUpdate,
-    _auth: dict = Depends(require_resource(write=True)),
+    user: dict = Depends(require_resource(write=True)),
 ) -> BlockOut:
     updates = payload.model_dump(exclude_unset=True)
     if not updates:
@@ -171,17 +128,28 @@ def update_block(
             f"UPDATE blocks SET {sets}, updated_at=datetime('now') WHERE id=?",
             (*updates.values(), block_id),
         )
+        conn.execute(
+            "UPDATE pages SET annotation_revision=annotation_revision+1 "
+            "WHERE id=(SELECT page_id FROM blocks WHERE id=?)",
+            (block_id,),
+        )
+        auditsvc.record(conn, user, "block.updated", resource_type="block", resource_id=block_id)
         return _block_out(_get_block_or_404(conn, block_id))
 
 
 @router.delete("/api/blocks/{block_id}")
 def delete_block(
     block_id: int,
-    _auth: dict = Depends(require_resource(write=True)),
+    user: dict = Depends(require_resource(write=True)),
 ) -> dict:
     with connect() as conn:
         block = _get_block_or_404(conn, block_id)
         conn.execute("DELETE FROM blocks WHERE id=?", (block_id,))
+        conn.execute(
+            "UPDATE pages SET annotation_revision=annotation_revision+1 WHERE id=?",
+            (block["page_id"],),
+        )
+        auditsvc.record(conn, user, "block.deleted", resource_type="block", resource_id=block_id)
     return {"deleted": True, "id": block["id"]}
 
 
@@ -227,7 +195,7 @@ def block_table_get(
 def block_table_put(
     block_id: int,
     payload: TableGrid,
-    _auth: dict = Depends(require_resource(write=True)),
+    user: dict = Depends(require_resource(write=True)),
 ) -> TableSaveOut:
     for name, lines, expected in (
         ("vlines", payload.vlines, payload.cols + 1),
@@ -267,6 +235,12 @@ def block_table_put(
             "grid_json=excluded.grid_json, updated_at=datetime('now')",
             (block_id, json.dumps(grid)),
         )
+        conn.execute(
+            "UPDATE pages SET annotation_revision=annotation_revision+1 "
+            "WHERE id=(SELECT page_id FROM blocks WHERE id=?)",
+            (block_id,),
+        )
+        auditsvc.record(conn, user, "table.updated", resource_type="block", resource_id=block_id)
     return TableSaveOut(grid=TableGrid.model_validate(grid), otsl=otsl_str)
 
 

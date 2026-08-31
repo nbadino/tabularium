@@ -18,9 +18,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import config
-from .model_adapters import get_adapter, list_adapters
+from .model_adapters import get_adapter, list_adapters, supported_prefill_modes, supports_export
 
 _ACTIVE: dict[str, dict] = {}  # adapter_id -> {"proc": Popen, "log_file": Path}
+
+# Template Modal gestite dall'interfaccia CloudControlModal. È distinto da
+# `local_serve_ready`: Unlimited-OCR, per esempio, è cloud-ready ma non si
+# avvia con il server locale standard.
+_CLOUD_TEMPLATES = {
+    "monkeyocrv2-parsing": "monkeyocrv2",
+    "mineru2.5": "mineru",
+    "paddleocr-vl": "paddleocr-vl",
+    "unlimited-ocr": "unlimited-ocr",
+    "dots-ocr": "dots-ocr",
+    "glm-ocr": "glm-ocr",
+    "deepseek-ocr": "deepseek-ocr",
+    "qwen3-vl-8b": "qwen3-vl",
+}
 
 _DOWNLOAD_SCRIPT = (
     "import sys\n"
@@ -120,8 +134,66 @@ def install_state(adapter_id: str) -> dict:
     }
 
 
+def vram_warning(adapter, size_bytes: int | None = None) -> str | None:
+    """Avviso soft sulla dimensione del checkpoint vs. VRAM libera rilevata.
+
+    Non è un preflight bloccante come `services/vram.py` per il training: qui
+    l'utente può servire in locale qualunque modello scelga (compreso un
+    modello custom di dimensione ignota a priori), esattamente come un
+    'potrebbe non entrare' di LM Studio — un avviso informativo, mai un
+    blocco. Usa la dimensione reale su disco se già scaricato (più accurata),
+    altrimenti la stima dichiarata dall'adapter.
+    """
+    size_gb = (size_bytes / (1024 ** 3)) if size_bytes else adapter.capabilities.approx_size_gb
+    if not size_gb:
+        return None
+    try:
+        from . import trainer_metrics
+        gpus = trainer_metrics.gpu_snapshot()
+    except Exception:  # noqa: BLE001
+        gpus = []
+    if not gpus:
+        return None
+    free_mib = max(g["memory_total"] - g["memory_used"] for g in gpus)
+    # Margine di stima: pesi + KV cache/attivazioni, non un limite esatto (v.
+    # `services/vram.py` per la stima puntuale usata nel training).
+    needed_mib = size_gb * 1024 * 1.35
+    if needed_mib <= free_mib:
+        return None
+    return (
+        f"il checkpoint pesa circa {size_gb:.1f} GB, la GPU rilevata ha "
+        f"{free_mib / 1024:.1f} GB liberi: potrebbe non entrare o lasciare poco "
+        "margine per il contesto. Puoi provarlo comunque; se va in out-of-memory, "
+        "riduci max-model-len o gpu-memory-utilization."
+    )
+
+
 def list_models() -> list[dict]:
-    return [{**cap, **install_state(cap["adapter_id"])} for cap in list_adapters()]
+    items = []
+    for cap in list_adapters():
+        adapter = get_adapter(cap["adapter_id"])
+        modes = supported_prefill_modes(adapter)
+        try:
+            local_serve_ready = adapter.serve_command("", 8888) is not None
+        except (NotImplementedError, TypeError):
+            local_serve_ready = False
+        state = install_state(cap["adapter_id"])
+        items.append({
+            **cap,
+            **state,
+            **modes,
+            "export_ready": supports_export(adapter),
+            "local_serve_ready": local_serve_ready,
+            "cloud_serve_ready": cap["adapter_id"] in _CLOUD_TEMPLATES,
+            "cloud_template": _CLOUD_TEMPLATES.get(cap["adapter_id"]),
+            "download_only": (
+                not local_serve_ready
+                and cap["adapter_id"] not in _CLOUD_TEMPLATES
+                and not modes["supports_native"]
+            ),
+            "vram_warning": vram_warning(adapter, state.get("size_bytes") or None),
+        })
+    return items
 
 
 def start_download(adapter_id: str) -> dict:

@@ -213,13 +213,17 @@ def test_layout_caps_oversized_archive_scans():
     assert abs(capped.width / capped.height - scan.width / scan.height) < 0.01
 
 
-def test_end2end_keeps_table_otsl_content_and_caps_page():
+def test_end2end_keeps_table_otsl_content_and_sends_image_asis():
+    """L'immagine va al modello COM'È: nessuna riscalatura nostra. Il tetto a
+    2 MP che prima era applicato di default (misurato in AGENTS.md §2.3.2 sul
+    percorso di layout) è uscito — la condizione perché i risultati coincidano
+    con l'uso diretto del modello; resta solo il tetto opzionale impostato
+    dall'utente via TABULARIUM_VLLM_MAX_PIXELS."""
     from PIL import Image
 
     from app.services.inference import (
         END2END_MAX_TOKENS,
         END2END_PROMPT,
-        LAYOUT_MAX_PIXELS,
         VllmClient,
     )
 
@@ -236,7 +240,7 @@ def test_end2end_keeps_table_otsl_content_and_caps_page():
     items = FakeClient(url="http://127.0.0.1:9/v1").end2end(
         Image.new("RGB", (2864, 3952))
     )
-    assert seen["pixels"] <= LAYOUT_MAX_PIXELS
+    assert seen["pixels"] == 2864 * 3952  # originale, intatta
     assert seen["prompt"] == END2END_PROMPT
     assert seen["max_tokens"] == END2END_MAX_TOKENS
     assert items[0]["label"] == "Table"
@@ -260,7 +264,7 @@ def test_table_grid_repeats_the_header_on_every_band():
     heights: list[int] = []
 
     class FakeClient(VllmClient):
-        def _chat(self, image, prompt, max_tokens=4096, min_pixels=None):
+        def _chat(self, image, prompt, max_tokens=4096, min_pixels=None, **kwargs):
             heights.append(image.height)
             return "<fcel>Vessel<fcel>Flg<nl><fcel>Abagur<fcel>Ru<nl>"
 
@@ -301,7 +305,7 @@ def test_table_grid_normalises_to_the_modal_column_count():
     calls = {"n": 0}
 
     class FakeClient(VllmClient):
-        def _chat(self, image, prompt, max_tokens=4096, min_pixels=None):
+        def _chat(self, image, prompt, max_tokens=4096, min_pixels=None, **kwargs):
             calls["n"] += 1
             body = (
                 "<fcel>a<fcel>b<fcel>c<fcel>d<fcel>e<nl>"
@@ -333,7 +337,7 @@ def test_table_grid_without_row_bounds_falls_back_to_fixed_bands():
     from app.services.inference import VllmClient
 
     class FakeClient(VllmClient):
-        def _chat(self, image, prompt, max_tokens=4096, min_pixels=None):
+        def _chat(self, image, prompt, max_tokens=4096, min_pixels=None, **kwargs):
             return "<fcel>a<fcel>b<nl>"
 
     client = FakeClient(url="http://127.0.0.1:9/v1")

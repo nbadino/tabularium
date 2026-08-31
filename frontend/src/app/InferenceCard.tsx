@@ -10,7 +10,6 @@ import {
 } from './inference'
 import { Badge, Field } from './ui'
 import { IconCloud, IconEnv } from './icons'
-import { CloudGuideModal } from './CloudGuideModal'
 import { CloudControlModal } from './CloudControlModal'
 import { ModelsModal } from './ModelsModal'
 
@@ -21,7 +20,6 @@ export function InferenceCard() {
   const [model, setModel] = useState(inf.model)
   const [apiKey, setApiKey] = useState(inf.apiKey)
   const [showKey, setShowKey] = useState(false)
-  const [guideOpen, setGuideOpen] = useState(false)
   const [controlOpen, setControlOpen] = useState(false)
   const [modelsOpen, setModelsOpen] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -133,56 +131,46 @@ export function InferenceCard() {
             type="button"
             onClick={() => void toggleEnabled()}
             className={`btn btn-sm text-[11px] font-semibold ${
-              inf.enabled
-                ? '!border-emerald-600 !bg-emerald-950 !text-emerald-300'
-                : '!border-neutral-600 !bg-neutral-800 !text-neutral-300'
+              inf.enabled ? 'text-[color:var(--color-ok)]' : ''
             }`}
             title={inf.enabled ? t('cloud.card.gpuOnTitle') : t('cloud.card.gpuOffTitle')}
           >
-            {inf.enabled ? `✓ ${t('cloud.card.gpuOn')}` : `✕ ${t('cloud.card.gpuOff')}`}
+            {inf.enabled ? t('cloud.card.gpuOn') : t('cloud.card.gpuOff')}
           </button>
 
           {inf.enabled ? (
             isOnline ? (
               <Badge tone="ok">
-                🟢 {isCloud ? t('cloud.card.onlineCloud') : t('cloud.card.onlineLocal')}
+                {isCloud ? t('cloud.card.onlineCloud') : t('cloud.card.onlineLocal')}
                 {latency != null && ` (${latency} ms)`}
               </Badge>
             ) : (
               <Badge tone="neutral">
-                ⚪ {t('cloud.card.offline')}
+                {t('cloud.card.offline')}
               </Badge>
             )
           ) : (
             <Badge tone="neutral">
-              ⚪ {t('cloud.card.disabled')}
+              {t('cloud.card.disabled')}
             </Badge>
           )}
 
           <button
             type="button"
             onClick={() => setControlOpen(true)}
-            className="btn btn-sm text-[11px] !border-sky-600 !bg-sky-950 !text-sky-300 font-medium"
+            className="btn btn-sm text-[11px]"
             title={t('cloud.card.manageTitle')}
           >
-            🎛️ {t('cloud.card.manage')}
+            {t('cloud.card.manage')}
           </button>
 
           <button
             type="button"
             onClick={() => setModelsOpen(true)}
-            className="btn btn-sm text-[11px] !border-violet-600 !bg-violet-950 !text-violet-300 font-medium"
+            className="btn btn-sm text-[11px]"
             title={t('cloud.card.modelsTitle')}
           >
-            📦 {t('cloud.card.models')}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setGuideOpen(true)}
-            className="btn btn-sm text-[11px]"
-          >
-            📖 {t('cloud.card.guide')}
+            {t('cloud.card.models')}
           </button>
         </div>
       </div>
@@ -281,7 +269,6 @@ export function InferenceCard() {
         </div>
       </div>
 
-      <CloudGuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
       <CloudControlModal open={controlOpen} onClose={() => setControlOpen(false)} />
       <ModelsModal open={modelsOpen} onClose={() => setModelsOpen(false)} />
     </div>

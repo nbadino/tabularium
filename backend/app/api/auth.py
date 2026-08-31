@@ -11,6 +11,7 @@ from .. import config
 from ..db import connect
 from ..schemas import (
     AuthStatusOut,
+    ChangePasswordIn,
     LoginIn,
     RegisterIn,
     SetupIn,
@@ -19,6 +20,7 @@ from ..schemas import (
 from ..services import auth as authsvc
 from ..services import settings as settingssvc
 from ..services import users as usersvc
+from ..services import rate_limit
 
 router = APIRouter(tags=["auth"])
 
@@ -61,7 +63,20 @@ def setup_first_admin(payload: SetupIn, response: Response) -> UserOut:
     """Crea l'amministratore al primo avvio (solo se non esistono utenti)."""
     if not authsvc.auth_enabled():
         raise HTTPException(status_code=400, detail="autenticazione disattivata")
+    # Il rate-limit deve sopravvivere anche a un errore applicativo successivo
+    # (per esempio setup già completato). Lo si committa prima di iniziare il
+    # claim; il claim resta atomico nella transazione separata.
     with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        setup_allowed = rate_limit.allow(conn, "setup")
+        conn.commit()
+    if not setup_allowed:
+        raise HTTPException(status_code=429, detail="troppi tentativi, riprova più tardi")
+
+    with connect() as conn:
+        # Claim atomico del primo avvio: due richieste concorrenti non possono
+        # entrambe superare il controllo utenti vuoto.
+        conn.execute("BEGIN IMMEDIATE")
         if usersvc.count_users(conn) > 0:
             raise HTTPException(status_code=409, detail="il primo avvio è già stato completato")
         admin = usersvc.create_user(
@@ -80,14 +95,20 @@ def setup_first_admin(payload: SetupIn, response: Response) -> UserOut:
 def login(payload: LoginIn, response: Response) -> UserOut:
     if not authsvc.auth_enabled():
         raise HTTPException(status_code=400, detail="autenticazione disattivata")
+    client_key = f"login:{payload.username.strip().lower()}"
     with connect() as conn:
+        login_allowed = rate_limit.allow(conn, client_key)
         row = conn.execute(
             "SELECT * FROM users WHERE username=?", (payload.username.strip(),)
         ).fetchone()
+    if not login_allowed:
+        raise HTTPException(status_code=429, detail="troppi tentativi, riprova più tardi")
     if row is None or not row["active"]:
         raise HTTPException(status_code=401, detail="credenziali non valide")
     if not authsvc.check_password(row, payload.password):
         raise HTTPException(status_code=401, detail="credenziali non valide")
+    with connect() as conn:
+        rate_limit.reset(conn, client_key)
     with connect() as conn:
         token, expires = authsvc.create_session(row["id"])
     authsvc.set_session_cookie(response, token, expires)
@@ -111,6 +132,13 @@ def register(payload: RegisterIn, response: Response) -> UserOut:
     if not settings["allow_registration"]:
         raise HTTPException(status_code=403, detail="la registrazione è chiusa dall'amministratore")
     role = settings["default_new_user_role"]
+    with connect() as conn:
+        register_allowed = rate_limit.allow(conn, "register")
+        # Persisti il tentativo prima di create_user: anche username duplicato
+        # o password rifiutata non deve azzerare il limite.
+        conn.commit()
+    if not register_allowed:
+        raise HTTPException(status_code=429, detail="troppi tentativi, riprova più tardi")
     with connect() as conn:
         user = usersvc.create_user(
             conn, payload.username, payload.password, email=payload.email, role=role
@@ -138,3 +166,40 @@ def logout(request: Request, response: Response) -> dict:
 @router.get("/api/auth/me", response_model=UserOut)
 def me(user: dict = Depends(authsvc.get_current_user)) -> UserOut:
     return _user_out(user)  # type: ignore[return-value]
+
+
+@router.post("/api/auth/change-password")
+def change_password(
+    payload: ChangePasswordIn,
+    request: Request,
+    user: dict = Depends(authsvc.get_current_user),
+) -> dict:
+    """Cambio password autonomo dell'utente connesso.
+
+    Richiede la password corrente: è la via sicura che manca all'admin
+    (l'endpoint admin di reset, per regola, non tocca il proprio account).
+    Le sessioni *altre* dell'utente decadono; quella corrente resta valida
+    così il cambio non disconnette chi lo sta eseguendo.
+    """
+    if not authsvc.auth_enabled():
+        raise HTTPException(status_code=400, detail="autenticazione disattivata")
+    if user.get("is_local"):
+        raise HTTPException(status_code=400, detail="la modalità locale non ha password")
+    from ..services import security  # noqa: PLC0415
+
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE id=?", (user["id"],)
+        ).fetchone()
+        if row is None or not authsvc.check_password(row, payload.current_password):
+            raise HTTPException(status_code=401, detail="password corrente non valida")
+        usersvc.set_password(conn, row["id"], payload.new_password)
+        token = request.cookies.get(config.SESSION_COOKIE)
+        if token:
+            conn.execute(
+                "DELETE FROM sessions WHERE user_id=? AND token_hash<>?",
+                (row["id"], security.hash_token(token)),
+            )
+        else:
+            conn.execute("DELETE FROM sessions WHERE user_id=?", (row["id"],))
+    return {"ok": True}

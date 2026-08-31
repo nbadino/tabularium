@@ -43,7 +43,9 @@ def playground_parse(
     image = pagesvc.load_source_image(page)
     if image is None:
         raise HTTPException(status_code=404, detail="immagine sorgente non disponibile")
-    client = infmod.get_vllm_client(url=payload.server_url, model=payload.model)
+    if payload.server_url is not None or payload.model is not None:
+        raise HTTPException(status_code=400, detail="usa il profilo di inferenza approvato dall'amministratore")
+    client = infmod.get_vllm_client()
 
     try:
         pred = client.layout(image)

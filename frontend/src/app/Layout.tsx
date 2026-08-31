@@ -11,10 +11,12 @@
 import { NavLink, Outlet } from 'react-router'
 import { useEffect, useState } from 'react'
 import { apiGet } from '../lib/api'
+import { syncInferenceFromBackend } from './inference'
 import type { HealthResponse } from '../lib/types'
 import { LOCALES, LOCALE_LABELS, useI18n } from '../i18n'
 import type { Locale } from '../i18n'
 import { useAuth } from './auth'
+import ChangePasswordModal from './ChangePasswordModal'
 import {
   IconAnnotate,
   IconArchive,
@@ -93,6 +95,7 @@ function BackendState() {
 function UserMenu() {
   const { t } = useI18n()
   const { user, logout } = useAuth()
+  const [pwOpen, setPwOpen] = useState(false)
   if (!user) return null
   const roleKey = `users.role${user.role.charAt(0).toUpperCase()}${user.role.slice(1)}`
   return (
@@ -102,26 +105,34 @@ function UserMenu() {
           {t('nav.users')}
         </NavLink>
       )}
-      {user.role === 'admin' && (
-        <NavLink to="/impostazioni" className="btn btn-sm">
-          {t('nav.settings')}
-        </NavLink>
-      )}
+      <NavLink to="/impostazioni" className="btn btn-sm">
+        {t('nav.settings')}
+      </NavLink>
       <span className="flex min-w-0 items-baseline gap-1.5">
         <span className="max-w-[14ch] truncate text-[12px] font-semibold text-[color:var(--color-ink)]">
           {user.username}
         </span>
         <span className="badge">{t(roleKey)}</span>
       </span>
+      <button type="button" onClick={() => setPwOpen(true)} className="btn btn-sm">
+        {t('layout.changePassword')}
+      </button>
       <button type="button" onClick={() => void logout()} className="btn btn-sm">
         {t('layout.logout')}
       </button>
+      {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} />}
     </div>
   )
 }
 
 export default function Layout() {
   const { t } = useI18n()
+  // Ogni pagina legge lo stato inferenza (chip GPU, banner, motori prefill):
+  // il sync all'avvio evita di mostrare disponibilità/latenza stantie da
+  // localStorage, che prima si aggiornavano solo aprendo la Home.
+  useEffect(() => {
+    void syncInferenceFromBackend().catch(() => {})
+  }, [])
   return (
     <div className="flex h-screen flex-col bg-[color:var(--color-sheet)]">
       <a

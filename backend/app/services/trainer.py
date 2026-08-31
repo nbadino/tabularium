@@ -6,6 +6,8 @@ Delega la generazione script a `trainer_script` e la telemetria a `trainer_metri
 from __future__ import annotations
 
 import json
+import os
+import signal
 import shutil
 import subprocess
 import threading
@@ -23,7 +25,12 @@ from .trainer_script import (
     generate_script,
     prepare_training_files,
 )
+from .training_executor import RemoteProcess, SshExecutor, TrainingRecipe, executor_from_config
+from .artifacts import write_manifest, verify_manifest
 from .i18n import msg
+from ..db import connect
+
+REMOTE_PROVIDERS = {"ssh", "vast", "runpod"}
 
 # Re-export per compatibilità con chi importava da trainer prima dello split.
 __all__ = [
@@ -35,6 +42,8 @@ __all__ = [
     "stop_run",
     "runs_dir",
     "preflight",
+    "TrainingRecipe",
+    "executor_from_config",
 ]
 
 
@@ -222,19 +231,21 @@ def _read_run_meta(run_dir: Path) -> dict | None:
 _ACTIVE: dict[int, dict] = {}
 
 
-def start_run(project_id: int, cfg: dict) -> dict:
+def start_run(project_id: int, cfg: dict, *, owner_id: int | None = None) -> dict:
     check = preflight(project_id, cfg)
     if not check["ready"]:
         raise ValueError("; ".join(check["errors"]))
-    run_dir = runs_dir(project_id) / f"run_{int(time.time())}"
+    run_dir = runs_dir(project_id) / f"run_{int(time.time() * 1000)}"
     run_dir.mkdir(parents=True, exist_ok=True)
     train_file, val_file = prepare_training_files(project_id, run_dir / "dataset")
 
     script = generate_script(cfg, run_dir, train_file, val_file)
-    (run_dir / "train.sh").write_text(script, encoding="utf-8")
+    script_path = run_dir / "train.sh"
+    script_path.write_text(script, encoding="utf-8")
 
     run_id = run_dir.name
     snapshot_id = check["dataset"].get("snapshot_id")
+    executor = executor_from_config(cfg, known_hosts=config.SSH_KNOWN_HOSTS)
     meta = {
         "run_id": run_id,
         "state": "running",
@@ -242,22 +253,48 @@ def start_run(project_id: int, cfg: dict) -> dict:
         "config": cfg,
         "dataset_snapshot_id": snapshot_id,
     }
+    recipe = TrainingRecipe(
+        run_id=run_id,
+        run_dir=run_dir,
+        script=script_path,
+        train_dataset=train_file,
+        val_dataset=val_file,
+        dataset_snapshot_id=snapshot_id,
+        config=cfg,
+        provider=executor.provider,
+    )
+    recipe.write_manifest()
+    meta["recipe"] = recipe.manifest()
     (run_dir / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
     log_file = run_dir / "train.log"
     try:
-        proc = subprocess.Popen(
-            ["bash", str(run_dir / "train.sh")],
-            stdout=log_file.open("wb"),
-            stderr=subprocess.STDOUT,
-        )
+        proc = executor.launch(recipe, log_file)
     except Exception as exc:  # noqa: BLE001
         meta["state"] = "error"
         meta["error"] = str(exc)
         (run_dir / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         raise
 
-    _ACTIVE[project_id] = {"run_id": run_id, "proc": proc, "run_dir": run_dir, "log_file": log_file}
+    with connect() as conn:
+        job = conn.execute(
+            "INSERT INTO jobs(kind, owner_id, project_id, provider, pid, process_group, remote_job_id, state, "
+            "heartbeat_at, command_json, log_path, recovery_strategy) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("training", owner_id, project_id, executor.provider,
+             proc.pid if executor.provider == "local" else None,
+             proc.pid if executor.provider == "local" else None,
+             str(proc.pid) if executor.provider in REMOTE_PROVIDERS else None,
+             "running", _now(),
+             json.dumps({"run_id": run_id, "script": str(run_dir / "train.sh"), "config": cfg}), str(log_file),
+             "reconcile-local-pid" if executor.provider == "local" else "reconcile-ssh-session"),
+        )
+        meta["job_id"] = job.lastrowid
+        if executor.provider == "local":
+            meta["pid"] = proc.pid
+        else:
+            meta["remote_job_id"] = str(proc.pid)
+        (run_dir / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    _ACTIVE[project_id] = {"run_id": run_id, "proc": proc, "run_dir": run_dir, "log_file": log_file, "job_id": job.lastrowid}
     threading.Thread(target=_metrics_writer, args=(project_id,), daemon=True).start()
     threading.Thread(target=_monitor, args=(project_id,), daemon=True).start()
     return _status(project_id)
@@ -304,11 +341,32 @@ def _monitor(project_id: int) -> None:
     proc, run_dir = handle["proc"], handle["run_dir"]
     code = proc.wait()
     state = "finished" if code == 0 else "failed"
+    artifact_error = None
+    if code == 0 and hasattr(proc, "download_artifacts"):
+        try:
+            result = proc.download_artifacts(run_dir / "checkpoints")
+            if not result.get("ok"):
+                artifact_error = "; ".join(result.get("errors") or ["checksum artefatti remoto fallito"])
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            artifact_error = str(exc)
+    if artifact_error:
+        state = "failed"
+        code = 1
+    artifact_manifest = write_manifest(run_dir / "checkpoints")
+    artifact_check = verify_manifest(run_dir / "checkpoints", artifact_manifest)
     meta = _read_run_meta(run_dir) or {}
     meta["state"] = state
     meta["ended_at"] = _now()
     meta["exit_code"] = code
+    meta["artifacts"] = artifact_check
+    if artifact_error:
+        meta["error"] = artifact_error
     (run_dir / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    with connect() as conn:
+        conn.execute(
+            "UPDATE jobs SET state=?, ended_at=?, exit_code=?, heartbeat_at=? WHERE id=?",
+            (state, meta["ended_at"], code, _now(), meta.get("job_id")),
+        )
     _ACTIVE.pop(project_id, None)
 
 
@@ -326,6 +384,65 @@ def _status(project_id: int) -> dict:
             "metrics": metrics,
             "gpu": gpu_snapshot(),
         }
+
+    # Recovery dopo un riavvio del backend: l'handle Python è perso, ma il
+    # PID/job manifest persistito resta sufficiente per osservare e fermare la
+    # run locale.
+    with connect() as conn:
+        job = conn.execute(
+            "SELECT * FROM jobs WHERE project_id=? AND kind='training' ORDER BY id DESC LIMIT 1",
+            (project_id,),
+        ).fetchone()
+    if job is not None and job["state"] == "running":
+        try:
+            command = json.loads(job["command_json"] or "{}")
+        except (TypeError, ValueError):
+            command = {}
+        if job["provider"] in REMOTE_PROVIDERS and job["remote_job_id"]:
+            run_dir = runs_dir(project_id) / str(command.get("run_id", ""))
+            meta = _read_run_meta(run_dir) or {}
+            cfg = command.get("config") or meta.get("config") or {}
+            try:
+                executor = executor_from_config(cfg, known_hosts=config.SSH_KNOWN_HOSTS)
+                if not isinstance(executor, SshExecutor):
+                    raise ValueError("executor SSH non disponibile")
+                recipe = TrainingRecipe(
+                    run_id=str(command.get("run_id", run_dir.name)),
+                    run_dir=run_dir,
+                    script=run_dir / "train.sh",
+                    train_dataset=run_dir / "dataset" / "train.jsonl",
+                    val_dataset=run_dir / "dataset" / "val.jsonl",
+                    dataset_snapshot_id=meta.get("dataset_snapshot_id"),
+                    config=cfg,
+                    provider=executor.provider,
+                )
+                proc = executor.recover(recipe, Path(job["log_path"]), int(job["remote_job_id"]))
+                if proc.poll() is None:
+                    _ACTIVE[project_id] = {"run_id": recipe.run_id, "proc": proc, "run_dir": run_dir, "log_file": Path(job["log_path"]), "job_id": job["id"]}
+                    threading.Thread(target=_metrics_writer, args=(project_id,), daemon=True).start()
+                    threading.Thread(target=_monitor, args=(project_id,), daemon=True).start()
+                    return {"active": True, "run": meta, "log_tail": _log_tail(Path(job["log_path"])), "metrics": _metrics(run_dir), "gpu": gpu_snapshot(), "recovered": True}
+            except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+                pass
+            ended = _now()
+            with connect() as conn:
+                conn.execute("UPDATE jobs SET state='failed', ended_at=?, error=?, heartbeat_at=? WHERE id=?", (ended, "job remoto non più raggiungibile dopo il riavvio", ended, job["id"]))
+
+        alive = False
+        if job["pid"]:
+            try:
+                os.kill(int(job["pid"]), 0)
+                alive = True
+            except OSError:
+                alive = False
+        if not alive:
+            ended = _now()
+            with connect() as conn:
+                conn.execute("UPDATE jobs SET state='failed', ended_at=?, error=?, heartbeat_at=? WHERE id=?", (ended, "processo non più presente dopo il riavvio", ended, job["id"]))
+        else:
+            run_dir = runs_dir(project_id) / str(command.get("run_id", ""))
+            meta = _read_run_meta(run_dir) or {"run_id": command.get("run_id"), "state": "running", "pid": job["pid"]}
+            return {"active": True, "run": meta, "log_tail": _log_tail(Path(job["log_path"])), "metrics": _metrics(run_dir), "gpu": gpu_snapshot(), "recovered": True}
 
     rd = runs_dir(project_id)
     if rd.exists():
@@ -346,6 +463,32 @@ def _status(project_id: int) -> dict:
 def stop_run(project_id: int) -> dict:
     handle = _ACTIVE.get(project_id)
     if not handle:
+        with connect() as conn:
+            job = conn.execute("SELECT * FROM jobs WHERE project_id=? AND kind='training' AND state='running' ORDER BY id DESC LIMIT 1", (project_id,)).fetchone()
+        if job is not None and job["provider"] in REMOTE_PROVIDERS and job["remote_job_id"]:
+            try:
+                command = json.loads(job["command_json"] or "{}")
+                cfg = command.get("config") or {}
+                executor = executor_from_config(cfg, known_hosts=config.SSH_KNOWN_HOSTS)
+                if not isinstance(executor, SshExecutor):
+                    raise ValueError("executor SSH non disponibile")
+                run_dir = runs_dir(project_id) / str(command.get("run_id", ""))
+                recipe = TrainingRecipe(str(command.get("run_id", run_dir.name)), run_dir, run_dir / "train.sh", run_dir / "dataset" / "train.jsonl", run_dir / "dataset" / "val.jsonl", None, cfg, executor.provider)
+                proc = executor.recover(recipe, Path(job["log_path"]), int(job["remote_job_id"]))
+                proc.terminate()
+            except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+                pass
+            ended = _now()
+            with connect() as conn:
+                conn.execute("UPDATE jobs SET state='stopped', ended_at=?, heartbeat_at=? WHERE id=?", (ended, ended, job["id"]))
+        elif job is not None and job["pid"]:
+            try:
+                os.killpg(int(job["process_group"] or job["pid"]), signal.SIGTERM)
+            except OSError:
+                pass
+            ended = _now()
+            with connect() as conn:
+                conn.execute("UPDATE jobs SET state='stopped', ended_at=?, heartbeat_at=? WHERE id=?", (ended, ended, job["id"]))
         return _status(project_id)
     proc = handle["proc"]
     if proc.poll() is None:
@@ -358,5 +501,29 @@ def stop_run(project_id: int) -> dict:
     meta["state"] = "stopped"
     meta["ended_at"] = _now()
     (handle["run_dir"] / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    with connect() as conn:
+        conn.execute("UPDATE jobs SET state='stopped', ended_at=?, heartbeat_at=? WHERE id=?", (meta["ended_at"], _now(), handle.get("job_id")))
     _ACTIVE.pop(project_id, None)
     return _status(project_id)
+
+
+def reconcile_jobs() -> None:
+    """Riconcilia i training locali marcati running all'avvio del backend."""
+    with connect() as conn:
+        rows = conn.execute("SELECT id, pid, provider FROM jobs WHERE kind='training' AND state='running'").fetchall()
+        for row in rows:
+            # Un PID remoto non è verificabile con os.kill locale. Il job SSH
+            # resta running e viene controllato quando l'utente chiede status;
+            # marcarlo failed qui perderebbe il training sopravvissuto al
+            # riavvio del backend.
+            if row["provider"] in REMOTE_PROVIDERS:
+                continue
+            alive = False
+            if row["pid"]:
+                try:
+                    os.kill(int(row["pid"]), 0)
+                    alive = True
+                except OSError:
+                    pass
+            if not alive:
+                conn.execute("UPDATE jobs SET state='failed', ended_at=?, error=? WHERE id=?", (_now(), "processo terminato durante il riavvio", row["id"]))

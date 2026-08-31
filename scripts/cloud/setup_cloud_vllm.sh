@@ -19,6 +19,12 @@ MODEL_DIR="${MODEL_DIR:-$HOME/MonkeyOCRv2/model_weight/MonkeyOCRv2-B-Parsing}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.90}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-24576}"
 API_KEY="${API_KEY:-}"
+VLLM_VERSION="${VLLM_VERSION:-0.25.1}"
+TRANSFORMERS_VERSION="${TRANSFORMERS_VERSION:-4.51.3}"
+MONKEYOCR_REF="${MONKEYOCR_REF:-}"
+MIN_DISK_GB="${MIN_DISK_GB:-10}"
+
+: "${MONKEYOCR_REF:?MONKEYOCR_REF obbligatorio: usare un commit SHA o un tag verificato}"
 
 # Parse flags
 while [[ $# -gt 0 ]]; do
@@ -51,14 +57,23 @@ echo "=========================================================="
 if command -v nvidia-smi &>/dev/null; then
   echo ">> GPU Rilevata:"
   nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
+  GPU_QUERY=$(nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader)
 else
-  echo "!! ATTENZIONE: nvidia-smi non trovato! Assicurati di essere su un'istanza con GPU NVIDIA." >&2
+  echo "!! nvidia-smi non trovato: serve una GPU NVIDIA funzionante." >&2
+  exit 1
+fi
+
+DISK_AVAILABLE_GB=$(df -Pk "$HOME" | awk 'NR==2 {printf "%d", $4 / 1024 / 1024}')
+if [ "$DISK_AVAILABLE_GB" -lt "$MIN_DISK_GB" ]; then
+  echo "!! Spazio insufficiente: ${DISK_AVAILABLE_GB} GB liberi, servono almeno ${MIN_DISK_GB} GB." >&2
+  exit 1
 fi
 
 # 2. Install base system dependencies
 echo ">> Installazione dipendenze di sistema..."
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq && apt-get install -y -qq git git-lfs curl wget build-essential gcc g++ > /dev/null 2>&1 || true
+apt-get update -qq
+apt-get install -y -qq git git-lfs curl wget build-essential gcc g++ > /dev/null 2>&1
 
 # 3. Clone MonkeyOCRv2 repo if not present
 WORK_DIR="$HOME/MonkeyOCRv2"
@@ -66,43 +81,57 @@ if [ ! -d "$WORK_DIR" ]; then
   echo ">> Clonazione repository MonkeyOCRv2 in $WORK_DIR..."
   git clone https://github.com/Yuliang-Liu/MonkeyOCRv2.git "$WORK_DIR"
 fi
+git -C "$WORK_DIR" fetch --depth 1 origin "$MONKEYOCR_REF"
+git -C "$WORK_DIR" checkout --detach FETCH_HEAD
 cd "$WORK_DIR/parsing"
 
 # 4. Install Python dependencies
 echo ">> Installazione dipendenze Python (vLLM, PyTorch, Transformers)..."
 python3 -m pip install --quiet --upgrade pip
 python3 -m pip install --quiet \
-  "vllm>=0.6.0" \
-  "transformers>=4.45.0" \
-  "accelerate" \
-  "huggingface_hub" \
-  "pillow" \
-  "pydantic" \
-  "requests" \
-  "timm" \
-  "einops" \
-  "flashinfer" || true
+  "vllm==${VLLM_VERSION}" \
+  "transformers==${TRANSFORMERS_VERSION}" \
+  "accelerate==1.6.0" \
+  "huggingface_hub==0.30.2" \
+  "pillow==11.2.1" \
+  "pydantic==2.11.3" \
+  "requests==2.32.3" \
+  "timm==1.0.15" \
+  "einops==0.8.1"
 
 # 5. Download model weights
 if [ ! -d "$MODEL_DIR" ] || [ ! -f "$MODEL_DIR/config.json" ]; then
   echo ">> Download pesi modello $MODEL_NAME in $MODEL_DIR..."
   mkdir -p "$(dirname "$MODEL_DIR")"
-  python3 -c "
+  MODEL_NAME="$MODEL_NAME" MODEL_DIR="$MODEL_DIR" python3 - <<'PY'
 from huggingface_hub import snapshot_download
 import os
 
-model_id = '$MODEL_NAME'
-target_dir = '$MODEL_DIR'
-print(f'Scaricamento {model_id} da HuggingFace...')
-try:
-    snapshot_download(repo_id=model_id, local_dir=target_dir, local_dir_use_symlinks=False)
-    print('Download completato!')
-except Exception as e:
-    print(f'HuggingFace download failed: {e}. Tentativo con ModelScope...')
-    from modelscope import snapshot_download as ms_download
-    ms_download(model_id, local_dir=target_dir)
-"
+model_id = os.environ["MODEL_NAME"]
+target_dir = os.environ["MODEL_DIR"]
+print(f"Scaricamento {model_id} da HuggingFace...")
+snapshot_download(repo_id=model_id, local_dir=target_dir)
+print("Download completato!")
+PY
 fi
+
+MODEL_NAME="$MODEL_NAME" MODEL_DIR="$MODEL_DIR" VLLM_VERSION="$VLLM_VERSION" \
+MONKEYOCR_REF="$MONKEYOCR_REF" GPU_QUERY="$GPU_QUERY" DISK_AVAILABLE_GB="$DISK_AVAILABLE_GB" \
+python3 - <<'PY'
+import json, os, subprocess
+from pathlib import Path
+
+manifest = {
+    "model": os.environ["MODEL_NAME"],
+    "model_dir": os.environ["MODEL_DIR"],
+    "vllm": os.environ["VLLM_VERSION"],
+    "monkeyocr_ref": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+    "requested_ref": os.environ["MONKEYOCR_REF"],
+    "gpu": os.environ["GPU_QUERY"],
+    "disk_available_gb": int(os.environ["DISK_AVAILABLE_GB"]),
+}
+Path("cloud-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+PY
 
 # 6. Prepare serving flags
 SERVE_ARGS=(
@@ -113,7 +142,6 @@ SERVE_ARGS=(
   --max-model-len "$MAX_MODEL_LEN"
   --max-num-batched-tokens "$MAX_MODEL_LEN"
   --max-num-seqs 8
-  --generation-config vllm
 )
 
 if [ -n "$API_KEY" ]; then

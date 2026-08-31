@@ -1,10 +1,11 @@
 import { useState } from 'react'
+import { Link } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import type { PageItem, PlaygroundResult } from '../lib/types'
 import { blocks } from '../lib/vocab'
 import { ErrorNotice, Field, Module } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
-import { toggleInferenceEnabled, useInference } from '../app/inference'
+import { useInference } from '../app/inference'
 import { IconCopy, IconPlayground } from '../app/icons'
 import { useI18n, tn } from '../i18n'
 
@@ -90,15 +91,12 @@ export default function PlaygroundPage() {
       </div>
 
       {!inference.enabled && (
-        <div className="mb-3 flex items-center justify-between rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-[12px] text-neutral-300">
-          <span>⚪ L'inferenza GPU/Cloud è attualmente disattivata nelle impostazioni.</span>
-          <button
-            type="button"
-            onClick={() => void toggleInferenceEnabled(true)}
-            className="btn btn-sm !border-emerald-600 !bg-emerald-950 !text-emerald-300"
-          >
-            Attiva Inferenza GPU
-          </button>
+        <div className="mb-3 flex items-center justify-between border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-3 py-2 text-[12px] text-[color:var(--color-ink-2)]">
+          <span>{t('cloud.card.inferenceDisabledNotice')}</span>
+          {/* Un solo posto configura la GPU: la card Inferenza in Home. */}
+          <Link to="/" className="btn btn-sm">
+            {t('cloud.card.inferenceConfigure')}
+          </Link>
         </div>
       )}
 

@@ -17,6 +17,18 @@ def _admin(user: dict = Depends(authsvc.get_current_user)) -> dict:
     return authsvc.require_admin(user)
 
 
+def _credential(payload: dict, raw_key: str = "api_key", ref_key: str = "credential_ref") -> str:
+    """Risolvi un credential dal vault senza mai copiarlo nella risposta."""
+    ref = str(payload.get(ref_key) or "").strip()
+    if ref:
+        from ..services import vault
+        value = vault.get(ref)
+        if not value:
+            raise HTTPException(status_code=400, detail="credential vault non configurato o non valido")
+        return value
+    return str(payload.get(raw_key) or "").strip()
+
+
 # --- Gestione Tunnel SSH da UI ------------------------------------------------
 @router.get("/api/system/cloud/tunnel")
 def get_cloud_tunnel(_admin: dict = Depends(_admin)) -> dict:
@@ -59,6 +71,7 @@ def start_cloud_tunnel(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             key_path=key_path,
             local_port=local_port,
             remote_port=remote_port,
+            owner_id=_admin.get("id"),
         )
         return {
             "ok": True,
@@ -87,7 +100,7 @@ def get_vast_instances(payload: dict, _admin: dict = Depends(_admin)) -> dict:
     """Recupera le istanze dell'account Vast.ai."""
     from ..services import cloud_manager
 
-    api_key = payload.get("api_key", "").strip()
+    api_key = _credential(payload)
     if not api_key:
         raise HTTPException(status_code=400, detail="API Key di Vast.ai obbligatoria.")
 
@@ -98,12 +111,59 @@ def get_vast_instances(payload: dict, _admin: dict = Depends(_admin)) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/api/system/cloud/vast/offers")
+def search_vast_offers(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Cerca offerte Vast.ai senza avviare un noleggio."""
+    from ..services import cloud_manager
+
+    try:
+        items = cloud_manager.search_vast_offers(
+            _credential(payload),
+            gpu_name=payload.get("gpu_name", ""),
+            num_gpus=payload.get("num_gpus", 1),
+            max_dph=payload.get("max_dph"),
+            min_reliability=payload.get("min_reliability", 0.95),
+            instance_type=payload.get("instance_type", "on-demand"),
+        )
+        return {"items": items}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/system/cloud/vast/rent")
+def rent_vast(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Noleggia l'offerta selezionata, dopo conferma esplicita nella UI."""
+    from ..services import cloud_manager
+
+    try:
+        offer_id = int(payload.get("offer_id"))
+        result = cloud_manager.rent_vast_instance(
+            _credential(payload),
+            offer_id,
+            image=payload.get("image", "vastai/pytorch:cuda-12.4.1-auto"),
+            disk_gb=payload.get("disk_gb", 40),
+            model=payload.get("model", "zenosai/MonkeyOCRv2-B-Parsing"),
+            port=payload.get("port", 8888),
+            api_key_for_server=_credential(payload, "server_api_key", "server_credential_ref"),
+            prepare_server=bool(payload.get("prepare_server", False)),
+        )
+        if result.get("contract_id") is not None:
+            cloud_manager.track_cloud_resource(
+                "vast", result["contract_id"], owner_id=_admin.get("id"),
+                hourly_rate=payload.get("dph_total"),
+                metadata={"offer_id": offer_id},
+            )
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/api/system/cloud/vast/control")
 def control_vast(payload: dict, _admin: dict = Depends(_admin)) -> dict:
     """Avvia o mette in pausa un'istanza Vast.ai da UI."""
     from ..services import cloud_manager
 
-    api_key = payload.get("api_key", "").strip()
+    api_key = _credential(payload)
     instance_id = payload.get("instance_id")
     action = payload.get("action", "stop").strip()
 
@@ -112,6 +172,124 @@ def control_vast(payload: dict, _admin: dict = Depends(_admin)) -> dict:
 
     try:
         res = cloud_manager.control_vast_instance(api_key, int(instance_id), action)
+        cloud_manager.track_cloud_resource("vast", instance_id, owner_id=_admin.get("id"), state=action)
         return res
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# --- Gestione Pod RunPod da UI -------------------------------------------------
+@router.post("/api/system/cloud/runpod/pods")
+def get_runpod_pods(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Recupera i Pod dell'account RunPod."""
+    from ..services import cloud_manager
+
+    api_key = _credential(payload, "api_key", "credential_ref")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API Key di RunPod obbligatoria.")
+
+    try:
+        items = cloud_manager.list_runpod_pods(api_key)
+        return {"items": items}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/system/cloud/runpod/create")
+def create_runpod(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Crea un Pod persistente dopo conferma esplicita dell'amministratore."""
+    from ..services import cloud_manager
+
+    try:
+        result = cloud_manager.create_runpod_pod(
+            _credential(payload),
+            name=payload.get("name", "tabularium-training"),
+            image=payload.get("image", "runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04"),
+            gpu_type_ids=payload.get("gpu_type_ids") or [],
+            volume_gb=payload.get("volume_gb", 40),
+            ports=payload.get("ports") or ["8888/http", "22/tcp"],
+            env=payload.get("env") or {},
+            interruptible=bool(payload.get("interruptible", False)),
+        )
+        pod = result.get("pod") or {}
+        if pod.get("id") is not None:
+            cloud_manager.track_cloud_resource("runpod", pod["id"], owner_id=_admin.get("id"), state="running")
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/system/cloud/runpod/control")
+def control_runpod(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Avvia o mette in pausa un Pod RunPod da UI."""
+    from ..services import cloud_manager
+
+    api_key = _credential(payload)
+    pod_id = payload.get("pod_id")
+    action = payload.get("action", "stop").strip()
+
+    if not api_key or not pod_id:
+        raise HTTPException(status_code=400, detail="API Key e ID Pod obbligatori.")
+
+    try:
+        res = cloud_manager.control_runpod_pod(api_key, str(pod_id), action)
+        cloud_manager.track_cloud_resource("runpod", pod_id, owner_id=_admin.get("id"), state=action)
+        return res
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# --- Gestione Modal Serverless da UI -------------------------------------------
+@router.get("/api/system/cloud/modal")
+def get_modal_status(template: str | None = None, _admin: dict = Depends(_admin)) -> dict:
+    """Stato Modal per una template: CLI, token, task in corso, endpoint dell'ultimo deploy."""
+    from ..services import modal_manager
+
+    try:
+        return modal_manager.status(template)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/system/cloud/modal/setup")
+def start_modal_setup(_admin: dict = Depends(_admin)) -> dict:
+    """Autenticazione Modal: apre il browser per approvare il token."""
+    from ..services import modal_manager
+
+    try:
+        modal_manager.start_setup()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "status": modal_manager.status()}
+
+
+@router.post("/api/system/cloud/modal/deploy")
+def start_modal_deploy(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Deploy della template serverless vLLM scelta (immagine + pesi + endpoint)."""
+    from ..services import modal_manager
+
+    template_id = payload.get("template") or None
+    try:
+        modal_manager.start_deploy(
+            template_id=template_id,
+            api_key=_credential(payload) or None,
+            keep_warm=bool(payload.get("keep_warm", False)),
+        )
+    except (RuntimeError, ValueError) as exc:
+        code = 409 if isinstance(exc, RuntimeError) else 400
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    return {"ok": True, "status": modal_manager.status(template_id)}
+
+
+@router.post("/api/system/cloud/modal/stop")
+def stop_modal_app(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Ferma l'app Modal selezionata e termina i suoi container."""
+    from ..services import modal_manager
+
+    template_id = payload.get("template") or None
+    try:
+        modal_manager.stop_app(template_id=template_id)
+    except (RuntimeError, ValueError) as exc:
+        code = 409 if isinstance(exc, RuntimeError) else 400
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    return {"ok": True, "status": modal_manager.status(template_id)}

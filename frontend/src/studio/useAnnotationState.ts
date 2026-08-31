@@ -26,6 +26,9 @@ export interface UseAnnotationStateReturn {
   redo: () => void
   addBlock: (input: { kind: 'rect' | 'polygon'; points: { x: number; y: number }[]; label: string }) => void
   updateBlockPoints: (id: string, points: { x: number; y: number }[]) => void
+  /** Blocco già scritto dal backend (streaming prefill): si aggiunge al
+   *  canvas senza selezionarlo, con `serverId` noto. */
+  insertServerBlock: (block: DisplayBlock) => void
   setBlockLabel: (id: string, label: string) => void
   setBlockContent: (id: string, content: string) => void
   setBlockConfirmed: (id: string, confirmed: boolean) => void
@@ -33,7 +36,16 @@ export interface UseAnnotationStateReturn {
   moveBlock: (id: string, dir: -1 | 1) => void
   reorderReset: () => void
   saveNow: () => Promise<void>
-  reset: (blocks?: DisplayBlock[]) => void
+  /** Vero se ci sono modifiche non ancora persistite. */
+  dirty: boolean
+  /** Lettura sincrona di `dirty`: serve a chi deve decidere *prima* di
+   *  cambiare pagina, senza attendere il ciclo di render. */
+  getDirty: () => boolean
+  /** Salva ora se sporco, altrimenti non fa nulla. Da attendere prima di
+   *  cambiare pagina o progetto: l'autosave con debounce non proteggerebbe
+   *  la navigazione interna, solo la chiusura del browser. */
+  flush: () => Promise<void>
+  reset: (blocks?: DisplayBlock[], annotationRevision?: number) => void
   selectedBlock: DisplayBlock | null
   selectedBboxPage: { x: number; y: number; w: number; h: number } | null
   colorFor: (label: string) => string
@@ -50,6 +62,21 @@ export function useAnnotationState(
   const [activeLabel, setActiveLabel] = useState('Text')
   const [save, setSave] = useState<SaveStatus>({ state: 'idle' })
   const dirtyRef = useRef(false)
+  const annotationRevisionRef = useRef(page?.annotation_revision ?? 0)
+  // Copia reattiva di dirtyRef: l'indicatore «non salvato» in UI deve
+  // aggiornarsi al render, la navigazione legge invece il ref in modo
+  // sincrono (getDirty) senza attendere il ciclo di render.
+  const [dirty, setDirty] = useState(false)
+  const markDirty = useCallback(() => {
+    if (!dirtyRef.current) {
+      dirtyRef.current = true
+      setDirty(true)
+    }
+  }, [])
+  const clearDirty = useCallback(() => {
+    dirtyRef.current = false
+    setDirty(false)
+  }, [])
 
   // Undo/redo modificano i blocchi tanto quanto un'aggiunta: vanno salvati.
   // Dopo il loro uso segnaliamo lo stato come «sporco» perché l'autosave
@@ -57,30 +84,31 @@ export function useAnnotationState(
   // ricaricando si tornava allo stato pre-annullamento).
   const undo = useCallback(() => {
     if (!hist.canUndo) return
-    dirtyRef.current = true
+    markDirty()
     hist.undo()
-  }, [hist])
+  }, [hist, markDirty])
 
   const redo = useCallback(() => {
     if (!hist.canRedo) return
-    dirtyRef.current = true
+    markDirty()
     hist.redo()
-  }, [hist])
+  }, [hist, markDirty])
 
   const reset = useCallback(
-    (blocks: DisplayBlock[] = []) => {
+    (blocks: DisplayBlock[] = [], annotationRevision = page?.annotation_revision ?? 0) => {
       hist.reset(blocks)
+      annotationRevisionRef.current = annotationRevision
       setSelectedId(null)
-      dirtyRef.current = false
+      clearDirty()
       setSave({ state: 'idle' })
     },
-    [hist],
+    [hist, clearDirty, page?.annotation_revision],
   )
 
   // --- operazioni blocchi ---------------------------------------------------
   const addBlock = useCallback(
     (input: { kind: 'rect' | 'polygon'; points: { x: number; y: number }[]; label: string }) => {
-      dirtyRef.current = true
+      markDirty()
       const block: DisplayBlock = {
         id: nextId(),
         serverId: null,
@@ -99,15 +127,27 @@ export function useAnnotationState(
 
   const updateBlockPoints = useCallback(
     (id: string, points: { x: number; y: number }[]) => {
-      dirtyRef.current = true
+      markDirty()
       hist.set((prev) => prev.map((b) => (b.id === id ? { ...b, points } : b)))
+    },
+    [hist],
+  )
+
+  /** Inserisce un blocco arrivato dal server durante lo streaming del
+   *  prefill, senza selezionarlo: il canvas si popola man mano che il
+   *  backend scrive. `serverId` è già noto, quindi l'autosave lo aggiorna
+   *  senza reinserirlo. */
+  const insertServerBlock = useCallback(
+    (block: DisplayBlock) => {
+      markDirty()
+      hist.set((prev) => [...prev, block])
     },
     [hist],
   )
 
   const setBlockLabel = useCallback(
     (id: string, label: string) => {
-      dirtyRef.current = true
+      markDirty()
       hist.set((prev) => prev.map((b) => (b.id === id ? { ...b, label } : b)))
     },
     [hist],
@@ -115,7 +155,7 @@ export function useAnnotationState(
 
   const setBlockContent = useCallback(
     (id: string, content: string) => {
-      dirtyRef.current = true
+      markDirty()
       // La digitazione è un unico gesto: le battute ravvicinate sulla stessa
       // cella non generano un passo di undo per ogni lettera.
       hist.set((prev) => prev.map((b) => (b.id === id ? { ...b, content } : b)), {
@@ -127,7 +167,7 @@ export function useAnnotationState(
 
   const setBlockConfirmed = useCallback(
     (id: string, confirmed: boolean) => {
-      dirtyRef.current = true
+      markDirty()
       hist.set((prev) => prev.map((b) => (b.id === id ? { ...b, confirmed } : b)))
     },
     [hist],
@@ -135,7 +175,7 @@ export function useAnnotationState(
 
   const deleteBlock = useCallback(
     (id: string) => {
-      dirtyRef.current = true
+      markDirty()
       hist.set((prev) => {
         const next = prev.filter((b) => b.id !== id)
         if (selectedId === id) setSelectedId(null)
@@ -147,7 +187,7 @@ export function useAnnotationState(
 
   const moveBlock = useCallback(
     (id: string, dir: -1 | 1) => {
-      dirtyRef.current = true
+      markDirty()
       hist.set((prev) => {
         const sorted = [...prev].sort(
           (a, b) => (a.orderIdx ?? Number.MAX_SAFE_INTEGER) - (b.orderIdx ?? Number.MAX_SAFE_INTEGER),
@@ -164,7 +204,7 @@ export function useAnnotationState(
   )
 
   const reorderReset = useCallback(() => {
-    dirtyRef.current = true
+    markDirty()
     hist.set((prev) => {
       const sorted = [...prev].sort(
         (a, b) => (a.orderIdx ?? Number.MAX_SAFE_INTEGER) - (b.orderIdx ?? Number.MAX_SAFE_INTEGER),
@@ -180,6 +220,7 @@ export function useAnnotationState(
     setSave({ state: 'saving' })
     const r = ratio
     const body: BlockBulkWrite = {
+      expected_revision: annotationRevisionRef.current,
       items: hist.present.map((b) => ({
         id: b.serverId ?? undefined,
         label: b.label,
@@ -198,17 +239,21 @@ export function useAnnotationState(
         `/pages/${page.id}/annotations`,
         body,
       )
-      dirtyRef.current = false
+      clearDirty()
       // Il mapping degli id di server non è una modifica: non deve finire
       // nello storico, altrimenti il prossimo «Annulla» sembrava un no-op.
       hist.replacePresent((prev) =>
         prev.map((b, i) => ({ ...b, serverId: res.items[i]?.id ?? b.serverId })),
       )
+      // The response includes the revision even though the historical type
+      // only declared items. Keep this tolerant for older deployments.
+      annotationRevisionRef.current = Number((res as { annotation_revision?: number }).annotation_revision ?? annotationRevisionRef.current + 1)
       setSave({ state: 'saved' })
     } catch (e) {
-      setSave({ state: 'error', message: String(e) })
+      const message = String(e)
+      setSave({ state: message.includes('→ 409') ? 'conflict' : 'error', message })
     }
-  }, [page, ratio, hist])
+  }, [page, ratio, hist, clearDirty])
 
   // autosave con debounce 700ms
   useEffect(() => {
@@ -216,6 +261,28 @@ export function useAnnotationState(
     const t = setTimeout(() => void saveNow(), 700)
     return () => clearTimeout(t)
   }, [hist.present, page, saveNow])
+
+  const flush = useCallback(async () => {
+    if (!dirtyRef.current) return
+    await saveNow()
+  }, [saveNow])
+
+  // Riferimento sempre aggiornato per il cleanup allo smontaggio: la closure
+  // dell'effetto non vede l'ultimo saveNow altrimenti.
+  const saveNowRef = useRef(saveNow)
+  useEffect(() => {
+    saveNowRef.current = saveNow
+  }, [saveNow])
+
+  // Cambiare pagina/progetto dentro l'app non passa da beforeunload: lo
+  // smontaggio con lavoro sporco salva ciò che può essere salvato, così
+  // l'autosave non dipende dal tempismo del debounce.
+  useEffect(
+    () => () => {
+      if (dirtyRef.current) void saveNowRef.current()
+    },
+    [],
+  )
 
   // avvisa se si chiude/cambia pagina con modifiche non ancora salvate
   useEffect(() => {
@@ -242,7 +309,7 @@ export function useAnnotationState(
         redo()
         return
       }
-      const toolKeys: Record<string, Tool> = { v: 'select', r: 'rect', p: 'polygon', h: 'pan' }
+      const toolKeys: Record<string, Tool> = { v: 'select', r: 'rect' }
       const tk = toolKeys[e.key.toLowerCase()]
       if (tk) setTool(tk)
     }
@@ -278,6 +345,7 @@ export function useAnnotationState(
     redo,
     addBlock,
     updateBlockPoints,
+    insertServerBlock,
     setBlockLabel,
     setBlockContent,
     setBlockConfirmed,
@@ -285,6 +353,9 @@ export function useAnnotationState(
     moveBlock,
     reorderReset,
     saveNow,
+    dirty,
+    getDirty: () => dirtyRef.current,
+    flush,
     reset,
     selectedBlock,
     selectedBboxPage,

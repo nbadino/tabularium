@@ -206,7 +206,7 @@ export default function TableGridOverlay({
         </button>
         <span className="mx-1 h-4 w-px bg-[color:var(--color-rule)]" />
         <button type="button" className="btn btn-sm" onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))} aria-label={t('table.zoomOut')}>−</button>
-        <span className="mono w-10 text-center text-[10px]">{Math.round(zoom * 100)}%</span>
+        <span className="mono w-10 text-center text-[11px]">{Math.round(zoom * 100)}%</span>
         <button type="button" className="btn btn-sm" onClick={() => setZoom((z) => Math.min(6, z + 0.25))} aria-label={t('table.zoomIn')}>+</button>
         <button type="button" className="btn btn-sm" onClick={() => setZoom(1)}>{t('table.resetZoom')}</button>
       </div>

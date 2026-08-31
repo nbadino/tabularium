@@ -443,6 +443,17 @@ def test_cannot_delete_self():
         assert r.status_code == 400
 
 
+def test_cannot_deactivate_project_owner():
+    admin = _mkuser("boss", role="admin")
+    owner = _mkuser("owner", role="editor")
+    _mkproject(owner_id=owner["id"])
+    with _client() as client:
+        _login(client, "boss")
+        r = client.patch(f"/api/users/{owner['id']}", json={"active": False})
+        assert r.status_code == 409
+        assert "trasferisci" in r.json()["detail"]
+
+
 def test_reset_password_invalidates_sessions():
     admin = _mkuser("boss", role="admin")
     target = _mkuser("anna", role="editor")
@@ -468,6 +479,66 @@ def test_reset_password_invalidates_sessions():
             "/api/auth/login", json={"username": "anna", "password": "nuovapass-123"}
         )
         assert r.status_code == 200
+
+
+# --- cambio password autonomo ----------------------------------------------------------
+def test_change_password_requires_current_and_keeps_session():
+    """Il cambio autonomo richiede la password corrente; le altre sessioni
+    dell'utente decadono, quella corrente resta valida."""
+    _mkuser("carlo", role="editor")
+    client = _client()
+    _login(client, "carlo")
+
+    # Password corrente sbagliata -> 401, la password non cambia.
+    r = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "sbagliata", "new_password": "nuovapass-123"},
+    )
+    assert r.status_code == 401
+    r = client.post(
+        "/api/auth/login", json={"username": "carlo", "password": "nuovapass-123"}
+    )
+    assert r.status_code == 401
+
+    # Nuova password troppo corta -> 422.
+    r = client.post(
+        "/api/auth/change-password",
+        json={"current_password": PASSWORD, "new_password": "corta"},
+    )
+    assert r.status_code == 422
+
+    # Cambio corretto: la sessione corrente resta valida e la nuova password
+    # funziona, quella vecchia no.
+    r = client.post(
+        "/api/auth/change-password",
+        json={"current_password": PASSWORD, "new_password": "nuovapass-123"},
+    )
+    assert r.status_code == 200, r.text
+    assert client.get("/api/auth/me").status_code == 200  # sessione corrente viva
+    assert client.post(
+        "/api/auth/login", json={"username": "carlo", "password": PASSWORD}
+    ).status_code == 401
+    assert client.post(
+        "/api/auth/login", json={"username": "carlo", "password": "nuovapass-123"}
+    ).status_code == 200
+
+    # Le sessioni *altre* (es. un altro browser) sono state chiuse.
+    other = _client()
+    other.post("/api/auth/login", json={"username": "carlo", "password": "nuovapass-123"})
+    client2 = _client()
+    client2.post("/api/auth/login", json={"username": "carlo", "password": "nuovapass-123"})
+    assert client2.post(
+        "/api/auth/change-password",
+        json={"current_password": "nuovapass-123", "new_password": "terzapass-123"},
+    ).status_code == 200
+    assert other.get("/api/auth/me").status_code == 401  # sessione zoppa chiusa
+    assert client2.get("/api/auth/me").status_code == 200  # quella corrente no
+
+    # Richiede il login: senza sessione, 401.
+    assert _client().post(
+        "/api/auth/change-password",
+        json={"current_password": "x", "new_password": "nuovapass-123"},
+    ).status_code == 401
 
 
 # --- sicurezza (unit) -------------------------------------------------------------------

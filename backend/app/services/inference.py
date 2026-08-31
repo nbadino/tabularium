@@ -9,9 +9,13 @@ import ast
 import base64
 import io
 import json
+import os
 import re
+import sqlite3
+import threading
 import time
 from collections import Counter
+from collections.abc import Callable
 
 import requests
 from PIL import Image
@@ -37,18 +41,22 @@ END2END_PROMPT = (
 
 
 def _prompt_for(adapter: ModelAdapter, task: str, label: str | None, fallback: str) -> str:
-    """`adapter.prompt_for` con ripiego sulla costante storica.
+    """`adapter.prompt_for` con ripiego sulla costante storica SOLO quando è
+    lo stesso adapter a scegliere di non prompare per quel task+label (torna
+    `None`: v. `MonkeyOCRv2ParsingAdapter.prompt_for` per `label` "Column"/
+    "Picture" — un default deliberato, non un buco).
 
-    Stesso pattern `or fallback` già usato in `dataset_builder.py`. Un
-    adapter nuovo può non avere ancora quel task implementato
-    (`NotImplementedError`, v. gli stub in `model_adapters.py`): in quel caso
-    come quando l'adapter torna `None` si ricade sul prompt storico di
-    MonkeyOCRv2, invece di propagare l'errore fino alla richiesta HTTP.
+    `NotImplementedError` (adapter che quel task non lo sa fare affatto, es.
+    `PaddleOcrVlAdapter` per "layout") **non** ricade più sul prompt di
+    MonkeyOCRv2: prima lo faceva, e mandava il prompt sbagliato a un modello
+    che non lo capisce — degradazione silenziosa, non un errore. `layout()`/
+    `recognize()`/`table_grid()` non la intercettano: risale a
+    `model_prelabel_pages` (prefill.py) e ai due endpoint in blocks.py/
+    evaluate.py, che già catturano `RuntimeError` (`NotImplementedError` ne è
+    sottoclasse) attorno a queste chiamate e lo mostrano come errore di
+    pagina/richiesta, non un crash.
     """
-    try:
-        return adapter.prompt_for(task, label) or fallback
-    except NotImplementedError:
-        return fallback
+    return adapter.prompt_for(task, label) or fallback
 
 # Semantica identica a `load_image` di `parsing/core_runner.py` (repo ufficiale):
 #   - `min_pixels` INGRANDISCE le immagini piccole, non le riduce. Il pipeline
@@ -89,6 +97,28 @@ DEFAULT_ROWS_PER_BAND = 15
 # 20.480 è un tetto di output, non il contesto totale: il parser rifiuta sempre
 # una lista troncata. Sulla pagina indice più lunga osservata 16.384 non bastano.
 END2END_MAX_TOKENS = 20_480
+
+
+def _should_retry_repeat_output(raw: str) -> bool:
+    """Rileva il loop di token tipico dei JSON di layout.
+
+    Il caso più frequente è un coordinato che diventa ``998, 998, ...``;
+    teniamo anche un controllo generico su n-grammi brevi per non legare la
+    protezione a quel solo valore di bordo.
+    """
+    text = raw or ""
+    if re.search(r"(?:\b998\b\s*,\s*){4,}\b998\b", text):
+        return True
+    tokens = re.findall(r"[A-Za-z0-9_]+|[^\w\s]", text)
+    for size in range(1, min(24, len(tokens) // 5) + 1):
+        repeats = 1
+        cursor = len(tokens) - size
+        while cursor >= size and tokens[cursor:cursor + size] == tokens[cursor - size:cursor]:
+            repeats += 1
+            cursor -= size
+        if repeats >= 5:
+            return True
+    return False
 
 
 class _OuterListScanner:
@@ -216,6 +246,16 @@ class VllmClient:
             for loc in ("127.0.0.1", "localhost", "0.0.0.0", "::1", "local")
         )
 
+    @property
+    def is_modal(self) -> bool:
+        """Modal usa un proxy HTTP davanti al web server vLLM.
+
+        Il proxy può troncare una risposta chunked molto lunga con
+        ``TransferEncodingError`` anche quando vLLM ha terminato normalmente;
+        il client lo evita drenando lo stream fino a ``[DONE]``.
+        """
+        return ".modal.run" in self.url.lower()
+
     def _chat(
         self,
         image: Image.Image,
@@ -224,6 +264,11 @@ class VllmClient:
         min_pixels: int | None = None,
         total_timeout: float | None = None,
         stop_when_complete_list: bool = False,
+        sampling: dict | None = None,
+        on_delta: Callable[[str], None] | None = None,
+        *,
+        task: str = "text",
+        cancel_event: threading.Event | None = None,
     ) -> str:
         buf = io.BytesIO()
         prepared = _fit_pixels(
@@ -231,22 +276,40 @@ class VllmClient:
         )
         prepared.convert("RGB").save(buf, format="PNG")
         data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+        # Tutti gli endpoint OpenAI-compatible, incluso Modal, usano lo
+        # streaming: la UI può mostrare i delta durante il decoding. La
+        # compatibilità Modal è garantita drenando la risposta fino a [DONE]
+        # anche quando `_OuterListScanner` ha già trovato la lista completa.
+        stream_response = True
+        content = [
+            {"type": "image_url", "image_url": {"url": data_uri}},
+            {"type": "text", "text": prompt},
+        ]
+        if getattr(self.adapter, "multimodal_content_order", "image-text") == "text-image":
+            content.reverse()
         payload = {
             "model": self.model,
             "temperature": 0,
             "max_tokens": max_tokens,
-            "stream": True,
-            "stream_options": {"include_usage": True},
+            "stream": stream_response,
             "messages": [
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": data_uri}},
-                        {"type": "text", "text": prompt},
-                    ],
+                    "content": content,
                 }
             ],
         }
+        if stream_response:
+            payload["stream_options"] = {"include_usage": True}
+        # Alcuni modelli richiedono penalità anti-ripetizione specifiche lato
+        # richiesta (es. MinerU2.5, abbinate al `--logits-processors` server:
+        # v. `MinerU2_5Adapter.sampling_for`). Non tocca `temperature`/
+        # `max_tokens`/`stream`: quelle chiavi non compaiono in `sampling`.
+        if sampling:
+            payload.update(sampling)
+        request_overrides = getattr(self.adapter, "request_overrides", None)
+        if callable(request_overrides):
+            payload.update(request_overrides(task) or {})
         last: Exception | None = None
         for attempt in range(self.max_retries + 1):
             started = time.perf_counter()
@@ -255,43 +318,70 @@ class VllmClient:
             usage: dict = {}
             finish_reason: str | None = None
             scanner = _OuterListScanner()
+            logical_done = False
             try:
                 with requests.post(
                     f"{self.url}/chat/completions",
                     json=payload,
                     headers=self._headers(),
                     timeout=(10, self.timeout),
-                    stream=True,
+                    stream=stream_response,
+                    allow_redirects=False,
                 ) as resp:
                     resp.raise_for_status()
-                    for line in resp.iter_lines(decode_unicode=True):
-                        elapsed = time.perf_counter() - started
-                        if total_timeout is not None and elapsed > total_timeout:
-                            raise TimeoutError(
-                                f"generazione oltre il limite di {total_timeout:.0f}s"
-                            )
-                        if not line or not line.startswith("data: "):
-                            continue
-                        body = line[6:]
-                        if body == "[DONE]":
-                            break
-                        event = json.loads(body)
-                        if event.get("usage"):
-                            usage = event["usage"]
+                    if not stream_response:
+                        event = resp.json()
+                        usage = event.get("usage") or {}
                         choices = event.get("choices") or []
-                        if not choices:
-                            continue
-                        choice = choices[0]
-                        finish_reason = choice.get("finish_reason") or finish_reason
-                        delta = (choice.get("delta") or {}).get("content") or ""
-                        if not delta:
-                            continue
-                        if first_token_at is None:
-                            first_token_at = time.perf_counter()
-                        chunks.append(delta)
-                        if stop_when_complete_list and scanner.feed(delta):
-                            finish_reason = "complete_list"
-                            break
+                        if choices:
+                            choice = choices[0]
+                            finish_reason = choice.get("finish_reason") or finish_reason
+                            message = choice.get("message") or {}
+                            delta = message.get("content") or ""
+                            if delta:
+                                first_token_at = time.perf_counter()
+                                chunks.append(delta)
+                                if on_delta:
+                                    on_delta(delta)
+                                if stop_when_complete_list:
+                                    scanner.feed(delta)
+                    else:
+                        for line in resp.iter_lines(decode_unicode=True):
+                            if cancel_event is not None and cancel_event.is_set():
+                                raise RuntimeError("inference cancelled")
+                            elapsed = time.perf_counter() - started
+                            if total_timeout is not None and elapsed > total_timeout:
+                                raise TimeoutError(
+                                    f"generazione oltre il limite di {total_timeout:.0f}s"
+                                )
+                            if not line or not line.startswith("data: "):
+                                continue
+                            body = line[6:]
+                            if body == "[DONE]":
+                                break
+                            event = json.loads(body)
+                            if event.get("usage"):
+                                usage = event["usage"]
+                            choices = event.get("choices") or []
+                            if not choices:
+                                continue
+                            choice = choices[0]
+                            finish_reason = choice.get("finish_reason") or finish_reason
+                            delta = (choice.get("delta") or {}).get("content") or ""
+                            if not delta:
+                                continue
+                            if first_token_at is None:
+                                first_token_at = time.perf_counter()
+                            if logical_done:
+                                # Il parser ha già trovato la lista completa,
+                                # ma dobbiamo comunque drenare fino a [DONE].
+                                continue
+                            if on_delta:
+                                on_delta(delta)
+                            chunks.append(delta)
+                            if stop_when_complete_list and scanner.feed(delta):
+                                finish_reason = "complete_list"
+                                logical_done = True
                 ended = time.perf_counter()
                 text = "".join(chunks)
                 self.last_text = text
@@ -330,18 +420,52 @@ class VllmClient:
                     break
         raise RuntimeError(f"vLLM non raggiungibile ({self.url}): {last}")
 
-    def layout(self, image: Image.Image) -> list[dict]:
-        # `min_pixels=1003520` è ciò che passa `get_layout` ufficiale; il tetto
-        # è nostro e riguarda solo questa chiamata (v. LAYOUT_MAX_PIXELS).
-        prepared = _fit_pixels(
-            image,
-            min_pixels=LAYOUT_MIN_PIXELS,
-            max_pixels=config.VLLM_MAX_PIXELS or LAYOUT_MAX_PIXELS,
-        )
+    def _parse_items(self, raw: str) -> list[dict]:
+        """Delega il parsing all'adapter se ne dichiara uno proprio (es.
+        `MinerU2_5Adapter`, formato a token speciali, non il JSON tollerante
+        di MonkeyOCRv2); altrimenti usa `_tolerant_items` come sempre."""
+        parse = getattr(self.adapter, "parse_layout", None)
+        return parse(raw) if callable(parse) else _tolerant_items(raw)
+
+    def _sampling_for(self, task: str) -> dict | None:
+        """Override di sampling per task, se l'adapter ne dichiara (es.
+        le penalità anti-ripetizione richieste da MinerU2.5)."""
+        sampling_for = getattr(self.adapter, "sampling_for", None)
+        return sampling_for(task) if callable(sampling_for) else None
+
+    def layout(
+        self, image: Image.Image, on_delta: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> list[dict]:
+        # Per il layout applichiamo il contratto del corpus: minimo ufficiale
+        # da 1 MP e tetto operativo di 2 MP sulle scansioni d'archivio. Il
+        # riconoscimento sui crop, invece, non passa da questo metodo e non
+        # riduce i caratteri. Un override esplicito può sostituire il tetto.
+        official_size = getattr(self.adapter, "official_layout_size", None)
+        if official_size:
+            # MinerUClient.prepare_for_layout() usa resize() a una dimensione
+            # fissa di 1036x1036. È parte del protocollo del checkpoint, non
+            # un'ottimizzazione nostra: aspect ratio e pixel budget diversi
+            # cambiano il layout che il VLM vede.
+            prepared = image.convert("RGB").resize(official_size, Image.Resampling.BICUBIC)
+        else:
+            prepared = _fit_pixels(
+                image,
+                min_pixels=LAYOUT_MIN_PIXELS,
+                max_pixels=config.VLLM_MAX_PIXELS or LAYOUT_MAX_PIXELS,
+            )
         prompt = _prompt_for(self.adapter, "layout", None, LAYOUT_PROMPT)
-        raw = self._chat(prepared, prompt, max_tokens=4096)
+        raw = self._chat(
+            prepared,
+            prompt,
+            task="layout",
+            max_tokens=4096,
+            sampling=self._sampling_for("layout"),
+            on_delta=on_delta,
+            cancel_event=cancel_event,
+        )
         cleaned = []
-        for item in _tolerant_items(raw):
+        for item in self._parse_items(raw):
             bbox = item.get("bbox")
             label = item.get("label") or item.get("category")
             if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
@@ -359,28 +483,77 @@ class VllmClient:
         max_tokens: int = END2END_MAX_TOKENS,
         max_pixels: int | None = None,
         total_timeout: float = 300,
+        on_delta: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+        on_retry: Callable[[], None] | None = None,
     ) -> list[dict]:
         """Pagina intera: bbox, label e contenuto in una sola generazione.
 
-        È il percorso ufficiale ``ALL_PROMPT['END2END']``. Come per il layout
-        applichiamo il tetto sperimentale di 2 MP che evita la frammentazione
-        osservata sulle scansioni Historic Shipping Index ad alta risoluzione.
+        È il percorso ufficiale ``ALL_PROMPT['END2END']``. L'immagine va al
+        modello com'è: nessuna riscalatura nostra, salvo il tetto opzionale
+        impostato dall'utente (v. `layout`).
         """
+        adapter_max_pixels = getattr(self.adapter, "end2end_max_pixels", None)
         prepared = _fit_pixels(
             image,
-            min_pixels=LAYOUT_MIN_PIXELS,
-            max_pixels=max_pixels or config.VLLM_MAX_PIXELS or LAYOUT_MAX_PIXELS,
+            max_pixels=max_pixels or config.VLLM_MAX_PIXELS or adapter_max_pixels,
         )
         prompt = _prompt_for(self.adapter, "end2end", None, END2END_PROMPT)
+        adapter_max_tokens = getattr(self.adapter, "end2end_max_tokens", max_tokens)
         raw = self._chat(
             prepared,
             prompt,
-            max_tokens=max_tokens,
+            task="end2end",
+            max_tokens=min(max_tokens, adapter_max_tokens),
             total_timeout=total_timeout,
-            stop_when_complete_list=True,
+            # Gli adapter JSON possono chiudere presto dopo la lista; questo
+            # modello invece emette markdown con marker <|det|>.
+            stop_when_complete_list=getattr(self.adapter, "end2end_output_format", "list") == "list",
+            sampling=self._sampling_for("end2end"),
+            on_delta=on_delta,
+            cancel_event=cancel_event,
         )
+
+        def valid_items(value: str) -> list[dict]:
+            parsed = self._parse_items(value)
+            return [
+                item for item in parsed
+                if isinstance(item.get("bbox"), (list, tuple))
+                and len(item["bbox"]) == 4
+                and item.get("label")
+            ]
+
+        # Il repo ufficiale riconosce il loop di token e ritenta con un
+        # campionamento leggermente meno rigido. Applichiamo la stessa idea al
+        # client HTTP, ma solo se il primo output è patologico: un END2END
+        # normale resta una sola chiamata. Questo evita di salvare bbox come
+        # [509, 21, 960, 998, 998, ...].
+        first_valid = valid_items(raw)
+        if not first_valid or _should_retry_repeat_output(raw):
+            if on_retry:
+                on_retry()
+            retry_sampling = dict(sampling or {})
+            retry_sampling.update({"temperature": 0.2, "top_p": 0.95})
+            retry_raw = self._chat(
+                prepared,
+                prompt,
+                task="end2end",
+                max_tokens=min(max_tokens, adapter_max_tokens),
+                total_timeout=total_timeout,
+                stop_when_complete_list=getattr(self.adapter, "end2end_output_format", "list") == "list",
+                sampling=retry_sampling,
+                on_delta=on_delta,
+                cancel_event=cancel_event,
+            )
+            retry_valid = valid_items(retry_raw)
+            if len(retry_valid) >= len(first_valid) and retry_valid:
+                raw = retry_raw
+            elif not first_valid:
+                raise RuntimeError(
+                    "MonkeyOCRv2 ha prodotto un END2END invalido anche dopo il retry anti-ripetizione"
+                )
         cleaned = []
-        for item in _tolerant_items(raw):
+        for item in self._parse_items(raw):
             bbox = item.get("bbox")
             label = item.get("label") or item.get("category")
             if not isinstance(bbox, (list, tuple)) or len(bbox) != 4 or not label:
@@ -401,11 +574,25 @@ class VllmClient:
             )
         return cleaned
 
-    def recognize(self, image: Image.Image, label: str) -> str:
+    def recognize(
+        self,
+        image: Image.Image,
+        label: str,
+        on_delta: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
         task = "table" if label == "Table" else "text"
         fallback = TABLE_PROMPT if label == "Table" else TEXT_PROMPT
         prompt = _prompt_for(self.adapter, task, label, fallback)
-        raw = self._chat(image, prompt, max_tokens=3072)
+        raw = self._chat(
+            image,
+            prompt,
+            task=task,
+            max_tokens=3072,
+            sampling=self._sampling_for(task),
+            on_delta=on_delta,
+            cancel_event=cancel_event,
+        )
         return (raw or "").strip()
 
     def _table_text_to_grid(self, raw: str) -> dict:
@@ -415,7 +602,14 @@ class VllmClient:
         sempre lo stesso schema indipendentemente dal modello che l'ha emessa.
         """
         text = (raw or "").strip()
-        if self.adapter.capabilities.table_format == "html":
+        # PaddleOCR-VL può emettere HTML nel pipeline completo, ma il server
+        # vLLM standalone usato da Tabularium può restituire OTSL nativo in
+        # risposta allo stesso task. Rileviamo prima il formato effettivo:
+        # convertire OTSL come HTML lo azzera completamente.
+        if (
+            self.adapter.capabilities.table_format == "html"
+            and not otsl.looks_like_otsl(text)
+        ):
             text = otsl.html_to_otsl(text)
         return otsl.otsl_to_grid(text)
 
@@ -427,6 +621,8 @@ class VllmClient:
         rows_per_band: int = DEFAULT_ROWS_PER_BAND,
         header_rows: int = 0,
         max_tokens: int = 8192,
+        on_delta: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> dict:
         """Riconosce una tabella e restituisce la griglia (celle + span).
 
@@ -441,7 +637,16 @@ class VllmClient:
         di tagliare una riga a metà fra due bande. Senza, si taglia a intervalli
         regolari e qualche riga di confine può perdersi.
         """
-        bands = self._band_boxes(image, row_bounds, rows_per_band)
+        if getattr(self.adapter, "table_recognition_strategy", None) == "full_crop":
+            # Percorso equivalente a MinerUClient.two_step_extract(): una
+            # richiesta sul crop completo, che conserva il contesto fra tutte
+            # le colonne. Le bande sono solo un fallback sperimentale per
+            # altri adapter e qui avrebbero potuto causare la regressione
+            # osservata sulle colonne di destra.
+            bands = [(0, image.height)]
+            row_bounds = None
+        else:
+            bands = self._band_boxes(image, row_bounds, rows_per_band)
         # Non assumere che la prima riga sia un'intestazione: nei registri
         # Historic Shipping Index spesso è già la prima nave (es. ``Abidjan``). La ripetizione
         # è consentita solo quando l'annotazione dichiara esplicitamente quante
@@ -454,15 +659,30 @@ class VllmClient:
         header = image.crop((0, 0, image.width, header_h)) if header_h > 4 else None
         prompt = _prompt_for(self.adapter, "table", "Table", TABLE_PROMPT)
 
-        rows: list[list[dict]] = []
-        for index, (top, bottom) in enumerate(bands):
+        def recognize_band(item: tuple[int, tuple[int, int]]) -> list[list[dict]]:
+            """Riconosce una banda e restituisce le righe già ordinate.
+
+            Le richieste sono indipendenti: su endpoint cloud possono partire
+            in parallelo e vLLM le raggruppa nello stesso batch. Il risultato
+            viene poi raccolto nell'ordine originale delle bande, quindi non
+            cambia né la lettura né la qualità del merge finale.
+            """
+            index, (top, bottom) = item
             band = image.crop((0, top, image.width, bottom))
             if header is not None and index > 0:
                 stitched = Image.new("RGB", (image.width, header.height + band.height), "white")
                 stitched.paste(header.convert("RGB"), (0, 0))
                 stitched.paste(band.convert("RGB"), (0, header.height))
                 band = stitched
-            raw = self._chat(band, prompt, max_tokens=max_tokens)
+            raw = self._chat(
+                band,
+                prompt,
+                task="table",
+                max_tokens=max_tokens,
+                sampling=self._sampling_for("table"),
+                on_delta=on_delta,
+                cancel_event=cancel_event,
+            )
             grid = self._table_text_to_grid(raw)
             by_row: dict[int, list[dict]] = {}
             for cell in grid.get("cells", []):
@@ -474,6 +694,22 @@ class VllmClient:
             ]
             if header is not None and index > 0 and ordered:
                 ordered = ordered[header_rows:]  # header riletti, da non duplicare
+            return ordered
+
+        indexed_bands = list(enumerate(bands))
+        # Quattro è allineato al profilo Modal (`max-num-seqs=4`). Il locale
+        # resta seriale: spesso ha una sola GPU condivisa e non deve pagare
+        # quattro picchi di memoria solo per ridurre la latenza di rete.
+        if self.is_cloud and len(indexed_bands) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(4, len(indexed_bands))) as pool:
+                band_rows = list(pool.map(recognize_band, indexed_bands))
+        else:
+            band_rows = [recognize_band(item) for item in indexed_bands]
+
+        rows: list[list[dict]] = []
+        for ordered in band_rows:
             rows.extend(ordered)
 
         if not rows:
@@ -543,19 +779,26 @@ class VllmClient:
         ]
 
     def ping(self, timeout: float | None = None) -> bool:
-        # Usa il timeout del client, non uno fisso: chi interroga la
-        # disponibilità all'apertura di una pagina lo imposta a pochi secondi e
-        # non può restare appeso venti secondi se il server è spento.
+        # Il default usa il timeout del client, non un tetto fisso: i tre
+        # chiamanti reali (prelabel, blocks, evaluate) lo invocano come
+        # pre-flight prima di un'operazione lunga, con il timeout che l'utente
+        # ha configurato apposta per il cold start seriale (es. Modal: fino a
+        # ~150s). Un tetto fisso a 10s (versione precedente) falliva sempre
+        # `ping()` su un endpoint serverless freddo, bloccando il prefill con
+        # "modello non disponibile" anche quando l'endpoint funzionava —
+        # riprodotto: cold start reale osservato a 142s. Chi vuole un controllo
+        # rapido "in apertura pagina" passa un timeout esplicito breve.
         try:
-            t = timeout if timeout is not None else min(self.timeout, 10)
+            t = timeout if timeout is not None else self.timeout
             if self.api_key or self.extra_headers:
                 resp = requests.get(
                     f"{self.url}/models",
                     headers=self._headers(),
                     timeout=t,
+                    allow_redirects=False,
                 )
             else:
-                resp = requests.get(f"{self.url}/models", timeout=t)
+                resp = requests.get(f"{self.url}/models", timeout=t, allow_redirects=False)
             resp.raise_for_status()
             return True
         except Exception:  # noqa: BLE001
@@ -570,9 +813,10 @@ class VllmClient:
                     f"{self.url}/models",
                     headers=self._headers(),
                     timeout=timeout,
+                    allow_redirects=False,
                 )
             else:
-                resp = requests.get(f"{self.url}/models", timeout=timeout)
+                resp = requests.get(f"{self.url}/models", timeout=timeout, allow_redirects=False)
             resp.raise_for_status()
             latency_ms = round((time.perf_counter() - started) * 1000, 1)
             data = resp.json()
@@ -587,6 +831,19 @@ class VllmClient:
                     ]
                 elif "id" in data:
                     models = [str(data["id"])]
+            if models and self.model not in models:
+                return {
+                    "ok": False,
+                    "url": self.url,
+                    "model": self.model,
+                    "models_available": models,
+                    "latency_ms": latency_ms,
+                    "is_cloud": self.is_cloud,
+                    "error": (
+                        f"modello '{self.model}' non esposto dall'endpoint; "
+                        f"disponibili: {', '.join(models)}"
+                    ),
+                }
             return {
                 "ok": True,
                 "url": self.url,
@@ -629,6 +886,10 @@ def get_inference_config() -> dict:
     url = rows.get("inference_url") or config.VLLM_URL
     model = rows.get("inference_model") or config.VLLM_MODEL
     api_key = rows.get("inference_api_key", config.VLLM_API_KEY)
+    credential_ref = rows.get("inference_credential_ref")
+    if credential_ref:
+        from . import vault
+        api_key = vault.get(credential_ref)
 
     extra_headers_raw = rows.get("inference_extra_headers")
     if extra_headers_raw:
@@ -655,10 +916,32 @@ def get_inference_config() -> dict:
         else config.VLLM_MAX_PIXELS
     )
 
-    # Quale adapter interpreta prompt/formato tabella per l'endpoint servito.
-    # Default MonkeyOCRv2: nessuna installazione esistente deve ricalibrare
-    # nulla per continuare a funzionare come prima di questa configurazione.
-    adapter_id = rows.get("inference_adapter_id") or "monkeyocrv2-parsing"
+    # Quale adapter interpreta prompt/formato per l'endpoint servito. Se il
+    # vecchio client aveva salvato solo URL/modello, riallineiamo il profilo
+    # quando il nome è riconoscibile: altrimenti un endpoint Unlimited può
+    # ricevere silenziosamente il prompt/parser di MonkeyOCRv2.
+    adapter_id = _adapter_for_endpoint(model, url) or rows.get("inference_adapter_id") or "monkeyocrv2-parsing"
+
+    # Dal DB v10 in poi il profilo attivo è la fonte di verità atomica. La
+    # lettura resta tollerante per basi appena migrate o test che non hanno
+    # ancora creato il profilo legacy.
+    try:
+        with connect() as conn:
+            profile = conn.execute("SELECT * FROM compute_profiles WHERE active=1 LIMIT 1").fetchone()
+        if profile:
+            url = profile["endpoint"]
+            model = profile["served_model_name"]
+            adapter_id = profile["model_adapter_id"]
+            ref = profile["credential_ref"] or ""
+            if ref.startswith("env:"):
+                api_key = os.environ.get(ref[4:], "")
+            elif ref.startswith("vault:"):
+                from . import vault
+                api_key = vault.get(ref)
+            elif ref == "meta:inference_api_key":
+                api_key = rows.get("inference_api_key", "")
+    except Exception:
+        profile = None
 
     return {
         "enabled": enabled,
@@ -670,6 +953,31 @@ def get_inference_config() -> dict:
         "max_pixels": max_pixels,
         "adapter_id": adapter_id,
     }
+
+
+def _adapter_for_endpoint(model: str, url: str) -> str | None:
+    """Indovina solo adapter con identità esplicita nel nome/URL.
+
+    Non prova a inferire da benchmark o da una risposta generica: il modello
+    esposto resta la fonte di verità e `test_connection` verifica che esista.
+    """
+    value = f"{model} {url}".lower()
+    aliases = (
+        ("unlimited-ocr", "unlimited-ocr"),
+        ("paddleocr-vl", "paddleocr-vl"),
+        ("paddleocr_vl", "paddleocr-vl"),
+        ("mineru", "mineru2.5"),
+        ("dots.mocr", "dots-ocr"),
+        ("dots.ocr", "dots-ocr"),
+        ("glm-ocr", "glm-ocr"),
+        ("deepseek-ocr", "deepseek-ocr"),
+        ("qwen3-vl", "qwen3-vl-8b"),
+        ("monkeyocr", "monkeyocrv2-parsing"),
+    )
+    for alias, adapter_id in aliases:
+        if alias in value:
+            return adapter_id
+    return None
 
 
 def save_inference_config(cfg: dict) -> None:
@@ -684,7 +992,11 @@ def save_inference_config(cfg: dict) -> None:
     if "model" in cfg:
         items.append(("inference_model", str(cfg["model"]).strip()))
     if "api_key" in cfg:
-        items.append(("inference_api_key", str(cfg["api_key"]).strip()))
+        from . import vault
+        value = str(cfg["api_key"]).strip()
+        items.append(("inference_credential_ref", vault.put("inference", value) if value else ""))
+        # Rimuove l'eventuale valore legacy in chiaro.
+        items.append(("inference_api_key", ""))
     if "extra_headers" in cfg:
         val = cfg["extra_headers"]
         items.append(
@@ -706,6 +1018,12 @@ def save_inference_config(cfg: dict) -> None:
         adapter_id = str(cfg["adapter_id"]).strip() or "monkeyocrv2-parsing"
         get_adapter(adapter_id)  # ValueError esplicito se sconosciuto, non salvato a metà
         items.append(("inference_adapter_id", adapter_id))
+    elif "model" in cfg or "url" in cfg:
+        inferred = _adapter_for_endpoint(
+            str(cfg.get("model") or ""), str(cfg.get("url") or "")
+        )
+        if inferred:
+            items.append(("inference_adapter_id", inferred))
 
     with connect() as conn:
         for key, value in items:
@@ -714,6 +1032,23 @@ def save_inference_config(cfg: dict) -> None:
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (key, value),
             )
+        # Compatibilità con la vecchia API: se è attivo il profilo legacy,
+        # aggiorniamo il record atomico nella stessa transazione. Un update
+        # parziale conserva gli altri campi del profilo, quindi non crea più
+        # la combinazione URL/adapter/modello incoerente della vecchia UI.
+        try:
+            active = conn.execute("SELECT * FROM compute_profiles WHERE active=1 LIMIT 1").fetchone()
+            if active and active["name"] == "legacy-active" and ("url" in cfg or "model" in cfg or "adapter_id" in cfg):
+                next_url = str(cfg.get("url", active["endpoint"])).strip()
+                next_model = str(cfg.get("model", active["served_model_name"])).strip()
+                next_adapter = str(cfg.get("adapter_id") or _adapter_for_endpoint(next_model, next_url) or active["model_adapter_id"])
+                conn.execute(
+                    "UPDATE compute_profiles SET endpoint=?, served_model_name=?, model_adapter_id=?, credential_ref=CASE WHEN ? THEN 'vault:inference' ELSE credential_ref END, updated_at=datetime('now') WHERE id=?",
+                    (next_url, next_model, next_adapter, bool(cfg.get("api_key")), active["id"]),
+                )
+        except sqlite3.OperationalError:
+            # Basi non ancora migrate alla v10 restano compatibili.
+            pass
 
 
 def get_vllm_client(
@@ -747,5 +1082,3 @@ def get_vllm_client(
             return VllmClient(url=url or cfg["url"], model=model or cfg["model"], adapter=adapter)
         except TypeError:
             return VllmClient()
-
-

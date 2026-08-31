@@ -23,6 +23,32 @@ def wait_for(driver, condition, timeout: float = 15):
     return WebDriverWait(driver, timeout).until(condition)
 
 
+def _chrome_options(root: Path) -> Options:
+    options = Options()
+    # Il binario si risolve così: TABULARIUM_CHROMIUM esplicito, poi i percorsi
+    # noti di installazione Linux, poi il default di Selenium Manager (che
+    # trova Chrome/Chromium su macOS, Windows e nei runner di CI).
+    binary = os.environ.get("TABULARIUM_CHROMIUM", "")
+    if not binary:
+        for candidate in (
+            "/usr/bin/chromium-browser",
+            "/usr/bin/chromium",
+            "/snap/bin/chromium",
+        ):
+            if Path(candidate).exists():
+                binary = candidate
+                break
+    if binary:
+        options.binary_location = binary
+    for flag in (
+        "--headless=new", "--no-sandbox", "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage", "--disable-gpu", "--no-first-run",
+        f"--user-data-dir={root / 'browser-profile'}",
+    ):
+        options.add_argument(flag)
+    return options
+
+
 def main() -> int:
     root = Path(tempfile.mkdtemp(prefix="tabularium-e2e-"))
     project_id: int | None = None
@@ -30,19 +56,9 @@ def main() -> int:
     stage = "bootstrap"
     try:
         Image.new("RGB", (900, 1300), (230, 230, 230)).save(root / "page.png")
-        options = Options()
-        options.binary_location = os.environ.get(
-            "TABULARIUM_CHROMIUM",
-            "/snap/chromium/3335/usr/lib/chromium-browser/chrome",
-        )
-        for flag in (
-            "--headless=new", "--no-sandbox", "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage", "--disable-gpu", "--no-first-run",
-            f"--user-data-dir={root / 'browser-profile'}",
-        ):
-            options.add_argument(flag)
+        options = _chrome_options(root)
         driver = webdriver.Chrome(
-            service=Service(os.environ.get("TABULARIUM_CHROMEDRIVER", "/usr/bin/chromedriver")),
+            service=Service(os.environ.get("TABULARIUM_CHROMEDRIVER") or None),
             options=options,
         )
         driver.set_window_size(1440, 1000)
@@ -74,7 +90,10 @@ def main() -> int:
             json={"rows": 2, "cols": 2, "cells": [{"r": 0, "c": 0, "rowspan": 1, "colspan": 1, "text": "Vessel"}]},
             timeout=10,
         ).ok
-        assert requests.patch(f"{BASE}/api/pages/{page['id']}", json={"status": "approved", "page_type": "shipping"}, timeout=10).ok
+        # page_type si imposta con la PATCH; lo stato va in approvazione con
+        # l'endpoint dedicato: la transizione di stato è protetta (self-hosted).
+        assert requests.patch(f"{BASE}/api/pages/{page['id']}", json={"page_type": "shipping"}, timeout=10).ok
+        assert requests.post(f"{BASE}/api/pages/{page['id']}/approve", timeout=10).ok
 
         # Snapshot dataset via API (la UI viene comunque caricata e verificata
         # subito dopo; evita una dipendenza dal timing del select React).

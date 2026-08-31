@@ -5,6 +5,13 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BASE_URL="${TABULARIUM_E2E_URL:-http://127.0.0.1:8787}"
+# Il binario Chromium: di default si cerca nel PATH (`chromium`), su macOS e
+# nelle CI si punta direttamente con TABULARIUM_CHROMIUM.
+CHROME_BIN="${TABULARIUM_CHROMIUM:-chromium}"
+command -v "$CHROME_BIN" >/dev/null 2>&1 || {
+  echo "e2e smoke: Chromium non trovato (impostare TABULARIUM_CHROMIUM)" >&2
+  exit 1
+}
 TMP_HTML="$(mktemp /tmp/tabularium-e2e.XXXXXX.html)"
 SERVER_PID=""
 cleanup() {
@@ -26,12 +33,12 @@ if ! curl -fsS "$BASE_URL/api/health" >/dev/null 2>&1; then
 fi
 curl -fsS "$BASE_URL/api/health" >/dev/null
 
-chromium --headless --no-sandbox --disable-gpu --virtual-time-budget=3000 \
+$CHROME_BIN --headless --no-sandbox --disable-gpu --virtual-time-budget=3000 \
   --dump-dom "$BASE_URL/" >"$TMP_HTML" 2>/dev/null
 grep -q '<title>Tabularium' "$TMP_HTML"
 grep -q 'id="root"' "$TMP_HTML"
 
-chromium --headless --no-sandbox --disable-gpu --virtual-time-budget=3000 \
+$CHROME_BIN --headless --no-sandbox --disable-gpu --virtual-time-budget=3000 \
   --dump-dom "$BASE_URL/dataset" >"$TMP_HTML" 2>/dev/null
 grep -q '<title>Tabularium' "$TMP_HTML"
 

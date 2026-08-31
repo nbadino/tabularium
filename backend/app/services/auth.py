@@ -114,6 +114,7 @@ def set_session_cookie(response: Response, token: str, expires_at: str | None = 
         expires=expires_at,
         httponly=True,
         samesite="strict",
+        secure=config.SESSION_COOKIE_SECURE,
         path="/",
     )
 
