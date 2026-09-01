@@ -18,9 +18,10 @@ aperto oppure solo parzialmente coperto.
   `409` con stato remoto e riconciliazione esplicita nell’annotatore.
 - [x] Condivisione progetto: membri, ruoli editor/viewer, rimozione,
   trasferimento owner, elenco candidati e audit delle operazioni principali.
-- [ ] Segreti cloud/API: rimosso il salvataggio delle chiavi nel browser;
-  il vault server-side cifrato è implementato, ma va ancora installato e
-  verificato nel virtualenv/CI (`cryptography`, rifiutata dal sandbox di rete).
+- [x] Segreti cloud/API: rimosso il salvataggio delle chiavi nel browser;
+  il vault server-side cifrato è implementato, `cryptography` è una dipendenza
+  obbligatoria verificata dagli installer e dalla suite del virtualenv Python
+  3.12; la CI installa lo stesso `requirements.txt`.
 - [x] SSRF di inferenza/playground: endpoint riservati, URL validati,
   destinazioni private bloccate e redirect HTTP non seguiti.
 
@@ -40,11 +41,17 @@ aperto oppure solo parzialmente coperto.
   invarianti di ownership: migrazione SQLite v12 con `ON DELETE RESTRICT`,
   più regressione su foreign key, cancellazione e disattivazione dell’owner.
 - [ ] Persistenza/recovery uniforme per tutti gli orchestratori cloud e
-  training remoto; oggi il percorso persistito è quello dei job locali.
+  training remoto; locale, Modal e gli identificativi Vast/RunPod sono
+  persistiti e riconciliati, ma manca ancora la verifica end-to-end uniforme
+  dei lifecycle remoti.
 - [ ] Executor remoto (locale/SSH/Vast/RunPod), manifest, checksum, upload,
   checkpoint, resume, stop, cleanup, costi e riferimenti credenziali.
+  Contratti e percorsi principali sono implementati e testati; resta da
+  eseguire il ciclo completo contro provider reali.
 - [ ] Recipe Vast/RunPod riproducibili: versioni pinnate, branch/commit
   dichiarati, hardware verificato, manifest e test del contratto API.
+  Il contratto locale è coperto; manca la prova operativa completa sui
+  provider.
 
 ### P1/P2 — qualità di prodotto e verifica
 
@@ -52,14 +59,24 @@ aperto oppure solo parzialmente coperto.
   modifica inline del ruolo, trasferimento owner e attività recente leggibile.
 - [ ] UI completa per impostazioni, accessi/attività, capability dichiarate,
   studio responsive e componenti/modal coerenti.
-- [ ] Test auth/annotazione non bloccanti e matrice CI sulle versioni Python
-  supportate; la suite mirata passa, ma la suite completa va rieseguita nel
-  nuovo ambiente di test.
+- [x] Test auth/annotazione non bloccanti e matrice CI sulle versioni Python
+  supportate; la suite backend completa passa nel virtualenv Python 3.12
+  allineato (`240 passed`) e la CI copre Python 3.11–3.13.
 - [ ] Pilot reale da 30–50 pagine con LoRA, gold set protetto, analisi errori
   e successiva scala a 150–300 pagine.
 
 ### Evidenze dell’ultima tranche
 
+- La suite backend completa è ora eseguibile anche nel virtualenv Python 3.14
+  tramite il client ASGI confinato ai test: `225 passed, 3 skipped`.
+  Gli skip sono espliciti per `cryptography` assente nel virtualenv e scansioni
+  reali opzionali; nel virtualenv Python 3.12 con `cryptography` installata
+  passa `240 passed`; frontend verificato con `79 passed` e build completata.
+- I confini verticali piegati (`row_columns`) e i flag
+  (`row_columns_proven`) fanno ora parte del contratto `TableGrid`, vengono
+  salvati nel JSON della tabella e sono riutilizzati dall’overlay dopo il
+  caricamento; l’API valida cardinalità, monotonia e normalizzazione;
+  regressione struttura rilevatore: `4 passed`.
 - `ProjectDetailPage` carica `/activity`, aggiorna la cronologia dopo le
   modifiche di accesso e mantiene i nomi lunghi leggibili senza mostrare
   payload tecnici; `npm run build` passa e il detector UI non segnala rilievi.
@@ -72,18 +89,79 @@ aperto oppure solo parzialmente coperto.
 - `AnnotationPage` espone di nuovo poligono, panoramica, flow preview, ordine
   di lettura e checklist delle convenzioni; i controlli esistenti ricevono i
   tool e le azioni dello store reale. Build TypeScript verificata.
-- Test frontend: `10` file e `66` test passati (`npm run test -- --run`).
+- Lo studio ha ora una modalità persistita per utente: `Tutto`, `Solo canvas`
+  e `Solo trascrizione`; la prima conserva gli splitter, le altre collassano
+  i pannelli non necessari per viewport stretti. Build, test frontend e
+  detector UI passano; resta da validare il comportamento su dispositivi reali.
+- Test frontend: `13` file e `79` test passati (`npm run test -- --run`).
+- Il contratto training remoto è ora verificato anche al confine API: `TrainConfig`
+  conserva repository e interprete remoti; recipe Vast/RunPod usa dataset,
+  cache e checkpoint relativi alla directory sincronizzata. Test mirati
+  trainer/executor: `24 passed`; build frontend e detector UI passano.
 - `.github/workflows/ci.yml` verifica il backend su Python 3.11, 3.12 e 3.13;
   Python 3.14 resta esplicitamente fuori finché lo stack TestClient non è
   compatibile e verificato.
 - La promessa README sul merge LoRA è stata resa onesta: il prodotto conserva
   adapter, recipe e manifest verificati; resta aperta l’integrazione del merge
-- La UI del Training Center espone ora executor locale/SSH/Vast/RunPod e i
-  parametri SSH senza salvare segreti; il trainer persiste e recupera il
-  `remote_job_id` anche per Vast/RunPod. Il lifecycle remoto completo resta
-  aperto finché non sono verificati upload, checkpoint/resume, cleanup e costi
-  end-to-end.
   ufficiale verso un checkpoint servibile, con test end-to-end.
+- La UI del Training Center espone ora executor locale/SSH/Vast/RunPod e i
+  parametri SSH senza salvare segreti; lo schema API conserva anche repository
+  e Python remoti. Lo script usa percorsi relativi alla recipe sincronizzata,
+  quindi dataset, cache e checkpoint non puntano più al filesystem locale.
+  Il trainer persiste e recupera il `remote_job_id` anche per Vast/RunPod. Il
+  lifecycle remoto completo resta aperto finché non sono verificati upload,
+  checkpoint/resume, cleanup e costi end-to-end.
+- Il resume è ora esplicito tramite `resume_run_id`: valida che la run
+  appartenga al progetto, copia solo i checkpoint locali verificati nella
+  nuova recipe e li sincronizza anche verso l’executor remoto.
+- Il provisioning Vast richiede ora un `monkeyocr_ref` esplicito (commit SHA o
+  tag verificato); il ref viene passato all’onstart e la chiave server non è
+  più interpolata nello script, ma solo nella variabile d’ambiente dell’istanza.
+  Contract test: ref obbligatorio, quoting e assenza del plaintext nell’onstart;
+  `bash -n` dello script passa.
+- La UI blocca ora il noleggio automatico Vast finché il ref pin-nato non è
+  compilato, evitando un’azione che il backend rifiuterebbe.
+- Verificato anche l’ordine del parsing nello script: `--ref` viene elaborato
+  prima del controllo obbligatorio. Il contract test Vast passa (`1 passed`).
+- La recipe cloud controlla ora la compute capability minima per BF16 e salva
+  nel `cloud-manifest.json` recipe ID, Python, Transformers, dtype, limiti
+  vLLM, GPU memory utilization e capability hardware.
+- Anche lo script `vast_onstart.sh` e il comando manuale RunPod richiedono
+  esplicitamente il ref pin-nato; non esiste più un esempio operativo che
+  avvii il setup con il branch implicito.
+- I task Modal persistono ora PID, process group, template, log, stato ed
+  owner, exit code in `jobs`; dopo un riavvio `status()` recupera log e task ancora
+  vivi invece di perdere lo stato singleton; lo stop dell’app interrompe
+  anche un deploy recuperato. Regressioni Modal: `2 passed`.
+- Anche il serving locale dei modelli persiste ora `serve` in `jobs` con PID,
+  process group, log, owner e comando; `status`/`stop` recuperano un server
+  ancora vivo dopo il riavvio del backend. Regressione lifecycle + recovery:
+  `2 passed` (suite dedicata verificata fino al limite noto del TestClient).
+- Il lifespan esegue anche il reconcile dei job `serve`: PID non più presenti
+  vengono marcati `failed` invece di restare bloccati in `running`; la suite
+  non HTTP del serving ora copre lifecycle, recovery e PID morto (`10 passed`).
+- Verificato il grafo frontend: Handsontable era dichiarato ma non usato e
+  viene rimosso da `package.json` e `package-lock.json`; React Query resta
+  perché è usato da `main.tsx`. Build e test frontend: `66 passed`.
+- La documentazione ora dichiara il supporto backend realmente coperto dalla
+  CI (Python 3.11–3.13); Python 3.14 resta esplicitamente pendente per il
+  blocco noto nell’adapter TestClient/AnyIO.
+- Il training remoto espone ora un cleanup esplicito e autenticato: rifiuta
+  run attive, valida il `run_id` dentro la directory del progetto, rimuove
+  solo la directory remota già composta dal provider e lascia intatti i
+  checkpoint locali; l’azione UI richiede una seconda pressione. Contract test
+  SSH e training: `25 passed`.
+- La documentazione chiarisce i confini multipiattaforma: dashboard, OCR CPU,
+  annotazione ed export funzionano su Linux/macOS/Windows; serving e training
+  CUDA locale richiedono Linux o WSL2, mentre SSH/Vast/RunPod sono disponibili
+  da tutti i client. Gli installer frontend usano ora `npm ci` e il lockfile
+  è verificato con `npm ci --dry-run --offline`.
+- `/api/system/info` dichiara ora le capability della macchina (`dashboard`,
+  `cpu_ocr`, `local_cuda`, `remote_gpu`) e l’Ambiente le mostra in UI; su
+  Windows espone esplicitamente il percorso CUDA via WSL2.
+- Il refresh delle istanze Vast/RunPod registra ora anche risorse già create
+  fuori da Tabularium, aggiorna stato/tariffa e calcola la stima persistita;
+  regressione refresh Vast: `2 passed` insieme al contract test di provisioning.
 - La disattivazione di un utente proprietario ora restituisce `409` finché i
   suoi progetti non vengono trasferiti; aggiunta regressione in
   `tests/test_auth.py`.
@@ -93,12 +171,79 @@ aperto oppure solo parzialmente coperto.
   aperti per lifecycle remoto, costi e teardown.
 - Vast/RunPod registrano ora le risorse create in `jobs` con provider, owner,
   stato, tariffa opzionale e stima cumulativa del costo; start/stop/delete
-  aggiornano il ciclo di vita e i test contrattuali coprono costo e chiusura.
+  aggiornano il ciclo di vita. La UI mostra la stima corrente e offre
+  `Distruggi` con conferma esplicita per entrambe le piattaforme; test cloud
+  mirati: `4 passed`.
 
 - `tests/test_compute_profiles.py`, `tests/test_db_migrations.py`,
   `tests/test_backup.py` e `tests/test_training.py` sono i test di controllo;
   insieme a `tests/test_rate_limit.py`, ultimo esito: `26 passed` dopo la
   migrazione v12 e la correzione della persistenza del rate limit.
+- Il lifecycle del backend esegue ora `PRAGMA integrity_check` dopo
+  `init_db()` e interrompe l’avvio con un errore diagnostico se il database
+  non è integro; il controllo resta esposto anche nella pagina backup.
+  Regressione lifecycle: `test_startup_stops_on_corrupt_database`.
+- Corretta una regressione del test health: non assume più la vecchia baseline
+  DB `6`, ma verifica la versione corrente dichiarata da `SCHEMA_VERSION`.
+- Aggiunti test senza runtime Paddle per il parser ufficiale: varianti JSON
+  annidate, fallback markdown a pagina intera e output vuoto.
+- La suite HTTP ora usa una compatibilità ASGI solo su Python 3.14: mantiene
+  cookie e stream SSE e aggira il deadlock del portal `TestClient`; il runtime
+  dell’app non viene modificato.
+- I setup backend shell/PowerShell accettano esplicitamente Python 3.11–3.13
+  e rifiutano versioni diverse con un messaggio diagnostico; questo evita di
+  creare ambienti apparentemente supportati ma incompatibili con la matrice CI.
+- Gli installer verificano anche l’import di `cryptography` dopo l’installazione:
+  nessun ambiente viene dichiarato pronto mentre il vault cifrato è assente.
+- L’helper SSH CLI non usa più `eval` sul comando incollato e applica
+  `StrictHostKeyChecking=yes` con un `known_hosts` dedicato, coerente con il
+  tunnel gestito dal backend; le recipe cloud documentate richiedono ora
+  esplicitamente un ref verificato e passano i secret tramite environment.
+- L’hook Vast richiede e scarica il setup Tabularium al suo `TABULARIUM_REF`,
+  separato dal `MONKEYOCR_REF` del runner, prima di avviarlo; un onstart copiato
+  da solo non può più puntare a uno script locale inesistente.
+- Il protocollo pilota non consente più sovrapposizioni gold/pilot: proteggere
+  una pagina la rimuove dal campione salvato e l’API restituisce il conteggio
+  delle esclusioni; regressione `test_gold_pages_cannot_enter_saved_pilot`.
+- Il campionatore pilot applica ora anche lato backend il contratto 30–50
+  pagine (`target` fuori intervallo risponde `422`), non solo nello script CLI;
+  regressione `test_pilot_sample_requires_review_sized_target`.
+- Lo smoke E2E attende ora fino a 30 secondi la readiness del backend quando
+  deve prima compilare il frontend, evitando falsi fallimenti su macchine
+  lente e su Windows/WSL.
+- Le preferenze Modal hanno abbandonato il prefisso storico `lloyds.*` con una
+  migrazione one-shot verso `tabularium.*`; il test verifica che la migrazione
+  non conservi chiavi obsolete e non coinvolga segreti.
+- Il tipo frontend `InferenceConfig` non dichiara più `api_key`: l’API espone
+  solo `has_api_key`, impedendo che un secret possa rientrare accidentalmente
+  nel contratto client durante refactoring futuri.
+- Il registro modelli espone ora una maturità esplicita (`supportato`,
+  `sperimentale`, `catalogo`, `non disponibile`) derivata dal contratto
+  dell’adapter: scaricabile non significa più implicitamente pronto per
+  inferenza o training.
+- La configurazione inferenza non lascia più un riferimento `vault:inference`
+  nel profilo legacy quando la credenziale viene rimossa; il test cloud usa una
+  chiave Fernet effimera e non contiene segreti persistenti.
+- La recipe Vast generata dal backend richiede ora ref verificati sia per
+  MonkeyOCRv2 sia per Tabularium, scarica lo script dal repository corretto
+  alla revisione dichiarata e non usa più `main` implicito; regressione del
+  provisioning: `10 passed`.
+- La procedura RunPod nella guida e nel pannello usa anch’essa due ref
+  espliciti (`MONKEYOCR_REF` e `TABULARIUM_REF`) e la credenziale server via
+  env, senza URL su `main` né `--api-key` esposto nel comando copiabile.
+- Il frontend gestisce anche il caso di una pagina aperta durante una nuova
+  build: se un chunk lazy hashato non è più presente, tenta un solo reload
+  automatico per riallineare `index.html` e gli asset. Il marker viene
+  cancellato solo dopo il mount riuscito dentro Suspense, evitando loop se il
+  server continua a servire asset incoerenti; test frontend `79 passed` e
+  build ripetuta dopo la modifica.
+- `scripts/run.sh` e `scripts/run.ps1` ricostruiscono ora automaticamente il
+  frontend quando i sorgenti sono più recenti di `dist/index.html`; è inoltre
+  disponibile `TABULARIUM_BUILD_FRONTEND=1` per forzare la build e prevenire
+  mismatch tra manifest HTML e chunk hashati al riavvio.
+- Gli installer backend shell e PowerShell validano ora Python 3.11–3.13
+  prima di creare o usare il virtualenv, evitando setup apparentemente riusciti
+  su versioni non supportate; README aggiornato.
 - Il vault è stato provato con il Python di sistema (`vault probe ok`): il
   plaintext non compare nel ciphertext; la verifica nel virtualenv resta
   sospesa finché non è disponibile `cryptography`.
@@ -163,13 +308,13 @@ aperto oppure solo parzialmente coperto.
     `dataset/v0001`, `v0002`, ecc. con manifest, hash e seed.
   - Verifica: un export fallito non modifica lo snapshot precedente.
 
-- [ ] Riparare la verifica HTTP backend e usare sempre
+- [x] Riparare la verifica HTTP backend e usare sempre
   `.venv/bin/python -m pytest` negli script.
-  - `httpx2` è fissato nei requirements-dev e i test unitari mirati passano;
-    la suite HTTP completa resta bloccata nel virtualenv Python 3.14 anche con
-    un’app FastAPI minimale: una route sincrona si ferma nell’adapter thread
-    di AnyIO. Serve una matrice CI su Python supportati e versioni compatibili,
-    non una workaround nel runtime.
+  - `httpx2` è fissato nei requirements-dev; la suite completa passa anche nel
+    virtualenv Python 3.14 usando una compatibilità ASGI confinata a
+    `tests/conftest.py`, mentre il runtime di produzione resta invariato.
+  - Gli script `test_backend.sh` e `test_backend.ps1` invocano il Python del
+    virtualenv; la matrice CI continua a verificare Python 3.11–3.13.
 
 ## P1 — Protocollo di ricerca e dataset affidabile
 
@@ -288,8 +433,9 @@ aperto oppure solo parzialmente coperto.
     è marcato non provato e la cella entra fra le `uncertain`.
   - Da 5,7% a 0,5% di valori spezzati sul campione reale.
   - L'overlay disegna la spezzata reale sotto la retta modificabile.
-  - **Da fare**: persistere i confini piegati (oggi il grid salvato porta solo
-    le rette, quelli piegati vivono nella diagnostica della bozza).
+  - I confini piegati e i flag `row_columns_proven` sono ora persistiti nel
+    grid salvato; le vecchie griglie restano compatibili perché i campi sono
+    opzionali. Regressione: forma, cardinalità e normalizzazione verificate.
 
 - [x] Far sapere al preflight se la configurazione entra nella GPU.
   - Il controllo guardava la VRAM libera in assoluto e passava sempre su una

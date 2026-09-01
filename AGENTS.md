@@ -68,34 +68,54 @@ non vuol dire che il modello non sappia leggere le tabelle.** Basta ritagliare q
 interrogarlo con il prompt Tabella per ottenere OTSL corretto — colonne separate, celle di uno o due
 caratteri incluse. Le due cose vanno valutate separatamente.
 
-Sul corpus Historic Shipping Index END2END a 2 MP ha già corretto testata, titolo e sottotitolo della pagina `_014`
-rispetto al percorso a due stadi, ma produce output molto lungo (~9k token) e il comportamento sul
+Sul corpus Historic Shipping Index END2END a 2 MP ha già corretto testata, titolo e sottotitolo di una
+pagina del campione rispetto al percorso a due stadi, ma produce output molto lungo (~9k token) e il comportamento sul
 registro OTSL completo deve ancora essere misurato. La UI espone entrambi: nessuno dei due diventa
 default sulla base di una sola pagina.
 
 ### 2.3.2 Risoluzione delle immagini (`min_pixels` ≠ `max_pixels`)
 In `load_image()` ufficiale `min_pixels` **ingrandisce** le immagini piccole e non riduce mai;
-`get_layout()` lo passa a `1003520`. Un tetto superiore esiste solo se si imposta la env
-`MOCR2_MAX_PIXELS`: **di default il codice ufficiale non riduce nulla.**
+`get_layout()` lo passa a `1003520`. Il tetto superiore è la env `MOCR2_MAX_PIXELS`, che il CLI
+ufficiale `parse.py` imposta **sempre** dal suo `--max-pixels` (default `1003520`) e propaga a tutte
+le chiamate, end2end compresa. Minimo e massimo coincidono: **il layout ufficiale lavora a 1 MP.**
 
 Da non confondere con `max_pixels 1003520` degli iperparametri di *training* (§2.6): è un altro
-parametro, di un'altra fase. Usare quel valore come tetto in inferenza non è ciò che fa il codice
-ufficiale.
+parametro, di un'altra fase, anche se il valore coincide.
 
 Le scansioni d'archivio però stanno molto oltre la taglia per cui il pipeline è pensato, e il layout
-degrada. Misurato su `LSI_17186_015` (2864×3952 = 11.3 MP), a parità di tutto il resto:
+degrada. Misurato su una pagina `index` del campione (2864×3952 = 11,3 MP), a parità di tutto il resto:
 
 | Pixel inviati | Blocchi | Esito |
 |---|---|---|
 | 11.3 MP (nessun tetto) | 2 | riquadri sovrapposti, inutilizzabili |
 | 6.0 MP | 16 | frammentato |
 | 4.0 MP | 137 | esploso a livello di cella |
-| **2.0 MP** | **5** | `Title`, numero, data, corpo — corretto |
-| 1.0 MP | 4 | corretto, meno granulare |
+| 2.0 MP | 5 | `Title`, numero, data, corpo — corretto |
+| **1.0 MP** | **4** | corretto, meno granulare — **default ufficiale** |
 
-Perciò `services/inference.py` impone un tetto di 2 MP **alla sola chiamata di layout**
-(`LAYOUT_MAX_PIXELS`, override con `TABULARIUM_VLLM_MAX_PIXELS`). Sui ritagli di testo e tabella non si
-riduce: sono già piccoli e ridurli cancellerebbe i caratteri.
+Il default è il valore ufficiale: `config.VLLM_MAX_PIXELS` vale `1003520` e si applica a ogni
+chiamata, esattamente come `MOCR2_MAX_PIXELS`. La granularità in più a 2 MP era una nostra
+deviazione misurata su una pagina, non il protocollo del checkpoint: chi la rivuole imposta
+`TABULARIUM_VLLM_MAX_PIXELS=2000000` (o il campo *max pixels* in Impostazioni, che ora arriva
+davvero al client). `TABULARIUM_VLLM_MAX_PIXELS=0` toglie il tetto; in quel caso resta
+`LAYOUT_MAX_PIXELS` (2 MP) come sola rete di sicurezza sul layout, perché a 11 MP collassa.
+
+### 2.3.4 Preprocessore ufficiale delle pagine
+`parsing/core_runner.py` non manda mai la pagina grezza al VLM: costruisce un `Preprocessor`
+(pesi `preprocessor1.pth`/`preprocessor2.pth`, già dentro il checkpoint) e vi passa ogni pagina
+prima di layout e riconoscimento. Il CLI ufficiale lo salta solo con `--skip-preprocess`,
+documentato come «this may lead to worse accuracy but faster speed».
+
+In Tabularium è il motore di trasformazione pagina `monkeyocr` (`services/monkey_preprocess.py`),
+**non** uno stadio nascosto dentro `inference.py`: il preprocessore cambia la geometria e i bbox
+normalizzati 0–1000 valgono sull'immagine che il modello ha ricevuto, quindi applicarlo di nascosto
+farebbe atterrare i blocchi su pixel diversi da quelli del canvas. Passando dal master di pagina
+resta valido il contratto «prefill, crop ed export osservano gli stessi pixel del canvas», che è
+anche ciò che fa il pipeline ufficiale (salva le pagine preprocessate e da lì lavora solo su quelle).
+
+È l'**unica** rettifica neurale: UVDoc e DocScanner-L sono usciti. Erano surrogati scelti prima che
+quello del modello fosse raggiungibile, e tenerli in parallelo significava poter preparare le pagine
+in un modo diverso da come il modello si aspetta di riceverle.
 
 ### 2.3.3 Tabelle grandi: intero come verità, bande come esperimento
 I chunk ciechi non sono una strategia sicura: possono spezzare righe, rowspan e contesto di
@@ -123,9 +143,10 @@ niente e non è una verità: è una bozza che l'annotatore accetta, sposta o rif
 **Righe dalle linee di base, non dal profilo.** Il passo tipografico e le righe si ricavano dalle
 componenti connesse (istogramma dei *fondi* dei glifi), non dall'autocorrelazione del profilo di
 inchiostro. Il percorso a proiezione reggeva su una pagina su quattro e si rompeva in tre modi
-distinti, tutti riprodotti nei test di regressione (`tests/test_table_detect.py`): armonica del
-periodo (`LSI_8447_014`, 156 px invece di 39), profilo saturo per interlinea stretta
-(`LSI_1974_039`), spalmatura da inclinazione (`LSIVS_11652_006`, −1,43°).
+distinti, tutti riprodotti nei test di regressione (`tests/test_table_detect.py`; nel resto del
+documento le pagine d'archivio del campione sono indicate con lettere): armonica del
+periodo (pagina `B`, 156 px invece di 39), profilo saturo per interlinea stretta
+(pagina `C`), spalmatura da inclinazione (pagina `D`, −1,43°).
 
 | Campo | Significato |
 |---|---|
@@ -148,7 +169,7 @@ da una pagina curva, deriva orizzontalmente scendendo. Misurato sul campione, og
 interno si sposta fra 25 e 77 px dall'alto al basso, cioè fra 0,6 e 2,0 passi tipografici,
 mentre una cifra è larga una ventina di pixel — quindi **nessuna retta può descrivere la
 tabella**: un taglio dritto alla mediana finisce dentro un numero e ne manda metà nella cella
-accanto. Su `LSI_8447_014` succedeva sul 10% dei tagli.
+accanto. Su pagina `B` succedeva sul 10% dei tagli.
 
 `snap_boundaries()` porta perciò ogni confine, riga per riga, nel varco di bianco migliore
 entro 1,5 passi, pesando la larghezza del varco contro la distanza dalla retta. Dove un varco
@@ -169,7 +190,7 @@ al 41% di tagli non provati), quindi scatterebbe sempre. La deriva non è una co
 scansione ma una proprietà per cella, e come tale viene contata e marcata.
 
 **Dominio d'uso.** Vale su un ritaglio che è **una sola tabella allineata a spazi**. Su una pagina
-a più colonne di giornale (`LSIVS_11652_006`, supplemento a cinque colonne) restituisce una griglia
+a più colonne di giornale (pagina `D`, supplemento a cinque colonne) restituisce una griglia
 priva di senso, e **non sa accorgersene**: entrambe le ipotesi verificabili sono state misurate e
 respinte — la larghezza dei gutter è invertita rispetto all'attesa (0,62 passi lì contro 1,07 del
 gutter *interno* più largo di una tabella singola) e le linee di base non si disallineano, perché
@@ -271,8 +292,9 @@ questo motivo.
    metadati data/annata/pagina/tipo di pagina, anteprima.
 2. **Studio di annotazione** (cuore del prodotto):
    - **rettifica geometrica revisionabile**: *Allinea e confronta* genera una proposta senza
-     toccare annotazioni o master attivo; motori distinti `deskew`, `uvdoc`, `docscanner`,
-     prospettiva manuale a quattro angoli e mesh manuale. Originale e proposta restano affiancati
+     toccare annotazioni o master attivo; l'unica rettifica neurale è `monkeyocr`, il
+     preprocessore ufficiale del modello (§2.3.4), affiancato dal solo `deskew` rotazionale
+     e dalle correzioni manuali prospettiva a quattro angoli e mesh. Originale e proposta restano affiancati
      fino ad *Accetta come master*; solo l'accettazione, previa conferma, elimina eventuali blocchi
      le cui coordinate diventerebbero invalide. Il master è PNG lossless e diventa l'unica sorgente
      per canvas, Prefill, crop ed export; JPEG solo per preview/tile. Metadati e API dichiarano
@@ -314,6 +336,32 @@ questo motivo.
        cancella tutto, griglie comprese, e richiede conferma nella UI (`replace` resta come
        alias storico di `replace_all`). La risposta dichiara `replaced_blocks`/`replaced_grids`;
        su pagina piena il pulsante Prefill apre un dialog di conferma (`PrefillDialog`);
+     - **dove vivono le bozze**: nel pannello contenuti, non sull'immagine — sul canvas non
+       compare nulla di generato finché qualcuno non lo verifica. Le **tabelle** fanno
+       eccezione, e la ragione è misurata: la regione è ciò che il layout sbaglia più spesso
+       (sulla pagina `index` da 11,3 MP del campione, PaddleOCR-VL propone come `Table` la sola colonna di sinistra e
+       lascia *From/For/Latest Report* fuori, come `Text`), e i confini della griglia si
+       muovono solo **dentro** il ritaglio, che è il bbox del blocco: senza riquadro
+       sull'immagine la correzione è impossibile. Una bozza di tabella sta quindi sul canvas,
+       tratteggiata e più chiara di un'annotazione, e si ridimensiona come qualsiasi blocco.
+       Al ridimensionamento la griglia **si rifà** sulla regione nuova (`/table/detect`,
+       riempimento OCR quando c'è un motore locale): conservarla sarebbe peggio che
+       perderla, perché `vlines`/`hlines` sono normalizzate sul ritaglio e su un ritaglio
+       diverso indicano un altro punto dell'inchiostro. Se una cella trascritta è già
+       `verified` il rifacimento non parte da solo: l'avviso chiede il permesso;
+     - **le bozze non si cancellano da sole**: non essendo sul canvas non arrivano mai nel
+       payload dell'autosave, quindi `sync_annotations` non può dedurne la cancellazione
+       dall'assenza (lo faceva, e la prima modifica al canvas dopo una run di prefill
+       distruggeva tutte le bozze con le loro griglie). Si scartano con `DELETE
+       /blocks/{id}`, con `replace_drafts`, o dichiarandole in `deleted_ids` nel salvataggio
+       bulk — è così che il canvas cancella una tabella: chi cancella lo dice, e un id
+       tornato fra gli `items` (annullamento) vince sulla cancellazione;
+     - **revisione della pagina**: ogni scrittura che non passa dall'autosave —
+       `PUT /blocks/{id}/table`, `PATCH /blocks/{id}` — fa avanzare `annotation_revision` e
+       la restituisce nella risposta (`TableSaveOut.annotation_revision`,
+       `BlockOut.annotation_revision`). Il client la riallinea con
+       `useAnnotationState.syncRevision`: senza, il primo autosave successivo si vedrebbe
+       respingere con 409 un conflitto che non esiste;
    - autosave, stato avanzamento per pagina, scorciatoie da tastiera;
    - **autosave e navigazione**: il cambio pagina/progetto attende `flush()` dello store
      (`useAnnotationState` espone `dirty`/`getDirty`/`flush`); lo smontaggio con lavoro
@@ -424,7 +472,8 @@ tabularium/
         inference.py        # client vLLM OpenAI-compatibile
       tests/
     requirements.txt        # core; varianti opzionali: requirements-dev.txt,
-                            # requirements-uvdoc.txt, requirements-docscanner.txt
+                            # requirements-uvdoc.txt (PaddleOCR: motore OCR e
+                            # runtime PaddleOCR-VL, non più il dewarp)
   frontend/
     src/
       app/                  # routes, layout, shell (Layout, AuthGate, auth, i18n, ui)
@@ -505,6 +554,26 @@ Regole:
 - Celle vuote `ecel` valide incluse; blocco tabella senza cella testuale non esportato.
 - Il bulk autosave aggiorna i blocchi esistenti preservandone gli ID: eliminare e reinserire farebbe
   scattare `ON DELETE CASCADE` e perderebbe le griglie tabellari associate.
+
+### Viste ufficiali Paddle (`services/paddle_dataset.py`)
+
+Le annotazioni restano nel formato canonico; questo exporter ne deriva tre viste, una per ciascun
+modello che il progetto può addestrare — sono modelli distinti e non si sostituiscono a vicenda:
+
+| Vista | File | Modello | Contenuto |
+|---|---|---|---|
+| layout | `layout_{train,val}.json` + `annotations/` | rilevatore PaddleX (COCO) | bbox + classe del blocco, ordine di lettura |
+| VLM | `vlm_{train,val}.jsonl` | PaddleOCR-VL via ERNIEKit | crop del blocco → OTSL (tabelle) o testo |
+| riga | `rec_{train,val}.txt` + `rec_dict.txt` + `cells/` | PP-OCR rec | **un campione per cella**: ritaglio → testo |
+
+La vista *riga* è ciò che chiude il ciclo sul motore OCR **locale** (quello che riempie le celle in
+`table_detect.fill_cells`): una cella corretta a mano torna indietro come campione. Il ritaglio è lo
+stesso che il riconoscitore vede in esercizio — confini della griglia più un quarto di passo di
+respiro, altezza nativa (la normalizzazione a 32/48 px è del trainer) — perché un dataset tagliato
+diversamente da come si legge insegna un'inquadratura che non esisterà mai. Con `approved_only`
+entrano solo le celle `verified`: il testo del prefill non è gold, e il manifest dichiara quante ne
+sono state escluse (`cells.unverified_skipped`). Il dizionario dei caratteri è quello osservato nel
+corpus, non uno generico.
 
 ---
 

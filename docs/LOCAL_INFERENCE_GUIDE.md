@@ -58,6 +58,36 @@ clonato in automatico).
 
 ---
 
+### 1.1 Stop-before-start: una GPU, un modello
+
+Una GPU consumer non regge due modelli, quindi avviarne uno ferma sempre quello
+in servizio. «Fermare» significa *attendere che il processo sia morto*, non
+limitarsi a segnalarlo: vLLM impiega qualche secondo a chiudere il socket dopo
+il SIGTERM, e ripartire subito faceva morire il modello nuovo con
+`OSError: [Errno 98] Address already in use` — un traceback lungo e illeggibile
+a valle. `stop()` quindi attende, ed escala a SIGKILL se il processo non
+collabora.
+
+Prima del lancio la porta viene comunque riverificata e, se serve, **liberata
+da sola**: un server rimasto orfano da una sessione finita male (il registro
+dei job ne ha perso le tracce) viene terminato senza chiedere niente
+all'utente — è esattamente il lavoro dello stop-before-start.
+
+Due limiti deliberati:
+
+- un processo che **non si riesce ad attribuire** a Tabularium non viene mai
+  segnalato. L'attribuzione guarda la riga di comando viva (`vllm serve`, il
+  wrapper `serve.py`, l'immagine Docker di un adapter, o comunque un comando
+  che contiene la cartella dei modelli), **non** la tabella `jobs`: i numeri di
+  PID vengono riciclati, e una riga scritta prima di un riavvio della macchina
+  può puntare oggi a un processo qualunque dell'utente. Se sulla porta c'è un
+  Jupyter, l'avvio si ferma e lo dice;
+- un processo *zombie* conta come morto. Senza questa distinzione l'attesa
+  scadeva sempre: il figlio era terminato ma il PID restava visibile a
+  `os.kill(pid, 0)` finché nessuno ne leggeva lo stato di uscita.
+
+---
+
 ## 2. MonkeyOCRv2-B-Parsing (produzione attuale)
 
 Serve command: `scripts/serve_model.sh` (non `vllm serve` diretto). Requisiti
@@ -85,6 +115,47 @@ verificati sul repo ufficiale `Yuliang-Liu/MonkeyOCRv2`:
   più bassi (0.5 / 16384 / 16384 / 128) — quelli in uso sono **tarati
   empiricamente** su questa GPU da 8 GB, non "corretti" rispetto all'upstream.
 - VRAM minima: non dichiarata ufficialmente; verificata empiricamente su 8 GB.
+
+### 2.1 DFlash (speculative decoding)
+
+Il README ufficiale (news del 2026-07-24) pubblica
+`zenosai/MonkeyOCRv2-B-Parsing-DFlash` come *draft* per lo speculative
+decoding, dato per «up to 2× faster inference» e supportato solo dalla variante
+B-Parsing. È attivo di default: alla prima messa in servizio `serve_manager`
+scarica il draft (~170 MB, in `models/monkeyocrv2-parsing-draft`, fase
+`preparing_draft`) e lo passa a `scripts/serve_model.sh`, che lo gira a
+`serve.py -d`. Note operative:
+
+- Richiede vLLM ≥ 0.12 (il repo documenta 0.25.1); con una versione più
+  vecchia `serve.py` rifiuta di partire, quindi lo script controlla la versione
+  e in caso avvia **senza** DFlash invece di fallire.
+- Il draft entra nel budget di `--gpu-memory-utilization`: a parità di flag, la
+  cache KV disponibile si riduce di conseguenza.
+- `TABULARIUM_MONKEY_DFLASH=0` lo disattiva; se il draft manca o il download
+  fallisce si serve comunque, senza accelerazione.
+
+### 2.2 Preprocessore ufficiale delle pagine
+
+`parsing/core_runner.py` non manda mai la pagina grezza al VLM: costruisce un
+`Preprocessor` (pesi `preprocessor1.pth` e `preprocessor2.pth`, già dentro il
+checkpoint) e vi passa ogni pagina prima di layout e riconoscimento. Il CLI
+ufficiale lo salta solo con `--skip-preprocess`, documentato come «this may
+lead to worse accuracy but faster speed».
+
+In Tabularium è il motore di trasformazione pagina **`monkeyocr`**
+(`services/monkey_preprocess.py`, endpoint `/api/pages/{id}/transform/candidate`),
+non uno stadio nascosto dentro `inference.py`: il preprocessore cambia la
+geometria e i bbox normalizzati 0–1000 che il modello restituisce valgono
+sull'immagine che ha ricevuto. Passando dal master di pagina resta valido il
+contratto esistente — prefill, crop ed export vedono gli stessi pixel del
+canvas — che è anche ciò che fa il pipeline ufficiale, il quale salva le pagine
+preprocessate e da lì in poi lavora solo su quelle.
+
+Gira in sottoprocesso nel runtime vLLM (`data/vllm-runtime`), l'unico ambiente
+già allineato a `parsing/requirements.txt` (serve `timm`). Di default su CPU
+(`TABULARIUM_MONKEY_PREPROCESS_DEVICE`), perché con il modello in servizio vLLM
+tiene il 90% della VRAM: le due reti lavorano su un input fisso 512×512, quindi
+il costo non dipende dalla risoluzione della scansione (~5 s a pagina qui).
 
 ---
 
@@ -188,19 +259,64 @@ docker run --rm --gpus all --network host --ipc host \
   --trust-remote-code \
   --logits_processors vllm.model_executor.models.unlimited_ocr:NGramPerReqLogitsProcessor \
   --no-enable-prefix-caching --mm-processor-cache-gb 0 \
+  --max-model-len 12288 \
   --port <porta> --gpu-memory-utilization 0.85 \
   --served-model-name Unlimited-OCR
 ```
 
 - Il logits processor è **obbligatorio**: senza, i documenti lunghi vanno in
-  loop sui token `<|det|>`.
+  loop sui token `<|det|>`. Il flag è scritto con underscore come nella
+  ricetta ufficiale: il `FlexibleArgumentParser` di vLLM normalizza `_` in `-`
+  (verificato nel sorgente dentro l'immagine), quindi è valido.
 - Il montaggio `-v <model_path>:/model` punta ai pesi già scaricati dal
   registro modelli invece di farli riscaricare dentro il container.
-- La card ufficiale dichiara "una singola GPU ≥ 8GB è sufficiente per
-  l'inferenza BF16": margine dichiarato ma stretto su 8 GB.
+- `--max-model-len 12288` **non** è nella ricetta ufficiale, che lascia il
+  default del checkpoint (32768). Su 8 GB quel default non entra nemmeno con
+  l'offload: misurato, per 32768 token servono 1.88 GiB di cache KV e ne
+  restano 0.93. A 12288 la cache basta (16.432 token) e resta comunque sopra
+  il budget di uscita dell'adapter (8192 token + ~1300 di immagine). È una
+  taratura di macchina come quelle di MonkeyOCRv2 in §2, non un requisito:
+  su una GPU capiente va alzato.
+- I 6.3 GiB di pesi non entrano in 8 GB: `serve_manager` aggiunge da sé
+  `--cpu-offload-gb 4` (v. §12), che porta i pesi residenti in VRAM a 2.23 GiB.
 - Fermare il server (`serve/stop`) invia SIGTERM al processo `docker run`,
   che Docker inoltra al container — non istantaneo come un processo nativo,
-  ma normale.
+  ma normale: `stop()` attende la fine effettiva del processo prima di
+  restituire (v. §1.1).
+
+### 6.1 Prerequisito di sistema: NVIDIA Container Toolkit
+
+`docker run --gpus all` richiede NVIDIA Container Toolkit. Se manca, l'avvio
+esce con codice 125 e `could not select device driver "" with capabilities:
+[[gpu]]`. Attenzione al caso insidioso: un aggiornamento di distribuzione
+(`do-release-upgrade`) **disattiva il repo NVIDIA** rinominandolo in `.save` e
+rimuove il pacchetto, ma lascia la voce `nvidia` in `daemon.json` — Docker
+sembra configurato e non lo è. Ripristino:
+
+```bash
+sudo cp /etc/apt/sources.list.d/nvidia-container-toolkit.list.save \
+        /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt update && sudo apt install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+Il registro modelli dichiara il prerequisito prima del click
+(`local_serve_blocker`) e `serve_manager` rifiuta l'avvio con il comando di
+installazione invece di lasciare l'errore Docker grezzo.
+
+### 6.2 Misure sul campo (pagina `A` del campione, RTX 4060 Laptop 8 GB)
+
+| | MonkeyOCRv2 (residente) | Unlimited-OCR (offload 4 GiB) |
+|---|---|---|
+| throughput | 152.6 tok/s | 13.3 tok/s |
+| layout della pagina | registro etichettato `Text` | registro etichettato **`table`** |
+| tabella | 6 chiamate a bande, colonne instabili (12 contro le 9 stampate) | 1 chiamata, **76 righe** complete `A.E.S. → Adamantios`, intestazione inclusa |
+| pagina intera end2end | — | 5 blocchi in 263 s, `finish_reason=stop` |
+
+Il contenuto tabellare arriva in **HTML** dentro il blocco `<|det|>table …`,
+non in markdown come lascerebbe intendere la card: `prefill` lo converte con
+`otsl.html_to_otsl` (verificato: griglia 76x8).
 
 ---
 
@@ -312,18 +428,48 @@ altrimenti la stima dichiarata) con la VRAM libera rilevata via `nvidia-smi`,
 con un margine del 35% per KV cache/attivazioni. **È un avviso, non un
 blocco** — a differenza del preflight del training (`services/vram.py`, che
 può bloccare un preset non riproducibile), qui l'utente decide sempre se
-provare comunque. Se il server va in out-of-memory, i primi due parametri da
-ridurre sono `--max-model-len` e `--gpu-memory-utilization`.
+provare comunque. Se il server va in out-of-memory, il parametro da ridurre è
+`--max-model-len` (la cache KV per richiesta) — **non**
+`--gpu-memory-utilization`, che ridurrebbe ancora il budget disponibile.
+Quando i soli pesi si mangiano il budget, l'avviso lo dice esplicitamente e
+rimanda alla GPU remota: nessun parametro salva la situazione.
 
 ---
 
-## 12. Tabella riassuntiva
+## 12. Offload dei pesi su RAM (`--cpu-offload-gb`)
+
+Un checkpoint più grande della VRAM disponibile non parte affatto: vLLM
+calcola una cache KV negativa e esce con `No available memory for the cache
+blocks`. `--cpu-offload-gb N` (backend UVA) mappa `N` GiB di pesi su memoria
+CPU pinned e li legge in zero-copy a ogni forward: costa banda PCIe, **non
+qualità**.
+
+`serve_manager.cpu_offload_gib()` lo calcola da sé e lo aggiunge solo quando
+serve, sia agli adapter `vllm serve` sia a quelli lanciati dentro l'immagine
+Docker ufficiale (il criterio è la presenza di `--gpu-memory-utilization`
+nell'argv). La formula parte dalla capacità della scheda — non dalla memoria
+libera al momento, perché il server precedente viene fermato subito dopo — e
+lascia ~2 GiB alla cache KV. Misure su RTX 4060 Laptop 8 GB:
+
+| modello | pesi | senza offload | con offload | throughput |
+|---|---|---|---|---|
+| DeepSeek-OCR-2 | 6.33 GiB | cache KV **-1.03 GiB**, non parte | `-gb 3` → 3.22 GiB residenti, KV 2.08 GiB | 16.7 tok/s |
+| Unlimited-OCR | 6.3 GiB | non parte | `-gb 4` → 2.23 GiB residenti, KV 0.94 GiB | 13.3 tok/s |
+| MonkeyOCRv2 | 1.92 GiB | entra, nessun offload | — | 152.6 tok/s |
+
+Il rapporto è circa 1:1 fra GiB spostati e GiB di cache KV recuperati. Il
+costo in velocità è **circa 10x** rispetto a un modello interamente residente:
+utilizzabile per confronti e per qualche pagina, non per macinare il corpus.
+
+---
+
+## 13. Tabella riassuntiva
 
 | Modello | Locale | Cloud (Modal) | Checkpoint | Note 8 GB |
 |---|---|---|---|---|
 | MonkeyOCRv2-B-Parsing | script dedicato | `modal_vllm.py` | ~1.5 GB | tarato, in produzione |
 | MinerU2.5 | `vllm serve` | `modal_mineru.py` | ~2.5 GB | comodo |
-| dots.mocr | `vllm serve` | `modal_dots_ocr.py` | ~6.1 GB | margine stretto |
+| dots.mocr | `vllm serve` | `modal_dots_ocr.py` | ~6.1 GB | margine stretto, offload probabile |
 | PaddleOCR-VL-1.6 | `vllm serve` | `modal_paddleocr_vl.py` | ~1.8 GB | comodo |
 | Unlimited-OCR | Docker | `modal_unlimited_ocr.py` | ~6 GB | margine stretto |
 | GLM-OCR | `vllm serve` | `modal_glm_ocr.py` | ~2.7 GB | comodo |

@@ -92,7 +92,17 @@ studio sono lo stesso oggetto a densità diverse.
   iperparametri avanzati del training vivono qui, non nel form principale.
 
 Componenti in `frontend/src/app/ui.tsx`: `Module`, `Collapsible`, `ErrorNotice`, `WarnNotice`,
-`Badge`, `Modal`, `Field`.
+`Notice`, `Badge`, `Progress`, `Modal`, `Field`.
+
+`Notice` è l'esito di un'azione detto in una riga dentro una piastra — un solo canale di ritorno
+per zona, invece di cinque avvisi resi ognuno a modo suo. Per ciò che si rompe resta `ErrorNotice`,
+che dice anche cosa fare adesso; le eccezioni grezze non arrivano mai allo schermo (`lib/errors.ts`).
+
+`Progress` è un filetto che si riempie, mai da solo: accanto c'è sempre la misura scritta
+(`123 MB di ~1,8 GB`), come per i `Badge`. Senza un totale attendibile la barra è indeterminata —
+dice «sta procedendo», che è l'unica cosa vera in quel caso — e non si inventa mai un «passo N di M»
+quando i passi dipendono da cosa manca davvero. Vale la stessa disciplina degli stati: un processo
+vivo non è un server pronto, e finché l'endpoint tace la UI dice «caricamento», non «in servizio».
 
 ## Navigazione
 
@@ -102,8 +112,19 @@ Riga 1: identità, lingua, stato del backend. Riga 2: le sezioni come linguette 
 Il rail regge più di sette voci senza ridisegnarsi e scorre orizzontalmente al proprio interno.
 La colonna sinistra resta libera per il **contesto** (pagine, progetti), mai per i link globali.
 
-Nello studio la stessa grammatica governa il rail destro: **una sola regione domina per volta**
-(Blocco / Livelli / Classi / Convenzioni), le altre restano linguette.
+Nello studio il rail destro è **una zona sola**: il contenuto della pagina. L'output del modello
+arriva in diretta in cima, i blocchi si correggono riga per riga sotto, e l'ordine di lettura si
+governa dalle righe stesse — non da un secondo elenco che ripete gli stessi blocchi. Le regole di
+trascrizione sono materiale di consultazione e stanno dietro il loro pulsante, non in un pannello
+che occupa il rail per sempre.
+
+Quella lista è anche l'equivalente DOM del canvas: i blocchi disegnati su Konva non esistono nel
+DOM, quindi devono vivere qui come righe vere, navigabili da tastiera (frecce, Alt+frecce per
+riordinare, Canc) e leggibili da uno screen reader.
+
+E dentro una pagina, quando gli argomenti sono più d'uno: Impostazioni ha cinque zone
+(Account / Istanza / Modello e calcolo / Dati e backup / Ambiente) rese con le stesse linguette,
+la scelta persistita nell'URL (`?s=`). La densità regge un form fitto, non cinque argomenti in fila.
 
 ## Il percorso
 
@@ -138,10 +159,15 @@ Sono sempre `aria-hidden`: il nome accessibile sta sul controllo.
 
 ## Movimento
 
-Minimo e funzionale. Un solo momento autoriale: `.swap` — il cambio di contenuto in posto,
+Minimo e funzionale. Due momenti soltanto, entrambi con la stessa curva: `.swap` — il cambio di contenuto in posto,
 140ms, `cubic-bezier(0.16, 1, 0.3, 1)`, con un `clip-path` che scopre da sinistra (il gesto
 della piastra che viene stampata). Sotto `prefers-reduced-motion` diventa uno scambio istantaneo
 e ogni transizione dell'app si azzera.
+
+Il secondo è lo streaming: `.stream-in` (220ms) fa entrare ogni pezzo di output che il modello
+produce senza far saltare quello che stai leggendo, e `.caret` è l'unico segnale che lampeggia —
+solo mentre lo stream è aperto, perché dice «la riga non è finita». Sotto `prefers-reduced-motion`
+il testo compare e basta, e il cursore resta fermo e visibile.
 
 ## Superfici del browser
 

@@ -58,16 +58,18 @@ con mediana 0,15 $/h; RTX 4090 da 0,13 $/h con mediana 0,36 $/h).
    ```
 3. Scarica ed esegui il nostro script di setup automatico:
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/nbadino/tabularium/main/scripts/cloud/setup_cloud_vllm.sh | bash
+   export MONKEYOCR_REF=<commit-o-tag-monkeyocr-verificato>
+   export TABULARIUM_REF=<commit-o-tag-tabularium-verificato>
+   curl -fsSL "https://raw.githubusercontent.com/nbadino/tabularium/${TABULARIUM_REF}/scripts/cloud/setup_cloud_vllm.sh" | bash -s -- --ref "$MONKEYOCR_REF"
    # Oppure se hai clonato il repo:
-   bash setup_cloud_vllm.sh --port 8888
+   bash setup_cloud_vllm.sh --port 8888 --ref <commit-o-tag-verificato>
    ```
-   *Lo script installa vLLM, clona il runner, scarica automaticamente i pesi di MonkeyOCRv2-B-Parsing e avvia il server.*
+   *Lo script installa versioni pin-nate, clona il runner al ref indicato, verifica GPU/disco, genera `cloud-manifest.json`, scarica i pesi e avvia il server.*
 
 ### Passo 3: Apri il Tunnel SSH sul tuo PC locale
 Sul tuo computer locale, esegui il nostro helper dedicato:
 ```bash
-./scripts/cloud/ssh_tunnel.sh -p 34567 root@198.51.100.24
+./scripts/cloud/ssh_tunnel.sh root@198.51.100.24 -p 34567
 ```
 Ora la porta remota `8888` è inoltrata in modo sicuro e cifrato al tuo `http://127.0.0.1:8888/v1` locale!
 
@@ -77,6 +79,23 @@ Ora la porta remota `8888` è inoltrata in modo sicuro e cifrato al tuo `http://
 3. Clicca su **"Test Connessione"**: vedrai la spia verde con la latenza in millisecondi.
 4. Clicca su **"Salva Configurazione"**.
 5. Fatto! Da questo momento, ogni operazione di annotazione assistita, rilevamento tabelle, playground ed evaluation userà la GPU Cloud.
+
+Il tunnel CLI usa `StrictHostKeyChecking=yes` e un file `known_hosts` dedicato.
+Prima del primo collegamento registra la chiave dopo averne verificato il
+fingerprint fornito dal provider, per esempio:
+
+```bash
+mkdir -p "$(dirname "${TABULARIUM_SSH_KNOWN_HOSTS:-$PWD/data/known_hosts}")"
+ssh-keyscan -p 34567 198.51.100.24 >> "${TABULARIUM_SSH_KNOWN_HOSTS:-$PWD/data/known_hosts}"
+```
+
+Per il tunnel gestito dall’interfaccia, il backend usa lo stesso percorso
+configurato da `TABULARIUM_SSH_KNOWN_HOSTS`.
+
+Se usi `scripts/cloud/vast_onstart.sh` come hook Vast, configura entrambe le
+revisioni prima dell’avvio: `MONKEYOCR_REF` per il runner MonkeyOCRv2 e
+`TABULARIUM_REF` per lo script Tabularium scaricato dall’hook. L’hook rifiuta
+un ref mancante e non usa più codice `main` implicito.
 
 ---
 
@@ -95,7 +114,10 @@ RunPod offre proxy HTTPS integrati senza bisogno di aprire tunnel SSH da termina
 1. Apri la **Web Terminal** o connettiti via SSH.
 2. Esegui lo script:
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/nbadino/tabularium/main/scripts/cloud/setup_cloud_vllm.sh | bash -s -- --port 8888 --api-key "chiave-segreta-tua"
+   export MONKEYOCR_REF=<commit-o-tag-monkeyocr-verificato>
+   export TABULARIUM_REF=<commit-o-tag-tabularium-verificato>
+   export TABULARIUM_SERVER_API_KEY=<token-del-server>
+   curl -fsSL "https://raw.githubusercontent.com/nbadino/tabularium/${TABULARIUM_REF}/scripts/cloud/setup_cloud_vllm.sh" | bash -s -- --port 8888 --ref "$MONKEYOCR_REF"
    ```
 
 ### Passo 3: Collega Tabularium con l'URL HTTPS di RunPod
@@ -114,7 +136,9 @@ Se preferisci non usare SSH Tunnel e avere una porta aperta su internet:
 1. All'avvio del container Vast.ai, apri una porta diretta (es. `8888`).
 2. Avvia vLLM con API Key:
    ```bash
-   bash setup_cloud_vllm.sh --port 8888 --api-key "IL_TUO_TOKEN_SEGRETO"
+   export MONKEYOCR_REF=<commit-o-tag-verificato>
+   export TABULARIUM_SERVER_API_KEY=<token-del-server>
+   bash setup_cloud_vllm.sh --port 8888 --ref "$MONKEYOCR_REF"
    ```
 3. In Tabularium, inserisci l'URL pubblico di Vast.ai (es. `http://198.51.100.24:34567/v1`) e la chiave API.
 

@@ -113,14 +113,27 @@ management. Passwords and session tokens are stored only as hashes.
 | Component | Requirement |
 |---|---|
 | OS | Linux, macOS or Windows |
-| Python | ≥ 3.11 (backend) |
-| Node.js | any current version (only to build the frontend once) |
+| Python | 3.11–3.13 (backend; CI-verified) |
+| Node.js | ≥ 20 (used by `run.sh`/`run.ps1` to build or refresh the frontend) |
 | Storage | SQLite (bundled), plus disk space for your scans |
 | GPU | NVIDIA, ≥ 8 GB VRAM — **only** for model prefill / inference / fine-tuning |
 
 Annotation and local-OCR prefill run entirely on CPU. The dashboard process
 never imports PyTorch: training and model inference run in separate
 environments it orchestrates.
+
+### Platform boundaries
+
+| Activity | Linux | macOS | Windows |
+|---|---:|---:|---:|
+| Dashboard, annotation, projects and dataset export | Yes | Yes | Yes |
+| Local OCR prefill on CPU | Yes | Yes | Yes |
+| Local NVIDIA/CUDA model serving and training | Yes | No | Via WSL2 |
+| Remote GPU through SSH, Vast.ai or RunPod | Yes | Yes | Yes |
+
+On macOS and Windows the application remains fully usable for archive
+preparation and annotation. GPU-dependent model serving/training must run on
+Linux, either directly, through WSL2 on Windows, or on a remote Linux GPU.
 
 ## Quickstart
 
@@ -134,6 +147,9 @@ environments it orchestrates.
 # 3. run everything on http://localhost:8787
 ./scripts/run.sh                    # Windows: scripts\run.ps1
 ```
+
+The backend installers accept Python 3.11, 3.12 or 3.13 and explicitly refuse
+versions outside the verified matrix.
 
 On first launch the app shows the **setup screen** where you create the
 instance administrator; every later session starts at the login page.
@@ -177,21 +193,16 @@ management (SSH tunnel, RunPod proxy, serverless) documented in
 ### Optional extras
 
 - **Page rectification** — *Align and compare* in the studio proposes a
-  corrected page (rotation, perspective, neural dewarp) without touching your
-  annotations; you accept or reject it. The neural **UVDoc** engine needs a
-  complete PaddleOCR runtime and runs in a dedicated Python environment that
-  the run script discovers automatically:
-
-  ```bash
-  python3.12 -m venv .venv-uvdoc
-  source .venv-uvdoc/bin/activate       # Windows: .venv-uvdoc\Scripts\activate
-  python -m pip install -r backend/requirements.txt
-  # Install the platform-specific PaddlePaddle wheel (see the official guide), then:
-  python -m pip install -r backend/requirements-uvdoc.txt
-  ```
-
-  The experimental **DocScanner-L** engine has its own installer
-  (`scripts/setup_docscanner.sh`) and never silently replaces UVDoc.
+  corrected page without touching your annotations; you accept or reject it.
+  The only neural rectifier is the **official MonkeyOCRv2 preprocessor**, the
+  same stage the model's own pipeline runs on every page before parsing (see
+  [docs/LOCAL_INFERENCE_GUIDE.md](docs/LOCAL_INFERENCE_GUIDE.md) §2.2). It
+  needs no extra install: it reuses the checkpoint's weights and the vLLM
+  runtime. Alongside it there are only rotation-only deskew and the manual
+  perspective/mesh corrections. The earlier third-party engines (UVDoc,
+  DocScanner-L) were substitutes chosen before the model's own preprocessor was
+  reachable, and have been removed: preparing pages differently from how the
+  model expects to receive them is a liability, not an option.
 - **Alternative OCR engines** — see
   [docs/OCR_MODEL_ALTERNATIVES.md](docs/OCR_MODEL_ALTERNATIVES.md).
 
@@ -280,9 +291,11 @@ follows `TABULARIUM_ROOT` (default `<repo>/data`).
 
 **The app doesn't start / the page is blank.**
 Check that the frontend was built at least once (`scripts/setup_frontend.sh`,
-or `cd frontend && npm run build`): the backend serves `frontend/dist`. The
-server log printed by `scripts/run.sh` reports the health endpoint on
-`/api/health`.
+or `cd frontend && npm run build`): the backend serves `frontend/dist`. When
+started with `scripts/run.sh`/`run.ps1`, the frontend is rebuilt automatically
+if its sources are newer than `dist/index.html` (or when
+`TABULARIUM_BUILD_FRONTEND=1` is set). The server log reports the health
+endpoint on `/api/health`.
 
 **Model prefill or playground says the model is unavailable.**
 Those features need the vLLM server (`scripts/serve_model.sh`); everything
