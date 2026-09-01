@@ -26,9 +26,11 @@ trap cleanup EXIT
 if ! curl -fsS "$BASE_URL/api/health" >/dev/null 2>&1; then
   "$ROOT/scripts/run.sh" >/tmp/tabularium-e2e-server.log 2>&1 &
   SERVER_PID=$!
-  for _ in {1..30}; do
+  # La prima esecuzione può compilare il frontend prima di avviare Uvicorn;
+  # sei secondi erano insufficienti su macchine lente o Windows/WSL.
+  for _ in {1..120}; do
     curl -fsS "$BASE_URL/api/health" >/dev/null 2>&1 && break
-    sleep 0.2
+    sleep 0.25
   done
 fi
 curl -fsS "$BASE_URL/api/health" >/dev/null

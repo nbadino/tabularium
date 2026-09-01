@@ -8,7 +8,7 @@
 # 3. Avviare il server vLLM OpenAI-compatibile su porta configurabile
 #
 # Uso sul server cloud:
-#   bash setup_cloud_vllm.sh [--port 8888] [--model zenosai/MonkeyOCRv2-B-Parsing] [--api-key SECRET]
+#   bash setup_cloud_vllm.sh [--port 8888] [--model zenosai/MonkeyOCRv2-B-Parsing] [--ref COMMIT_OR_TAG] [--api-key SECRET]
 # ==============================================================================
 set -euo pipefail
 
@@ -18,13 +18,12 @@ MODEL_NAME="${MODEL_NAME:-zenosai/MonkeyOCRv2-B-Parsing}"
 MODEL_DIR="${MODEL_DIR:-$HOME/MonkeyOCRv2/model_weight/MonkeyOCRv2-B-Parsing}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.90}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-24576}"
-API_KEY="${API_KEY:-}"
+API_KEY="${API_KEY:-${TABULARIUM_SERVER_API_KEY:-}}"
 VLLM_VERSION="${VLLM_VERSION:-0.25.1}"
 TRANSFORMERS_VERSION="${TRANSFORMERS_VERSION:-4.51.3}"
 MONKEYOCR_REF="${MONKEYOCR_REF:-}"
 MIN_DISK_GB="${MIN_DISK_GB:-10}"
-
-: "${MONKEYOCR_REF:?MONKEYOCR_REF obbligatorio: usare un commit SHA o un tag verificato}"
+MIN_COMPUTE_CAP="${MIN_COMPUTE_CAP:-8.0}"
 
 # Parse flags
 while [[ $# -gt 0 ]]; do
@@ -43,10 +42,14 @@ while [[ $# -gt 0 ]]; do
       GPU_MEM_UTIL="$2"; shift 2 ;;
     --max-len)
       MAX_MODEL_LEN="$2"; shift 2 ;;
+    --ref|--monkeyocr-ref)
+      MONKEYOCR_REF="$2"; shift 2 ;;
     *)
       echo "Argomento sconosciuto: $1" >&2; exit 1 ;;
   esac
 done
+
+: "${MONKEYOCR_REF:?MONKEYOCR_REF obbligatorio: usare un commit SHA o un tag verificato}"
 
 echo "=========================================================="
 echo ">> [Tabularium Cloud Setup] Avvio configurazione vLLM GPU"
@@ -56,8 +59,14 @@ echo "=========================================================="
 # 1. Check GPU
 if command -v nvidia-smi &>/dev/null; then
   echo ">> GPU Rilevata:"
-  nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
-  GPU_QUERY=$(nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader)
+  nvidia-smi --query-gpu=name,memory.total,driver_version,compute_cap --format=csv,noheader
+  GPU_QUERY=$(nvidia-smi --query-gpu=name,memory.total,driver_version,compute_cap --format=csv,noheader)
+  COMPUTE_CAP=$(printf '%s\n' "$GPU_QUERY" | awk -F',' 'NR==1 {gsub(/[[:space:]]/, "", $4); print $4}')
+  if ! awk -v actual="$COMPUTE_CAP" -v minimum="$MIN_COMPUTE_CAP" 'BEGIN { exit !(actual + 0 >= minimum + 0) }'; then
+    echo "!! GPU con compute capability ${COMPUTE_CAP:-sconosciuta}: servono almeno ${MIN_COMPUTE_CAP} per la recipe bf16." >&2
+    exit 1
+  fi
+  echo ">> Compute capability verificata: $COMPUTE_CAP (minima $MIN_COMPUTE_CAP)"
 else
   echo "!! nvidia-smi non trovato: serve una GPU NVIDIA funzionante." >&2
   exit 1
@@ -116,18 +125,27 @@ PY
 fi
 
 MODEL_NAME="$MODEL_NAME" MODEL_DIR="$MODEL_DIR" VLLM_VERSION="$VLLM_VERSION" \
-MONKEYOCR_REF="$MONKEYOCR_REF" GPU_QUERY="$GPU_QUERY" DISK_AVAILABLE_GB="$DISK_AVAILABLE_GB" \
+TRANSFORMERS_VERSION="$TRANSFORMERS_VERSION" MONKEYOCR_REF="$MONKEYOCR_REF" \
+GPU_QUERY="$GPU_QUERY" COMPUTE_CAP="$COMPUTE_CAP" DISK_AVAILABLE_GB="$DISK_AVAILABLE_GB" \
+GPU_MEM_UTIL="$GPU_MEM_UTIL" MAX_MODEL_LEN="$MAX_MODEL_LEN" \
 python3 - <<'PY'
-import json, os, subprocess
+import json, os, platform, subprocess, sys
 from pathlib import Path
 
 manifest = {
     "model": os.environ["MODEL_NAME"],
     "model_dir": os.environ["MODEL_DIR"],
     "vllm": os.environ["VLLM_VERSION"],
+    "transformers": os.environ["TRANSFORMERS_VERSION"],
     "monkeyocr_ref": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
     "requested_ref": os.environ["MONKEYOCR_REF"],
     "gpu": os.environ["GPU_QUERY"],
+    "compute_capability": os.environ.get("COMPUTE_CAP", ""),
+    "dtype": "bfloat16",
+    "gpu_memory_utilization": float(os.environ["GPU_MEM_UTIL"]),
+    "max_model_len": int(os.environ["MAX_MODEL_LEN"]),
+    "python": platform.python_version(),
+    "recipe": "monkeyocrv2-vllm-vast-1",
     "disk_available_gb": int(os.environ["DISK_AVAILABLE_GB"]),
 }
 Path("cloud-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

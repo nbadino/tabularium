@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Confronta i motori geometrici sul corpus senza modificare Lloyds Lab.
+"""Confronta i motori geometrici sul corpus senza modificare Tabularium.
 
 Le misure OCR sono proxy (copertura e confidenza), non sostituiscono CER su
 trascrizioni gold. Output e report restano nella directory indicata.
@@ -28,8 +28,8 @@ def main() -> int:
     parser.add_argument(
         "--engines",
         nargs="+",
-        choices=("raw", "deskew", "uvdoc", "docscanner"),
-        default=("raw", "deskew", "uvdoc", "docscanner"),
+        choices=("raw", "deskew", "monkeyocr"),
+        default=("raw", "deskew", "monkeyocr"),
     )
     parser.add_argument("--ocr", choices=("rapidocr", "paddleocr"), default="rapidocr")
     args = parser.parse_args()

@@ -3,5 +3,5 @@
 set -euo pipefail
 cd "$(dirname "$0")/../frontend" || exit 1
 
-npm install
+npm ci
 echo ">> Frontend pronto."
