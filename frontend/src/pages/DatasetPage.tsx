@@ -26,6 +26,12 @@ export default function DatasetPage() {
   const [adapterId, setAdapterId] = useState('monkeyocrv2-parsing')
   const [adapters, setAdapters] = useState<Array<{ adapter_id: string; display_name: string; tasks: string[]; training_types: string[]; export_ready?: boolean }>>([])
   const [building, setBuilding] = useState(false)
+  const [paddleBuilding, setPaddleBuilding] = useState(false)
+  const [paddleTraining, setPaddleTraining] = useState(false)
+  const [paddleRecipe, setPaddleRecipe] = useState<{ files?: Record<string, string>; preflight?: { ready: boolean; errors?: string[]; warnings?: string[] } } | null>(null)
+  const [alternativeRecipe, setAlternativeRecipe] = useState<{ adapter_id?: string; status?: string; files?: Record<string, string> } | null>(null)
+  const [alternativeBuilding, setAlternativeBuilding] = useState(false)
+  const [paddleManifest, setPaddleManifest] = useState<{ counts?: { layout?: Record<string, number>; vlm?: Record<string, number> }; files?: Record<string, string>; warnings?: string[] } | null>(null)
   const [status, setStatus] = useState<DatasetStatus>({ built: false, report: null })
   const [error, setError] = useState<unknown>(null)
 
@@ -91,6 +97,47 @@ export default function DatasetPage() {
       setError(e)
     } finally {
       setBuilding(false)
+    }
+  }
+
+  const buildPaddle = async () => {
+    if (projectId === '') return
+    setPaddleBuilding(true)
+    setError(null)
+    try {
+      setPaddleManifest(await apiPost(`/projects/${projectId}/datasets/build-paddle`, {
+        split_ratio: ratio, seed, approved_only: approvedOnly,
+      }))
+    } catch (e) {
+      setError(e)
+    } finally {
+      setPaddleBuilding(false)
+    }
+  }
+
+  const preparePaddleTraining = async () => {
+    if (projectId === '') return
+    setPaddleTraining(true)
+    setError(null)
+    try {
+      setPaddleRecipe(await apiPost(`/projects/${projectId}/datasets/paddle-training`, {}))
+    } catch (e) {
+      setError(e)
+    } finally {
+      setPaddleTraining(false)
+    }
+  }
+
+  const prepareAlternativeTraining = async (adapter: 'glm' | 'deepseek' | 'dots-ocr' | 'unlimited-ocr' | 'mineru2.5') => {
+    if (projectId === '') return
+    setAlternativeBuilding(true)
+    setError(null)
+    try {
+      setAlternativeRecipe(await apiPost(`/projects/${projectId}/datasets/${adapter}-training`, { approved_only: approvedOnly }))
+    } catch (e) {
+      setError(e)
+    } finally {
+      setAlternativeBuilding(false)
     }
   }
 
@@ -215,7 +262,49 @@ export default function DatasetPage() {
                 {t('dataset.overwriteNote')}
               </span>
             )}
+            <button onClick={() => void buildPaddle()} disabled={paddleBuilding || projectId === ''} className="btn">
+              {paddleBuilding ? t('dataset.paddleBuilding') : t('dataset.paddleBuild')}
+            </button>
+            <button onClick={() => void preparePaddleTraining()} disabled={paddleTraining || projectId === '' || !paddleManifest} className="btn">
+              {paddleTraining ? t('dataset.paddleTraining') : t('dataset.paddlePrepareTraining')}
+            </button>
+            <button onClick={() => void prepareAlternativeTraining('glm')} disabled={alternativeBuilding || projectId === ''} className="btn">
+              {t('dataset.glmPrepareTraining')}
+            </button>
+            <button onClick={() => void prepareAlternativeTraining('deepseek')} disabled={alternativeBuilding || projectId === ''} className="btn">
+              {t('dataset.deepseekPrepareTraining')}
+            </button>
+            <button onClick={() => void prepareAlternativeTraining('dots-ocr')} disabled={alternativeBuilding || projectId === ''} className="btn">
+              {t('dataset.dotsPrepareTraining')}
+            </button>
+            <button onClick={() => void prepareAlternativeTraining('unlimited-ocr')} disabled={alternativeBuilding || projectId === ''} className="btn">
+              {t('dataset.unlimitedPrepareTraining')}
+            </button>
+            <button onClick={() => void prepareAlternativeTraining('mineru2.5')} disabled={alternativeBuilding || projectId === ''} className="btn">
+              {t('dataset.mineruPrepareTraining')}
+            </button>
           </div>
+          {paddleManifest && (
+            <p className="mt-2 mono text-[11px] text-[color:var(--color-ok)]">
+              {t('dataset.paddleReady', { train: paddleManifest.counts?.vlm?.train ?? 0, val: paddleManifest.counts?.vlm?.val ?? 0 })}
+            </p>
+          )}
+          {paddleRecipe && (
+            <div className="mt-2 border-l-2 border-[color:var(--color-rule-strong)] pl-2 text-[11px]">
+              <p className="mono text-[color:var(--color-ok)]">{t('dataset.paddleRecipeReady')}</p>
+              {!paddleRecipe.preflight?.ready && (
+                <p className="mt-1 text-[color:var(--color-sig-text)]">
+                  {(paddleRecipe.preflight?.errors ?? []).join(' · ')}
+                </p>
+              )}
+              {paddleRecipe.files && <p className="mt-1 mono text-[color:var(--color-ink-2)]">{Object.values(paddleRecipe.files).join(' · ')}</p>}
+            </div>
+          )}
+          {alternativeRecipe && (
+            <p className="mt-2 mono text-[11px] text-[color:var(--color-ok)]">
+              {alternativeRecipe.adapter_id}: {alternativeRecipe.status ?? t('dataset.recipeReady')}
+            </p>
+          )}
         </Module>
       </div>
 

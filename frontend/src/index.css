@@ -427,6 +427,66 @@
     background-position: 0 0, 8px 8px;
   }
 
+  /* ---- tabella dati (output del modello) ---------------------------------
+     Una tabella di dati non è una griglia di scatole: il reticolo completo
+     disegna 200 rettangoli e nessuna colonna. Qui restano solo le linee che
+     servono a seguire la riga — orizzontali sottili — mentre le colonne le
+     tiene l'incolonnamento (cifre tabulari, numeri a destra). L'intestazione
+     è una piastra che resta in cima allo scorrimento: in un registro di 60
+     righe, sapere che colonna stai leggendo è metà del lavoro. */
+  .dtable {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .dtable th,
+  .dtable td {
+    padding: 5px 10px;
+    text-align: left;
+    vertical-align: top;
+    white-space: pre-wrap;
+    border-bottom: 1px solid var(--color-rule);
+  }
+  .dtable thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--color-fill);
+    border-bottom: 1px solid var(--color-rule-strong);
+    color: var(--color-ink-2);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  /* La prima colonna porta quasi sempre l'identità della riga (la nave, il
+     porto): regge il peso, le altre restano di lettura. */
+  .dtable tbody td:first-child {
+    font-weight: 500;
+    color: var(--color-ink);
+  }
+  .dtable tbody td {
+    color: var(--color-ink-2);
+  }
+  /* Numeri e date si leggono incolonnati a destra, come su carta. */
+  .dtable td[data-num='true'] {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .dtable tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  .dtable tbody tr:hover td {
+    background: var(--color-fill);
+  }
+  /* Cella vuota: un trattino basso invece del nulla, così la riga non sembra
+     sfilata di una colonna. */
+  .dtable td:empty::after {
+    content: '·';
+    color: var(--color-ink-3);
+  }
+
   /* ---- foglio tabella (Handsontable) -------------------------------------- */
   /* Colonna proposta dal rilevatore ma non attestata da nessun confine reale:
      tratteggio d'allarme, non un filetto come gli altri. */
@@ -443,6 +503,57 @@
     animation: swap-in 140ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
+  /* Il modello scrive: ogni pezzo che arriva entra da sé, senza far saltare
+     quello che stai già leggendo. Stessa curva dello scambio in posto. */
+  .stream-in {
+    animation: stream-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes stream-in {
+    from {
+      opacity: 0;
+      transform: translateY(2px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* Il cursore che dice «la riga non è finita»: unico posto in cui il segnale
+     lampeggia, e solo finché lo stream è aperto. */
+  .caret {
+    display: inline-block;
+    width: 0.45em;
+    height: 1em;
+    margin-left: 1px;
+    vertical-align: -0.15em;
+    background: var(--color-sig);
+    animation: caret 1s steps(1, end) infinite;
+  }
+
+  @keyframes caret {
+    50% {
+      opacity: 0;
+    }
+  }
+
+  /* Avanzamento senza totale attendibile: la barra scorre per dire «sta
+     procedendo», l'unica cosa vera che si può dire in quel caso. */
+  .prog-idle {
+    width: 35%;
+    animation: prog-idle 1400ms cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  }
+
+  @keyframes prog-idle {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(286%);
+    }
+  }
+
   @keyframes swap-in {
     from {
       opacity: 0;
@@ -456,6 +567,18 @@
 
   @media (prefers-reduced-motion: reduce) {
     .swap {
+      animation: none;
+    }
+    /* Senza movimento la barra indeterminata non può «scorrere»: resta piena,
+       che è comunque il segno «in corso» e non un vuoto. */
+    .prog-idle {
+      width: 100%;
+      animation: none;
+    }
+    /* Il testo in streaming compare senza entrare; il cursore resta fermo e
+       visibile, che è il segno «sto scrivendo» anche da immobile. */
+    .stream-in,
+    .caret {
       animation: none;
     }
     *,

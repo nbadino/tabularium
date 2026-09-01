@@ -30,6 +30,7 @@ interface RentedInstance {
   ssh_port: number | null
   is_running: boolean
   label: string
+  cost_estimate?: { estimated_usd: number; hours: number; hourly_rate: number }
 }
 
 interface VastOffer {
@@ -53,6 +54,30 @@ interface ModalStatus {
 }
 
 type Provider = 'vast' | 'runpod' | 'modal' | 'manual'
+
+const MODAL_TEMPLATE_KEY = 'tabularium.modal.template'
+const MODAL_KEEP_WARM_KEY = 'tabularium.modal.keep_warm'
+
+/** Migra una preferenza innocua dal prefisso storico senza migrare segreti. */
+export function readMigratedPreference(key: string, legacyKey: string): string | null {
+  try {
+    const current = localStorage.getItem(key)
+    if (current !== null) {
+      // Elimina anche un eventuale residuo storico: il valore corrente ha già
+      // precedenza, quindi tenere la chiave legacy può solo creare ambiguità.
+      if (localStorage.getItem(legacyKey) !== null) localStorage.removeItem(legacyKey)
+      return current
+    }
+    const legacy = localStorage.getItem(legacyKey)
+    if (legacy !== null) {
+      localStorage.setItem(key, legacy)
+      localStorage.removeItem(legacyKey)
+    }
+    return legacy
+  } catch {
+    return null
+  }
+}
 
 /** Su quale provider aprire il pannello: quello che l'endpoint salvato indica già. */
 function guessProvider(url: string): Provider {
@@ -121,6 +146,8 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
   const [vastMaxDph, setVastMaxDph] = useState('')
   const [vastDiskGb, setVastDiskGb] = useState('40')
   const [vastPrepare, setVastPrepare] = useState(true)
+  const [vastMonkeyRef, setVastMonkeyRef] = useState('')
+  const [vastTabulariumRef, setVastTabulariumRef] = useState('')
   const [sshHost, setSshHost] = useState('')
   const [sshPort, setSshPort] = useState('')
   const [sshUser, setSshUser] = useState('root')
@@ -139,16 +166,20 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
   // dalla vista a ogni refresh — riportava sempre alla template attualmente
   // in uso, nascondendo il task in corso su un'altra. Riprodotto dal vivo.
   const [modalTemplate, setModalTemplateRaw] = useState(
-    () => localStorage.getItem('lloyds.modal_template') || guessModalTemplate(inf.url),
+    () => readMigratedPreference(MODAL_TEMPLATE_KEY, 'lloyds.modal_template') || guessModalTemplate(inf.url),
   )
   const setModalTemplate = (id: string) => {
     setModalTemplateRaw(id)
-    localStorage.setItem('lloyds.modal_template', id)
+    try {
+      localStorage.setItem(MODAL_TEMPLATE_KEY, id)
+    } catch {
+      /* storage non disponibile: la scelta resta valida per la sessione */
+    }
   }
   const [modalStatus, setModalStatus] = useState<ModalStatus | null>(null)
   const [modalApiKey, setModalApiKey] = useState('')
   const [modalKeepWarm, setModalKeepWarm] = useState(
-    () => localStorage.getItem('lloyds.modal_keep_warm') === '1',
+    () => readMigratedPreference(MODAL_KEEP_WARM_KEY, 'lloyds.modal_keep_warm') === '1',
   )
   const [modalBusy, setModalBusy] = useState(false)
   const [modalNotice, setModalNotice] = useState<string | null>(null)
@@ -289,6 +320,14 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
   }
 
   const handleRentVast = async (offer: VastOffer) => {
+    if (vastPrepare && !vastMonkeyRef.trim()) {
+      setVastNotice(t('cloud.control.monkeyRefRequired'))
+      return
+    }
+    if (vastPrepare && !vastTabulariumRef.trim()) {
+      setVastNotice(t('cloud.control.tabulariumRefRequired'))
+      return
+    }
     const price = offer.dph_total == null ? t('cloud.control.priceUnknown') : `$${offer.dph_total.toFixed(3)}/h`
     if (!window.confirm(t('cloud.control.rentConfirm', { gpu: `${offer.num_gpus}× ${offer.gpu_name || 'GPU'}`, price }))) return
     setVastBusy(true)
@@ -297,7 +336,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
       await apiPost('/system/cloud/vast/rent', {
         api_key: vastApiKey.trim(), offer_id: offer.id, disk_gb: Number(vastDiskGb) || 40,
         dph_total: offer.dph_total,
-        prepare_server: vastPrepare, model: 'zenosai/MonkeyOCRv2-B-Parsing', port: 8888,
+        prepare_server: vastPrepare, monkeyocr_ref: vastMonkeyRef.trim(), tabularium_ref: vastTabulariumRef.trim(), model: 'zenosai/MonkeyOCRv2-B-Parsing', port: 8888,
       })
       setVastOffers([])
       setVastNotice(t('cloud.control.rentStarted'))
@@ -309,13 +348,14 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
     }
   }
 
-  const handleControlVast = async (instanceId: number | string, action: 'start' | 'stop') => {
+  const handleControlVast = async (instanceId: number | string, action: 'start' | 'stop' | 'delete') => {
+    if (action === 'delete' && !window.confirm(t('cloud.control.deleteResourceConfirm', { id: String(instanceId) }))) return
     setVastBusy(true)
     try {
       await apiPost('/system/cloud/vast/control', { api_key: vastApiKey.trim(), instance_id: instanceId, action })
       setVastNotice(
         t('cloud.control.commandSent', {
-          action: action === 'start' ? t('cloud.control.actionStart') : t('cloud.control.actionPause'),
+          action: action === 'start' ? t('cloud.control.actionStart') : action === 'stop' ? t('cloud.control.actionPause') : t('cloud.control.actionDelete'),
         }),
       )
       await handleLoadVast()
@@ -361,13 +401,14 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
     }
   }
 
-  const handleControlRunpod = async (podId: number | string, action: 'start' | 'stop') => {
+  const handleControlRunpod = async (podId: number | string, action: 'start' | 'stop' | 'delete') => {
+    if (action === 'delete' && !window.confirm(t('cloud.control.deleteResourceConfirm', { id: String(podId) }))) return
     setRunpodBusy(true)
     try {
       await apiPost('/system/cloud/runpod/control', { api_key: runpodApiKey.trim(), pod_id: podId, action })
       setRunpodNotice(
         t('cloud.control.commandSent', {
-          action: action === 'start' ? t('cloud.control.actionStart') : t('cloud.control.actionPause'),
+          action: action === 'start' ? t('cloud.control.actionStart') : action === 'stop' ? t('cloud.control.actionPause') : t('cloud.control.actionDelete'),
         }),
       )
       await handleLoadRunpod()
@@ -490,6 +531,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
     connectLabel: string,
     onStart: (id: number | string) => void,
     onStop: (id: number | string) => void,
+    onDelete: (id: number | string) => void,
   ) => (
     <Module tab={t('cloud.control.instancesLabel')} quiet flush>
       <div className="divide-y divide-[color:var(--color-rule)]">
@@ -502,6 +544,11 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                 {inst.dph_total != null && (
                   <span className="mono text-[11px] font-semibold text-[color:var(--color-sig)]">
                     ${inst.dph_total.toFixed(3)}/h
+                  </span>
+                )}
+                {inst.cost_estimate && (
+                  <span className="mono text-[11px] text-[color:var(--color-ink-2)]">
+                    {t('cloud.control.costSoFar', { cost: inst.cost_estimate.estimated_usd.toFixed(2) })}
                   </span>
                 )}
               </div>
@@ -535,6 +582,15 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                   {t('cloud.control.resume')}
                 </button>
               )}
+              <button
+                type="button"
+                onClick={() => onDelete(inst.id)}
+                disabled={busy}
+                className="btn btn-sm btn-danger"
+                title={t('cloud.control.deleteResource')}
+              >
+                {t('cloud.control.deleteResource')}
+              </button>
             </div>
           </div>
         ))}
@@ -622,6 +678,16 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                   <input type="checkbox" checked={vastPrepare} onChange={(e) => setVastPrepare(e.target.checked)} />
                   {t('cloud.control.prepareServer')}
                 </label>
+                {vastPrepare && (
+                  <div className="sm:col-span-2 grid gap-3 md:grid-cols-2">
+                    <Field label={t('cloud.control.monkeyRefLabel')} hint={t('cloud.control.monkeyRefHint')}>
+                      <input value={vastMonkeyRef} onChange={(e) => setVastMonkeyRef(e.target.value)} placeholder="commit SHA o tag verificato" className="fld fld-mono" />
+                    </Field>
+                    <Field label={t('cloud.control.tabulariumRefLabel')} hint={t('cloud.control.tabulariumRefHint')}>
+                      <input value={vastTabulariumRef} onChange={(e) => setVastTabulariumRef(e.target.value)} placeholder="commit SHA o tag verificato" className="fld fld-mono" />
+                    </Field>
+                  </div>
+                )}
                 <div className="flex items-end">
                   <button type="button" onClick={() => void handleSearchVast()} disabled={vastBusy} className="btn btn-primary w-full">
                     {vastBusy ? t('cloud.control.loading') : t('cloud.control.findOffers')}
@@ -655,6 +721,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                 t('cloud.control.connect'),
                 (id) => void handleControlVast(id, 'start'),
                 (id) => void handleControlVast(id, 'stop'),
+                (id) => void handleControlVast(id, 'delete'),
               )}
 
             <div className="grid gap-3 border border-[color:var(--color-rule)] p-3 sm:grid-cols-2">
@@ -723,6 +790,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                 t('cloud.control.runpodUseProxy'),
                 (id) => void handleControlRunpod(id, 'start'),
                 (id) => void handleControlRunpod(id, 'stop'),
+                (id) => void handleControlRunpod(id, 'delete'),
               )}
 
             <details>
@@ -731,7 +799,7 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
               </summary>
               <div className="mt-2 space-y-2 text-[12px] text-[color:var(--color-ink-2)]">
                 <p>{t('cloud.control.runpodSetupBody')}</p>
-                {commandBox('curl -fsSL https://raw.githubusercontent.com/cappannonno/tabularium/main/scripts/cloud/setup_cloud_vllm.sh | bash -s -- --port 8888 --api-key "CHIAVE_SEGRETA"', 'runpod-setup')}
+                {commandBox('export MONKEYOCR_REF=COMMIT_O_TAG_MONKEYOCR_VERIFICATO; export TABULARIUM_REF=COMMIT_O_TAG_TABULARIUM_VERIFICATO; export TABULARIUM_SERVER_API_KEY=TOKEN_DEL_SERVER; curl -fsSL "https://raw.githubusercontent.com/nbadino/tabularium/${TABULARIUM_REF}/scripts/cloud/setup_cloud_vllm.sh" | bash -s -- --port 8888 --ref "$MONKEYOCR_REF"', 'runpod-setup')}
               </div>
             </details>
           </div>
@@ -794,7 +862,11 @@ export function CloudControlModal({ open, onClose }: CloudControlModalProps) {
                 onChange={(event) => {
                   const value = event.target.checked
                   setModalKeepWarm(value)
-                  localStorage.setItem('tabularium.modal_keep_warm', value ? '1' : '0')
+                  try {
+                    localStorage.setItem(MODAL_KEEP_WARM_KEY, value ? '1' : '0')
+                  } catch {
+                    /* storage non disponibile: la scelta vale per la sessione */
+                  }
                 }}
               />
               <span>

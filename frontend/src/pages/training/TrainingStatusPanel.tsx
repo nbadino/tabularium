@@ -18,6 +18,9 @@ interface TrainingStatusPanelProps {
   gpuList: GpuInfo[]
   metricsData: Array<{ i: number; loss?: number; lr?: number }>
   state: string
+  canCleanup: boolean
+  cleanupArmed: boolean
+  onCleanup: () => void
 }
 
 /** Cosa significa davvero lo stato in cui è finito il run. */
@@ -37,6 +40,9 @@ export default function TrainingStatusPanel({
   gpuList,
   metricsData,
   state,
+  canCleanup,
+  cleanupArmed,
+  onCleanup,
 }: TrainingStatusPanelProps) {
   const { t, tn } = useI18n()
   const hasLr = metricsData.some((m) => m.lr != null)
@@ -69,6 +75,16 @@ export default function TrainingStatusPanel({
           <p className="mt-1.5 text-[12px] text-[color:var(--color-ink-2)]">
             {t('training.noRun')}
           </p>
+        )}
+        {canCleanup && (
+          <div className="mt-3 border-t border-[color:var(--color-rule)] pt-2">
+            <button type="button" className="btn btn-sm" onClick={onCleanup}>
+              {cleanupArmed ? t('training.confirmCleanupRemote') : t('training.cleanupRemote')}
+            </button>
+            <p className="mt-1 text-[11px] text-[color:var(--color-ink-3)]">
+              {t('training.cleanupRemoteNote')}
+            </p>
+          </div>
         )}
       </Module>
 

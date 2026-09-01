@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
-import { insertTrack, deleteTrack, mergeRange, ownerMap, splitCell } from '../../lib/grid'
+import { insertTrack, deleteTrack, mergeRange, normalizeTableGrid, ownerMap, splitCell } from '../../lib/grid'
 import type { TableDetectOut, TableDetectRequest, TableGrid } from '../../lib/types'
 import { WarnNotice } from '../../app/ui'
 import { IconMinus, IconPlus, IconSave } from '../../app/icons'
@@ -32,7 +32,7 @@ const AUTOSAVE_DELAY = 900
 export default function SheetEditor({ grid: initialGrid, onSave, onDetect }: SheetEditorProps) {
   const { t } = useI18n()
   const inf = useInference()
-  const [grid, setGrid] = useState<TableGrid>(initialGrid)
+  const [grid, setGrid] = useState<TableGrid>(() => normalizeTableGrid(initialGrid))
   const [saving, setSaving] = useState(false)
   const [otsl, setOtsl] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -124,7 +124,7 @@ export default function SheetEditor({ grid: initialGrid, onSave, onDetect }: She
     setDetecting(true)
     try {
       const out = await onDetect({ fill: detectFill })
-      setGrid(out.grid)
+      setGrid(normalizeTableGrid(out.grid))
       setDetectInfo(out)
       setNotice(null)
     } catch (e) {
@@ -186,6 +186,19 @@ export default function SheetEditor({ grid: initialGrid, onSave, onDetect }: She
               <IconMinus size={11} />
             </button>
           </div>
+        </div>
+        <div>
+          <label className="lbl" htmlFor="table-header-rows">Header</label>
+          <input
+            id="table-header-rows"
+            type="number"
+            min={0}
+            max={20}
+            value={grid.header_rows ?? 0}
+            onChange={(e) => setGrid((g) => ({ ...g, header_rows: Math.max(0, Math.min(20, Number(e.target.value) || 0)) }))}
+            className="fld fld-mono w-16"
+            title="Numero di righe di intestazione dichiarate manualmente"
+          />
         </div>
         {onDetect && (
           <div>

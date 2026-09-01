@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiDelete, apiGet, apiPost } from '../lib/api'
 import { useI18n } from '../i18n'
-import { Badge, Modal } from './ui'
+import { Badge, Modal, Progress } from './ui'
 import { IconWarn } from './icons'
 
 interface ModelsModalProps {
@@ -19,6 +19,7 @@ interface ModelItem {
   license_note: string
   train_toolchain: string
   serve_backend: string
+  maturity: 'supported' | 'experimental' | 'catalog' | 'unavailable' | string
   supports_native: boolean
   supports_two_stage: boolean
   supports_end2end: boolean
@@ -29,11 +30,17 @@ interface ModelItem {
   download_only: boolean
   installed: boolean
   downloading: boolean
+  /** Stima del totale da scaricare, per la barra. Approssimata: è la
+   *  dimensione dichiarata dall'adapter, non una misura del repo remoto. */
+  expected_bytes: number | null
   path: string | null
   size_bytes: number
   state: string
   error: string | null
   vram_warning: string | null
+  runtime_ready?: boolean
+  runtime_state?: string | null
+  runtime_error?: string | null
 }
 
 const CUSTOM_ID_PREFIX = 'custom-'
@@ -60,18 +67,172 @@ const EMPTY_CUSTOM_FORM: CustomModelForm = {
   extra_args: '',
 }
 
+/**
+ * Stato del server locale. Due verità distinte, e la distinzione conta:
+ * `running` = il processo è vivo, `ready` = l'endpoint risponde davvero.
+ * Fra le due passano i minuti in cui vLLM carica i pesi.
+ */
 interface ServeStatus {
   running: boolean
+  starting?: boolean
+  ready?: boolean
   adapter_id: string | null
   port: number | null
   pid: number | null
   error: string | null
+  phase?: string | null
+  elapsed_s?: number | null
+  log_tail?: string
 }
 
 function fmtBytes(n: number): string {
   if (n <= 0) return '0 B'
   if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(0)} MB`
   return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`
+}
+
+/** Durata leggibile: `45 s`, `2 min 14 s`, `1 h 07 min`. */
+function fmtDuration(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds))
+  if (s < 60) return `${s} s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m} min ${String(s % 60).padStart(2, '0')} s`
+  return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`
+}
+
+/** Chiave i18n dell'etichetta di fase: nessun enum grezzo sullo schermo. */
+const SERVE_PHASE_KEY: Record<string, string> = {
+  preparing: 'cloud.models.servePhasePreparing',
+  preparing_repo: 'cloud.models.servePhasePreparingRepo',
+  preparing_runtime: 'cloud.models.servePhasePreparingRuntime',
+  preparing_draft: 'cloud.models.servePhasePreparingDraft',
+  preparing_image: 'cloud.models.servePhasePreparingImage',
+  launching: 'cloud.models.servePhaseLaunching',
+  loading: 'cloud.models.servePhaseLoading',
+  ready: 'cloud.models.servePhaseReady',
+  failed: 'cloud.models.servePhaseFailed',
+}
+
+const MATURITY_KEY: Record<string, string> = {
+  supported: 'cloud.models.maturitySupported',
+  experimental: 'cloud.models.maturityExperimental',
+  catalog: 'cloud.models.maturityCatalog',
+  unavailable: 'cloud.models.maturityUnavailable',
+}
+
+const MATURITY_TONE: Record<string, 'ok' | 'progress' | 'neutral' | 'warn'> = {
+  supported: 'ok',
+  experimental: 'progress',
+  catalog: 'neutral',
+  unavailable: 'warn',
+}
+
+/** Coda del log che resta incollata all'ultima riga: durante un'attesa lunga
+ *  la riga viva è l'ultima, e doverla inseguire a mano è una piccola crudeltà. */
+function LogTail({ text }: { text: string }) {
+  const ref = useRef<HTMLPreElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [text])
+  return (
+    <pre
+      ref={ref}
+      className="mono mt-1 max-h-40 overflow-auto whitespace-pre-wrap border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-2 text-[11px] leading-relaxed"
+    >
+      {text}
+    </pre>
+  )
+}
+
+/**
+ * Quanto manca al download: barra, byte scaricati sul totale atteso,
+ * velocità media e tempo stimato. Il totale è dichiarato dall'adapter e non
+ * misurato sul repo remoto: si scrive `~` davanti e non si finge precisione.
+ */
+function DownloadProgress({ model, rate }: { model: ModelItem; rate: number | null }) {
+  const { t } = useI18n()
+  const expected =
+    model.expected_bytes ?? (model.approx_size_gb ? model.approx_size_gb * 1024 ** 3 : null)
+  // Mai 100% finché il registro non dichiara installato: l'ultimo file che
+  // manca è comunque un file che manca.
+  const pct = expected ? Math.min(99, (model.size_bytes / expected) * 100) : undefined
+  const remaining = expected ? Math.max(0, expected - model.size_bytes) : null
+  const eta = rate && rate > 0 && remaining != null ? remaining / rate : null
+  return (
+    <div className="basis-full pt-2">
+      <Progress
+        value={pct}
+        indeterminate={pct == null}
+        label={t('cloud.models.downloadProgressAria', { name: model.display_name })}
+      />
+      <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[11px] text-[color:var(--color-ink-2)]">
+        <span className="mono">
+          {expected
+            ? t('cloud.models.downloadedOf', {
+                done: fmtBytes(model.size_bytes),
+                total: fmtBytes(expected),
+              })
+            : t('cloud.models.downloadedSoFar', { done: fmtBytes(model.size_bytes) })}
+        </span>
+        {pct != null && <span className="mono">{Math.round(pct)}%</span>}
+        {rate != null && (
+          <span className="mono">{t('cloud.models.downloadRate', { rate: fmtBytes(rate) })}</span>
+        )}
+        <span>
+          {eta != null
+            ? t('cloud.models.downloadEta', { time: fmtDuration(eta) })
+            : t('cloud.models.downloadEtaUnknown')}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * A che punto è l'avvio del server locale. Non c'è una percentuale onesta da
+ * mostrare — le fasi dipendono da cosa manca davvero — quindi la barra è
+ * indeterminata e il testo dice la fase, da quanto dura e cosa scrive il log:
+ * abbastanza per distinguere «sta procedendo» da «è bloccato».
+ */
+function ServeProgress({ status, name }: { status: ServeStatus; name: string }) {
+  const { t } = useI18n()
+  const phase = status.phase ?? 'preparing'
+  const failed = phase === 'failed'
+  const label = SERVE_PHASE_KEY[phase]
+  return (
+    <div className="basis-full border-t border-[color:var(--color-rule)] pt-2">
+      {!failed && (
+        <Progress indeterminate label={t('cloud.models.serveProgressAria', { name })} />
+      )}
+      <div className="mt-1 flex flex-wrap items-baseline justify-between gap-2 text-[11px]">
+        <span className={failed ? 'text-[color:var(--color-sig-text)]' : 'text-[color:var(--color-ink)]'}>
+          {label ? t(label) : phase}
+        </span>
+        {status.elapsed_s != null && (
+          <span className="mono text-[color:var(--color-ink-3)]">
+            {t('cloud.models.serveElapsed', { time: fmtDuration(status.elapsed_s) })}
+          </span>
+        )}
+      </div>
+      {!failed && (
+        <p className="mt-0.5 text-[11px] text-[color:var(--color-ink-3)]">
+          {t('cloud.models.serveProgressHint')}
+        </p>
+      )}
+      {status.error && (
+        <p className="mt-1 text-[11px] text-[color:var(--color-sig-text)]">{status.error}</p>
+      )}
+      {status.log_tail && (
+        <details className="mt-1.5">
+          <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.04em] text-[color:var(--color-ink-3)]">
+            {t('cloud.models.serveLog')}
+          </summary>
+          <LogTail text={status.log_tail} />
+        </details>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -89,6 +250,10 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
   const [showAddCustom, setShowAddCustom] = useState(false)
   const [customForm, setCustomForm] = useState<CustomModelForm>(EMPTY_CUSTOM_FORM)
   const [customBusy, setCustomBusy] = useState(false)
+  const [rates, setRates] = useState<Record<string, number | null>>({})
+  // Primo campione (istante, byte) di ogni download in corso: la velocità è
+  // la media da lì, non l'ultimo scatto — meno ballerina e più utile.
+  const firstSample = useRef<Record<string, { t: number; bytes: number }>>({})
   const [serveStatus, setServeStatus] = useState<ServeStatus>({
     running: false,
     adapter_id: null,
@@ -101,9 +266,32 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
     try {
       const res = await apiGet<{ items: ModelItem[] }>('/models')
       setModels(res.items)
+      trackRates(res.items)
     } catch (e) {
       setNotice(t('cloud.models.loadError', { error: String(e) }))
     }
+  }
+
+  const trackRates = (items: ModelItem[]) => {
+    const now = Date.now()
+    const next: Record<string, number | null> = {}
+    for (const m of items) {
+      if (!m.downloading) {
+        delete firstSample.current[m.adapter_id]
+        continue
+      }
+      const first = firstSample.current[m.adapter_id]
+      // Nessun campione, o dimensione tornata indietro (download ripartito):
+      // si riparte a contare da adesso.
+      if (!first || m.size_bytes < first.bytes) {
+        firstSample.current[m.adapter_id] = { t: now, bytes: m.size_bytes }
+        next[m.adapter_id] = null
+        continue
+      }
+      const seconds = (now - first.t) / 1000
+      next[m.adapter_id] = seconds >= 3 ? (m.size_bytes - first.bytes) / seconds : null
+    }
+    setRates(next)
   }
 
   const loadServeStatus = async () => {
@@ -127,7 +315,7 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
   }, [open])
 
   useEffect(() => {
-    if (!open || !models.some((m) => m.downloading)) return
+    if (!open || !models.some((m) => m.downloading || (m.adapter_id === 'paddleocr-vl' && m.runtime_state === 'installing'))) return
     const id = setInterval(() => void load(), 2000)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -197,8 +385,9 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
     setBusy((b) => ({ ...b, [adapterId]: true }))
     setNotice(null)
     try {
-      await apiPost(`/models/${adapterId}/serve/start`, { port: 8888 })
-      setNotice(t('cloud.models.serveStarted'))
+      const status = await apiPost<ServeStatus>(`/models/${adapterId}/serve/start`, { port: 8888 })
+      setServeStatus(status)
+      setNotice(t('cloud.models.serveStartingNotice'))
       await loadServeStatus()
     } catch (e) {
       setNotice(t('cloud.models.serveError', { error: String(e) }))
@@ -402,13 +591,29 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
                       {m.adapter_id.startsWith(CUSTOM_ID_PREFIX) && (
                         <Badge tone="neutral">{t('cloud.models.customBadge')}</Badge>
                       )}
+                      {MATURITY_KEY[m.maturity] && (
+                        <Badge tone={MATURITY_TONE[m.maturity] ?? 'neutral'}>
+                          {t(MATURITY_KEY[m.maturity])}
+                        </Badge>
+                      )}
                       {m.supports_native && <Badge tone="ok">{t('cloud.models.prefillReady')}</Badge>}
                       {m.export_ready && <Badge tone="ok">{t('cloud.models.exportReady')}</Badge>}
                       {m.cloud_serve_ready && <Badge tone="ok">{t('cloud.models.cloudReady')}</Badge>}
+                      {m.adapter_id === 'paddleocr-vl' && m.installed && m.runtime_state && m.runtime_state !== 'ready' && (
+                        <Badge tone={m.runtime_state === 'failed' ? 'warn' : 'neutral'}>
+                          {t('cloud.models.paddleRuntime', { state: m.runtime_state })}
+                        </Badge>
+                      )}
                       {m.download_only && <Badge tone="neutral">{t('cloud.models.downloadOnly')}</Badge>}
-                      {serveStatus.running && serveStatus.adapter_id === m.adapter_id && (
+                      {serveStatus.ready && serveStatus.adapter_id === m.adapter_id && (
                         <Badge tone="ok">{t('cloud.models.serving', { port: String(serveStatus.port) })}</Badge>
                       )}
+                      {serveStatus.adapter_id === m.adapter_id &&
+                        (serveStatus.starting || (serveStatus.running && !serveStatus.ready)) && (
+                          <Badge tone="progress">
+                            {t(SERVE_PHASE_KEY[serveStatus.phase ?? 'preparing'] ?? 'cloud.models.servePhasePreparing')}
+                          </Badge>
+                        )}
                     </div>
                     <div className="mono text-[11px] text-[color:var(--color-ink-3)] mt-0.5">
                       {m.hf_repo}
@@ -423,6 +628,9 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
                       <div className="text-[11px] text-[color:var(--color-ink-3)] mt-0.5">{m.license_note}</div>
                     )}
                     {m.error && <div className="mt-0.5 text-[11px] text-[color:var(--color-sig-text)]">{m.error}</div>}
+                    {m.runtime_error && (
+                      <div className="mt-0.5 text-[11px] text-[color:var(--color-sig-text)]">{m.runtime_error}</div>
+                    )}
                     {m.vram_warning && (
                       <div className="mt-0.5 flex items-start gap-1 text-[11px] text-[color:var(--color-warn)]">
                         <IconWarn size={12} />
@@ -444,7 +652,17 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
                     ) : m.installed ? (
                       <>
                         {m.local_serve_ready && (
-                          serveStatus.running && serveStatus.adapter_id === m.adapter_id ? (
+                          (serveStatus.starting || (serveStatus.running && !serveStatus.ready)) &&
+                          serveStatus.adapter_id === m.adapter_id ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleServeStop(m.adapter_id)}
+                              disabled={rowBusy}
+                              className="btn btn-sm"
+                            >
+                              {t('cloud.models.serveStop')}
+                            </button>
+                          ) : serveStatus.ready && serveStatus.adapter_id === m.adapter_id ? (
                             <button
                               type="button"
                               onClick={() => void handleServeStop(m.adapter_id)}
@@ -458,9 +676,10 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
                               type="button"
                               onClick={() => void handleServeStart(m.adapter_id)}
                               disabled={rowBusy}
+                              title={rowBusy ? t('cloud.models.serveStartingHint') : undefined}
                               className="btn btn-sm text-[color:var(--color-ok)]"
                             >
-                              {t('cloud.models.serveStart')}
+                              {rowBusy ? t('cloud.models.serveStarting') : t('cloud.models.serveStart')}
                             </button>
                           )
                         )}
@@ -498,6 +717,13 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
                       </>
                     )}
                   </div>
+                  {m.downloading && <DownloadProgress model={m} rate={rates[m.adapter_id] ?? null} />}
+                  {serveStatus.adapter_id === m.adapter_id &&
+                    (serveStatus.starting ||
+                      serveStatus.phase === 'failed' ||
+                      (serveStatus.running && !serveStatus.ready)) && (
+                      <ServeProgress status={serveStatus} name={m.display_name} />
+                    )}
                 </div>
               )
             })}

@@ -53,7 +53,10 @@ export default function BlockLayer({
       tr.getLayer()?.batchDraw()
       return
     }
-    if (node.getType() === 'Line') {
+    // `getClassName()`, non `getType()`: il secondo dice 'Shape' per ogni
+    // forma e la trasformazione dei poligoni restava senza la sua conversione
+    // di coordinate (v. StudioCanvas.onMouseDown per lo stesso inganno).
+    if (node.getClassName() === 'Line') {
       const line = node as Konva.Line
       ;(tr as unknown as { transformPointFun?: (x: number, y: number) => { x: number; y: number } })
         .transformPointFun = (x: number, y: number) => {
@@ -78,6 +81,15 @@ export default function BlockLayer({
       {blocks.map((b) => {
         const color = colorFor(b.label) || '#64748b'
         const selected = b.id === selectedId
+        // Un riquadro proposto dal prefill e non ancora verificato non deve
+        // somigliare a un'annotazione: resta tratteggiato e più chiaro finché
+        // qualcuno non lo conferma, anche quando non è selezionato.
+        const draft = Boolean(b.prefill) && !b.confirmed
+        const dash = selected
+          ? [6 / viewportK, 4 / viewportK]
+          : draft
+            ? [3 / viewportK, 3 / viewportK]
+            : undefined
         if (b.kind === 'rect') {
           const bb = bboxPoints(b.points)
           return (
@@ -92,10 +104,10 @@ export default function BlockLayer({
               width={Math.max(bb.w, 1)}
               height={Math.max(bb.h, 1)}
               fill={color}
-              opacity={0.28}
+              opacity={draft ? 0.14 : 0.28}
               stroke={color}
               strokeWidth={selected ? sw * 1.8 : sw}
-              dash={selected ? [6 / viewportK, 4 / viewportK] : undefined}
+              dash={dash}
               draggable={tool === 'select'}
               hitStrokeWidth={Math.max(8 / viewportK, sw)}
               onMouseEnter={(e) => {
@@ -119,7 +131,7 @@ export default function BlockLayer({
               }}
               onDragMove={() => onDragMove(b.id)}
               onDragEnd={(e) => {
-                e.target.opacity(0.28)
+                e.target.opacity(draft ? 0.14 : 0.28)
                 e.target.getStage()!.container().style.cursor = ''
                 onDragEnd(b.id, 'rect')
               }}
@@ -138,10 +150,10 @@ export default function BlockLayer({
             points={b.points.flatMap((p) => [p.x, p.y])}
             closed
             fill={color}
-            opacity={0.24}
+            opacity={draft ? 0.12 : 0.24}
             stroke={color}
             strokeWidth={selected ? sw * 1.8 : sw}
-            dash={selected ? [6 / viewportK, 4 / viewportK] : undefined}
+            dash={dash}
             draggable={tool === 'select'}
             hitStrokeWidth={Math.max(8 / viewportK, sw)}
             onMouseEnter={(e) => {
@@ -165,7 +177,7 @@ export default function BlockLayer({
             }}
             onDragMove={() => onDragMove(b.id)}
             onDragEnd={(e) => {
-              e.target.opacity(0.24)
+              e.target.opacity(draft ? 0.12 : 0.24)
               e.target.getStage()!.container().style.cursor = ''
               onDragEnd(b.id, 'polygon')
             }}

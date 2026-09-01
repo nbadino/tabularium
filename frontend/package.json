@@ -13,9 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@handsontable/react-wrapper": "^18.0.0",
     "@tanstack/react-query": "^5.0.0",
-    "handsontable": "^18.0.0",
     "konva": "^10.3.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

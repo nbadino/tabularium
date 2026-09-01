@@ -116,13 +116,17 @@ export default function TrainingConfigForm({
           <Field label={t('training.baseModel')}>
             <select
               value={cfg.model}
-              onChange={(e) => set({ model: e.target.value })}
+              onChange={(e) => {
+                const model = e.target.value
+                set({ model, adapter_id: model.startsWith('Qwen/') ? 'qwen3-vl-8b' : 'monkeyocrv2-parsing' })
+              }}
               className="fld"
             >
               <option value="zenosai/MonkeyOCRv2-B-Parsing">MonkeyOCRv2-B-Parsing</option>
               <option value="zenosai/MonkeyOCRv2-S-Parsing">
                 {t('training.modelLighter')}
               </option>
+              <option value="Qwen/Qwen3-VL-8B-Instruct">Qwen3-VL-8B (ms-swift)</option>
             </select>
           </Field>
           <Field label={t('training.trainType')}>
@@ -266,6 +270,12 @@ export default function TrainingConfigForm({
           <Field label={t('training.sshRoot')} hint={t('training.sshRootHint')}>
             <input value={cfg.ssh_root ?? '/tmp/tabularium-runs'} onChange={(e) => set({ ssh_root: e.target.value })} className="fld fld-mono" />
           </Field>
+          <Field label={t('training.sshTrainRepo')} hint={t('training.sshTrainRepoHint')}>
+            <input value={cfg.ssh_train_repo ?? ''} onChange={(e) => set({ ssh_train_repo: e.target.value })} className="fld fld-mono" placeholder="/opt/MonkeyOCRv2/parsing/train" />
+          </Field>
+          <Field label={t('training.sshPython')} hint={t('training.sshPythonHint')}>
+            <input value={cfg.ssh_python ?? ''} onChange={(e) => set({ ssh_python: e.target.value })} className="fld fld-mono" placeholder="/opt/venv/bin/python" />
+          </Field>
         </div>}
       </Module>
 
@@ -282,6 +292,11 @@ export default function TrainingConfigForm({
           <button onClick={onStop} disabled={!isActive} className="btn btn-danger">
             {stopArmed ? t('training.confirmStop') : t('training.stopRun')}
           </button>
+          {!isActive && cfg.resume_run_id && (
+            <span className="mono text-[11px] text-[color:var(--color-ink-2)]">
+              {t('training.resumeConfigured')}: {cfg.resume_run_id}
+            </span>
+          )}
           {stopArmed && (
             <span className="text-[11px] text-[color:var(--color-sig-text)]">
               {t('training.stopNote')}
@@ -294,6 +309,14 @@ export default function TrainingConfigForm({
             repo: 'TABULARIUM_TRAIN_REPO',
           })}
         </p>
+        <Field label={t('training.resumeRun')} hint={t('training.resumeRunHint')}>
+          <input
+            value={cfg.resume_run_id ?? ''}
+            onChange={(e) => set({ resume_run_id: e.target.value })}
+            className="fld fld-mono"
+            placeholder="run_..."
+          />
+        </Field>
       </Module>
     </div>
   )

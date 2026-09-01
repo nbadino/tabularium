@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 /**
- * Test del pannello contenuto: lista di righe editabili (una per blocco),
- * ognuna con ritaglio + editor affiancati; le tabelle caricano il foglio
- * dal server.
+ * Test del pannello contenuto: **l'unica zona del rail destro**. Lista di
+ * righe editabili (una per blocco) con ritaglio + editor affiancati, ordine
+ * di lettura governato dalle righe stesse, output del modello in diretta
+ * sopra la lista. Le tabelle caricano il foglio dal server.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import '@testing-library/jest-dom/vitest'
 import ContentPane from './ContentPane'
 import { emptyGrid } from '../../lib/grid'
@@ -184,5 +186,146 @@ describe('ContentPane', () => {
     expect(screen.getByText('VESSEL—Owner')).toBeTruthy()
     expect(screen.getByText('A. C. Bedford')).toBeTruthy()
     expect(screen.getByText('Incomplete')).toBeTruthy()
+  })
+
+  it('l’ordine di lettura si governa dalla riga: niente secondo elenco', async () => {
+    const user = userEvent.setup()
+    const onMove = vi.fn()
+    render(
+      <ContentPane
+        blocks={[
+          makeBlock({ id: 'b1', serverId: 11, orderIdx: 0, label: 'Title' }),
+          makeBlock({ id: 'b2', serverId: 12, orderIdx: 1, label: 'Text' }),
+        ]}
+        drafts={[]}
+        labels={[]}
+        selectedId={null}
+        working={null}
+        onMove={onMove}
+        {...noop}
+      />,
+    )
+    // Una sola regione: il contenuto. Livelli e regole non sono più moduli.
+    expect(screen.getAllByRole('region')).toHaveLength(1)
+    expect(screen.queryByRole('region', { name: 'Livelli' })).toBeNull()
+
+    await user.click(screen.getByLabelText('Sposta Text prima nell’ordine di lettura'))
+    expect(onMove).toHaveBeenCalledWith('b2', -1)
+  })
+
+  it('Alt+freccia sulla riga riordina, Canc elimina: la lista resta l’equivalente del canvas', async () => {
+    const user = userEvent.setup()
+    const onMove = vi.fn()
+    const onDelete = vi.fn()
+    render(
+      <ContentPane
+        blocks={[makeBlock({ id: 'b1', orderIdx: 0, label: 'Title' })]}
+        drafts={[]}
+        labels={[]}
+        selectedId={null}
+        working={null}
+        onMove={onMove}
+        {...noop}
+        onDelete={onDelete}
+      />,
+    )
+    const handle = screen.getByRole('button', { name: 'Blocco 1: Title' })
+    handle.focus()
+    await user.keyboard('{Alt>}{ArrowDown}{/Alt}')
+    expect(onMove).toHaveBeenCalledWith('b1', 1)
+    await user.keyboard('{Delete}')
+    expect(onDelete).toHaveBeenCalledWith('b1')
+  })
+
+  it('le regole di trascrizione stanno dietro il loro pulsante, non nel rail', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ conventions: [{ id: 'soft_hyphen', label: 'x', checked: false }] }),
+      }),
+    )
+    const user = userEvent.setup()
+    render(
+      <ContentPane
+        blocks={[makeBlock({})]}
+        drafts={[]}
+        labels={[]}
+        selectedId={null}
+        working={null}
+        projectId={3}
+        {...noop}
+      />,
+    )
+    expect(screen.queryByText(/Ricomporre le parole spezzate/)).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Regole' }))
+    expect(await screen.findByRole('dialog', { name: /Regole di trascrizione/ })).toBeTruthy()
+    expect(await screen.findByText(/Ricomporre le parole spezzate/)).toBeTruthy()
+  })
+
+  it('mentre il modello scrive: stato vivo, testo in diretta e cursore', () => {
+    render(
+      <ContentPane
+        blocks={[]}
+        drafts={[]}
+        labels={[]}
+        selectedId={null}
+        working={{
+          engine: 'MonkeyOCRv2',
+          startedAt: Date.now(),
+          blocks: 2,
+          last: 'Table',
+          output: { phase: 'end2end', text: 'Prima riga della pagina' },
+        }}
+        {...noop}
+      />,
+    )
+    const stream = screen.getByRole('region', { name: 'Output del modello' })
+    expect(stream).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByText('Prima riga della pagina')).toBeTruthy()
+    expect(screen.getByText(/2 blocchi proposti/)).toBeTruthy()
+  })
+
+  it('la tabella Markdown usa l’intestazione dichiarata, non la prima riga a caso', () => {
+    render(
+      <ContentPane
+        blocks={[]}
+        drafts={[]}
+        labels={[]}
+        selectedId={null}
+        working={{
+          engine: 'Unlimited-OCR',
+          startedAt: Date.now(),
+          blocks: 0,
+          last: null,
+          output: { phase: 'table', text: '| Vessel | Tons |\n|---|---|\n| Aagtekerk | 1.240 |' },
+        }}
+        {...noop}
+      />,
+    )
+    expect(screen.getByRole('columnheader', { name: 'Vessel' })).toBeTruthy()
+    // La colonna numerica si incolonna a destra: è una superficie di misura.
+    expect(screen.getByText('1.240')).toHaveAttribute('data-num', 'true')
+  })
+
+  it('OTSL: nessuna intestazione indovinata — la prima riga è già un dato', () => {
+    render(
+      <ContentPane
+        blocks={[]}
+        drafts={[]}
+        labels={[]}
+        selectedId={null}
+        working={{
+          engine: 'MinerU2.5',
+          startedAt: Date.now(),
+          blocks: 0,
+          last: null,
+          output: { phase: 'table', text: '<fcel>A. C. Bedford<fcel>Am<nl><fcel>Aagtekerk<fcel>Du' },
+        }}
+        {...noop}
+      />,
+    )
+    expect(screen.queryAllByRole('columnheader')).toHaveLength(0)
+    expect(screen.getByText('A. C. Bedford')).toBeTruthy()
   })
 })

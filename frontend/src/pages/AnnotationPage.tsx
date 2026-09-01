@@ -6,8 +6,6 @@ import StudioCanvas from '../studio/StudioCanvas'
 import PageSidebar from '../studio/components/PageSidebar'
 import ContentPane from '../studio/components/ContentPane'
 import Splitter from '../studio/components/Splitter'
-import LayersPanel from '../studio/components/LayersPanel'
-import ConventionsChecklist from '../studio/components/ConventionsChecklist'
 import { clamp } from '../studio/canvasGeometry'
 import { useAnnotationState } from '../studio/useAnnotationState'
 import { runPrelabelStream } from '../studio/prefillStream'
@@ -41,10 +39,21 @@ import { useInference } from '../app/inference'
 // La scelta segue l'utente tra le sessioni; un valore corrotto o assente
 // ricade sulla misura di riposo.
 const SPLIT_KEY = 'tabularium.studio.split'
+const MODE_KEY = 'tabularium.studio.mode'
 const SPLIT_DEFAULT = { sidebar: 240, content: 520 }
 const SIDEBAR_MIN = 176
 const SIDEBAR_MAX = 420
 const CONTENT_MIN = 320
+type StudioMode = 'all' | 'canvas' | 'transcription'
+
+function loadStudioMode(): StudioMode {
+  try {
+    const value = localStorage.getItem(MODE_KEY)
+    return value === 'canvas' || value === 'transcription' ? value : 'all'
+  } catch {
+    return 'all'
+  }
+}
 
 function loadSplit(): { sidebar: number; content: number } {
   try {
@@ -91,7 +100,9 @@ export default function AnnotationPage() {
     setPrefillDrafts((d) => d.map((x) => (x.serverId === serverId ? { ...x, content } : x)))
     clearTimeout(draftTimers.current[serverId])
     draftTimers.current[serverId] = setTimeout(() => {
-      void apiPatch(`/blocks/${serverId}`, { content }).catch((e) => setError(String(e)))
+      void apiPatch<BlockOut>(`/blocks/${serverId}`, { content })
+        .then((out) => ann.syncRevision(out.annotation_revision))
+        .catch((e) => setError(String(e)))
     }, 800)
   }
   /** Verifica una bozza: da questo momento il blocco esiste anche sul canvas
@@ -99,7 +110,8 @@ export default function AnnotationPage() {
   const onDraftConfirmed = async (serverId: number, confirmed: boolean) => {
     setPrefillDrafts((d) => d.map((x) => (x.serverId === serverId ? { ...x, confirmed } : x)))
     try {
-      await apiPatch(`/blocks/${serverId}`, { confirmed })
+      const out = await apiPatch<BlockOut>(`/blocks/${serverId}`, { confirmed })
+      ann.syncRevision(out.annotation_revision)
       if (page) await applyBlocks(page, ratio)
     } catch (e) {
       setError(String(e))
@@ -110,6 +122,7 @@ export default function AnnotationPage() {
   }
   const onSaveDraftGrid = async (serverId: number, grid: TableGrid): Promise<string> => {
     const out = await apiPut<TableSaveOut>(`/blocks/${serverId}/table`, grid)
+    ann.syncRevision(out.annotation_revision)
     return out.otsl
   }
   /** Scarta una bozza non verificata: sparisce dal pannello e dal server —
@@ -148,6 +161,15 @@ export default function AnnotationPage() {
 
   // --- larghezze pannelli ------------------------------------------------------
   const [split, setSplit] = useState(loadSplit)
+  const [studioMode, setStudioMode] = useState<StudioMode>(loadStudioMode)
+  const setMode = (mode: StudioMode) => {
+    setStudioMode(mode)
+    try {
+      localStorage.setItem(MODE_KEY, mode)
+    } catch {
+      // Storage bloccato: la modalità resta valida per la sessione.
+    }
+  }
   const setSplitPane = (pane: 'sidebar' | 'content', value: number) =>
     setSplit((cur) => {
       const next = { ...cur, [pane]: Math.round(value) }
@@ -173,12 +195,20 @@ export default function AnnotationPage() {
   const applyBlocks = async (p: PageItem, r: number) => {
     const rep = await apiGet<{ items: BlockOut[]; annotation_revision?: number }>(`/pages/${p.id}/annotations`)
     const isPendingDraft = (b: BlockOut) => Boolean(b.prefill_source) && !b.confirmed
-    // Le bozze del prefill non verificate NON entrano nel canvas: sull'immagine
+    // Le bozze del prefill non verificate restano fuori dal canvas: sull'immagine
     // non deve comparire nulla di generato. Vivono nel pannello contenuti
     // (ContentPane → `drafts`) finché l'utente non le verifica.
+    //
+    // Le TABELLE sono l'eccezione, e per una ragione misurata: la regione di
+    // una tabella è la cosa che il modello sbaglia più spesso (sul registro
+    // Lloyd's prende una colonna sola e lascia fuori metà pagina), e senza
+    // riquadro sull'immagine non c'è modo di correggerla — i confini della
+    // griglia si muovono solo DENTRO il ritaglio, che è il bbox del blocco.
+    // Una bozza di tabella è quindi sul canvas, ridimensionabile, e resta
+    // marcata «non verificata» finché qualcuno non la conferma.
     ann.reset(
       rep.items
-        .filter((b) => !isPendingDraft(b))
+        .filter((b) => !isPendingDraft(b) || b.label === 'Table')
         .map((b) => ({
         id: `srv-${b.id}`,
         serverId: b.id,
@@ -199,7 +229,7 @@ export default function AnnotationPage() {
     // pagina anche se nessuno ha guardato lo stream fino alla fine.
     setPrefillDrafts(
       rep.items
-        .filter(isPendingDraft)
+        .filter((b) => isPendingDraft(b) && b.label !== 'Table')
         .map((b) => ({ serverId: b.id, label: b.label, content: b.content, confirmed: false, grid: null })),
     )
   }
@@ -258,16 +288,33 @@ export default function AnnotationPage() {
             // Durante e dopo lo stream il canvas resta PULITO: l'output
             // nativo va nel pannello come testo formattato, non come
             // riquadri sull'immagine. Il blocco è già nel database.
-            setPrefillDrafts((d) => [
-              ...d,
-              {
+            // Unica eccezione le tabelle: la loro regione va corretta
+            // sull'immagine, quindi compaiono subito come riquadro non
+            // verificato (stessa regola di `applyBlocks`).
+            if (ev.block.label === 'Table') {
+              ann.insertServerBlock({
+                id: `srv-${ev.block.id}`,
                 serverId: ev.block.id,
                 label: ev.block.label,
+                kind: 'rect',
+                points: ev.block.points.map(([x, y]) => ({ x: x * ratio, y: y * ratio })),
                 content: ev.block.content,
+                orderIdx: ev.block.order_idx,
                 confirmed: false,
-                grid: (ev.block.grid as TableGrid | null) ?? null,
-              },
-            ])
+                prefill: ev.block.prefill_source ?? null,
+              })
+            } else {
+              setPrefillDrafts((d) => [
+                ...d,
+                {
+                  serverId: ev.block.id,
+                  label: ev.block.label,
+                  content: ev.block.content,
+                  confirmed: false,
+                  grid: (ev.block.grid as TableGrid | null) ?? null,
+                },
+              ])
+            }
             setPrefillProgress((p) =>
               p ? { blocks: p.blocks + 1, last: ev.block.label } : p,
             )
@@ -311,18 +358,17 @@ export default function AnnotationPage() {
       grids?: number
     } | null
     if (s) {
-      const base = tn('annotate.ocrNotice', s.inserted ?? 0, { engine: workingEngineName() })
-      const replacedPart =
-        (s.replaced_blocks ?? 0) > 0 ? ' ' + tn('annotate.prefillReplaced', s.replaced_blocks ?? 0) : ''
-      const tablePart =
-        (s.tables ?? 0) > 0
-          ? ' ' + t('annotate.ocrTableNotice', { grids: s.grids ?? 0 })
-          : ''
-      setPrefillNotice(
-        ((s.deskew_angle && Math.abs(s.deskew_angle) >= 0.05
-          ? `${base}${replacedPart} ${t('annotate.deskewApplied', { angle: s.deskew_angle.toFixed(2) })}`
-          : base + replacedPart) + tablePart),
-      )
+      // L'avviso dice solo ciò che il pannello non mostra già da sé: quante
+      // bozze siano arrivate e che siano da verificare si legge nelle righe,
+      // ripeterlo in un riquadro sopra la pagina era rumore. Restano le due
+      // cose che sono *successe* alla pagina e non si vedono altrove.
+      const parts = [
+        (s.replaced_blocks ?? 0) > 0 ? tn('annotate.prefillReplaced', s.replaced_blocks ?? 0) : null,
+        s.deskew_angle && Math.abs(s.deskew_angle) >= 0.05
+          ? t('annotate.deskewApplied', { angle: s.deskew_angle.toFixed(2) })
+          : null,
+      ].filter(Boolean)
+      setPrefillNotice(parts.length > 0 ? parts.join(' ') : null)
     }
     setPrefillBusy(false)
     setPrefillProgress(null)
@@ -543,11 +589,93 @@ export default function AnnotationPage() {
   // dell'invocazione (il pannello le passa insieme al blocco).
   const saveTable = async (serverId: number, grid: TableGrid): Promise<string> => {
     const out = await apiPut<TableSaveOut>(`/blocks/${serverId}/table`, grid)
+    // Il server ha fatto avanzare la revisione della pagina: senza allinearla
+    // il prossimo autosave del canvas verrebbe respinto con un 409 inventato.
+    ann.syncRevision(out.annotation_revision)
     return out.otsl
   }
 
   const detectTable = (serverId: number, opts: TableDetectRequest): Promise<TableDetectOut> =>
     apiPost<TableDetectOut>(`/blocks/${serverId}/table/detect`, opts)
+
+  // --- la regione è cambiata: la griglia va rifatta ----------------------------
+  // I confini della griglia sono normalizzati 0–1 SUL RITAGLIO, cioè sul bbox
+  // del blocco. Spostare o allargare il riquadro li lascia dov'erano in
+  // frazione e quindi altrove sull'inchiostro: una griglia che sembra salva ma
+  // non lo è più. Dopo un ridimensionamento si rilegge dunque la regione nuova.
+  //
+  // Il ri-riconoscimento è automatico solo finché non c'è lavoro umano da
+  // perdere: se una cella trascritta è già stata verificata, la decisione
+  // torna all'annotatore con il pulsante «Rileva» dell'editor, che chiede
+  // conferma prima di sovrascrivere.
+  const [tableRedetect, setTableRedetect] = useState<
+    { serverId: number; state: 'busy' | 'done' | 'stale' | 'error'; message?: string } | null
+  >(null)
+  /** Contatore per ritaglio: forza il ricarico di immagine e griglia. */
+  const [tableVersions, setTableVersions] = useState<Record<number, number>>({})
+  const bumpTable = (serverId: number) =>
+    setTableVersions((v) => ({ ...v, [serverId]: (v[serverId] ?? 0) + 1 }))
+  const redetectTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
+
+  const redetectTable = async (serverId: number, force = false) => {
+    try {
+      // Il rilevamento gira sul bbox salvato: senza flush leggerebbe il vecchio.
+      await ann.flush()
+      const current = await apiGet<{ grid: TableGrid | null }>(`/blocks/${serverId}/table`)
+      const verified = (current.grid?.cells ?? []).some(
+        (c) => (c.text ?? '').trim() !== '' && c.verified,
+      )
+      if (verified && !force) {
+        bumpTable(serverId)
+        setTableRedetect({ serverId, state: 'stale' })
+        return
+      }
+      setTableRedetect({ serverId, state: 'busy' })
+      // Con quale motore si rilegge. La regola è: **quello che ha scritto la
+      // griglia**. Una tabella nata da PaddleOCR-VL riletta con l'OCR di riga
+      // locale peggiora, e di molto: sono due modelli diversi, e il secondo
+      // legge una cella alla volta senza vedere la tabella. Si scende all'OCR
+      // locale solo se il modello non è servito, e in quel caso lo si dice.
+      const source = ann.blocks.find((b) => b.serverId === serverId)?.prefill ?? ''
+      const wantsModel = source.startsWith('model:')
+      const fill: 'model' | 'ocr' | 'none' = wantsModel && engines?.model.available
+        ? 'model'
+        : engines?.ocr.available
+          ? 'ocr'
+          : 'none'
+      const downgraded = wantsModel && fill !== 'model'
+      const out = await detectTable(serverId, { fill })
+      const saved = await apiPut<TableSaveOut>(`/blocks/${serverId}/table`, out.grid)
+      ann.syncRevision(saved.annotation_revision)
+      bumpTable(serverId)
+      setTableRedetect({
+        serverId,
+        state: 'done',
+        message:
+          t('table.redetectDone', {
+            rows: out.grid.rows,
+            cols: out.grid.cols,
+            fill: fill === 'none' ? t('table.redetectNoFill') : (out.ocr?.engine ?? fill),
+          }) + (downgraded ? ` — ${t('table.redetectDowngraded')}` : ''),
+      })
+    } catch (e) {
+      bumpTable(serverId)
+      setTableRedetect({ serverId, state: 'error', message: String(e) })
+    }
+  }
+
+  /** Ridimensionamento/spostamento di un blocco: per le tabelle trascina con sé
+   *  la griglia. Il debounce evita una raffica di rilevamenti mentre si
+   *  aggiusta il riquadro a più riprese. */
+  const updateBlockPoints = (id: string, points: { x: number; y: number }[]) => {
+    ann.updateBlockPoints(id, points)
+    const block = ann.blocks.find((b) => b.id === id)
+    if (!block || block.label !== 'Table' || !block.serverId) return
+    const serverId = block.serverId
+    setTableRedetect({ serverId, state: 'busy' })
+    clearTimeout(redetectTimers.current[serverId])
+    redetectTimers.current[serverId] = setTimeout(() => void redetectTable(serverId), 900)
+  }
 
   // --- cancellazione blocco: toast con annullamento esplicito ------------------
   const [deleteToast, setDeleteToast] = useState<{ label: string } | null>(null)
@@ -597,8 +725,23 @@ export default function AnnotationPage() {
         : t('annotate.guideReady')
 
   return (
-    <div className="flex h-full overflow-hidden">
-      <PageSidebar
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-2 py-1" role="toolbar" aria-label={t('annotate.viewModeAria')}>
+        <span className="mr-1 text-[11px] font-semibold uppercase tracking-[0.05em] text-[color:var(--color-ink-3)]">{t('annotate.viewMode')}</span>
+        {(['all', 'canvas', 'transcription'] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => setMode(mode)}
+            aria-pressed={studioMode === mode}
+            className={studioMode === mode ? 'btn btn-sm bg-[color:var(--color-sig-wash)]' : 'btn btn-sm'}
+          >
+            {t(`annotate.view${mode[0].toUpperCase()}${mode.slice(1)}` as 'annotate.viewAll' | 'annotate.viewCanvas' | 'annotate.viewTranscription')}
+          </button>
+        ))}
+      </div>
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+      {studioMode === 'all' && <PageSidebar
         projects={projects}
         projectId={projectId}
         pages={pages}
@@ -606,9 +749,9 @@ export default function AnnotationPage() {
         onProjectChange={onProjectChange}
         onPageSelect={onPageSelect}
         width={split.sidebar}
-      />
+      />}
 
-      <Splitter
+      {studioMode === 'all' && <Splitter
         value={split.sidebar}
         min={SIDEBAR_MIN}
         max={SIDEBAR_MAX}
@@ -616,10 +759,10 @@ export default function AnnotationPage() {
         label={t('annotate.splitSidebar')}
         onChange={(v) => setSplitPane('sidebar', v)}
         onReset={() => resetSplitPane('sidebar')}
-      />
+      />}
 
       {/* Centro: toolbar + canvas */}
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className={studioMode === 'transcription' ? 'hidden' : 'flex min-w-0 flex-1 flex-col'}>
         <div className="flex flex-wrap items-center gap-2 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-2 py-1.5">
           <div className="flex border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)]" role="toolbar" aria-label={t('annotate.toolsAria')}>
             {tools.map((tool) => (
@@ -880,7 +1023,7 @@ export default function AnnotationPage() {
                 colorFor={ann.colorFor}
                 onSelect={ann.setSelectedId}
                 onAddBlock={ann.addBlock}
-                onUpdateBlock={ann.updateBlockPoints}
+                onUpdateBlock={updateBlockPoints}
                 onDeleteBlock={handleDeleteBlock}
               />
             )
@@ -888,11 +1031,12 @@ export default function AnnotationPage() {
         </div>
       </main>
 
-      {/* Pannello contenuto: l'intero output OCR/LLM della pagina, editabile
-          riga per riga — immagine a sinistra, testo (o foglio per le
-          tabelle) a destra, senza dover cliccare ogni riquadro uno alla
-          volta. Larghezza governata dallo splitter. */}
-      <Splitter
+      {/* Rail destro: una zona sola — il contenuto della pagina. L'output
+          del modello arriva in diretta in cima, i blocchi si correggono
+          riga per riga sotto (ritaglio a sinistra, testo o foglio a
+          destra), l'ordine di lettura si governa dalle righe stesse.
+          Larghezza governata dallo splitter. */}
+      {studioMode === 'all' && <Splitter
         value={split.content}
         min={CONTENT_MIN}
         max={contentMax()}
@@ -900,24 +1044,12 @@ export default function AnnotationPage() {
         label={t('annotate.splitContent')}
         onChange={(v) => setSplitPane('content', v)}
         onReset={() => resetSplitPane('content')}
-      />
+      />}
       <section
         aria-label={t('content.paneAria')}
-        className="flex shrink-0 flex-col overflow-y-auto bg-[color:var(--color-sheet)] p-3"
-        style={{ width: split.content }}
+        className={`flex min-w-0 flex-col overflow-y-auto bg-[color:var(--color-sheet)] p-3 ${studioMode === 'all' ? 'shrink-0' : 'flex-1'}`}
+        style={studioMode === 'all' ? { width: split.content } : undefined}
       >
-        {projectId !== '' && <ConventionsChecklist projectId={projectId} />}
-        <div className="mb-3">
-          <LayersPanel
-            blocks={ann.blocks}
-            selectedId={ann.selectedId}
-            colorFor={ann.colorFor}
-            onSelect={ann.setSelectedId}
-            onMove={ann.moveBlock}
-            onDelete={handleDeleteBlock}
-            onReorderReset={ann.reorderReset}
-          />
-        </div>
         <ContentPane
           blocks={ann.blocks}
           drafts={prefillDrafts}
@@ -930,11 +1062,22 @@ export default function AnnotationPage() {
           onDelete={handleDeleteBlock}
           onSaveTable={saveTable}
           onDetectTable={detectTable}
+          tableVersions={tableVersions}
+          tableRedetect={tableRedetect}
+          onDismissRedetect={() => setTableRedetect(null)}
+          onRedetectNow={(serverId) => {
+            setTableRedetect({ serverId, state: 'busy' })
+            void redetectTable(serverId, true)
+          }}
           onDraftContent={onDraftContent}
           onDraftGrid={onDraftGrid}
           onSaveDraftGrid={onSaveDraftGrid}
           onDraftConfirmed={onDraftConfirmed}
           onDraftReject={(id) => void onDraftReject(id)}
+          onMove={ann.moveBlock}
+          onReorderReset={ann.reorderReset}
+          colorFor={ann.colorFor}
+          projectId={projectId !== '' ? projectId : undefined}
           liveOutput={liveOutput}
           working={
             prefillBusy && prefillProgress
@@ -949,6 +1092,8 @@ export default function AnnotationPage() {
           }
         />
       </section>
+
+      </div>
 
       {prefillOpen && page && projectId !== '' && (
         <PrefillDialog

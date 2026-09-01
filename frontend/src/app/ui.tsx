@@ -197,6 +197,79 @@ export function Badge({
   return <span className={`badge ${TONE_STYLE[tone]}`}>{children}</span>
 }
 
+/* ----------------------------------------------------------------- Notice -- */
+
+const NOTICE_TONE: Record<StatusTone, string> = {
+  neutral: 'text-[color:var(--color-ink)]',
+  progress: 'text-[color:var(--color-ink)]',
+  ok: 'text-[color:var(--color-ok)]',
+  warn: 'text-[color:var(--color-warn)]',
+  sig: 'text-[color:var(--color-sig-text)]',
+}
+
+/**
+ * L'esito di un'azione, detto in una riga dentro una piastra.
+ *
+ * Serve a non avere cinque canali di ritorno diversi nella stessa pagina —
+ * uno per il salvataggio, uno per il backup, uno per i profili — ciascuno
+ * reso a modo suo. Per gli errori veri resta `ErrorNotice`, che spiega anche
+ * cosa fare adesso: questo è per il «fatto», non per il «rotto».
+ */
+export function Notice({
+  tone = 'neutral',
+  children,
+}: {
+  tone?: StatusTone
+  children: ReactNode
+}) {
+  return (
+    <p
+      role="status"
+      className={`mt-3 border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-2 py-1.5 text-[12px] ${NOTICE_TONE[tone]}`}
+    >
+      {children}
+    </p>
+  )
+}
+
+/* --------------------------------------------------------------- Progress -- */
+
+/**
+ * Avanzamento: un filetto che si riempie, senza angoli né ombre.
+ *
+ * Non porta mai il dato da solo — accanto c'è sempre la misura scritta
+ * (`123 MB di ~1,8 GB`), come per i `Badge`: il segno rinforza, non informa.
+ * Senza un totale attendibile la barra diventa indeterminata: dice «sta
+ * procedendo», che è l'unica cosa vera che si può dire in quel caso.
+ */
+export function Progress({
+  value,
+  label,
+  indeterminate,
+}: {
+  /** 0–100. Ignorato quando `indeterminate`. */
+  value?: number
+  label: string
+  indeterminate?: boolean
+}) {
+  const pct = Math.max(0, Math.min(100, value ?? 0))
+  return (
+    <div
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      {...(indeterminate ? {} : { 'aria-valuenow': Math.round(pct) })}
+      className="h-1.5 w-full overflow-hidden border border-[color:var(--color-rule)] bg-[color:var(--color-fill)]"
+    >
+      <div
+        className={`h-full bg-[color:var(--color-sig)] ${indeterminate ? 'prog-idle' : ''}`}
+        style={indeterminate ? undefined : { width: `${pct}%` }}
+      />
+    </div>
+  )
+}
+
 /* ------------------------------------------------------------------ Modal -- */
 
 /**

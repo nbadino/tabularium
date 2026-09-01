@@ -10,13 +10,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { apiGet } from '../lib/api'
-import type { HealthResponse, PageItem, Project, SystemInfo } from '../lib/types'
+import type { PageItem, Project } from '../lib/types'
 import { statusLabel, STATUS_RANK, STATUS_TONE } from '../lib/vocab'
-import { Badge, Collapsible, ErrorNotice, Module } from '../app/ui'
+import { Badge, ErrorNotice, Module } from '../app/ui'
 import { Pipeline } from '../app/Pipeline'
 import { buildPipeline, usePipelineState } from '../app/pipeline'
 import { pickActive, writeActiveProject } from '../app/activeProject'
-import { InferenceCard } from '../app/InferenceCard'
 import { IconArchive } from '../app/icons'
 import { useI18n } from '../i18n'
 
@@ -51,8 +50,6 @@ export default function HomePage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [projectId, setProjectId] = useState<number | null>(null)
   const [pages, setPages] = useState<PageItem[]>([])
-  const [info, setInfo] = useState<SystemInfo | null>(null)
-  const [health, setHealth] = useState<HealthResponse | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<string>('')
@@ -67,8 +64,6 @@ export default function HomePage() {
       })
       .catch((e) => alive && setError(e))
       .finally(() => alive && setLoading(false))
-    apiGet<SystemInfo>('/system/info').then((i) => alive && setInfo(i)).catch(() => {})
-    apiGet<HealthResponse>('/health').then((h) => alive && setHealth(h)).catch(() => {})
     return () => {
       alive = false
     }
@@ -261,34 +256,6 @@ export default function HomePage() {
           </div>
         )}
       </Module>
-
-      {/* --- inferenza & cloud offloading ----------------------------------- */}
-      <div className="mt-3">
-        <InferenceCard />
-      </div>
-
-      {/* --- l'ambiente, richiuso: serve a chi debugga, non a chi annota ------ */}
-      <div className="mt-3">
-        <Collapsible tab={t('home.env')} quiet aux={<span>{t('home.envLocal')}</span>}>
-          <dl className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3">
-            {[
-              [t('home.envBackend'), health?.status ?? '—'],
-              [t('home.envApp'), health?.version ?? info?.version ?? '—'],
-              [t('home.envSchema'), info?.schema_version ?? '—'],
-              [t('home.envData'), info?.data_dir ?? '—'],
-              [t('home.envPython'), info?.python ?? '—'],
-              [t('home.envPlatform'), info?.platform ?? '—'],
-            ].map(([k, v]) => (
-              <div key={k} className="flex min-w-0 gap-2">
-                <dt className="lbl !mb-0 shrink-0 pt-px">{k}</dt>
-                <dd className="mono min-w-0 flex-1 truncate text-[12px]" title={v}>
-                  {v}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </Collapsible>
-      </div>
     </div>
   )
 }

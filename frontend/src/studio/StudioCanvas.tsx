@@ -74,9 +74,18 @@ export default function StudioCanvas({
       return
     }
     if (tool === 'select') {
-      const target = e.target
-      const isShape = target.getType() === 'Rect' || target.getType() === 'Line'
-      if (!isShape) onSelect(null)
+      // Si deseleziona premendo sul vuoto, e solo lì. L'immagine sta in un
+      // layer non ascoltante, quindi premere sulla pagina arriva allo stage.
+      //
+      // La versione precedente chiedeva `target.getType()` e lo confrontava con
+      // 'Rect'/'Line'. In Konva `getType()` è il tipo di NODO — 'Stage',
+      // 'Layer', 'Group', 'Shape' — non la classe (`getClassName()`), quindi il
+      // confronto era sempre falso e ogni pressione deselezionava. Sui blocchi
+      // non si vedeva, perché il click successivo li riselezionava; ma le
+      // maniglie del transformer non hanno un click che rimedi, e afferrarne
+      // una staccava il transformer prima che il trascinamento cominciasse:
+      // le maniglie sparivano e il ridimensionamento non partiva mai.
+      if (e.target === e.target.getStage()) onSelect(null)
     }
   }
 

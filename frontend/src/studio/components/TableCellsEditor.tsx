@@ -4,6 +4,7 @@ import {
   dropBoundary,
   insertBoundary,
   mergeRange,
+  normalizeTableGrid,
   ownerMap,
   resizeGrid,
   sortedCells,
@@ -51,7 +52,7 @@ export default function TableCellsEditor({
 }: TableCellsEditorProps) {
   const { t } = useI18n()
   const inf = useInference()
-  const [grid, setGrid] = useState<TableGrid>(initialGrid)
+  const [grid, setGrid] = useState<TableGrid>(() => normalizeTableGrid(initialGrid))
   const [detecting, setDetecting] = useState(false)
   const [detectFill, setDetectFill] = useState<'none' | 'ocr' | 'model'>('none')
   const [detectInfo, setDetectInfo] = useState<TableDetectOut | null>(null)
@@ -136,7 +137,7 @@ export default function TableCellsEditor({
     setDetecting(true)
     try {
       const out = await onDetect({ fill: detectFill })
-      setGrid(out.grid)
+      setGrid(normalizeTableGrid(out.grid))
       setDetectInfo(out)
       setSelectedCell(null)
       setNotice(null)
@@ -257,6 +258,19 @@ export default function TableCellsEditor({
               <IconPlus size={11} />
             </button>
           </div>
+        </div>
+        <div>
+          <label className="lbl" htmlFor="table-header-rows-modal">Header</label>
+          <input
+            id="table-header-rows-modal"
+            type="number"
+            min={0}
+            max={20}
+            value={grid.header_rows ?? 0}
+            onChange={(e) => setGrid((g) => ({ ...g, header_rows: Math.max(0, Math.min(20, Number(e.target.value) || 0)) }))}
+            className="fld fld-mono w-16"
+            title="Numero di righe di intestazione dichiarate manualmente"
+          />
         </div>
         <div>
           <span className="lbl">{t('table.mode')}</span>
@@ -389,8 +403,8 @@ export default function TableCellsEditor({
               vlines={grid.vlines ?? []}
               hlines={grid.hlines ?? []}
               columnSupport={detectInfo?.column_support}
-              rowColumns={detectInfo?.diagnostics.row_columns}
-              rowColumnsProven={detectInfo?.diagnostics.row_columns_proven}
+              rowColumns={grid.row_columns ?? detectInfo?.diagnostics.row_columns}
+              rowColumnsProven={grid.row_columns_proven ?? detectInfo?.diagnostics.row_columns_proven}
               rows={grid.rows}
               onMove={moveBoundary}
               onInsert={addBoundary}

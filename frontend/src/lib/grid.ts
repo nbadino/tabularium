@@ -1,6 +1,20 @@
 /** Helper sulle griglie di tabelle: matrice fisica, merge, split, resize. */
 import type { TableCell, TableGrid } from './types'
 
+/** Normalizza griglie provenienti da versioni precedenti del backend.
+ * `phantom_cols` è stata aggiunta dopo il primo formato persistito e può
+ * quindi mancare nelle risposte già salvate. */
+export function normalizeTableGrid(value: TableGrid): TableGrid {
+  return {
+    ...value,
+    rows: Number(value.rows) || 0,
+    cols: Number(value.cols) || 0,
+    cells: Array.isArray(value.cells) ? value.cells : [],
+    phantom_cols: Array.isArray(value.phantom_cols) ? value.phantom_cols : [],
+    header_rows: Math.max(0, Math.min(20, Number(value.header_rows) || 0)),
+  }
+}
+
 /** Mappa ogni posizione fisica (r,c) alla cella logica che la copre. */
 export function ownerMap(grid: TableGrid): (TableCell | undefined)[][] {
   const map: (TableCell | undefined)[][] = Array.from({ length: grid.rows }, () =>

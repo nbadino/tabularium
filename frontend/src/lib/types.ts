@@ -63,6 +63,13 @@ export interface SystemInfo {
   schema_version: string | null
   python: string
   platform: string
+  capabilities?: {
+    dashboard?: boolean
+    cpu_ocr?: boolean
+    local_cuda?: boolean
+    remote_gpu?: boolean
+    cuda_note?: string | null
+  }
 }
 
 // --- Progetti & pagine (M1) --------------------------------------------------
@@ -121,7 +128,7 @@ export interface PageItem {
   created_at: string
 }
 
-export type TransformEngine = 'deskew' | 'uvdoc' | 'docscanner' | 'perspective' | 'mesh'
+export type TransformEngine = 'deskew' | 'monkeyocr' | 'perspective' | 'mesh'
 
 export interface TransformMetadata {
   version: number
@@ -190,10 +197,24 @@ export interface BlockOut {
   confirmed: boolean
   prefill_source: string | null
   updated_at: string
+  /** Presente solo nella risposta a una PATCH: la revisione della pagina dopo
+   *  la modifica, da riallineare nello stato di annotazione. */
+  annotation_revision?: number
+}
+
+/** Risposta del salvataggio bulk: tutti i blocchi della pagina, la revisione
+ *  raggiunta e — allineati al payload — gli id assegnati ai suoi item. */
+export interface BlockListOut {
+  items: BlockOut[]
+  annotation_revision?: number
+  assigned_ids?: number[]
 }
 
 export interface BlockBulkWrite {
   expected_revision?: number
+  /** Blocchi cancellati davvero: il server non lo deduce dall'assenza, perché
+   *  il canvas non porta tutte le bozze del prefill. */
+  deleted_ids?: number[]
   items: Array<{
     id?: number
     label: string
@@ -236,8 +257,13 @@ export interface TableGrid {
   cols: number
   cells: TableCell[]
   phantom_cols: number[]
+  /** Righe header dichiarate manualmente; zero significa nessuna. */
+  header_rows?: number
   vlines?: number[]
   hlines?: number[]
+  /** Confini verticali piegati, persistiti riga per riga quando rilevati. */
+  row_columns?: number[][]
+  row_columns_proven?: boolean[][]
 }
 
 export interface TableGridOut {
@@ -247,6 +273,9 @@ export interface TableGridOut {
 export interface TableSaveOut {
   grid: TableGrid
   otsl: string
+  /** Revisione della pagina dopo il salvataggio: va riallineata nello stato di
+   *  annotazione, altrimenti il prossimo autosave del canvas vede un 409. */
+  annotation_revision?: number
 }
 
 export interface PrefillEngines {
@@ -410,8 +439,12 @@ export interface TrainConfigBody {
   ssh_port?: number
   ssh_key_path?: string
   ssh_root?: string
+  ssh_train_repo?: string
+  ssh_python?: string
+  resume_run_id?: string
   model?: string
   model_path?: string
+  adapter_id?: string
   train_type?: 'lora' | 'full'
   lora_rank?: number
   lora_alpha?: number
@@ -507,7 +540,6 @@ export interface InferenceConfig {
   model: string
   adapter_id?: string
   has_api_key?: boolean
-  api_key?: string
   extra_headers?: Record<string, string>
   timeout?: number
   max_pixels?: number | null

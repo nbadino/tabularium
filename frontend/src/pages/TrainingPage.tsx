@@ -20,6 +20,8 @@ export default function TrainingPage() {
   const [error, setError] = useState<unknown>(null)
   const [stopArmed, setStopArmed] = useState(false)
   const stopArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [cleanupArmed, setCleanupArmed] = useState(false)
+  const cleanupArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     apiGet<{ gpus: GpuInfo[] }>('/system/gpu')
@@ -30,6 +32,7 @@ export default function TrainingPage() {
   useEffect(
     () => () => {
       if (stopArmTimer.current) clearTimeout(stopArmTimer.current)
+      if (cleanupArmTimer.current) clearTimeout(cleanupArmTimer.current)
     },
     [],
   )
@@ -38,6 +41,7 @@ export default function TrainingPage() {
     setProjectId(pid)
     writeActiveProject(pid === '' ? null : pid)
     setStatus(null)
+    setCleanupArmed(false)
   }
 
   const projects = useProjects(onProject, setError)
@@ -115,6 +119,27 @@ export default function TrainingPage() {
     }
   }
 
+  const cleanupRemote = async () => {
+    if (projectId === '' || !status?.run?.run_id) return
+    if (!cleanupArmed) {
+      setCleanupArmed(true)
+      if (cleanupArmTimer.current) clearTimeout(cleanupArmTimer.current)
+      cleanupArmTimer.current = setTimeout(() => setCleanupArmed(false), 5000)
+      return
+    }
+    if (cleanupArmTimer.current) clearTimeout(cleanupArmTimer.current)
+    setCleanupArmed(false)
+    setBusy(true)
+    try {
+      await apiPost(`/projects/${projectId}/training/cleanup`, { run_id: status.run.run_id })
+      setStatus(await apiGet<TrainingStatus>(`/projects/${projectId}/training/status`))
+    } catch (e) {
+      setError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const project = projects.find((p) => p.id === projectId) ?? null
   const { workflow, dataset } = usePipelineState(projectId === '' ? null : projectId)
   const stages = buildPipeline({ project, workflow, dataset, training: status })
@@ -164,6 +189,15 @@ export default function TrainingPage() {
           gpuList={gpuList}
           metricsData={metricsData}
           state={state}
+          canCleanup={Boolean(
+            status?.run &&
+              status.run.state !== 'running' &&
+              status.run.state !== 'starting' &&
+              status.run.config?.executor &&
+              status.run.config.executor !== 'local',
+          )}
+          cleanupArmed={cleanupArmed}
+          onCleanup={() => void cleanupRemote()}
         />
       </div>
     </div>
