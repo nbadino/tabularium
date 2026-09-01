@@ -146,6 +146,22 @@ def test_build_datasets(tmp_path: Path):
         assert got["built"] is True
         assert got["report"]["counts"]["table"]["train"] + got["report"]["counts"]["table"]["val"] == 1
 
+        # Vista Paddle: stesso gold, split per pagina, ERNIEKit + COCO.
+        paddle = client.post(
+            f"/api/projects/{pid}/datasets/build-paddle",
+            json={"split_ratio": 0.5, "seed": 42, "approved_only": False},
+        )
+        assert paddle.status_code == 200, paddle.text
+        paddle_manifest = paddle.json()
+        paddle_root = Path(paddle_manifest["files"]["vlm_train"]).parent
+        assert paddle_manifest["format"] == "paddleocr-vl-erniekit-v1"
+        assert (paddle_root / "annotations/train.json").exists()
+        assert (paddle_root / "vlm_train.jsonl").exists()
+        row = json.loads((paddle_root / "vlm_train.jsonl").read_text().splitlines()[0])
+        assert row["image_info"][0]["image_url"]
+        assert row["text_info"][0]["tag"] == "mask"
+        assert row["text_info"][1]["tag"] == "no_mask"
+
         # Il campione pilot salvato può produrre uno snapshot isolato, senza
         # includere le altre pagine annotate del progetto.
         saved = client.post(f"/api/projects/{pid}/pilot-sample/save", json=[p1]).json()
@@ -172,6 +188,28 @@ def test_build_unannotated_project(tmp_path: Path):
         assert client.post(
             f"/api/projects/{pid}/datasets/build", json={"split_ratio": 1.3}
         ).status_code == 422
+
+
+def test_gold_pages_cannot_enter_saved_pilot(tmp_path: Path):
+    pid, (p1, p2) = _setup(tmp_path / "gold-pilot")
+    with TestClient(app) as client:
+        saved = client.post(f"/api/projects/{pid}/pilot-sample/save", json=[p1, p2])
+        assert saved.json()["pilot_pages"] == [p1, p2]
+
+        protected = client.post(f"/api/projects/{pid}/gold-set", json=[p1])
+        assert protected.json()["gold_pages"] == [p1]
+        assert protected.json()["pilot_pages"] == [p2]
+
+        saved_again = client.post(f"/api/projects/{pid}/pilot-sample/save", json=[p1, p2])
+        assert saved_again.json()["pilot_pages"] == [p2]
+        assert saved_again.json()["gold_excluded"] == 1
+
+
+def test_pilot_sample_requires_review_sized_target(tmp_path: Path):
+    pid, _pages = _setup(tmp_path / "pilot-size")
+    with TestClient(app) as client:
+        response = client.get(f"/api/projects/{pid}/pilot-sample?target=29")
+        assert response.status_code == 422
 
 
 def test_table_windows_are_row_aligned_and_do_not_cut_rowspans():

@@ -17,13 +17,19 @@ memoria): è infrastruttura occasionale, non un sistema di code.
 """
 from __future__ import annotations
 
+import json
 import os
+import sqlite3
 import shutil
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .. import config
+from ..db import connect
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -122,17 +128,16 @@ class ModalTask:
     log: list[str] = field(default_factory=list)
     done: bool = False
     ok: bool | None = None
+    log_path: Path | None = None
+    job_id: int | None = None
 
     def drain(self) -> None:
         """Consuma l'output disponibile senza bloccare (log live in UI)."""
-        assert self.proc.stdout is not None
-        while True:
-            line = self.proc.stdout.readline()
-            if not line:
-                break
-            self.log.append(line.rstrip())
-            if len(self.log) > 500:
-                del self.log[: len(self.log) - 500]
+        if self.log_path is not None:
+            try:
+                self.log = self.log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-500:]
+            except OSError:
+                pass
 
 
 _task: ModalTask | None = None
@@ -168,8 +173,57 @@ def _watch(task: ModalTask) -> None:
     task.drain()
     task.done = True
     task.ok = task.proc.returncode == 0
+    if task.job_id is not None:
+        try:
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE jobs SET state=?, ended_at=datetime('now'), exit_code=?, heartbeat_at=datetime('now') WHERE id=?",
+                    ("finished" if task.ok else "failed", task.proc.returncode, task.job_id),
+                )
+        except sqlite3.OperationalError:
+            pass
     _token_cache = None  # il setup/deploy può aver cambiato lo stato del token
     _invalidate_cache()  # idem per lo stato dell'app
+
+
+def _persisted_running() -> dict | None:
+    """Recupera il minimo stato osservabile di un task sopravvissuto al restart."""
+    try:
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE kind='modal' AND state='running' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if row is None:
+        return None
+    pid = int(row["pid"] or 0)
+    try:
+        if pid <= 0:
+            raise OSError("PID Modal assente")
+        os.kill(pid, 0)
+    except OSError:
+        try:
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE jobs SET state='failed', ended_at=datetime('now'), error=?, heartbeat_at=datetime('now') WHERE id=?",
+                    ("processo Modal non più presente dopo il riavvio", row["id"]),
+                )
+        except sqlite3.OperationalError:
+            pass
+        return None
+    try:
+        command = json.loads(row["command_json"] or "{}")
+    except (TypeError, ValueError):
+        command = {}
+    return {
+        "id": row["id"],
+        "owner_id": row["owner_id"],
+        "pid": pid,
+        "kind": command.get("kind", "deploy"),
+        "template_id": command.get("template_id"),
+        "log_path": row["log_path"],
+    }
 
 
 def _start(
@@ -177,10 +231,13 @@ def _start(
     args: list[str],
     env: dict[str, str] | None = None,
     template_id: str | None = None,
+    owner_id: int | None = None,
 ) -> None:
     global _task
     with _task_lock:
         if _task is not None and not _task.done:
+            raise RuntimeError("un task Modal è già in corso")
+        if _persisted_running() is not None:
             raise RuntimeError("un task Modal è già in corso")
         exe = _find_modal()
         if exe is None:
@@ -188,26 +245,46 @@ def _start(
                 "CLI modal non trovata: installarla con "
                 "`backend/.venv/bin/pip install modal` e riavviare Tabularium"
             )
+        log_path = config.ROOT_DIR / "modal" / f"{kind}-{int(time.time() * 1000)}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         proc = subprocess.Popen(  # noqa: S603
             [exe, *args],
             cwd=str(REPO_ROOT),
-            stdout=subprocess.PIPE,
+            stdout=log_path.open("a", encoding="utf-8"),
             stderr=subprocess.STDOUT,
             text=True,
             env=env,
         )
-        _task = ModalTask(kind=kind, proc=proc, template_id=template_id)
+        try:
+            with connect() as conn:
+                cur = conn.execute(
+                    "INSERT INTO jobs(kind, owner_id, provider, pid, process_group, state, heartbeat_at, command_json, log_path, recovery_strategy) "
+                    "VALUES('modal', ?, 'modal', ?, ?, 'running', datetime('now'), ?, ?, 'pid-process-group')",
+                    (owner_id, proc.pid, os.getpgid(proc.pid) if hasattr(os, "getpgid") else proc.pid,
+                     json.dumps({"kind": kind, "template_id": template_id, "args": args}), str(log_path)),
+                )
+                job_id = int(cur.lastrowid)
+        except sqlite3.OperationalError as exc:
+            proc.terminate()
+            raise RuntimeError("tabella jobs non disponibile: eseguire init_db()") from exc
+        _task = ModalTask(kind=kind, proc=proc, template_id=template_id, log_path=log_path, job_id=job_id)
         threading.Thread(target=_watch, args=(_task,), daemon=True).start()
 
 
 def is_deploying() -> bool:
     task = _current()
-    return task is not None and task.kind == "deploy" and not task.done
+    if task is not None and task.kind == "deploy" and not task.done:
+        return True
+    persisted = _persisted_running()
+    return bool(persisted and persisted.get("kind") == "deploy")
 
 
 def current_kind() -> str | None:
     task = _current()
-    return task.kind if task is not None and not task.done else None
+    if task is not None and not task.done:
+        return task.kind
+    persisted = _persisted_running()
+    return persisted.get("kind") if persisted else None
 
 
 def _current() -> ModalTask | None:
@@ -239,15 +316,16 @@ def token_configured() -> bool:
     return ok
 
 
-def start_setup() -> None:
+def start_setup(owner_id: int | None = None) -> None:
     """Autenticazione: apre il browser per approvare il token."""
-    _start("setup", ["token", "new"])
+    _start("setup", ["token", "new"], owner_id=owner_id)
 
 
 def start_deploy(
     template_id: str | None = None,
     api_key: str | None = None,
     keep_warm: bool = False,
+    owner_id: int | None = None,
 ) -> None:
     """Deploy della template serverless (costruzione immagine + endpoint).
 
@@ -260,21 +338,65 @@ def start_deploy(
     if api_key:
         env["TABULARIUM_VLLM_API_KEY"] = api_key
     env["TABULARIUM_MODAL_MIN_CONTAINERS"] = "1" if keep_warm else "0"
-    _start("deploy", ["deploy", str(template.script)], env=env, template_id=template.id)
+    _start("deploy", ["deploy", str(template.script)], env=env, template_id=template.id, owner_id=owner_id)
 
 
-def stop_app(template_id: str | None = None) -> None:
+def stop_app(template_id: str | None = None, owner_id: int | None = None) -> None:
     """Ferma l'app Modal e termina i container attivi."""
     template = _template(template_id)
     exe = _find_modal()
     if exe is None:
         raise RuntimeError("CLI Modal non trovata")
+    _cancel_deploy_if_running(template.id)
     _start(
         "stop",
         ["app", "stop", "-y", template.app_name],
         env=dict(os.environ),
         template_id=template.id,
+        owner_id=owner_id,
     )
+
+
+def _cancel_deploy_if_running(template_id: str) -> None:
+    """Interrompe un deploy recuperato prima di inviare `modal app stop`."""
+    global _task
+    task = _task
+    if task is not None and not task.done and task.kind == "deploy" and task.template_id == template_id:
+        task.proc.terminate()
+        try:
+            task.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            task.proc.kill()
+        if task.job_id is not None:
+            try:
+                with connect() as conn:
+                    conn.execute(
+                        "UPDATE jobs SET state='stopped', ended_at=datetime('now'), heartbeat_at=datetime('now'), error=? WHERE id=?",
+                        ("deploy interrotto prima dello stop dell’app", task.job_id),
+                    )
+            except sqlite3.OperationalError:
+                pass
+        return
+    persisted = _persisted_running()
+    if persisted is None or persisted.get("kind") != "deploy" or persisted.get("template_id") != template_id:
+        return
+    pid = int(persisted["pid"])
+    try:
+        process_group = int(persisted.get("process_group") or pid)
+        if hasattr(os, "killpg"):
+            os.killpg(process_group, 15)
+        else:
+            os.kill(pid, 15)
+    except OSError:
+        pass
+    try:
+        with connect() as conn:
+            conn.execute(
+                "UPDATE jobs SET state='stopped', ended_at=datetime('now'), heartbeat_at=datetime('now'), error=? WHERE id=?",
+                ("deploy interrotto prima dello stop dell’app", persisted["id"]),
+            )
+    except sqlite3.OperationalError:
+        pass
 
 
 def extract_endpoint() -> str | None:
@@ -361,8 +483,36 @@ def _query_modal_cli(template_id: str | None = None) -> dict:
 def status(template_id: str | None = None) -> dict:
     template = _template(template_id)
     task = _task
+    persisted = None if task is not None and not task.done else _persisted_running()
     cli_state = _query_modal_cli(template.id)
-    task_matches = task is not None and (task.kind == "setup" or task.template_id == template.id)
+    task_matches = (
+        task is not None and (task.kind == "setup" or task.template_id == template.id)
+    ) or (
+        persisted is not None
+        and (persisted["kind"] == "setup" or persisted.get("template_id") == template.id)
+    )
+    if task_matches and task is not None:
+        task_payload = {
+            "kind": task.kind,
+            "done": task.done,
+            "ok": task.ok,
+            "log": task.log[-80:],
+        }
+    elif task_matches and persisted is not None:
+        log: list[str] = []
+        if persisted.get("log_path"):
+            try:
+                log = Path(persisted["log_path"]).read_text(encoding="utf-8", errors="replace").splitlines()[-80:]
+            except OSError:
+                pass
+        task_payload = {
+            "kind": persisted["kind"],
+            "done": False,
+            "ok": None,
+            "log": log,
+        }
+    else:
+        task_payload = None
     return {
         "cli": _find_modal() is not None,
         "token": token_configured(),
@@ -371,12 +521,5 @@ def status(template_id: str | None = None) -> dict:
         "workspace": cli_state["workspace"],
         "app_state": cli_state["app_state"],
         "endpoint": cli_state["endpoint"],
-        "task": None
-        if not task_matches
-        else {
-            "kind": task.kind,
-            "done": task.done,
-            "ok": task.ok,
-            "log": task.log[-80:],
-        },
+        "task": task_payload,
     }

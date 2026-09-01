@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app import db
 from app.main import app
 
 
@@ -17,4 +18,4 @@ def test_system_info():
         assert r.status_code == 200
         body = r.json()
         assert body["app"] == "Tabularium"
-        assert body["schema_version"] == "6"
+        assert body["schema_version"] == str(db.SCHEMA_VERSION)

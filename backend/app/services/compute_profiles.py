@@ -55,9 +55,10 @@ def ensure_legacy_profile() -> None:
             return
         from . import inference
         cfg = inference.get_inference_config()
+        credential_ref = "vault:inference" if cfg.get("api_key") else None
         conn.execute(
             "INSERT INTO compute_profiles(name,provider,purpose,model_adapter_id,served_model_name,endpoint,credential_ref,runtime_recipe_id,generation_profile_id,image_profile_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
-            ("legacy-active", "local", "both", cfg.get("adapter_id", "monkeyocrv2-parsing"), cfg.get("model", "MonkeyOCRv2"), cfg.get("url", config.VLLM_URL), "vault:inference", "legacy", "default", "default"),
+            ("legacy-active", "local", "both", cfg.get("adapter_id", "monkeyocrv2-parsing"), cfg.get("model", "MonkeyOCRv2"), cfg.get("url", config.VLLM_URL), credential_ref, "legacy", "default", "default"),
         )
         conn.execute("UPDATE compute_profiles SET active=1")
 

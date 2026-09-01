@@ -72,9 +72,10 @@ def test_deskew_flow(tmp_path: Path):
 
 
 def test_align_levels(tmp_path: Path, monkeypatch):
-    # Il test verifica il contratto HTTP, non deve inizializzare né scaricare
-    # il modello neurale opzionale.
-    monkeypatch.setattr(dewarp, "_uvdoc_dewarp", lambda image: image)
+    # Il test verifica il contratto HTTP, non deve caricare il preprocessore.
+    from app.services import monkey_preprocess
+
+    monkeypatch.setattr(monkey_preprocess, "preprocess", lambda image, timeout=600.0: image)
     pid = _setup(tmp_path / "al")
     with TestClient(app) as client:
         page = client.get(f"/api/projects/{pid}/pages").json()["items"][0]
@@ -119,12 +120,14 @@ def test_align_levels(tmp_path: Path, monkeypatch):
 
 
 def test_dewarp_levels_never_use_unsafe_fallback(monkeypatch):
-    """Senza il motore neurale, medium/high devono essere identici al deskew."""
+    """Senza il preprocessore, medium/high devono essere identici al deskew."""
+    from app.services import monkey_preprocess
+
     image = Image.new("RGB", (480, 640), "white")
     draw = ImageDraw.Draw(image)
     draw.rectangle((30, 40, 450, 600), outline="black", width=4)
     expected, expected_angle = deskew(image)
-    monkeypatch.setattr(dewarp, "_uvdoc_dewarp", lambda _image: None)
+    monkeypatch.setattr(monkey_preprocess, "preprocess", lambda image, timeout=600.0: None)
 
     for level in ("medium", "high"):
         actual, angle = dewarp.align_page(image, level=level)
@@ -133,17 +136,36 @@ def test_dewarp_levels_never_use_unsafe_fallback(monkeypatch):
         assert actual.tobytes() == expected.tobytes()
 
 
-def test_fit_without_crop_rejects_distorted_aspect_ratio():
-    image = Image.new("RGB", (1000, 1000), "white")
-    assert dewarp._fit_without_crop(image, (1000, 1500)) is None
+def test_align_does_not_deskew_around_the_official_preprocessor(monkeypatch):
+    """`core_runner.py` passa l'originale al `Preprocessor` e la rettifica
+    include la rotazione: un deskew prima o dopo sarebbe geometria in più."""
+    from app.services import monkey_preprocess
+
+    seen: dict = {}
+    rectified = Image.new("RGB", (480, 640), "green")
+
+    def fake(image, timeout=600.0):
+        seen["input"] = image.tobytes()
+        return rectified
+
+    monkeypatch.setattr(monkey_preprocess, "preprocess", fake)
+    source = Image.new("RGB", (480, 640), "white")
+    ImageDraw.Draw(source).rectangle((30, 40, 450, 600), outline="black", width=4)
+
+    out, angle = dewarp.align_page(source, level="medium")
+
+    assert seen["input"] == source.tobytes()  # originale, non il deskew
+    assert angle == 0.0
+    assert out.tobytes() == rectified.tobytes()
 
 
-def test_fit_without_crop_rejects_content_moved_to_edge():
-    source = Image.new("RGB", (400, 600), "white")
-    ImageDraw.Draw(source).rectangle((30, 30, 370, 570), outline="black", width=8)
-    candidate = Image.new("RGB", (400, 600), "white")
-    ImageDraw.Draw(candidate).rectangle((0, 0, 399, 599), outline="black", width=8)
-    assert dewarp._fit_without_crop(candidate, source.size, source=source) is None
+def test_only_the_official_rectifier_is_offered(monkeypatch):
+    """I surrogati (UVDoc, DocScanner) sono usciti: chiederli è un errore, non
+    un ripiego silenzioso su un altro motore."""
+    for engine in ("uvdoc", "docscanner"):
+        result = dewarp.run_transform(Image.new("RGB", (200, 300), "white"), engine)
+        assert result.actual_engine == "none"
+        assert result.error == "transform_engine_invalid"
 
 
 def test_manual_rectifiers_preserve_canvas_and_validate_geometry():
@@ -205,3 +227,42 @@ def test_prefill_source_reuses_the_accepted_transform(tmp_path: Path):
     image, angle = pagesvc.maybe_auto_deskew(row)
     assert angle == 0.0
     assert image.getpixel((10, 10)) == (255, 0, 0)
+
+
+def test_monkeyocr_engine_uses_the_official_preprocessor(monkeypatch):
+    """`monkeyocr` è lo stadio che `parsing/core_runner.py` esegue prima del
+    parsing: la pagina va al `Preprocessor` così com'è, senza deskew nostro."""
+    from app.services import monkey_preprocess
+
+    seen: dict = {}
+    rectified = Image.new("RGB", (1200, 1600), "green")
+
+    def fake_preprocess(image, timeout=600.0):
+        seen["size"] = image.size
+        return rectified
+
+    monkeypatch.setattr(monkey_preprocess, "preprocess", fake_preprocess)
+
+    source = Image.new("RGB", (1200, 1600), "white")
+    result = dewarp.run_transform(source, "monkeyocr")
+
+    assert seen["size"] == (1200, 1600)  # nessuna riscalatura prima del modello
+    assert result.actual_engine == "monkeyocr"
+    assert result.error is None
+    assert result.image.getpixel((10, 10)) == (0, 128, 0)
+
+
+def test_monkeyocr_engine_falls_back_to_deskew_when_unavailable(monkeypatch):
+    """Il preprocessore è opzionale: se l'ambiente non c'è, la pagina resta
+    utilizzabile con il solo deskew invece di far fallire la trasformazione."""
+    from app.services import monkey_preprocess
+
+    monkeypatch.setattr(monkey_preprocess, "preprocess", lambda image, timeout=600.0: None)
+    monkeypatch.setattr(monkey_preprocess, "last_error", lambda: "monkeyocr_preprocessor_unavailable")
+
+    result = dewarp.run_transform(Image.new("RGB", (800, 1000), "white"), "monkeyocr")
+
+    assert result.requested_engine == "monkeyocr"
+    assert result.actual_engine == "deskew"
+    assert result.error == "monkeyocr_preprocessor_unavailable"
+    assert "neural_fallback_deskew" in result.warnings

@@ -305,7 +305,7 @@ class AlignRequest(BaseModel):
 
 
 class TransformCandidateRequest(BaseModel):
-    engine: str = Field(pattern="^(deskew|uvdoc|docscanner|perspective|mesh)$")
+    engine: str = Field(pattern="^(deskew|monkeyocr|perspective|mesh)$")
     perspective_points: list[list[float]] | None = None
     mesh_grid: list[list[list[float]]] | None = None
 
@@ -317,8 +317,8 @@ def align_page_endpoint(
     confirm: bool = Query(default=False, description="elimina i blocchi già annotati"),
     _auth: dict = Depends(require_resource(write=True)),
 ) -> dict:
-    """Allinea la pagina con livello di qualità scelto:
-    basic = solo rotazione, medium/high = UVDoc con validazione anti-crop.
+    """Allinea la pagina con livello di qualità scelto: basic = solo rotazione,
+    medium/high = preprocessore ufficiale MonkeyOCRv2.
     Cambia le coordinate: richiede pagina senza blocchi o ?confirm=true."""
     from ..services import dewarp
 
@@ -367,7 +367,7 @@ def align_page_endpoint(
 def _transform_state(page_id: int) -> dict:
     import importlib.util
 
-    from ..services import docscanner
+    from ..services import monkey_preprocess
 
     active = pagesvc.read_transform_meta(page_id)
     candidate = pagesvc.read_transform_meta(page_id, candidate=True)
@@ -384,13 +384,8 @@ def _transform_state(page_id: int) -> dict:
             "deskew": {"available": importlib.util.find_spec("cv2") is not None},
             "perspective": {"available": importlib.util.find_spec("cv2") is not None},
             "mesh": {"available": True},
-            "uvdoc": {
-                "available": (
-                    importlib.util.find_spec("paddleocr") is not None
-                    and importlib.util.find_spec("paddle") is not None
-                ),
-            },
-            "docscanner": {"available": docscanner.available()},
+            # Unica rettifica neurale: quella del modello stesso.
+            "monkeyocr": {"available": monkey_preprocess.available()},
         },
     }
 

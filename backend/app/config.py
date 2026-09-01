@@ -57,6 +57,12 @@ TRAIN_PYTHON = os.environ.get("TABULARIUM_TRAIN_PYTHON", "").strip()
 # assume che `vllm`/`python` siano già sul PATH del processo backend.
 SERVE_PYTHON = os.environ.get("TABULARIUM_SERVE_PYTHON", "").strip()
 
+# DFlash: speculative decoding ufficiale di MonkeyOCRv2 (README, news
+# 2026.07.24), dato per "up to 2x faster inference". Il draft (~170 MB) viene
+# scaricato alla prima messa in servizio. `0` lo disattiva e riporta il serving
+# al comando senza `-d`.
+MONKEY_DFLASH = os.environ.get("TABULARIUM_MONKEY_DFLASH", "1").strip() not in {"0", "false", "no"}
+
 # --- Inferenza (vLLM, endpoint OpenAI-compatibile) ------------------------------
 VLLM_URL = os.environ.get("TABULARIUM_VLLM_URL", "http://127.0.0.1:8888/v1").strip()
 VLLM_MODEL = os.environ.get("TABULARIUM_VLLM_MODEL", "MonkeyOCRv2").strip()
@@ -70,14 +76,16 @@ try:
 except Exception:
     VLLM_EXTRA_HEADERS = {}
 
-# Tetto opzionale ai pixel inviati al modello, equivalente della env
-# `MOCR2_MAX_PIXELS` del repo ufficiale. Non impostato = nessuna riduzione,
-# che è il comportamento di default di `parsing/core_runner.py`.
-VLLM_MAX_PIXELS = (
-    int(os.environ["TABULARIUM_VLLM_MAX_PIXELS"])
-    if os.environ.get("TABULARIUM_VLLM_MAX_PIXELS", "").strip()
-    else None
-)
+# Tetto ai pixel inviati al modello, equivalente della env `MOCR2_MAX_PIXELS`
+# del repo ufficiale. Il default 1.003.520 è quello di `parsing/parse.py`
+# (`--max-pixels`), che `configure_runtime()` propaga come `MOCR2_MAX_PIXELS` a
+# TUTTE le chiamate (layout, testo, tabella, end2end): con `min_pixels=1003520`
+# già imposto dal layout ufficiale, la pagina arriva al VLM esattamente a 1 MP.
+# `0` disattiva il tetto e riproduce il comportamento senza `MOCR2_MAX_PIXELS`.
+_max_pixels_env = os.environ.get("TABULARIUM_VLLM_MAX_PIXELS", "").strip()
+VLLM_MAX_PIXELS: int | None = int(_max_pixels_env) if _max_pixels_env else 1_003_520
+if VLLM_MAX_PIXELS is not None and VLLM_MAX_PIXELS <= 0:
+    VLLM_MAX_PIXELS = None
 
 # --- OCR per pseudo-labeling (rapidocr | paddleocr | auto) ----------------------
 OCR_ENGINE = os.environ.get("TABULARIUM_OCR_ENGINE", "auto").strip()

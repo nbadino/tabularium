@@ -432,6 +432,8 @@ def rent_vast_instance(
     model: str = "zenosai/MonkeyOCRv2-B-Parsing",
     port: int = 8888,
     api_key_for_server: str = "",
+    monkeyocr_ref: str = "",
+    tabularium_ref: str = "",
     prepare_server: bool = False,
 ) -> dict[str, Any]:
     """Noleggia un'offerta esplicita. L'azione è separata dalla ricerca."""
@@ -440,6 +442,16 @@ def rent_vast_instance(
         raise ValueError("API Key di Vast.ai non specificata.")
     if int(disk_gb) < 10:
         raise ValueError("Il disco deve essere almeno 10 GB.")
+    pinned_ref = str(monkeyocr_ref).strip()
+    if prepare_server and not pinned_ref:
+        raise ValueError("monkeyocr_ref obbligatorio per preparare il server con una recipe riproducibile")
+    pinned_tabularium_ref = str(tabularium_ref).strip()
+    if prepare_server and not pinned_tabularium_ref:
+        raise ValueError("tabularium_ref obbligatorio per preparare il server con una recipe riproducibile")
+    if pinned_ref and any(ch in pinned_ref for ch in " \t\r\n;|&`$\\'"):
+        raise ValueError("monkeyocr_ref non valido")
+    if pinned_tabularium_ref and any(ch in pinned_tabularium_ref for ch in " \t\r\n;|&`$\\'"):
+        raise ValueError("tabularium_ref non valido")
     body: dict[str, Any] = {
         "image": image,
         "disk": int(disk_gb),
@@ -450,12 +462,14 @@ def rent_vast_instance(
     }
     if prepare_server:
         secret = api_key_for_server.strip()
-        safe_key = f" --api-key {shlex.quote(secret)}" if secret else ""
+        if secret:
+            body["env"] += f" -e TABULARIUM_SERVER_API_KEY={shlex.quote(secret)}"
         body["onstart"] = (
             "apt-get update -qq && apt-get install -y -qq git curl && "
-            "curl -fsSL https://raw.githubusercontent.com/cappannonno/tabularium/main/"
+            "curl -fsSL https://raw.githubusercontent.com/nbadino/tabularium/"
+            f"{shlex.quote(pinned_tabularium_ref)}/"
             "scripts/cloud/setup_cloud_vllm.sh | bash -s --"
-            f" --port {int(port)} --model {shlex.quote(str(model))}{safe_key}"
+            f" --port {int(port)} --model {shlex.quote(str(model))} --ref {shlex.quote(pinned_ref)}"
         )
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "application/json"}
     try:
@@ -476,7 +490,7 @@ def rent_vast_instance(
     }
 
 
-def list_vast_instances(api_key: str) -> list[dict[str, Any]]:
+def list_vast_instances(api_key: str, *, owner_id: int | None = None) -> list[dict[str, Any]]:
     """Recupera l'elenco delle istanze noleggiate dall'account Vast.ai."""
     api_key = api_key.strip()
     if not api_key:
@@ -503,18 +517,33 @@ def list_vast_instances(api_key: str) -> list[dict[str, Any]]:
     instances = data.get("instances", [])
     out = []
     for inst in instances:
+        is_running = inst.get("actual_status") == "running"
+        status = inst.get("actual_status") or inst.get("status_msg") or "unknown"
+        resource_id = inst.get("id")
         out.append({
-            "id": inst.get("id"),
-            "status": inst.get("actual_status") or inst.get("status_msg") or "unknown",
+            "id": resource_id,
+            "status": status,
             "gpu_name": inst.get("gpu_name"),
             "num_gpus": inst.get("num_gpus", 1),
             "dph_total": inst.get("dph_total"),
             "ssh_host": inst.get("ssh_host"),
             "ssh_port": inst.get("ssh_port"),
-            "is_running": (inst.get("actual_status") == "running"),
+            "is_running": is_running,
             "label": inst.get("label") or f"{inst.get('num_gpus', 1)}x {inst.get('gpu_name', 'GPU')}",
             "ports": inst.get("ports", {}),
         })
+        if resource_id is not None:
+            normalized = str(status).lower()
+            state = "running" if is_running else (
+                "deleted" if normalized in {"deleted", "destroyed", "terminated"}
+                else "stopped" if normalized in {"stopped", "exited", "paused"}
+                else "running"
+            )
+            track_cloud_resource(
+                "vast", resource_id, owner_id=owner_id,
+                hourly_rate=inst.get("dph_total"), state=state,
+                metadata={"provider_status": status},
+            )
     return _with_cost("vast", out)
 
 
@@ -549,7 +578,7 @@ def control_vast_instance(api_key: str, instance_id: int, action: str) -> dict[s
 RUNPOD_API_BASE = "https://rest.runpod.io/v1"
 
 
-def list_runpod_pods(api_key: str) -> list[dict[str, Any]]:
+def list_runpod_pods(api_key: str, *, owner_id: int | None = None) -> list[dict[str, Any]]:
     """Recupera l'elenco dei Pod noleggiati dall'account RunPod."""
     api_key = api_key.strip()
     if not api_key:
@@ -574,8 +603,9 @@ def list_runpod_pods(api_key: str) -> list[dict[str, Any]]:
         public_ip = pod.get("publicIp")
         ssh_port = ports.get("22")
         status = pod.get("desiredStatus") or "UNKNOWN"
+        resource_id = pod.get("id")
         out.append({
-            "id": pod.get("id"),
+            "id": resource_id,
             "status": status,
             "gpu_name": gpu.get("displayName"),
             "num_gpus": gpu.get("count", 1),
@@ -586,6 +616,18 @@ def list_runpod_pods(api_key: str) -> list[dict[str, Any]]:
             "label": pod.get("name") or f"{gpu.get('count', 1)}x {gpu.get('displayName', 'GPU')}",
             "ports": ports,
         })
+        if resource_id is not None:
+            normalized = str(status).lower()
+            state = "running" if normalized == "running" else (
+                "deleted" if normalized in {"terminated", "deleted"}
+                else "stopped" if normalized in {"exited", "stopped", "paused"}
+                else "running"
+            )
+            track_cloud_resource(
+                "runpod", resource_id, owner_id=owner_id,
+                hourly_rate=pod.get("costPerHr"), state=state,
+                metadata={"provider_status": status},
+            )
     return _with_cost("runpod", out)
 
 

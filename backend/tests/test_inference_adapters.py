@@ -80,7 +80,7 @@ def test_paddle_vl_exposes_gpu_recognition_with_explicit_layout_fallback():
         "supports_native": True,
     }
     assert adapter.prompt_for("table") == "Table Recognition:"
-    assert getattr(adapter, "page_layout_fallback") == "ocr"
+    assert getattr(adapter, "page_layout_fallback") == "official-pipeline"
     assert adapter.capabilities.table_format == "html"
 
 

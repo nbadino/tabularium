@@ -9,6 +9,7 @@ import json
 import os
 import signal
 import shutil
+import sqlite3
 import subprocess
 import threading
 import time
@@ -239,6 +240,19 @@ def start_run(project_id: int, cfg: dict, *, owner_id: int | None = None) -> dic
     run_dir.mkdir(parents=True, exist_ok=True)
     train_file, val_file = prepare_training_files(project_id, run_dir / "dataset")
 
+    resume_run_id = str(cfg.get("resume_run_id") or "").strip()
+    if resume_run_id:
+        # L'ID è un nome di directory generato dal backend: non consentire
+        # percorsi arbitrari o checkpoint provenienti da un altro progetto.
+        previous_dir = (runs_dir(project_id) / resume_run_id).resolve()
+        runs_root = runs_dir(project_id).resolve()
+        if previous_dir.parent != runs_root or not previous_dir.is_dir():
+            raise ValueError("run di resume non valida per questo progetto")
+        previous_checkpoints = previous_dir / "checkpoints"
+        if not previous_checkpoints.is_dir() or not any(path.is_file() for path in previous_checkpoints.rglob("*")):
+            raise ValueError("la run di resume non contiene checkpoint")
+        shutil.copytree(previous_checkpoints, run_dir / "checkpoints", dirs_exist_ok=True)
+
     script = generate_script(cfg, run_dir, train_file, val_file)
     script_path = run_dir / "train.sh"
     script_path.write_text(script, encoding="utf-8")
@@ -253,6 +267,8 @@ def start_run(project_id: int, cfg: dict, *, owner_id: int | None = None) -> dic
         "config": cfg,
         "dataset_snapshot_id": snapshot_id,
     }
+    if resume_run_id:
+        meta["resumed_from"] = resume_run_id
     recipe = TrainingRecipe(
         run_id=run_id,
         run_dir=run_dir,
@@ -388,11 +404,19 @@ def _status(project_id: int) -> dict:
     # Recovery dopo un riavvio del backend: l'handle Python è perso, ma il
     # PID/job manifest persistito resta sufficiente per osservare e fermare la
     # run locale.
-    with connect() as conn:
-        job = conn.execute(
-            "SELECT * FROM jobs WHERE project_id=? AND kind='training' ORDER BY id DESC LIMIT 1",
-            (project_id,),
-        ).fetchone()
+    try:
+        with connect() as conn:
+            job = conn.execute(
+                "SELECT * FROM jobs WHERE project_id=? AND kind='training' ORDER BY id DESC LIMIT 1",
+                (project_id,),
+            ).fetchone()
+    except sqlite3.OperationalError as exc:
+        # Supporta anche una directory dati appena creata prima della prima
+        # migrazione: lo status vuoto resta interrogabile e l'avvio normale
+        # continua a passare da init_db().
+        if "no such table: jobs" not in str(exc):
+            raise
+        job = None
     if job is not None and job["state"] == "running":
         try:
             command = json.loads(job["command_json"] or "{}")
@@ -505,6 +529,56 @@ def stop_run(project_id: int) -> dict:
         conn.execute("UPDATE jobs SET state='stopped', ended_at=?, heartbeat_at=? WHERE id=?", (meta["ended_at"], _now(), handle.get("job_id")))
     _ACTIVE.pop(project_id, None)
     return _status(project_id)
+
+
+def cleanup_remote_run(project_id: int, run_id: str) -> dict:
+    """Elimina una run remota solo su richiesta esplicita dell'utente."""
+    run_id = str(run_id or "").strip()
+    root = runs_dir(project_id).resolve()
+    run_dir = (root / run_id).resolve()
+    if not run_id or run_id in {".", ".."} or run_dir.parent != root or not run_dir.is_dir():
+        raise ValueError("run non valida per questo progetto")
+    if _ACTIVE.get(project_id):
+        raise ValueError("fermare il training prima del cleanup remoto")
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM jobs WHERE project_id=? AND kind='training' ORDER BY id DESC",
+            (project_id,),
+        ).fetchall()
+    job = None
+    for candidate in rows:
+        try:
+            command = json.loads(candidate["command_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if command.get("run_id") == run_id:
+            job = candidate
+            break
+    if job is None or job["provider"] not in REMOTE_PROVIDERS or not job["remote_job_id"]:
+        raise ValueError("run remota non trovata")
+    try:
+        command = json.loads(job["command_json"] or "{}")
+        cfg = command.get("config") or {}
+        executor = executor_from_config(cfg, known_hosts=config.SSH_KNOWN_HOSTS)
+        if not isinstance(executor, SshExecutor):
+            raise ValueError("executor remoto non disponibile")
+        recipe = TrainingRecipe(
+            run_id=run_id,
+            run_dir=run_dir,
+            script=run_dir / "train.sh",
+            train_dataset=run_dir / "dataset" / "train.jsonl",
+            val_dataset=run_dir / "dataset" / "val.jsonl",
+            dataset_snapshot_id=None,
+            config=cfg,
+            provider=executor.provider,
+        )
+        executor.recover(recipe, Path(job["log_path"]), int(job["remote_job_id"])).cleanup()
+    except (OSError, ValueError, TypeError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise ValueError(f"cleanup remoto fallito: {exc}") from exc
+    meta = _read_run_meta(run_dir) or {"run_id": run_id}
+    meta["remote_cleaned_at"] = _now()
+    (run_dir / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": True, "run_id": run_id, "remote_cleaned_at": meta["remote_cleaned_at"]}
 
 
 def reconcile_jobs() -> None:

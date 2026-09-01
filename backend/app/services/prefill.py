@@ -15,6 +15,7 @@ from fastapi import HTTPException
 
 from ..db import connect
 from . import labeling, ocr as ocrmod, otsl, table_detect
+from . import paddle_official
 from . import pages as pagesvc
 from .i18n import msg
 
@@ -206,6 +207,66 @@ def _scale_bbox(item: dict, width: int, height: int) -> list[int]:
     ]
 
 
+def _containment(inner: list[float], outer: list[float]) -> float:
+    """Quanta parte di ``inner`` sta dentro ``outer``, 0–1."""
+    x1, y1 = max(inner[0], outer[0]), max(inner[1], outer[1])
+    x2, y2 = min(inner[2], outer[2]), min(inner[3], outer[3])
+    inter = max(0, x2 - x1) * max(0, y2 - y1)
+    area = max(0, inner[2] - inner[0]) * max(0, inner[3] - inner[1])
+    return inter / area if area > 0 else 0.0
+
+
+def _box_of(item: dict) -> list[float] | None:
+    bbox = item.get("bbox")
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return None
+    try:
+        return [float(value) for value in bbox]
+    except (TypeError, ValueError):
+        return None
+
+
+def _label_of(item: dict) -> str:
+    return str(item.get("label") or item.get("category") or "")
+
+
+def _drop_nested_duplicates(items: list[dict], threshold: float = 0.9) -> list[dict]:
+    """Scarta i blocchi contenuti in un altro blocco della stessa classe.
+
+    Il risultato ufficiale di PaddleX porta la stessa regione a due livelli —
+    la lista di parsing finale e le detection grezze del layout — e il bridge
+    (`paddle_official._items`) raccoglie ricorsivamente entrambi. Sul registro
+    Lloyd's la colonna di sinistra arrivava così quattro volte: una intera,
+    con testo e griglia, più tre fasce che la ritagliano. L'IoU non le vede
+    (una fascia sovrapposta al 100% con l'intero ha IoU 0,25), il contenimento
+    sì.
+
+    Si tiene sempre il blocco più grande: è quello su cui il pipeline ha
+    riconosciuto il contenuto, e la fascia interna non aggiunge nulla che la
+    griglia dell'intero non abbia già.
+    """
+    boxes = [(item, _box_of(item)) for item in items]
+    kept: list[dict] = []
+    for item, box in boxes:
+        if box is None:
+            kept.append(item)
+            continue
+        area = max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
+        swallowed = False
+        for other, other_box in boxes:
+            if other is item or other_box is None:
+                continue
+            other_area = max(0.0, other_box[2] - other_box[0]) * max(0.0, other_box[3] - other_box[1])
+            if other_area <= area or _label_of(other) != _label_of(item):
+                continue
+            if _containment(box, other_box) >= threshold:
+                swallowed = True
+                break
+        if not swallowed:
+            kept.append(item)
+    return kept
+
+
 def _dedupe_model_items(items: list[dict], iou_threshold: float = 0.92) -> list[dict]:
     """Rimuove duplicati evidenti dalla lista generata dal modello.
 
@@ -213,7 +274,10 @@ def _dedupe_model_items(items: list[dict], iou_threshold: float = 0.92) -> list[
     generazione end2end lunga. Non è corretto creare decine di bozze identiche
     né mostrarle come blocchi distinti: conserviamo il primo record nell'ordine
     di lettura e lasciamo intatti i blocchi realmente diversi.
+
+    Al duplicato esatto si aggiunge quello *annidato*: v. ``_drop_nested_duplicates``.
     """
+    items = _drop_nested_duplicates(items)
     kept: list[dict] = []
     for item in items:
         bbox = item.get("bbox")
@@ -244,6 +308,8 @@ def _dedupe_model_items(items: list[dict], iou_threshold: float = 0.92) -> list[
 
 
 def _native_mode(adapter) -> str:
+    if adapter.adapter_id == "paddleocr-vl":
+        return "official"
     """Il percorso nativo di un adapter, sondato come le modalità prefill:
     una generazione di parsing per chi la ha verificata (MonkeyOCRv2
     END2END), il protocollo client ufficiale a due passi per chi è nato così
@@ -348,7 +414,20 @@ def model_prelabel_events(
                                 raise
                             return method(*args)
 
-                if mm == "end2end":
+                if mm == "official":
+                    items = paddle_official.parse_page(
+                        image, client.url, client.model, image.width, image.height
+                    )
+                    for item in items:
+                        bbox = item.get("bbox") or []
+                        if len(bbox) == 4:
+                            item["bbox"] = [
+                                round(float(bbox[0]) / image.width * 1000),
+                                round(float(bbox[1]) / image.height * 1000),
+                                round(float(bbox[2]) / image.width * 1000),
+                                round(float(bbox[3]) / image.height * 1000),
+                            ]
+                elif mm == "end2end":
                     items = call_live(
                         client.end2end,
                         image,
@@ -420,7 +499,8 @@ def model_prelabel_events(
             # così il secondo stadio Paddle riceve l'intero registro e può
             # restituire HTML/OTSL con colonne e celle unite.
             if (
-                getattr(client.adapter, "page_layout_fallback", None) == "ocr"
+                mm != "official"
+                and getattr(getattr(client, "adapter", None), "page_layout_fallback", None) == "ocr"
                 and opts.table_promote
             ):
                 candidate = _table_cluster(kept)
@@ -447,6 +527,10 @@ def model_prelabel_events(
                     mm == "two_stage"
                     and k["label"] not in {"Column", "Picture"}
                     and not k.get("content")
+                    and not (
+                        k["label"] == "Table"
+                        and getattr(client.adapter, "table_recognition_strategy", None) == "full_crop"
+                    )
                 ):
                     try:
                         x1, y1, x2, y2 = k["bbox"]
@@ -486,7 +570,7 @@ def model_prelabel_events(
                     # nel risultato, non una sostituzione silenziosa.
                     grid = None
                     used_end2end_content = False
-                    if mm == "end2end" and k.get("content"):
+                    if mm in {"end2end", "official"} and k.get("content"):
                         try:
                             raw_content = k["content"]
                             # END2END segue il formato ufficiale di parsing: per

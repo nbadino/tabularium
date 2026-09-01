@@ -83,6 +83,30 @@ def training_stop(
     return result
 
 
+@router.post("/api/projects/{project_id}/training/cleanup")
+def training_cleanup(
+    project_id: int,
+    payload: dict,
+    user: dict = Depends(require_resource(write=True)),
+) -> dict:
+    """Rimuove la directory di una run remota dopo una conferma esplicita."""
+    _require_project(project_id)
+    try:
+        result = trainer.cleanup_remote_run(project_id, str(payload.get("run_id") or ""))
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with connect() as conn:
+        auditsvc.record(
+            conn,
+            user,
+            "training.remote_cleanup",
+            resource_type="project",
+            resource_id=project_id,
+            payload={"run_id": result["run_id"]},
+        )
+    return result
+
+
 @router.get("/api/projects/{project_id}/training/stream")
 def training_stream(
     project_id: int,

@@ -25,9 +25,11 @@ def _auth_on_and_clean_db(monkeypatch):
     init_db()
     with connect() as conn:
         conn.execute("DELETE FROM sessions")
-        conn.execute("DELETE FROM users")
+        # I progetti vanno prima: `projects.owner_id` è ON DELETE RESTRICT, e
+        # cancellare gli utenti con un progetto ancora intestato fallisce.
         conn.execute("DELETE FROM project_members")
         conn.execute("DELETE FROM projects")
+        conn.execute("DELETE FROM users")
     yield
 
 

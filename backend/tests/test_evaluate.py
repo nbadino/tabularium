@@ -213,12 +213,14 @@ def test_layout_caps_oversized_archive_scans():
     assert abs(capped.width / capped.height - scan.width / scan.height) < 0.01
 
 
-def test_end2end_keeps_table_otsl_content_and_sends_image_asis():
-    """L'immagine va al modello COM'È: nessuna riscalatura nostra. Il tetto a
-    2 MP che prima era applicato di default (misurato in AGENTS.md §2.3.2 sul
-    percorso di layout) è uscito — la condizione perché i risultati coincidano
-    con l'uso diretto del modello; resta solo il tetto opzionale impostato
-    dall'utente via TABULARIUM_VLLM_MAX_PIXELS."""
+def test_end2end_applies_the_official_pixel_cap_and_keeps_table_otsl_content():
+    """End2end rispetta il tetto ufficiale, come ogni altra chiamata.
+
+    `parsing/parse.py` passa `--max-pixels` (default 1003520) a
+    `configure_runtime()`, che lo esporta come `MOCR2_MAX_PIXELS`: da lì vale
+    per tutte le `batch_inference`, end2end compresa. Il nostro equivalente è
+    `config.VLLM_MAX_PIXELS`, sovrascrivibile per client.
+    """
     from PIL import Image
 
     from app.services.inference import (
@@ -240,11 +242,32 @@ def test_end2end_keeps_table_otsl_content_and_sends_image_asis():
     items = FakeClient(url="http://127.0.0.1:9/v1").end2end(
         Image.new("RGB", (2864, 3952))
     )
-    assert seen["pixels"] == 2864 * 3952  # originale, intatta
+    assert seen["pixels"] <= 1_003_520
+    assert seen["pixels"] > 0.98 * 1_003_520  # scalata al tetto, non oltre
     assert seen["prompt"] == END2END_PROMPT
     assert seen["max_tokens"] == END2END_MAX_TOKENS
     assert items[0]["label"] == "Table"
     assert items[0]["content"].startswith("<fcel>Abidjan")
+
+
+def test_end2end_sends_the_image_asis_when_the_cap_is_removed():
+    """Tetto disattivato (`TABULARIUM_VLLM_MAX_PIXELS=0`) = nessuna riscalatura
+    nostra, come `core_runner.py` senza `MOCR2_MAX_PIXELS`."""
+    from PIL import Image
+
+    from app.services.inference import VllmClient
+
+    seen: dict = {}
+
+    class FakeClient(VllmClient):
+        def _chat(self, image, prompt, max_tokens=4096, min_pixels=None, **kwargs):
+            seen.update(pixels=image.width * image.height)
+            return "[{'bbox':[10,20,900,980],'label':'Table','content':'<fcel>A'}]"
+
+    FakeClient(url="http://127.0.0.1:9/v1", max_pixels=None).end2end(
+        Image.new("RGB", (2864, 3952))
+    )
+    assert seen["pixels"] == 2864 * 3952
 
 
 def test_table_grid_repeats_the_header_on_every_band():
@@ -370,3 +393,92 @@ def test_ping_uses_the_client_timeout():
     finally:
         requests.get = original
     assert seen["timeout"] == 2
+
+
+def test_layout_lands_on_the_official_one_megapixel_working_point():
+    """`get_layout()` ufficiale chiede `min_pixels=1003520` e il tetto globale
+    vale 1003520: minimo e massimo coincidono, quindi il layout vede sempre
+    1 MP, sia partendo da una scansione da 11 MP sia da una miniatura."""
+    from PIL import Image
+
+    from app.services.inference import VllmClient
+
+    seen: list[int] = []
+
+    class FakeClient(VllmClient):
+        def _chat(self, image, prompt, max_tokens=4096, min_pixels=None, **kwargs):
+            seen.append(image.width * image.height)
+            return "[]"
+
+    client = FakeClient(url="http://127.0.0.1:9/v1")
+    client.layout(Image.new("RGB", (3000, 3800)))  # 11.4 MP
+    client.layout(Image.new("RGB", (400, 500)))  # 0.2 MP
+    assert all(abs(px - 1_003_520) / 1_003_520 < 0.02 for px in seen), seen
+
+
+def test_client_takes_the_pixel_cap_from_the_runtime_configuration(monkeypatch):
+    """Il campo "max pixels" delle impostazioni è l'equivalente di
+    `--max-pixels`/`MOCR2_MAX_PIXELS`: deve arrivare al client, non restare
+    scritto nel database senza effetto."""
+    from app.services import inference
+
+    monkeypatch.setattr(
+        inference,
+        "get_inference_config",
+        lambda: {
+            "url": "http://127.0.0.1:9/v1",
+            "model": "MonkeyOCRv2",
+            "adapter_id": "monkeyocrv2-parsing",
+            "max_pixels": 4_000_000,
+        },
+    )
+    assert inference.get_vllm_client().max_pixels == 4_000_000
+
+
+def test_a_zero_pixel_cap_means_no_cap():
+    """0 = "non impostare `MOCR2_MAX_PIXELS`", non "riscala a zero pixel"."""
+    from app.services.inference import VllmClient
+
+    assert VllmClient(url="http://127.0.0.1:9/v1", max_pixels=0).max_pixels is None
+
+
+def test_the_table_budget_never_exceeds_the_context_the_adapter_serves():
+    """vLLM rifiuta con 400 una richiesta il cui `max_tokens` supera il
+    contesto — non la tronca. Chiedere 8192 token di uscita a DeepSeek-OCR-2,
+    servito con `--max-model-len 8192`, faceva fallire la chiamata."""
+    from PIL import Image
+
+    from app.services.inference import TABLE_MAX_TOKENS, VllmClient
+    from app.services.model_adapters import get_adapter, list_adapters
+
+    seen: dict = {}
+
+    class FakeClient(VllmClient):
+        def _chat(self, image, prompt, max_tokens=4096, min_pixels=None, **kwargs):
+            seen["max_tokens"] = max_tokens
+            return ""
+
+    checked = 0
+    for cap in list_adapters():
+        client = FakeClient(url="http://127.0.0.1:9/v1", adapter=get_adapter(cap["adapter_id"]))
+        try:
+            client.recognize(Image.new("RGB", (400, 600)), "Table")
+        except NotImplementedError:
+            continue  # adapter senza percorso tabella (es. solo end2end)
+        checked += 1
+        assert seen["max_tokens"] <= cap["max_model_len"] - 2048, cap["adapter_id"]
+        assert seen["max_tokens"] <= TABLE_MAX_TOKENS
+    assert checked, "nessun adapter con percorso tabella: il test non verifica nulla"
+
+
+def test_an_adapter_that_declares_no_context_keeps_the_full_budget():
+    from app.services.inference import TABLE_MAX_TOKENS, VllmClient
+    from app.services.model_adapters import MonkeyOCRv2ParsingAdapter
+
+    adapter = MonkeyOCRv2ParsingAdapter()
+    client = VllmClient(url="http://127.0.0.1:9/v1", adapter=adapter)
+    object.__setattr__(adapter.capabilities, "max_model_len", 0)
+    try:
+        assert client._output_budget(TABLE_MAX_TOKENS) == TABLE_MAX_TOKENS
+    finally:
+        object.__setattr__(adapter.capabilities, "max_model_len", 24576)

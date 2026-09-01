@@ -52,17 +52,16 @@ def test_prefill_engines_endpoint_exposes_supported_modes_for_active_adapter():
 def test_supports_export_probes_prompt_for_per_family():
     # Il builder chiama `prompt_for` per layout/testo/tabella (v.
     # `dataset_builder`): l'export è possibile solo dove tutte e tre le
-    # famiglie hanno un prompt. Solo MonkeyOCRv2 e MinerU2.5 li hanno tutti;
-    # dots.ocr e PaddleOCR-VL ne mancano almeno uno, gli stub di sola ricetta
-    # non ne hanno nessuno — non vanno offerti nel selettore dell'export.
+    # famiglie hanno un prompt. GLM, DeepSeek e Qwen usano prompt strutturati
+    # dedicati; dots.ocr e PaddleOCR-VL hanno percorsi end-to-end separati.
     assert model_adapters.supports_export(model_adapters.get_adapter("monkeyocrv2-parsing"))
     assert model_adapters.supports_export(model_adapters.get_adapter("mineru2.5"))
     assert not model_adapters.supports_export(model_adapters.get_adapter("dots-ocr"))
     assert not model_adapters.supports_export(model_adapters.get_adapter("paddleocr-vl"))
     assert not model_adapters.supports_export(model_adapters.get_adapter("unlimited-ocr"))
-    assert not model_adapters.supports_export(model_adapters.get_adapter("glm-ocr"))
-    assert not model_adapters.supports_export(model_adapters.get_adapter("deepseek-ocr"))
-    assert not model_adapters.supports_export(model_adapters.get_adapter("qwen3-vl-8b"))
+    assert model_adapters.supports_export(model_adapters.get_adapter("glm-ocr"))
+    assert model_adapters.supports_export(model_adapters.get_adapter("deepseek-ocr"))
+    assert model_adapters.supports_export(model_adapters.get_adapter("qwen3-vl-8b"))
 
 
 def test_model_adapters_endpoint_exposes_export_ready():
@@ -72,7 +71,15 @@ def test_model_adapters_endpoint_exposes_export_ready():
         items = {item["adapter_id"]: item for item in res.json()["items"]}
         assert items["monkeyocrv2-parsing"]["export_ready"] is True
         assert items["mineru2.5"]["export_ready"] is True
-        assert items["glm-ocr"]["export_ready"] is False
+        assert items["glm-ocr"]["export_ready"] is True
+
+
+def test_model_adapters_expose_maturity_without_equating_download_with_support():
+    items = {item["adapter_id"]: item for item in model_adapters.list_adapters()}
+    assert items["monkeyocrv2-parsing"]["maturity"] == "supported"
+    # Gli adapter alternativi possono avere una recipe o un download senza
+    # avere ancora il workflow completo verificato.
+    assert items["mineru2.5"]["maturity"] == "catalog"
 
 
 def test_new_adapters_are_registered_alongside_monkeyocrv2():
@@ -190,18 +197,13 @@ def test_mineru_sampling_matches_official_client_defaults():
     assert adapter.sampling_for("text") == {**base, "presence_penalty": 1.0, "frequency_penalty": 0.05}
 
 
-def test_stub_adapters_are_now_servable_but_still_lack_ocr_integration():
-    # Deployment (download + serve locale/cloud) e integrazione OCR (prompt/
-    # parsing) sono due lavori separati: questi adapter hanno guadagnato il
-    # primo (v. model_adapters.py) ma restano stub sul secondo.
+def test_alternative_adapters_are_servable_and_have_structured_prompts():
+    # Deployment e integrazione OCR sono separati, ma questi adapter espongono
+    # ora prompt strutturati specifici oltre al comando di serving.
     for adapter_id in ("glm-ocr", "deepseek-ocr", "qwen3-vl-8b"):
         adapter = model_adapters.get_adapter(adapter_id)
         assert adapter.serve_command("/tmp/whatever", 8888) is not None
-        try:
-            adapter.prompt_for("text")
-            raise AssertionError(f"{adapter_id}: doveva sollevare NotImplementedError")
-        except NotImplementedError:
-            pass
+        assert adapter.prompt_for("text")
 
 
 def test_unlimited_ocr_serves_locally_via_dedicated_docker_image():
@@ -247,3 +249,103 @@ def test_delete_uninstalled_model_is_a_noop():
         res = client.delete("/api/models/qwen3-vl-8b")
         assert res.status_code == 200
         assert res.json()["installed"] is False
+
+
+def test_monkeyocrv2_declares_the_name_its_server_actually_exposes():
+    """`scripts/serve_model.sh` delega a `parsing/serve.py`, che registra il
+    modello come "MonkeyOCRv2" (`--served-model-name`, default del repo). Se
+    l'adapter non lo dichiarasse, l'avvio dal registro salverebbe `adapter_id`
+    come nome richiesto e ogni chiamata fallirebbe con "modello non esposto"."""
+    from app.services.model_adapters import get_adapter
+
+    caps = get_adapter("monkeyocrv2-parsing").capabilities
+    assert caps.served_model_name == "MonkeyOCRv2"
+
+
+def test_monkeyocrv2_declares_the_official_dflash_draft():
+    """README ufficiale (news 2026.07.24): DFlash accelera il serving vLLM ed è
+    pubblicato come repo separato, solo per la variante B-Parsing."""
+    from app.services.model_adapters import get_adapter
+    from app.services import model_registry
+
+    caps = get_adapter("monkeyocrv2-parsing").capabilities
+    assert caps.draft_hf_repo == "zenosai/MonkeyOCRv2-B-Parsing-DFlash"
+    # Il draft vive accanto ai pesi ma in una cartella sua: `is_installed()`
+    # non deve scambiare i suoi file per quelli del checkpoint.
+    assert model_registry.draft_dir("monkeyocrv2-parsing") != model_registry.models_dir(
+        "monkeyocrv2-parsing"
+    )
+
+
+def test_adapters_without_a_draft_never_trigger_a_download():
+    from app.services import model_registry
+
+    assert model_registry.ensure_draft("mineru2.5") is None
+
+
+def test_a_draft_marked_unusable_is_not_downloaded_again():
+    """Su una GPU dove il draft non entra, il marcatore evita di ripagare il
+    tentativo a ogni avvio. Cancellare o riscaricare il modello lo azzera."""
+    from app.services import model_registry
+
+    try:
+        model_registry.mark_draft_unusable("monkeyocrv2-parsing", "niente VRAM")
+        assert model_registry.draft_unusable_reason("monkeyocrv2-parsing") == "niente VRAM"
+        assert model_registry.ensure_draft("monkeyocrv2-parsing") is None
+    finally:
+        model_registry._draft_unusable_marker("monkeyocrv2-parsing").unlink(missing_ok=True)
+    assert model_registry.draft_unusable_reason("monkeyocrv2-parsing") is None
+
+
+def test_declared_context_matches_the_serve_command_when_it_sets_one():
+    """`max_model_len` descrive il contesto reale del serving: se il comando
+    impone `--max-model-len`, i due valori devono coincidere, altrimenti il
+    client calcola male il budget di uscita e il server risponde 400."""
+    from app.services.model_adapters import get_adapter, list_adapters
+
+    checked = 0
+    for cap in list_adapters():
+        argv = get_adapter(cap["adapter_id"]).serve_command("/m", 8888) or []
+        if "--max-model-len" not in argv:
+            continue
+        checked += 1
+        declared = cap["max_model_len"]
+        served = int(argv[argv.index("--max-model-len") + 1])
+        assert declared == served, f"{cap['adapter_id']}: dichiarato {declared}, servito {served}"
+    assert checked, "nessun adapter impone --max-model-len: il test non verifica nulla"
+
+
+def test_the_vram_warning_agrees_with_the_offload_decision(monkeypatch):
+    """L'avviso e il serving devono raccontare la stessa storia: un modello che
+    `cpu_offload_gib` sa servire non va annunciato come «non parte», e uno che
+    entra da solo non deve portarsi dietro un avviso di lentezza."""
+    from app.services import model_registry, serve_manager
+    from app.services.model_adapters import get_adapter
+
+    monkeypatch.setattr(
+        "app.services.trainer_metrics.gpu_snapshot",
+        lambda: [{"memory_total": 8188, "memory_used": 4986}],
+    )
+    gib = 1024 ** 3
+
+    heavy = model_registry.vram_warning(get_adapter("deepseek-ocr"), int(6.32 * gib))
+    assert heavy and "RAM" in heavy
+    assert "non parte" not in heavy  # con l'offload parte eccome
+    assert serve_manager.cpu_offload_gib(int(6.32 * gib)) > 0
+
+    light = model_registry.vram_warning(get_adapter("monkeyocrv2-parsing"), int(1.92 * gib))
+    assert light is None
+    assert serve_manager.cpu_offload_gib(int(1.92 * gib)) == 0
+
+
+def test_the_warning_ignores_memory_held_by_the_model_being_replaced(monkeypatch):
+    """Avviare un modello ferma quello in servizio: misurare il libero adesso
+    direbbe «non ci sta» per un modello che da solo ci starebbe benissimo."""
+    from app.services import model_registry
+    from app.services.model_adapters import get_adapter
+
+    monkeypatch.setattr(
+        "app.services.trainer_metrics.gpu_snapshot",
+        lambda: [{"memory_total": 8188, "memory_used": 7000}],
+    )
+    assert model_registry.vram_warning(get_adapter("mineru2.5"), int(2.17 * 1024 ** 3)) is None

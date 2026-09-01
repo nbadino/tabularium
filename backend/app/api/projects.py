@@ -426,10 +426,23 @@ def set_gold_set(
         settings = json.loads(project["settings_json"] or "{}")
         protocol = settings.setdefault("study_protocol", {})
         protocol["gold_pages"] = valid
+        # Un campione già salvato non può diventare contemporaneamente tuning
+        # e gold: proteggere una pagina la rimuove dal pilot persistito.
+        pilot_pages = {
+            int(value) for value in protocol.get("pilot_pages", [])
+            if str(value).lstrip("-").isdigit()
+        }
+        protocol["pilot_pages"] = sorted(pilot_pages - set(valid))
         protocol["version"] = int(protocol.get("version", 0)) + 1
         protocol["updated_at"] = datetime.now(timezone.utc).isoformat()
         conn.execute("UPDATE projects SET settings_json=? WHERE id=?", (json.dumps(settings, ensure_ascii=False), project_id))
-    return {"project_id": project_id, "gold_pages": valid, "count": len(valid), "protected": True}
+    return {
+        "project_id": project_id,
+        "gold_pages": valid,
+        "pilot_pages": protocol["pilot_pages"],
+        "count": len(valid),
+        "protected": True,
+    }
 
 
 @router.get("/api/projects/{project_id}/qa-report")
@@ -455,7 +468,7 @@ def qa_report(
 @router.get("/api/projects/{project_id}/pilot-sample")
 def pilot_sample(
     project_id: int,
-    target: int = Query(default=40, ge=1, le=50),
+    target: int = Query(default=40, ge=30, le=50),
     seed: int = Query(default=42, ge=0),
     _auth: dict = Depends(require_resource()),
 ) -> dict:
@@ -477,10 +490,21 @@ def save_pilot_sample(
         valid = sorted({int(row["id"]) for row in rows})
         settings = json.loads(project["settings_json"] or "{}")
         protocol = settings.setdefault("study_protocol", {})
+        gold_pages = {
+            int(value) for value in protocol.get("gold_pages", [])
+            if str(value).lstrip("-").isdigit()
+        }
+        gold_excluded = len(set(valid) & gold_pages)
+        valid = [page_id for page_id in valid if page_id not in gold_pages]
         protocol["pilot_pages"] = valid
         protocol["updated_at"] = datetime.now(timezone.utc).isoformat()
         conn.execute("UPDATE projects SET settings_json=? WHERE id=?", (json.dumps(settings, ensure_ascii=False), project_id))
-    return {"project_id": project_id, "pilot_pages": valid, "count": len(valid)}
+    return {
+        "project_id": project_id,
+        "pilot_pages": valid,
+        "gold_excluded": gold_excluded,
+        "count": len(valid),
+    }
 
 
 @router.get("/api/projects/{project_id}/conventions", response_model=ConventionsOut)

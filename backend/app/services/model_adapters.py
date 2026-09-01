@@ -14,6 +14,7 @@ serving (vedi `docs/OCR_MODEL_ALTERNATIVES.md` e il piano multi-modello).
 """
 from __future__ import annotations
 
+import json
 import re
 import shlex
 from dataclasses import asdict, dataclass, field
@@ -53,6 +54,23 @@ class ModelCapabilities:
     # della richiesta (`--served-model-name` di vLLM). `None` = deciso altrove
     # (MonkeyOCRv2 lo configura oggi da UI, storicamente "MonkeyOCRv2").
     served_model_name: str | None = None
+    # Repo Hugging Face del draft per lo speculative decoding, quando il
+    # modello ne pubblica uno (MonkeyOCRv2: DFlash). Vuoto = nessun draft.
+    draft_hf_repo: str = ""
+    # Immagine Docker richiesta dal serving, quando l'architettura non è nella
+    # wheel pip stabile (`serve_backend="docker-vllm-openai"`). Dichiararla qui
+    # invece di dedurla dall'argv permette a `serve_manager` di scaricarla in
+    # una fase esplicita, invece di lasciare `docker run` a farlo in silenzio.
+    serve_image: str = ""
+    # Contesto con cui l'adapter serve il modello: il `--max-model-len` del
+    # `serve_command` se lo impone, altrimenti il default del checkpoint. Serve
+    # al client per non chiedere più token in uscita di quanti ne esistano: una
+    # richiesta con `max_tokens` oltre il contesto viene rifiutata dal server
+    # con 400, non troncata.
+    max_model_len: int = 16384
+    # Maturità del percorso prodotto: un modello può essere scaricabile senza
+    # che inferenza/export/training siano ancora verificati insieme.
+    maturity: str = "catalog"
 
 
 class ModelAdapter(Protocol):
@@ -72,11 +90,11 @@ class MonkeyOCRv2ParsingAdapter:
     """Adapter per il formato ufficiale MonkeyOCRv2-Parsing/ms-swift."""
 
     adapter_id = "monkeyocrv2-parsing"
-    # Sul documento archivistico la generazione pagina-intera degrada quando
-    # il VLM riceve gli 11 MP originali: il demo ufficiale prepara l'immagine
-    # a circa 1024 px di lato lungo. 2 MP conserva il dettaglio utile e impedisce
-    # che il decoder vada in loop sui coordinati finali.
-    end2end_max_pixels = 2_000_000
+    # Tetto ufficiale: `parsing/parse.py --max-pixels` (default 1003520) viene
+    # propagato come `MOCR2_MAX_PIXELS` a ogni chiamata, end2end inclusa. Sul
+    # documento archivistico è anche ciò che impedisce al decoder di andare in
+    # loop sulle coordinate quando riceve gli 11 MP originali.
+    end2end_max_pixels = 1_003_520
     end2end_max_tokens = 12_288
     capabilities = ModelCapabilities(
         adapter_id=adapter_id,
@@ -95,6 +113,18 @@ class MonkeyOCRv2ParsingAdapter:
         license_note="",
         train_toolchain="ms-swift",
         serve_backend="vllm-openai",
+        # `scripts/serve_model.sh` delega al `serve.py` del repo ufficiale, che
+        # registra il modello su /v1/models come "MonkeyOCRv2" (lo stesso
+        # default di `config.VLLM_MODEL`). Senza questo campo l'avvio dal
+        # registro modelli salvava `adapter_id` come nome richiesto e ogni
+        # chiamata falliva con "modello 'monkeyocrv2-parsing' non esposto".
+        served_model_name="MonkeyOCRv2",
+        max_model_len=24576,  # v. scripts/serve_model.sh
+        # README ufficiale (news 2026.07.24): DFlash abilita il serving vLLM
+        # con speculative decoding, "up to 2x faster inference". Supportato
+        # solo per la variante B-Parsing.
+        draft_hf_repo="zenosai/MonkeyOCRv2-B-Parsing-DFlash",
+        maturity="supported",
     )
 
     _PROMPTS = {
@@ -358,8 +388,11 @@ class MinerU2_5Adapter(_StubAdapter):
 class UnlimitedOcrAdapter(_StubAdapter):
     """baidu/Unlimited-OCR — discendente di DeepSeek-OCR (SAM-ViT-B + CLIP-L
     DeepEncoder, modalità *gundam* per pagina singola), 3B parametri, MIT.
-    Parsing one-shot documento → **markdown** con token di grounding
-    ``<|ref|>tipo<|/ref|>`` / ``<|det|>tipo [bbox]<|/det|>`` per riga.
+    Parsing one-shot documento → markdown con token di grounding
+    ``<|ref|>tipo<|/ref|>`` / ``<|det|>tipo [bbox]<|/det|>`` per riga. Le
+    **tabelle** arrivano però in HTML dentro il blocco ``<|det|>table …``, non
+    in markdown: verificato sull'immagine ufficiale su pagina `A` del campione. È il
+    formato che `prefill` già converte con ``otsl.html_to_otsl``.
 
     Fatti verificati sulla card Hugging Face e sulla ricetta vLLM ufficiale
     (recipes.vllm.ai/baidu/Unlimited-OCR, agosto 2026):
@@ -392,6 +425,19 @@ class UnlimitedOcrAdapter(_StubAdapter):
         non è ancora verificata sul repo e il template di training non è
         integrato: `training_types` dichiara l'intenzione, non un percorso
         pronto.
+
+    Misurato su LSI_17186_015 (2864x3952) con l'immagine ufficiale su una
+    RTX 4060 Laptop 8 GB, pesi in offload (`--cpu-offload-gb 4`, 2.23 GiB
+    residenti in VRAM):
+      - end2end pagina intera: 5 blocchi, ~264 s. Le coordinate coincidono con
+        quelle di MonkeyOCRv2 a 1 MP, ma il masthead viene separato in due
+        `title` e — soprattutto — il registro è etichettato **`table`**, cosa
+        che MonkeyOCRv2 su questo corpus non fa mai (lo classifica `Text`, e la
+        promozione a tabella la fa `prefill._looks_like_table` su base
+        geometrica);
+      - throughput 13.3 tok/s contro 152.6 di MonkeyOCRv2 residente e 16.7 di
+        DeepSeek-OCR-2 pure in offload: il costo è la banda PCIe, non il
+        modello.
     """
 
     adapter_id = "unlimited-ocr"
@@ -407,7 +453,9 @@ class UnlimitedOcrAdapter(_StubAdapter):
         display_name="Unlimited-OCR",
         tasks=("layout", "text", "table"),
         coordinate_system="normalized-0-1000",
-        table_format="markdown",
+        # Il modello emette `<table>...</table>` per le tabelle, non markdown:
+        # misurato, non dedotto dalla card.
+        table_format="html",
         training_types=("lora", "full"),
         inference_modes=("vllm",),
         hardware=("cuda",),
@@ -417,6 +465,21 @@ class UnlimitedOcrAdapter(_StubAdapter):
         license_note="MIT.",
         train_toolchain="ms-swift",
         serve_backend="docker-vllm-openai",
+        serve_image="vllm/vllm-openai:unlimited-ocr",
+        # Serving e inferenza end2end verificati sul campo (v. sotto), training
+        # e export no: `experimental`, non `supported`.
+        maturity="experimental",
+        # La ricetta ufficiale non impone `--max-model-len`, quindi varrebbe il
+        # default del checkpoint (32768, da `config.json`). Su una GPU singola
+        # da 8 GB non ci sta nemmeno spostando i pesi in RAM: misurato, per
+        # 32768 token servono 1.88 GiB di cache KV e ne restano 0.93 dopo
+        # l'offload. Il tetto è tarato su quella misura (~0.057 GiB ogni 1000
+        # token) e resta ben sopra il budget dell'adapter stesso
+        # (`end2end_max_tokens` 8192 + ~1300 token di immagine + prompt).
+        # Stessa natura dei flag empirici già documentati per MonkeyOCRv2 in
+        # docs/LOCAL_INFERENCE_GUIDE.md: taratura di macchina, non requisito
+        # del produttore — su una GPU capiente si può alzare.
+        max_model_len=12288,
         served_model_name="Unlimited-OCR",
     )
 
@@ -446,6 +509,7 @@ class UnlimitedOcrAdapter(_StubAdapter):
             "--logits_processors", "vllm.model_executor.models.unlimited_ocr:NGramPerReqLogitsProcessor",
             "--no-enable-prefix-caching",
             "--mm-processor-cache-gb", "0",
+            "--max-model-len", str(self.capabilities.max_model_len),
             "--port", str(port),
             "--gpu-memory-utilization", "0.85",
             "--served-model-name", self.capabilities.served_model_name,
@@ -585,6 +649,21 @@ class GlmOcrAdapter(_StubAdapter):
         served_model_name="glm-ocr",
     )
 
+    _PROMPTS = {
+        "layout": "Return the document layout as a JSON array in reading order. Each item must have bbox [x1,y1,x2,y2] normalized from 0 to 1000 and category.",
+        "text": "Transcribe all text in this image exactly. Return plain text only.",
+        "table": "Extract the table in this image in OTSL format. Preserve every row, column, empty cell, and merged-cell span.",
+    }
+
+    def prompt_for(self, task: str, label: str | None = None) -> str | None:
+        prompt = self._PROMPTS.get(task)
+        if prompt is None:
+            raise NotImplementedError(f"adapter '{self.adapter_id}': task '{task}' non supportato")
+        return prompt
+
+    def serialize_target(self, task: str, value: object) -> str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":")) if task == "layout" else str(value)
+
     def serve_command(self, model_path: str, port: int) -> list[str] | None:
         return [
             "vllm", "serve", model_path,
@@ -633,7 +712,23 @@ class DeepSeekOcrAdapter(_StubAdapter):
         train_toolchain="unsloth",
         serve_backend="vllm-openai",
         served_model_name="deepseek-ocr-2",
+        max_model_len=8192,
     )
+
+    _PROMPTS = {
+        "layout": "Return the document layout as a JSON array in reading order. Each item must contain bbox [x1,y1,x2,y2] normalized from 0 to 1000 and label.",
+        "text": "<image>\nFree OCR. Transcribe the image exactly and return only the recognized text.",
+        "table": "<image>\nExtract this table in OTSL format. Preserve every row, column, empty cell, and merged cell.",
+    }
+
+    def prompt_for(self, task: str, label: str | None = None) -> str | None:
+        prompt = self._PROMPTS.get(task)
+        if prompt is None:
+            raise NotImplementedError(f"adapter '{self.adapter_id}': task '{task}' non supportato")
+        return prompt
+
+    def serialize_target(self, task: str, value: object) -> str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":")) if task == "layout" else str(value)
 
     def serve_command(self, model_path: str, port: int) -> list[str] | None:
         return [
@@ -652,7 +747,8 @@ class DeepSeekOcrAdapter(_StubAdapter):
 class PaddleOcrVlAdapter(_StubAdapter):
     """PaddlePaddle/PaddleOCR-VL-1.6 — punteggio più alto su OmniDocBench fra
     i candidati studiati, 0.9B, ma il fine-tuning ufficiale passa da ERNIEKit
-    (toolchain diversa da ms-swift/LLaMA-Factory) e non è ancora integrato.
+    (toolchain diversa da ms-swift/LLaMA-Factory). Tabularium genera il dataset
+    ERNIEKit e la recipe PaddleX; l'avvio resta esplicito dopo il preflight.
 
     `serve_command` e i prompt di riconoscimento sono verificati sulla guida
     ufficiale vLLM (docs.vllm.ai/projects/recipes/en/stable/PaddlePaddle/
@@ -660,8 +756,8 @@ class PaddleOcrVlAdapter(_StubAdapter):
     layout/detection via prompt: riconosce il contenuto di un crop. La pipeline
     PaddleOCR-VL completa aggiunge PP-DocLayoutV3/PP-DocLayoutV2 e produce
     layout, Markdown e tabelle HTML con celle unite. Nel prefill Tabularium
-    usiamo il detector OCR locale per la segmentazione e Paddle per il
-    riconoscimento GPU dei crop; non mandiamo un prompt layout inesistente.
+    usiamo il pipeline ufficiale PaddleOCRVL con layout detection attivo e il
+    VLM per il riconoscimento dei blocchi; non inventiamo un prompt layout.
     `table_format="html"` è coerente con l'output strutturato documentato.
 
     `--max-model-len`/`--gpu-memory-utilization` aggiunti dopo verifica: il
@@ -674,26 +770,32 @@ class PaddleOcrVlAdapter(_StubAdapter):
     una 8GB, da validare empiricamente."""
 
     adapter_id = "paddleocr-vl"
-    # L'endpoint Modal contiene il VLM; il primo stadio di geometria usa il
-    # detector OCR già integrato nel backend. Il risultato resta un percorso
-    # modello valido: testo e tabelle vengono riconosciuti da Paddle su GPU.
-    page_layout_fallback = "ocr"
+    # Il pipeline ufficiale contiene già il layout detector PaddleX; il
+    # fallback OCR locale appartiene solo alla modalità ocr separata.
+    page_layout_fallback = "official-pipeline"
+    # I registri lunghi (es. LSI_17186_015) vanno riconosciuti come un unico
+    # crop tabellare. Il passaggio generico "OCR:" ha un budget più piccolo e
+    # tronca il contenuto prima del fondo pagina.
+    table_recognition_strategy = "full_crop"
     capabilities = ModelCapabilities(
         adapter_id=adapter_id,
         display_name="PaddleOCR-VL-1.6",
-        tasks=("text", "table", "formula"),
+        tasks=("layout", "text", "table", "formula"),
         coordinate_system="unverified",
         table_format="html",
-        training_types=(),
+        # Dataset e recipe sono integrati; l'esecuzione richiede checkout e
+        # config ufficiali forniti dall'utente.
+        training_types=("full",),
         inference_modes=("vllm",),
         hardware=("cuda",),
         languages=("en", "zh") + tuple(f"lang-{i}" for i in range(1)),  # 100+ lingue dichiarate, non enumerate qui
         hf_repo="PaddlePaddle/PaddleOCR-VL-1.6",
         approx_size_gb=1.8,
         license_note="",
-        train_toolchain="none",  # ERNIEKit non ancora integrato
+        train_toolchain="erniekit+paddlex",
         serve_backend="vllm-openai",
         served_model_name="PaddleOCR-VL-1.6",
+        max_model_len=12288,
     )
 
     _PROMPTS = {
@@ -710,6 +812,14 @@ class PaddleOcrVlAdapter(_StubAdapter):
             "il modello fa solo recognition (OCR/Table/Formula), non layout/detection"
         )
 
+    def sampling_for(self, task: str) -> dict:
+        if task == "table":
+            # Lascia spazio sufficiente per il registro completo; il modello
+            # ha max-model-len=12288 e vLLM riduce comunque il budget effettivo
+            # se il prompt multimodale occupa parte del contesto.
+            return {"max_tokens": 4096}
+        return {}
+
     def serve_command(self, model_path: str, port: int) -> list[str] | None:
         return [
             "vllm", "serve", model_path,
@@ -718,7 +828,7 @@ class PaddleOcrVlAdapter(_StubAdapter):
             "--max-num-batched-tokens", "16384",
             "--no-enable-prefix-caching",
             "--mm-processor-cache-gb", "0",
-            "--max-model-len", "8192",
+            "--max-model-len", "12288",
             "--gpu-memory-utilization", "0.85",
             "--served-model-name", self.capabilities.served_model_name,
         ]
@@ -764,7 +874,24 @@ class Qwen3VlAdapter(_StubAdapter):
         train_toolchain="ms-swift",
         serve_backend="vllm-openai",
         served_model_name="qwen3-vl-8b",
+        max_model_len=32768,
     )
+
+    _PROMPTS = {
+        "layout": "Identify all document elements in reading order. Return only a JSON array; each item must contain bbox [x1,y1,x2,y2] normalized to 0-1000 and label.",
+        "text": "Transcribe the text in the image exactly. Return plain text only.",
+        "table": "Extract the table exactly in OTSL format. Preserve all rows, columns, empty cells, and merged cells.",
+        "formula": "Transcribe the formula as LaTeX.",
+    }
+
+    def prompt_for(self, task: str, label: str | None = None) -> str | None:
+        prompt = self._PROMPTS.get(task)
+        if prompt is None:
+            raise NotImplementedError(f"adapter '{self.adapter_id}': task '{task}' non supportato")
+        return prompt
+
+    def serialize_target(self, task: str, value: object) -> str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":")) if task == "layout" else str(value)
 
     def serve_command(self, model_path: str, port: int) -> list[str] | None:
         return [
@@ -886,7 +1013,7 @@ def supported_prefill_modes(adapter: ModelAdapter) -> dict[str, bool]:
     modes["supports_native"] = (
         modes["supports_two_stage"]
         or modes["supports_end2end"]
-        or getattr(adapter, "page_layout_fallback", None) == "ocr"
+        or getattr(adapter, "page_layout_fallback", None) in {"ocr", "official-pipeline"}
     )
     return modes
 

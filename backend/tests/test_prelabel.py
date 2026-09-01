@@ -409,3 +409,34 @@ def test_prelabel_stream_summary_matches_batch(tmp_path: Path, monkeypatch):
             ]
         streamed = next(ev["summary"] for ev in events if ev["type"] == "page_done")
         assert streamed == batch
+
+
+def test_dedupe_drops_nested_same_label_blocks():
+    """Le fasce contenute in una tabella più grande sono la stessa tabella.
+
+    Riprodotto dalla pagina LSI_17186_015: il risultato ufficiale PaddleOCR-VL
+    portava la colonna sinistra una volta intera (con testo) e tre volte a
+    fasce. L'IoU non le riconosce come duplicati, il contenimento sì.
+    """
+    from app.services.prefill import _dedupe_model_items
+
+    items = [
+        {"bbox": [100, 684, 1229, 3818], "label": "Table", "content": "<table>…</table>"},
+        {"bbox": [106, 688, 1229, 1269], "label": "Table", "content": ""},
+        {"bbox": [103, 1292, 1226, 2091], "label": "Table", "content": ""},
+        {"bbox": [100, 2126, 1217, 3814], "label": "Table", "content": ""},
+        {"bbox": [1232, 680, 2695, 2083], "label": "Text", "content": "London Mar 8"},
+    ]
+    out = _dedupe_model_items(items)
+    assert [i["bbox"] for i in out] == [[100, 684, 1229, 3818], [1232, 680, 2695, 2083]]
+
+
+def test_dedupe_keeps_nested_blocks_of_a_different_class():
+    """Una cosa dentro un'altra non è un duplicato se le classi differiscono."""
+    from app.services.prefill import _dedupe_model_items
+
+    items = [
+        {"bbox": [0, 0, 1000, 1000], "label": "Table", "content": ""},
+        {"bbox": [100, 100, 200, 200], "label": "Picture", "content": ""},
+    ]
+    assert len(_dedupe_model_items(items)) == 2

@@ -4,9 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from app.services.training_executor import RunPodExecutor, SshExecutor, TrainingRecipe, VastExecutor, executor_from_config
+from app.services.training_executor import RunPodExecutor, SshExecutor, TrainingRecipe, VastExecutor, RemoteProcess, executor_from_config
 from app.services import trainer
 from app import db
+from app.schemas import TrainConfig
 
 
 def _recipe(tmp_path: Path) -> TrainingRecipe:
@@ -50,6 +51,35 @@ def test_cloud_executors_reuse_ssh_transport(tmp_path: Path):
     assert isinstance(runpod, RunPodExecutor)
     assert vast.provider == "vast"
     assert runpod.provider == "runpod"
+
+
+def test_remote_cleanup_uses_only_validated_run_directory(tmp_path: Path, monkeypatch):
+    known = tmp_path / "known_hosts"
+    known.write_text("gpu.example ssh-ed25519 AAAA\n", encoding="utf-8")
+    executor = SshExecutor("gpu.example", known_hosts=known, remote_root="/srv/tabularium-runs")
+    recipe = _recipe(tmp_path)
+    commands: list[str] = []
+
+    def fake_remote(command: str):
+        commands.append(command)
+        return __import__("subprocess").CompletedProcess([], 0, "", "")
+
+    process = RemoteProcess(executor, recipe, tmp_path / "train.log", 4242)
+    monkeypatch.setattr(process, "_remote", fake_remote)
+    process.cleanup()
+
+    assert commands == ["rm -rf -- /srv/tabularium-runs/run_7"]
+
+
+def test_training_schema_keeps_remote_runtime_fields():
+    cfg = TrainConfig(
+        executor="vast",
+        ssh_host="gpu.example",
+        ssh_train_repo="/opt/MonkeyOCRv2/parsing/train",
+        ssh_python="/opt/venv/bin/python",
+    )
+    assert cfg.model_dump(exclude_unset=True)["ssh_train_repo"] == "/opt/MonkeyOCRv2/parsing/train"
+    assert cfg.model_dump(exclude_unset=True)["ssh_python"] == "/opt/venv/bin/python"
 
 
 def test_reconcile_does_not_kill_remote_job_on_backend_restart():

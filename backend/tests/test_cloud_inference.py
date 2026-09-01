@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+import pytest
 
 from app.db import connect, init_db
 from app.main import app
 from app.services import inference as infmod
 from app.services import cloud_manager
+from app.services import vault
 
 
 def test_vllm_client_headers_and_cloud_detection():
@@ -32,7 +34,26 @@ def test_vllm_client_headers_and_cloud_detection():
     assert not local_client.is_modal
 
 
-def test_inference_config_persistence_and_api():
+def _stub_public_dns(monkeypatch):
+    """Gli host fittizi del contratto non devono dipendere dal DNS esterno."""
+    import socket
+
+    original = socket.getaddrinfo
+
+    def resolve(host, port, *args, **kwargs):
+        if host in {"custom-gpu.vast.ai", "fast-cloud-node.vast.ai"}:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
+        return original(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+
+
+@pytest.mark.skipif(vault.Fernet is None, reason="cryptography non installata nel virtualenv")
+def test_inference_config_persistence_and_api(monkeypatch):
+    _stub_public_dns(monkeypatch)
+    # Il test esercita la cifratura delle credenziali persistite: la chiave deve
+    # essere esplicita e usa un valore effimero, mai un segreto del repository.
+    monkeypatch.setenv("TABULARIUM_VAULT_KEY", vault.Fernet.generate_key().decode("ascii"))
     with TestClient(app) as client:
         # 1. Recupero config iniziale
         res = client.get("/api/system/inference")
@@ -57,7 +78,8 @@ def test_inference_config_persistence_and_api():
         assert put_data["model"] == "MonkeyOCRv2-B-Parsing"
         assert put_data["has_api_key"] is True
         assert put_data["is_cloud"] is True
-        assert put_data["extra_headers"] == {"X-Custom-Header": "value"}
+        # Gli header possono contenere token e sono server-only nella risposta.
+        assert put_data["extra_headers"] == {}
         assert put_data["timeout"] == 120
 
         # 3. Verifica persistenza tramite get_inference_config
@@ -71,6 +93,7 @@ def test_inference_config_persistence_and_api():
 
 
 def test_inference_test_endpoint_mocked(monkeypatch):
+    _stub_public_dns(monkeypatch)
     class MockResponse:
         def raise_for_status(self):
             pass
@@ -144,6 +167,79 @@ def test_vast_search_uses_current_endpoint_and_payload(monkeypatch):
     assert captured["url"].endswith("/search/asks/")
     assert captured["json"]["type"] == "ondemand"
     assert captured["headers"]["Accept"] == "application/json"
+
+
+def test_vast_prepare_requires_pinned_ref_and_quotes_onstart(monkeypatch):
+    with pytest.raises(ValueError, match="monkeyocr_ref"):
+        cloud_manager.rent_vast_instance("token", 7, prepare_server=True)
+    with pytest.raises(ValueError, match="tabularium_ref"):
+        cloud_manager.rent_vast_instance("token", 7, prepare_server=True, monkeyocr_ref="v1.2.3")
+
+    captured = {}
+
+    class Response:
+        status_code = 200
+        content = b'{"new_contract": 12}'
+        text = ""
+
+        def json(self):
+            return {"new_contract": 12}
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def put(self, url, **kwargs):
+            captured.update(url=url, **kwargs)
+            return Response()
+
+    monkeypatch.setattr(cloud_manager.httpx, "Client", Client)
+    result = cloud_manager.rent_vast_instance(
+        "token", 7, prepare_server=True, monkeyocr_ref="v1.2.3",
+        tabularium_ref="2026-08-31",
+        api_key_for_server="server-secret",
+    )
+    assert result["contract_id"] == 12
+    assert "--ref v1.2.3" in captured["json"]["onstart"]
+    assert "raw.githubusercontent.com/nbadino/tabularium/2026-08-31/" in captured["json"]["onstart"]
+    assert "server-secret" not in captured["json"]["onstart"]
+    assert "TABULARIUM_SERVER_API_KEY" in captured["json"]["env"]
+
+
+def test_provider_refresh_persists_rate_and_live_state(monkeypatch):
+    init_db()
+    resource_id = 987654
+    with connect() as conn:
+        conn.execute("DELETE FROM jobs WHERE kind='cloud_resource' AND remote_job_id=?", (str(resource_id),))
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"instances": [{
+                "id": resource_id, "actual_status": "running", "gpu_name": "RTX 4090",
+                "num_gpus": 1, "dph_total": 0.42,
+            }]}
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, **kwargs): return Response()
+
+    monkeypatch.setattr(cloud_manager.httpx, "Client", Client)
+    items = cloud_manager.list_vast_instances("token")
+    assert items[0]["is_running"] is True
+    assert items[0]["cost_estimate"]["hourly_rate"] == 0.42
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT provider, state FROM jobs WHERE kind='cloud_resource' AND remote_job_id=?",
+            (str(resource_id),),
+        ).fetchone()
+        conn.execute("DELETE FROM jobs WHERE kind='cloud_resource' AND remote_job_id=?", (str(resource_id),))
+    assert row["provider"] == "vast"
+    assert row["state"] == "running"
 
 
 def test_runpod_create_uses_persistent_pod_schema(monkeypatch):

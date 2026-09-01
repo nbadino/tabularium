@@ -1,3 +1,5 @@
-# Optional neural dewarping engine. Install PaddlePaddle first using the
-# official CPU or CUDA wheel for the target machine, then install this file.
+# Runtime PaddleOCR: motore OCR di pseudo-labeling e pipeline PaddleOCR-VL.
+# (Non serve più per il dewarp: l'unica rettifica neurale è il preprocessore
+# ufficiale di MonkeyOCRv2, che non ha dipendenze proprie.) Installare prima
+# PaddlePaddle con la wheel CPU o CUDA ufficiale per la macchina di destinazione.
 paddleocr>=3.0,<4

@@ -1,9 +1,8 @@
 """Contratti per eseguire una recipe di training in provider diversi.
 
 La recipe descrive *cosa* eseguire ed è identica per locale e remoto. Gli
-executor descrivono *dove*: per ora l'implementazione usata in produzione è
-quella locale; gli executor remoti potranno riusare lo stesso manifest senza
-ricreare la logica di dataset, resume e audit del trainer.
+executor descrivono *dove*: il manifest e lo script vengono sincronizzati
+immutati, mentre il run remoto viene eseguito dalla propria directory.
 """
 from __future__ import annotations
 
@@ -264,6 +263,17 @@ class RemoteProcess:
 
     def kill(self) -> None:
         self._remote(f"kill -KILL -- -{self.pid} 2>/dev/null || kill -KILL {self.pid}")
+
+    def cleanup(self) -> None:
+        """Rimuove esplicitamente la directory della run sull'host remoto.
+
+        Il percorso è composto da ``remote_root`` e ``run_id`` già validati da
+        ``_remote_dir``; il cleanup non viene mai eseguito automaticamente.
+        """
+        result = self._remote(f"rm -rf -- {shlex.quote(self.executor._remote_dir(self.recipe))}")
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "errore remoto").strip()
+            raise RuntimeError(f"cleanup remoto fallito: {detail[:300]}")
 
 
 def executor_from_config(cfg: dict, *, known_hosts: Path | None = None) -> TrainingExecutor:

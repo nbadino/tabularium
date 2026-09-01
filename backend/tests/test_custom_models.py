@@ -98,15 +98,28 @@ def test_add_custom_model_rejects_invalid_repo_via_api():
 
 def test_vram_warning_flags_undersized_gpu(monkeypatch):
     adapter = model_adapters.get_adapter("monkeyocrv2-parsing")
+    # Il confronto è con la **capacità** della scheda, non con il libero del
+    # momento: avviare un modello ferma quello in servizio, quindi la memoria
+    # che quest'ultimo occupa non è un vincolo. Qui la scheda è piccola davvero.
+    monkeypatch.setattr(
+        "app.services.trainer_metrics.gpu_snapshot",
+        lambda: [{"memory_total": 1536, "memory_used": 0}],
+    )
+    # MonkeyOCRv2 pesa ~1.5 GB dichiarati: 1.5 * 1024 * 1.35 ≈ 2073 MiB > 1536.
+    warning = model_registry.vram_warning(adapter)
+    assert warning is not None
+    assert "GB" in warning
+
+
+def test_vram_warning_ignores_a_model_currently_in_service(monkeypatch):
+    """Regressione: misurando il libero, un 8 GB occupato da un altro modello
+    faceva comparire «non ci sta» su checkpoint che ci stanno benissimo."""
+    adapter = model_adapters.get_adapter("monkeyocrv2-parsing")
     monkeypatch.setattr(
         "app.services.trainer_metrics.gpu_snapshot",
         lambda: [{"memory_total": 8192, "memory_used": 7000}],
     )
-    # MonkeyOCRv2 pesa ~1.5 GB dichiarati: entra comodamente anche in 1.2 GB liberi? No:
-    # 1.5 * 1024 * 1.35 ≈ 2073 MiB > 1192 MiB liberi -> warning atteso.
-    warning = model_registry.vram_warning(adapter)
-    assert warning is not None
-    assert "GB" in warning
+    assert model_registry.vram_warning(adapter) is None
 
 
 def test_vram_warning_silent_when_plenty_of_room(monkeypatch):

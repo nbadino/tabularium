@@ -9,7 +9,7 @@ from ..db import connect
 
 
 def sample_pilot(project_id: int, target: int = 40, seed: int = 42) -> dict:
-    target = max(1, min(target, 50))
+    target = max(30, min(target, 50))
     with connect() as conn:
         rows = conn.execute("SELECT * FROM pages WHERE project_id=? ORDER BY id", (project_id,)).fetchall()
         project = conn.execute("SELECT settings_json FROM projects WHERE id=?", (project_id,)).fetchone()

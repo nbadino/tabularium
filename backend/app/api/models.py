@@ -112,25 +112,37 @@ def delete_model(adapter_id: str, _admin: dict = Depends(_admin)) -> dict:
 
 @router.get("/api/models/serve/status")
 def serve_status() -> dict:
+    """Stato del server locale **e** avanzamento dell'avvio.
+
+    `POST /serve/start` avvia il lavoro in background e la prima volta può metterci minuti
+    (venv vLLM, clone del repo ufficiale, caricamento dei pesi): questa rotta
+    è quella che la UI interroga nel frattempo per dire a che punto è.
+    `running` significa «processo vivo», `ready` significa «risponde».
+    """
     st = serve_manager.get_status()
+    prog = serve_manager.progress(st)
     return {
         "running": st.running,
-        "adapter_id": st.adapter_id,
+        "starting": st.starting,
+        "adapter_id": st.adapter_id or prog["adapter_id"],
         "port": st.port,
         "pid": st.pid,
-        "error": st.error,
-        "log_tail": serve_manager.log_tail(st.adapter_id) if st.adapter_id else "",
+        "error": st.error or prog["error"],
+        "phase": prog["phase"],
+        "ready": prog["phase"] == "ready",
+        "elapsed_s": prog["elapsed_s"],
+        "log_tail": prog["log_tail"],
     }
 
 
-@router.post("/api/models/{adapter_id}/serve/start")
+@router.post("/api/models/{adapter_id}/serve/start", status_code=202)
 def serve_start(adapter_id: str, payload: dict | None = None, _admin: dict = Depends(_admin)) -> dict:
     """Avvia il server locale per `adapter_id` e lo punta come endpoint di
     inferenza attivo — stesso effetto di configurarlo a mano in Impostazioni,
     ma con un click dal registro modelli."""
     port = int((payload or {}).get("port") or 8888)
     try:
-        st = serve_manager.start(adapter_id, port=port)
+        st = serve_manager.start_async(adapter_id, port=port, owner_id=_admin.get("id"))
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -143,9 +155,11 @@ def serve_start(adapter_id: str, payload: dict | None = None, _admin: dict = Dep
     })
     return {
         "running": st.running,
+        "starting": st.starting,
         "adapter_id": st.adapter_id,
         "port": st.port,
         "pid": st.pid,
+        "phase": st.phase,
     }
 
 

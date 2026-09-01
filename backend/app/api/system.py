@@ -168,6 +168,16 @@ def system_info() -> dict:
         "schema_version": version["value"] if version else None,
         "python": sys.version.split()[0],
         "platform": platform.platform(),
+        "capabilities": {
+            "dashboard": True,
+            "cpu_ocr": True,
+            # Il serving/training CUDA locale è supportato direttamente su
+            # Linux; su Windows il percorso supportato è WSL2, non il Python
+            # nativo. macOS non espone CUDA NVIDIA.
+            "local_cuda": platform.system() == "Linux",
+            "remote_gpu": True,
+            "cuda_note": "WSL2" if platform.system() == "Windows" else None,
+        },
     }
 
 

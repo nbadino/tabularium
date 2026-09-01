@@ -233,6 +233,12 @@ class BlockBulkWrite(BaseModel):
     # Optional for old API clients; new clients must send the revision from
     # GET /annotations so stale full-page snapshots cannot overwrite work.
     expected_revision: int | None = Field(default=None, ge=0)
+    # Blocchi che l'utente ha cancellato davvero. L'assenza da ``items`` non
+    # basta a dedurlo: il canvas non porta tutte le bozze del prefill, e
+    # dedurre la cancellazione dal silenzio le distruggeva. Chi cancella lo
+    # dice; un id che ricompare in ``items`` (annullamento) vince sulla
+    # cancellazione.
+    deleted_ids: list[int] = Field(default_factory=list)
 
 
 class BlockUpdate(BaseModel):
@@ -255,10 +261,21 @@ class BlockOut(BaseModel):
     confirmed: bool
     prefill_source: str | None = None
     updated_at: str
+    # Valorizzata solo dalle risposte che hanno appena fatto avanzare la
+    # revisione (PATCH del blocco): serve al client per non presentare
+    # all'autosave successivo un'attesa ormai vecchia. Nelle liste resta
+    # assente — lì la revisione la porta ``BlockListOut``.
+    annotation_revision: int | None = None
 
 
 class BlockListOut(BaseModel):
     items: list[BlockOut]
+    # Solo in risposta a un salvataggio bulk: l'id assegnato a ciascun item del
+    # payload, nello stesso ordine. `items` contiene TUTTI i blocchi della
+    # pagina — comprese le bozze che il canvas non porta — quindi accoppiarli
+    # per posizione era sbagliato: il client si ritrovava gli id di altri
+    # blocchi e la modifica successiva finiva sulla riga di qualcun altro.
+    assigned_ids: list[int] | None = None
     annotation_revision: int = 0
 
 
@@ -295,8 +312,16 @@ class TableGrid(BaseModel):
     cols: int = Field(ge=1, le=256)
     cells: list[TableCell] = []
     phantom_cols: list[int] = []
+    # Numero di righe dichiarate dall'annotatore come intestazione. Zero =
+    # nessuna intestazione: non viene mai inferita automaticamente.
+    header_rows: int = Field(default=0, ge=0, le=20)
     vlines: list[float] = []
     hlines: list[float] = []
+    # Confini verticali piegati, normalizzati sul ritaglio, persistiti insieme
+    # alla griglia dopo una proposta di rilevamento. Sono opzionali perché le
+    # griglie inserite manualmente e quelle prodotte dal modello non li hanno.
+    row_columns: list[list[float]] = []
+    row_columns_proven: list[list[bool]] = []
 
 
 class TableGridOut(BaseModel):
@@ -306,6 +331,11 @@ class TableGridOut(BaseModel):
 class TableSaveOut(BaseModel):
     grid: TableGrid
     otsl: str
+    # Salvare una griglia fa avanzare la revisione della pagina come qualsiasi
+    # altra modifica. Senza rimandarla, il client resterebbe indietro di uno e
+    # il primo autosave successivo del canvas si vedrebbe rifiutare con 409 un
+    # conflitto che non esiste.
+    annotation_revision: int | None = None
 
 
 # --- Rilevamento struttura tabella --------------------------------------------
@@ -374,8 +404,12 @@ class TrainConfig(BaseModel):
     ssh_port: int = Field(default=22, ge=1, le=65535)
     ssh_key_path: str | None = Field(default=None, max_length=1000)
     ssh_root: str = Field(default="/tmp/tabularium-runs", max_length=1000)
+    ssh_train_repo: str | None = Field(default=None, max_length=1000)
+    ssh_python: str | None = Field(default=None, max_length=1000)
+    resume_run_id: str | None = Field(default=None, max_length=120)
     model: str | None = None
     model_path: str | None = None
+    adapter_id: str = Field(default="monkeyocrv2-parsing", min_length=1, max_length=120)
     train_type: Literal["lora", "full"] = "lora"
     lora_rank: int = Field(default=8, ge=1, le=256)
     lora_alpha: int = Field(default=32, ge=1, le=1024)

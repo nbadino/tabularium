@@ -15,10 +15,10 @@ quattro**, e le tre diagnosi sono distinte:
 
 | Pagina | Passo stimato | Passo vero | Rottura |
 |---|---|---|---|
-| `LSI_17186_015` | 40 px | 40 px | — |
-| `LSI_8447_014` | 156 px | 39 px | autocorrelazione agganciata a un'**armonica** (4×) |
-| `LSI_1974_039` | 117 px | 38 px | interlinea stretta: il profilo **non torna mai a zero** fra le righe |
-| `LSIVS_11652_006` | 10 px | 39 px | inclinazione −1,45°: su 3500 px la riga **si spalma** per 90 px |
+| pagina `A` | 40 px | 40 px | — |
+| pagina `B` | 156 px | 39 px | autocorrelazione agganciata a un'**armonica** (4×) |
+| pagina `C` | 117 px | 38 px | interlinea stretta: il profilo **non torna mai a zero** fra le righe |
+| pagina `D` | 10 px | 39 px | inclinazione −1,45°: su 3500 px la riga **si spalma** per 90 px |
 
 Nessuna delle tre si ripara ritoccando soglie: il profilo orizzontale è una
 somma su tutta la larghezza, quindi qualunque cosa spalmi o saldi le righe lo
@@ -784,9 +784,9 @@ def detect_grid(
     column_support = [len(bands), *support, len(bands)]
 
     # Confini piegati: dove passa davvero il taglio su ciascuna riga. Servono a
-    # disegnarli e a riempire le celle senza spezzare valori; non sono ancora
-    # persistiti (il grid salvato porta solo le rette), quindi vivono nella
-    # diagnostica della bozza.
+    # disegnarli e a riempire le celle senza spezzare valori; la risposta API li
+    # copia anche nel grid persistibile, mentre la diagnostica resta utile per
+    # compatibilità e per mostrare le misure dell'algoritmo.
     if len(vlines_px) > 2:
         row_bounds, row_proven = snap_boundaries(ink, bands, vlines_px, pitch, shear)
     else:

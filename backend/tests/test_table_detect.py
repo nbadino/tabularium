@@ -103,6 +103,18 @@ def test_every_boundary_carries_its_support():
     assert all(s >= 0 for s in detection.column_support)
 
 
+def test_bent_boundaries_are_part_of_the_persistable_grid_contract():
+    detection = table_detect.detect_grid(_synthetic_table())
+    row_columns = detection.diagnostics["row_columns"]
+    proven = detection.diagnostics["row_columns_proven"]
+
+    assert len(row_columns) == detection.rows
+    assert len(proven) == detection.rows
+    assert all(len(row) == detection.cols - 1 for row in row_columns)
+    assert all(len(row) == detection.cols - 1 for row in proven)
+    assert all(0.0 <= x <= 1.0 for row in row_columns for x in row)
+
+
 def test_lines_are_normalised_and_monotonic():
     detection = table_detect.detect_grid(_synthetic_table())
     for lines in (detection.vlines, detection.hlines):
@@ -556,3 +568,75 @@ def test_fill_cells_uses_the_bent_boundaries_not_the_straight_ones():
     # E il riempimento cambia davvero: se i due percorsi coincidessero, `snap`
     # non starebbe facendo niente.
     assert snapped["filled"] >= straight["filled"]
+
+
+@pytest.mark.skipif(not REAL_SCAN.exists(), reason="scansione di riferimento assente")
+def test_the_region_decides_what_the_detector_can_see():
+    """La griglia vale quanto il riquadro su cui è misurata.
+
+    Su LSI_17186_015 il layout di PaddleOCR-VL propone come `Table` la sola
+    colonna di sinistra (x 100–1229): dentro quel riquadro il rilevatore non
+    può inventarsi i campi *From / For / Latest Report*, che stanno fuori.
+    Allargata la regione alla tabella intera ricompaiono, con supporto pieno.
+
+    È la ragione per cui una bozza di tabella sta sul canvas e si ridimensiona,
+    e per cui il ridimensionamento rifà la griglia invece di conservarla: i
+    confini sono normalizzati sul ritaglio, quindi un ritaglio diverso è una
+    tabella diversa.
+    """
+    page = Image.open(REAL_SCAN)
+    partial = table_detect.detect_grid(page.crop((100, 684, 1229, 3818)))
+    whole = table_detect.detect_grid(page.crop((100, 680, 2709, 3826)))
+
+    # Il confine For|Latest Report esiste solo nella regione intera.
+    assert whole.cols > partial.cols
+    boundaries = [round(v * 2609) for v in whole.vlines]
+    assert any(abs(b - 1864) <= 40 for b in boundaries), boundaries
+    # E non è un confine debole: regge su quasi tutte le righe.
+    assert max(whole.column_support) >= 0.9 * whole.rows
+
+
+def test_bands_cover_the_whole_crop_including_the_header_strip():
+    """Il filetto orizzontale di una tabella è disegnato *sotto* i nomi delle
+    colonne: partendo dalla prima riga rilevata, l'intestazione finiva fuori da
+    ogni banda e non veniva mai letta. Misurato su LSI_17186_015: i primi 293 px
+    del ritaglio non venivano inviati al modello.
+    """
+    from PIL import Image
+
+    from app.services.inference import VllmClient
+
+    crop = Image.new("RGB", (1000, 1200))
+    # Confini rilevati che iniziano sotto l'intestazione e finiscono prima del
+    # fondo, come restituisce il rilevatore geometrico su una pagina reale.
+    bounds = [120, 200, 280, 360, 440, 520, 600, 680, 760, 1100]
+
+    bands = VllmClient._band_boxes(crop, bounds, 3)
+
+    assert bands[0][0] == 0, bands
+    assert bands[-1][1] == crop.height, bands
+    # Nessun buco fra una banda e la successiva.
+    for (_, previous_bottom), (top, _) in zip(bands, bands[1:]):
+        assert top == previous_bottom, bands
+
+
+def test_a_table_gets_a_table_sized_output_budget():
+    """Un registro a piena pagina è di 70-80 righe OTSL: con il budget di un
+    blocco di testo l'uscita si tronca a metà cella."""
+    from PIL import Image
+
+    from app.services.inference import TABLE_MAX_TOKENS, VllmClient
+
+    seen: dict = {}
+
+    class FakeClient(VllmClient):
+        def _chat(self, image, prompt, max_tokens=4096, min_pixels=None, **kwargs):
+            seen[kwargs.get("task")] = max_tokens
+            return ""
+
+    client = FakeClient(url="http://127.0.0.1:9/v1")
+    client.recognize(Image.new("RGB", (400, 600)), "Table")
+    client.recognize(Image.new("RGB", (400, 600)), "Text")
+
+    assert seen["table"] == TABLE_MAX_TOKENS
+    assert seen["text"] < seen["table"]

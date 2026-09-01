@@ -186,6 +186,7 @@ def _slice_table_grid(grid: dict, start: int, end: int) -> dict:
         "cols": int(grid.get("cols", 0)),
         "cells": cells,
         "phantom_cols": list(grid.get("phantom_cols", [])),
+        "header_rows": max(0, min(int(grid.get("header_rows", 0) or 0) - start, end - start)),
         "vlines": list(grid.get("vlines", [])),
         "hlines": local_hlines,
     }

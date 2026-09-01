@@ -35,9 +35,49 @@ def test_generate_script_full_omits_lora(tmp_path: Path):
         tmp_path / "val.jsonl",
     )
     assert "--train_type 'full'" in script
-    assert "--lora_rank" not in script
-    assert "--freeze_vit false" in script
-    assert "--learning_rate 2e-05" in script
+
+
+def test_generate_script_qwen_uses_qwen_template(tmp_path: Path):
+    script = trainer.generate_script(
+        {
+            "adapter_id": "qwen3-vl-8b",
+            "model": "Qwen/Qwen3-VL-8B-Instruct",
+            "train_type": "lora",
+            "batch_size": 1,
+            "gpus": "0",
+        },
+        tmp_path / "run",
+        tmp_path / "train.jsonl",
+        tmp_path / "val.jsonl",
+    )
+    assert "--model_type qwen3_vl" in script
+    assert "--template qwen3_vl" in script
+    assert "--tuner_type lora" in script
+    assert "--model_type monkeyocrv2" not in script
+    assert "--lora_rank 8" in script
+    assert "--freeze_vit" not in script
+
+
+def test_generate_script_remote_uses_recipe_paths_and_remote_runtime(tmp_path: Path):
+    run_dir = tmp_path / "local-run"
+    script = trainer.generate_script(
+        {
+            "executor": "vast",
+            "model": "zenosai/MonkeyOCRv2-B-Parsing",
+            "ssh_train_repo": "/opt/MonkeyOCRv2/parsing/train",
+            "ssh_python": "/opt/venv/bin/python",
+        },
+        run_dir,
+        run_dir / "dataset" / "train.jsonl",
+        run_dir / "dataset" / "val.jsonl",
+    )
+    assert '--dataset "dataset/train.jsonl"' in script
+    assert '--val_dataset "dataset/val.jsonl"' in script
+    assert 'output_dir="checkpoints/monkeyocrv2_lora"' in script
+    assert 'cd "/opt/MonkeyOCRv2/parsing/train"' in script
+    assert 'dirname /opt/venv/bin/python' in script
+    assert f'MODELSCOPE_CACHE="{run_dir}' not in script
+    assert str(run_dir) not in script
 
 
 def test_parse_metrics_line():

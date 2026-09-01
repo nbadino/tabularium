@@ -61,27 +61,30 @@ def _prompt_for(adapter: ModelAdapter, task: str, label: str | None, fallback: s
 # Semantica identica a `load_image` di `parsing/core_runner.py` (repo ufficiale):
 #   - `min_pixels` INGRANDISCE le immagini piccole, non le riduce. Il pipeline
 #     ufficiale passa 1003520 alla chiamata di layout, come *minimo*.
-#   - un tetto superiore esiste solo se richiesto: là è la env `MOCR2_MAX_PIXELS`,
-#     qui `TABULARIUM_VLLM_MAX_PIXELS`. Di default nessuno dei due riduce nulla.
+#   - il tetto superiore è la env `MOCR2_MAX_PIXELS`, che `parse.py` imposta
+#     sempre dal suo `--max-pixels` (default 1003520) e che vale per TUTTE le
+#     chiamate. Qui è `config.VLLM_MAX_PIXELS` / `TABULARIUM_VLLM_MAX_PIXELS`,
+#     con lo stesso default; il campo "max pixels" in Impostazioni lo sovrascrive.
+# Con entrambi a 1003520 la pagina arriva al layout esattamente a 1 MP, che è il
+# punto di lavoro del checkpoint ufficiale.
 # Attenzione a non confondere questo con `max_pixels 1003520` degli iperparametri
-# di *training* (AGENTS.md §2.6): sono due cose diverse, e usare quel valore come
-# tetto in inferenza non è ciò che fa il codice ufficiale.
+# di *training* (AGENTS.md §2.6): sono due cose diverse anche se il valore coincide.
 LAYOUT_MIN_PIXELS = 1_003_520
 
-# Tetto applicato **alla sola chiamata di layout**. Il codice ufficiale non ne
-# impone uno, ma è pensato per pagine di dimensioni ordinarie: una scansione
-# d'archivio Historic Shipping Index è 11.3 MP e a quella taglia il layout collassa. Misurato
-# sulla stessa pagina (LSI_17186_015), a parità di tutto il resto:
+# Rete di sicurezza per il solo layout, usata quando il tetto globale è
+# disattivato esplicitamente (`TABULARIUM_VLLM_MAX_PIXELS=0`): una scansione
+# d'archivio Historic Shipping Index è 11.3 MP e a quella taglia il layout
+# collassa. Misurato su pagina `A` del campione, a parità di tutto il resto:
 #
 #     11.3 MP → 2 blocchi sovrapposti e inutili
 #      6.0 MP → 16 blocchi, frammentato
 #      4.0 MP → 137 blocchi, esploso a livello di cella
-#      2.0 MP → 5 blocchi: Title, numero, data, corpo   ← scelto
-#      1.0 MP → 4 blocchi, corretto ma meno granulare
+#      2.0 MP → 5 blocchi: Title, numero, data, corpo
+#      1.0 MP → 4 blocchi, corretto ma meno granulare   ← default ufficiale
 #
-# Il tetto NON si applica al riconoscimento di testo e tabelle: lì il ritaglio
-# è già piccolo e ridurlo perderebbe i caratteri. Override con
-# `TABULARIUM_VLLM_MAX_PIXELS`, equivalente di `MOCR2_MAX_PIXELS` del repo ufficiale.
+# Il default resta quello del repo (1 MP, v. `config.VLLM_MAX_PIXELS`): la
+# granularità in più a 2 MP era una nostra deviazione misurata, non il
+# protocollo del checkpoint. Chi la rivuole imposta 2000000 come max pixels.
 LAYOUT_MAX_PIXELS = 2_000_000
 
 # Righe per banda nel riconoscimento tabella. Misurato su LSI_17186_015, tabella
@@ -89,6 +92,10 @@ LAYOUT_MAX_PIXELS = 2_000_000
 # 8 colonne stabili, con bande da 25 ne restituisce 59. Bande più corte costano
 # più chiamate ma non perdono righe.
 DEFAULT_ROWS_PER_BAND = 15
+
+# Budget di uscita per il riconoscimento di una tabella, uguale per il crop
+# intero (`recognize`) e per le bande (`table_grid`).
+TABLE_MAX_TOKENS = 8192
 
 # Il checkpoint supporta 40.960 token, ma su una RTX 4060 la cache KV disponibile
 # consente in pratica un limite operativo di 24.576 (configurato in
@@ -206,6 +213,11 @@ def _tolerant_items(text: str) -> list[dict]:
     return []
 
 
+# Sentinella per distinguere "tetto non specificato dal chiamante" (usa il
+# default di config) da "tetto rimosso di proposito" (None).
+_MAX_PIXELS_DEFAULT = object()
+
+
 class VllmClient:
     def __init__(
         self,
@@ -216,6 +228,7 @@ class VllmClient:
         timeout: int = 180,
         max_retries: int = 2,
         adapter: ModelAdapter | None = None,
+        max_pixels: int | None | object = _MAX_PIXELS_DEFAULT,
     ) -> None:
         self.url = (url or config.VLLM_URL).rstrip("/")
         self.model = model or config.VLLM_MODEL
@@ -226,6 +239,10 @@ class VllmClient:
         # Default MonkeyOCRv2: i chiamanti esistenti (test compresi) costruiscono
         # `VllmClient` senza adapter e si aspettano il comportamento storico.
         self.adapter: ModelAdapter = adapter or MonkeyOCRv2ParsingAdapter()
+        # Equivalente di `MOCR2_MAX_PIXELS`: vale per ogni chiamata al modello.
+        # 0 o negativo = nessun tetto, come non impostare la env ufficiale.
+        cap = config.VLLM_MAX_PIXELS if max_pixels is _MAX_PIXELS_DEFAULT else max_pixels
+        self.max_pixels: int | None = cap if (cap or 0) > 0 else None
         self.last_trace: dict = {}
         self.last_text = ""
 
@@ -272,7 +289,7 @@ class VllmClient:
     ) -> str:
         buf = io.BytesIO()
         prepared = _fit_pixels(
-            image, min_pixels=min_pixels, max_pixels=config.VLLM_MAX_PIXELS
+            image, min_pixels=min_pixels, max_pixels=self.max_pixels
         )
         prepared.convert("RGB").save(buf, format="PNG")
         data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
@@ -427,6 +444,20 @@ class VllmClient:
         parse = getattr(self.adapter, "parse_layout", None)
         return parse(raw) if callable(parse) else _tolerant_items(raw)
 
+    def _output_budget(self, wanted: int) -> int:
+        """`max_tokens` che sta nel contesto con cui l'adapter serve il modello.
+
+        vLLM **rifiuta** con 400 una richiesta il cui `max_tokens` supera il
+        contesto, non la tronca: chiedere 8192 token di uscita a un adapter
+        servito con `--max-model-len 8192` fa fallire la chiamata invece di
+        produrre una tabella più corta. Misurato su DeepSeek-OCR-2. Il margine
+        è per l'immagine e il prompt, che occupano lo stesso contesto.
+        """
+        context = getattr(self.adapter.capabilities, "max_model_len", 0) or 0
+        if context <= 0:
+            return wanted
+        return max(512, min(wanted, context - 2048))
+
     def _sampling_for(self, task: str) -> dict | None:
         """Override di sampling per task, se l'adapter ne dichiara (es.
         le penalità anti-ripetizione richieste da MinerU2.5)."""
@@ -437,10 +468,10 @@ class VllmClient:
         self, image: Image.Image, on_delta: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
     ) -> list[dict]:
-        # Per il layout applichiamo il contratto del corpus: minimo ufficiale
-        # da 1 MP e tetto operativo di 2 MP sulle scansioni d'archivio. Il
-        # riconoscimento sui crop, invece, non passa da questo metodo e non
-        # riduce i caratteri. Un override esplicito può sostituire il tetto.
+        # Layout: minimo e tetto ufficiali coincidono a 1 MP, quindi la pagina
+        # arriva al VLM esattamente come in `get_layout()` del repo. Un override
+        # esplicito (Impostazioni / env) sostituisce il tetto; se il tetto è
+        # disattivato resta `LAYOUT_MAX_PIXELS` come rete di sicurezza.
         official_size = getattr(self.adapter, "official_layout_size", None)
         if official_size:
             # MinerUClient.prepare_for_layout() usa resize() a una dimensione
@@ -452,7 +483,7 @@ class VllmClient:
             prepared = _fit_pixels(
                 image,
                 min_pixels=LAYOUT_MIN_PIXELS,
-                max_pixels=config.VLLM_MAX_PIXELS or LAYOUT_MAX_PIXELS,
+                max_pixels=self.max_pixels or LAYOUT_MAX_PIXELS,
             )
         prompt = _prompt_for(self.adapter, "layout", None, LAYOUT_PROMPT)
         raw = self._chat(
@@ -489,22 +520,27 @@ class VllmClient:
     ) -> list[dict]:
         """Pagina intera: bbox, label e contenuto in una sola generazione.
 
-        È il percorso ufficiale ``ALL_PROMPT['END2END']``. L'immagine va al
-        modello com'è: nessuna riscalatura nostra, salvo il tetto opzionale
-        impostato dall'utente (v. `layout`).
+        È il percorso ufficiale ``ALL_PROMPT['END2END']``. Vale lo stesso tetto
+        `MOCR2_MAX_PIXELS` di tutte le altre chiamate (1 MP di default,
+        v. `config.VLLM_MAX_PIXELS`); un `max_pixels` esplicito lo sostituisce.
         """
-        adapter_max_pixels = getattr(self.adapter, "end2end_max_pixels", None)
         prepared = _fit_pixels(
             image,
-            max_pixels=max_pixels or config.VLLM_MAX_PIXELS or adapter_max_pixels,
+            # END2END segue il contratto ufficiale della pagina intera: stesso
+            # tetto globale del resto della pipeline, nessuna regola separata.
+            max_pixels=max_pixels or self.max_pixels,
         )
         prompt = _prompt_for(self.adapter, "end2end", None, END2END_PROMPT)
-        adapter_max_tokens = getattr(self.adapter, "end2end_max_tokens", max_tokens)
+        end2end_tokens = max_tokens
+        # Unlimited's grounded protocol has a deliberately smaller server
+        # budget; generic/end-to-end document parsing remains generous.
+        if getattr(self.adapter, "adapter_id", None) == "unlimited-ocr":
+            end2end_tokens = min(max_tokens, getattr(self.adapter, "end2end_max_tokens", max_tokens))
         raw = self._chat(
             prepared,
             prompt,
             task="end2end",
-            max_tokens=min(max_tokens, adapter_max_tokens),
+            max_tokens=end2end_tokens,
             total_timeout=total_timeout,
             # Gli adapter JSON possono chiudere presto dopo la lista; questo
             # modello invece emette markdown con marker <|det|>.
@@ -584,11 +620,17 @@ class VllmClient:
         task = "table" if label == "Table" else "text"
         fallback = TABLE_PROMPT if label == "Table" else TEXT_PROMPT
         prompt = _prompt_for(self.adapter, task, label, fallback)
+        # Una tabella non sta in un budget da blocco di testo: un registro
+        # Historic Shipping Index a piena pagina è di 70-80 righe OTSL e a 3072
+        # token l'uscita si interrompeva a metà cella (misurato su
+        # LSI_17186_015: troncata a "Act 29"). A 1 MP l'immagine costa ~1300
+        # token dei 24576 di contesto di MonkeyOCRv2, quindi il budget delle
+        # bande (`table_grid`) ci sta comodamente — ma non su ogni adapter.
         raw = self._chat(
             image,
             prompt,
             task=task,
-            max_tokens=3072,
+            max_tokens=self._output_budget(TABLE_MAX_TOKENS) if task == "table" else 3072,
             sampling=self._sampling_for(task),
             on_delta=on_delta,
             cancel_event=cancel_event,
@@ -620,7 +662,7 @@ class VllmClient:
         row_bounds: list[int] | None = None,
         rows_per_band: int = DEFAULT_ROWS_PER_BAND,
         header_rows: int = 0,
-        max_tokens: int = 8192,
+        max_tokens: int = TABLE_MAX_TOKENS,
         on_delta: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
     ) -> dict:
@@ -763,9 +805,19 @@ class VllmClient:
     def _band_boxes(
         image: Image.Image, row_bounds: list[int] | None, rows_per_band: int
     ) -> list[tuple[int, int]]:
-        """Estremi verticali delle bande da inviare al modello."""
+        """Estremi verticali delle bande da inviare al modello.
+
+        Le bande devono coprire **tutto** il ritaglio. Il rilevatore geometrico
+        trova le righe orizzontali della tabella, ma la prima può stare sotto
+        l'intestazione (il filetto è disegnato *sotto* i nomi delle colonne) e
+        l'ultima sopra l'ultima riga: partire da `hlines[0]` e fermarsi a
+        `hlines[-1]` lasciava fuori quelle strisce, che è esattamente il modo in
+        cui l'intestazione spariva dalla griglia. Il ritaglio è già la tabella
+        annotata dall'utente: nulla al suo interno va scartato in silenzio.
+        """
         if row_bounds and len(row_bounds) > 2:
             bounds = sorted(set(int(b) for b in row_bounds))
+            bounds = [0] + [b for b in bounds if 0 < b < image.height] + [image.height]
             return [
                 (bounds[i], bounds[min(i + rows_per_band, len(bounds) - 1)])
                 for i in range(0, len(bounds) - 1, rows_per_band)
@@ -798,7 +850,7 @@ class VllmClient:
                     allow_redirects=False,
                 )
             else:
-                resp = requests.get(f"{self.url}/models", timeout=t, allow_redirects=False)
+                resp = requests.get(f"{self.url}/models", timeout=t)
             resp.raise_for_status()
             return True
         except Exception:  # noqa: BLE001
@@ -816,7 +868,7 @@ class VllmClient:
                     allow_redirects=False,
                 )
             else:
-                resp = requests.get(f"{self.url}/models", timeout=timeout, allow_redirects=False)
+                resp = requests.get(f"{self.url}/models", timeout=timeout)
             resp.raise_for_status()
             latency_ms = round((time.perf_counter() - started) * 1000, 1)
             data = resp.json()
@@ -1043,8 +1095,15 @@ def save_inference_config(cfg: dict) -> None:
                 next_model = str(cfg.get("model", active["served_model_name"])).strip()
                 next_adapter = str(cfg.get("adapter_id") or _adapter_for_endpoint(next_model, next_url) or active["model_adapter_id"])
                 conn.execute(
-                    "UPDATE compute_profiles SET endpoint=?, served_model_name=?, model_adapter_id=?, credential_ref=CASE WHEN ? THEN 'vault:inference' ELSE credential_ref END, updated_at=datetime('now') WHERE id=?",
-                    (next_url, next_model, next_adapter, bool(cfg.get("api_key")), active["id"]),
+                    "UPDATE compute_profiles SET endpoint=?, served_model_name=?, model_adapter_id=?, credential_ref=CASE WHEN ? THEN 'vault:inference' WHEN ? THEN '' ELSE credential_ref END, updated_at=datetime('now') WHERE id=?",
+                    (
+                        next_url,
+                        next_model,
+                        next_adapter,
+                        bool(str(cfg.get("api_key") or "").strip()),
+                        "api_key" in cfg,
+                        active["id"],
+                    ),
                 )
         except sqlite3.OperationalError:
             # Basi non ancora migrate alla v10 restano compatibili.
@@ -1076,6 +1135,7 @@ def get_vllm_client(
             ),
             timeout=timeout if timeout is not None else cfg.get("timeout", 180),
             adapter=adapter,
+            max_pixels=cfg.get("max_pixels"),
         )
     except TypeError:
         try:

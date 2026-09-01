@@ -105,7 +105,7 @@ def get_vast_instances(payload: dict, _admin: dict = Depends(_admin)) -> dict:
         raise HTTPException(status_code=400, detail="API Key di Vast.ai obbligatoria.")
 
     try:
-        items = cloud_manager.list_vast_instances(api_key)
+        items = cloud_manager.list_vast_instances(api_key, owner_id=_admin.get("id"))
         return {"items": items}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -145,6 +145,8 @@ def rent_vast(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             model=payload.get("model", "zenosai/MonkeyOCRv2-B-Parsing"),
             port=payload.get("port", 8888),
             api_key_for_server=_credential(payload, "server_api_key", "server_credential_ref"),
+            monkeyocr_ref=payload.get("monkeyocr_ref", ""),
+            tabularium_ref=payload.get("tabularium_ref", ""),
             prepare_server=bool(payload.get("prepare_server", False)),
         )
         if result.get("contract_id") is not None:
@@ -189,7 +191,7 @@ def get_runpod_pods(payload: dict, _admin: dict = Depends(_admin)) -> dict:
         raise HTTPException(status_code=400, detail="API Key di RunPod obbligatoria.")
 
     try:
-        items = cloud_manager.list_runpod_pods(api_key)
+        items = cloud_manager.list_runpod_pods(api_key, owner_id=_admin.get("id"))
         return {"items": items}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -257,7 +259,7 @@ def start_modal_setup(_admin: dict = Depends(_admin)) -> dict:
     from ..services import modal_manager
 
     try:
-        modal_manager.start_setup()
+      modal_manager.start_setup(owner_id=_admin.get("id"))
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"ok": True, "status": modal_manager.status()}
@@ -274,6 +276,7 @@ def start_modal_deploy(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             template_id=template_id,
             api_key=_credential(payload) or None,
             keep_warm=bool(payload.get("keep_warm", False)),
+            owner_id=_admin.get("id"),
         )
     except (RuntimeError, ValueError) as exc:
         code = 409 if isinstance(exc, RuntimeError) else 400
@@ -288,7 +291,7 @@ def stop_modal_app(payload: dict, _admin: dict = Depends(_admin)) -> dict:
 
     template_id = payload.get("template") or None
     try:
-        modal_manager.stop_app(template_id=template_id)
+        modal_manager.stop_app(template_id=template_id, owner_id=_admin.get("id"))
     except (RuntimeError, ValueError) as exc:
         code = 409 if isinstance(exc, RuntimeError) else 400
         raise HTTPException(status_code=code, detail=str(exc)) from exc

@@ -37,8 +37,11 @@ class LogicalTable:
     columns: int
     cells: list[TableCell]
     phantom_columns: list[int]
+    header_rows: int = 0
     vertical_lines: list[float] | None = None
     horizontal_lines: list[float] | None = None
+    bent_vertical_lines: list[list[float]] | None = None
+    bent_vertical_lines_proven: list[list[bool]] | None = None
 
 
 @dataclass(frozen=True)
@@ -114,8 +117,17 @@ def from_records(page: Any, blocks: list[Any], tables: dict[int, dict]) -> PageA
                 region_id=region.id, rows=int(grid.get("rows", 0)), columns=int(grid.get("cols", 0)),
                 cells=[TableCell(int(c.get("r", 0)), int(c.get("c", 0)), int(c.get("rowspan", 1)), int(c.get("colspan", 1)), str(c.get("text", ""))) for c in grid.get("cells", [])],
                 phantom_columns=[int(c) for c in grid.get("phantom_cols", [])],
+                header_rows=int(grid.get("header_rows", 0) or 0),
                 vertical_lines=[float(c) for c in grid.get("vlines", [])] or None,
                 horizontal_lines=[float(c) for c in grid.get("hlines", [])] or None,
+                bent_vertical_lines=[
+                    [float(value) for value in row]
+                    for row in grid.get("row_columns", [])
+                ] or None,
+                bent_vertical_lines_proven=[
+                    [bool(value) for value in row]
+                    for row in grid.get("row_columns_proven", [])
+                ] or None,
             ))
     metadata = {k: page[k] for k in ("issue_date", "issue_no", "page_no", "page_type") if get(page, k) is not None}
     return PageAnnotation(int(get(page, "id", 0)), int(get(page, "width", 0)), int(get(page, "height", 0)), metadata, regions, logical_tables, str(get(page, "status", "new")))

@@ -169,3 +169,149 @@ def test_block_crud_and_bulk(tmp_path: Path):
         assert r.status_code == 200
         conv = client.get(f"/api/projects/{_pid}/conventions").json()["conventions"]
         assert len(conv) == 1 and conv[0]["checked"] is False
+
+
+def test_autosave_preserves_prefill_drafts(tmp_path: Path):
+    """L'autosave del canvas non deve cancellare le bozze di prefill.
+
+    Le bozze non verificate non compaiono sul canvas, quindi non sono mai nel
+    payload del salvataggio: dedurne la cancellazione dall'assenza distruggeva
+    il lavoro del prefill — griglia tabellare compresa — al primo gesto
+    dell'annotatore sull'immagine.
+    """
+    from app.db import connect
+
+    pid, page_id = _setup_page(tmp_path / "drafts")
+    with TestClient(app) as client:
+        with connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO blocks (page_id,label,kind,points,content,order_idx,"
+                "prefill_source,confirmed) VALUES (?,?,?,?,?,?,?,0)",
+                (page_id, "Table", "rect", "[[10,10],[500,900]]", "", 1, "model:paddle"),
+            )
+            draft_id = int(cur.lastrowid)
+            conn.execute(
+                "INSERT INTO tables (block_id, grid_json) VALUES (?,?)",
+                (draft_id, '{"rows":3,"cols":2,"cells":[]}'),
+            )
+        revision = client.get(f"/api/pages/{page_id}/annotations").json()["annotation_revision"]
+        res = client.put(
+            f"/api/pages/{page_id}/annotations",
+            json={
+                "expected_revision": revision,
+                "items": [
+                    {
+                        "label": "Text",
+                        "kind": "rect",
+                        "points": [[0, 0], [100, 100]],
+                        "content": "",
+                        "order_idx": 1,
+                        "confirmed": True,
+                    }
+                ],
+            },
+        )
+        assert res.status_code == 200, res.text
+        ids = [b["id"] for b in client.get(f"/api/pages/{page_id}/annotations").json()["items"]]
+        assert draft_id in ids
+        assert client.get(f"/api/blocks/{draft_id}/table").json()["grid"] is not None
+
+
+def test_draft_is_deleted_when_the_client_asks_by_name(tmp_path: Path):
+    """La protezione delle bozze non deve rendere impossibile cancellarne una.
+
+    Le tabelle stanno sul canvas: quando l'annotatore ne cancella una, il
+    salvataggio lo dichiara in `deleted_ids` invece di lasciarlo dedurre
+    dall'assenza. Un id che torna fra gli `items` — annullamento prima del
+    salvataggio — vince sulla cancellazione.
+    """
+    from app.db import connect
+
+    pid, page_id = _setup_page(tmp_path / "explicit")
+    with TestClient(app) as client:
+        with connect() as conn:
+            ids = [
+                int(
+                    conn.execute(
+                        "INSERT INTO blocks (page_id,label,kind,points,content,order_idx,"
+                        "prefill_source,confirmed) VALUES (?,?,?,?,?,?,?,0)",
+                        (page_id, label, "rect", "[[10,10],[500,900]]", "", i, "model:paddle"),
+                    ).lastrowid
+                )
+                for i, label in enumerate(("Table", "Text"), start=1)
+            ]
+        table_id, text_id = ids
+        revision = client.get(f"/api/pages/{page_id}/annotations").json()["annotation_revision"]
+        res = client.put(
+            f"/api/pages/{page_id}/annotations",
+            json={
+                "expected_revision": revision,
+                "deleted_ids": [table_id, text_id],
+                "items": [
+                    {
+                        "id": text_id,
+                        "label": "Text",
+                        "kind": "rect",
+                        "points": [[10, 10], [500, 900]],
+                        "content": "",
+                        "order_idx": 1,
+                        "confirmed": False,
+                    }
+                ],
+            },
+        )
+        assert res.status_code == 200, res.text
+        remaining = [b["id"] for b in res.json()["items"]]
+        # La tabella era dichiarata cancellata e sparisce…
+        assert table_id not in remaining
+        # …il testo era dichiarato cancellato ma è tornato fra gli items: resta.
+        assert text_id in remaining
+
+
+def test_saving_reports_which_id_each_item_received(tmp_path: Path):
+    """`items` è tutta la pagina, `assigned_ids` è il payload.
+
+    Accoppiare per posizione i blocchi mandati con quelli tornati era corretto
+    solo finché la pagina conteneva esattamente ciò che il canvas porta. Con
+    una bozza di prefill in mezzo — che il canvas non manda ma il server
+    elenca — il client si prendeva l'id di un altro blocco, e la modifica
+    successiva finiva sulla riga sbagliata.
+    """
+    from app.db import connect
+
+    pid, page_id = _setup_page(tmp_path / "assigned")
+    with TestClient(app) as client:
+        with connect() as conn:
+            # Bozza con order_idx 1: nell'elenco del server viene PRIMA.
+            draft_id = int(
+                conn.execute(
+                    "INSERT INTO blocks (page_id,label,kind,points,content,order_idx,"
+                    "prefill_source,confirmed) VALUES (?,?,?,?,?,?,?,0)",
+                    (page_id, "Text", "rect", "[[0,0],[10,10]]", "bozza", 1, "model:paddle"),
+                ).lastrowid
+            )
+        revision = client.get(f"/api/pages/{page_id}/annotations").json()["annotation_revision"]
+        res = client.put(
+            f"/api/pages/{page_id}/annotations",
+            json={
+                "expected_revision": revision,
+                "items": [
+                    {
+                        "label": "Table",
+                        "kind": "rect",
+                        "points": [[20, 20], [400, 400]],
+                        "content": "",
+                        "order_idx": 2,
+                        "confirmed": True,
+                    }
+                ],
+            },
+        ).json()
+
+        assigned = res["assigned_ids"]
+        assert len(assigned) == 1
+        assert assigned[0] != draft_id
+        # Per posizione il client avrebbe preso la bozza: è il primo elemento.
+        assert res["items"][0]["id"] == draft_id
+        table = next(b for b in res["items"] if b["id"] == assigned[0])
+        assert table["label"] == "Table"

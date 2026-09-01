@@ -134,7 +134,11 @@ def update_block(
             (block_id,),
         )
         auditsvc.record(conn, user, "block.updated", resource_type="block", resource_id=block_id)
-        return _block_out(_get_block_or_404(conn, block_id))
+        out = _block_out(_get_block_or_404(conn, block_id))
+        out.annotation_revision = conn.execute(
+            "SELECT annotation_revision FROM pages WHERE id=?", (out.page_id,)
+        ).fetchone()[0]
+        return out
 
 
 @router.delete("/api/blocks/{block_id}")
@@ -214,13 +218,40 @@ def block_table_put(
                 status_code=400,
                 detail=f"{name}: i confini devono essere crescenti e compresi tra 0 e 1",
             )
+    if payload.row_columns or payload.row_columns_proven:
+        if len(payload.row_columns) != payload.rows:
+            raise HTTPException(
+                status_code=400,
+                detail="row_columns: deve contenere una riga per ogni riga della griglia",
+            )
+        if len(payload.row_columns_proven) != payload.rows:
+            raise HTTPException(
+                status_code=400,
+                detail="row_columns_proven: deve contenere una riga per ogni riga della griglia",
+            )
+        for row, proven in zip(payload.row_columns, payload.row_columns_proven):
+            if len(row) != max(0, payload.cols - 1) or len(proven) != len(row):
+                raise HTTPException(
+                    status_code=400,
+                    detail="row_columns: cardinalità dei confini interni non valida",
+                )
+            if any(value < 0 or value > 1 for value in row) or any(
+                right <= left for left, right in zip(row, row[1:])
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="row_columns: i confini devono essere crescenti e compresi tra 0 e 1",
+                )
     grid = {
         "rows": payload.rows,
         "cols": payload.cols,
         "cells": [c.model_dump() for c in payload.cells],
         "phantom_cols": payload.phantom_cols,
+        "header_rows": payload.header_rows,
         "vlines": payload.vlines,
         "hlines": payload.hlines,
+        "row_columns": payload.row_columns,
+        "row_columns_proven": payload.row_columns_proven,
     }
     try:
         otsl_str = otsl.grid_to_otsl(grid)
@@ -240,8 +271,17 @@ def block_table_put(
             "WHERE id=(SELECT page_id FROM blocks WHERE id=?)",
             (block_id,),
         )
+        revision = conn.execute(
+            "SELECT annotation_revision FROM pages "
+            "WHERE id=(SELECT page_id FROM blocks WHERE id=?)",
+            (block_id,),
+        ).fetchone()[0]
         auditsvc.record(conn, user, "table.updated", resource_type="block", resource_id=block_id)
-    return TableSaveOut(grid=TableGrid.model_validate(grid), otsl=otsl_str)
+    return TableSaveOut(
+        grid=TableGrid.model_validate(grid),
+        otsl=otsl_str,
+        annotation_revision=int(revision),
+    )
 
 
 def _block_bbox(block) -> tuple[int, int, int, int]:
@@ -380,6 +420,14 @@ def block_table_detect(
         phantom_cols=[],
         vlines=vlines,
         hlines=hlines,
+        row_columns=(
+            detection.diagnostics.get("row_columns", [])
+            if payload.fill != "model" else []
+        ),
+        row_columns_proven=(
+            detection.diagnostics.get("row_columns_proven", [])
+            if payload.fill != "model" else []
+        ),
     )
     return TableDetectOut(
         grid=grid,
