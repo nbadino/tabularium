@@ -1,6 +1,9 @@
 """Test per il registro modelli: adapter aggiuntivi, stato installazione, API."""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -47,6 +50,16 @@ def test_prefill_engines_endpoint_exposes_supported_modes_for_active_adapter():
         model = res.json()["model"]
         assert "supports_two_stage" in model
         assert "supports_end2end" in model
+
+
+def test_huggingface_auth_status_never_exposes_token():
+    with TestClient(app) as client:
+        res = client.get("/api/models/huggingface/auth")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["state"] in {"disconnected", "connected", "awaiting_authorization", "error"}
+        assert "access_token" not in body
+        assert "device_code" not in body
 
 
 def test_supports_export_probes_prompt_for_per_family():
@@ -135,7 +148,7 @@ def test_mineru_serves_and_layout_table_prompts_are_implemented():
         "--logits-processors", "mineru_vl_utils:MinerULogitsProcessor",
         "--dtype", "bfloat16",
         "--gpu-memory-utilization", "0.75",
-        "--max-model-len", "16384",
+        "--max-model-len", "8192",
         "--max-num-seqs", "4",
         "--max-num-batched-tokens", "8192",
         "--served-model-name", "mineru2.5",
@@ -242,6 +255,21 @@ def test_download_unknown_adapter_returns_400():
     with TestClient(app) as client:
         res = client.post("/api/models/does-not-exist/download")
         assert res.status_code == 400
+
+
+def test_download_is_rejected_before_start_when_disk_space_is_insufficient(monkeypatch, tmp_path):
+    """Il click Download non deve avviare un processo destinato a saturare il disco."""
+    monkeypatch.setattr(model_registry.config, "MODELS_DIR", tmp_path / "models")
+    monkeypatch.setattr(
+        model_registry.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(free=2 * 1024**3),
+    )
+
+    with pytest.raises(ValueError, match="spazio disco insufficiente"):
+        model_registry.start_download("glm-ocr")
+
+    assert not (tmp_path / "models" / "glm-ocr").exists()
 
 
 def test_delete_uninstalled_model_is_a_noop():

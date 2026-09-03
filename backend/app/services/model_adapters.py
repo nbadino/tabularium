@@ -239,6 +239,16 @@ class MinerU2_5Adapter(_StubAdapter):
     # checkpoint si aspetta questa rappresentazione; lasciarla cambiare in
     # base alla risoluzione della scansione altera il contesto visivo.
     official_layout_size = (1036, 1036)
+    # Anche i crop di testo/tabella seguono un protocollo immagine proprio:
+    # il client ufficiale li invia a risoluzione nativa (`resize_by_need`
+    # non ridimensiona, guarda solo edge-ratio e bordo minimo). Nessun tetto
+    # client-side: il cap vero è quello del preprocessore lato vLLM, letto
+    # dal preprocessor_config del checkpoint (max_pixels=1605632). Il tetto
+    # globale 1 MP del client (pensato per MonkeyOCRv2/MOCR2) qui non si
+    # applica: su LSI_17186_015 restringeva il layout a ~1001x1001 e il
+    # modello allucinava 175 micro-blocchi `page_number` al posto dei 5
+    # blocchi reali (riprodotto live, 2026-09-02).
+    native_image_resolution = True
     # Il client ufficiale riconosce il crop della tabella intero. Le bande
     # restano un fallback sperimentale di Tabularium per gli adapter per cui è
     # stato misurato; non si applicano a MinerU senza prova equivalente.
@@ -259,6 +269,10 @@ class MinerU2_5Adapter(_StubAdapter):
         train_toolchain="none",
         serve_backend="vllm-openai",
         served_model_name="mineru2.5",
+        # Il checkpoint corrente dichiara max_position_embeddings=8192 nella
+        # text_config; vLLM 0.28 rifiuta correttamente 16384 senza il flag
+        # pericoloso VLLM_ALLOW_LONG_MAX_MODEL_LEN.
+        max_model_len=8192,
     )
 
     _PROMPTS = {
@@ -371,14 +385,14 @@ class MinerU2_5Adapter(_StubAdapter):
         # 8 GB, non vendor-verificati. Nota: il `config.json` del checkpoint
         # dichiara `max_position_embeddings=32768` a livello top-level ma
         # `8192` nella sotto-struct `text_config` — discrepanza non spiegata
-        # da OpenDataLab; 16384 è una scelta intermedia prudente.
+        # da OpenDataLab; il limite 8192 del text_config è quello applicabile.
         return [
             "vllm", "serve", model_path,
             "--port", str(port),
             "--logits-processors", "mineru_vl_utils:MinerULogitsProcessor",
             "--dtype", "bfloat16",
             "--gpu-memory-utilization", "0.75",
-            "--max-model-len", "16384",
+            "--max-model-len", "8192",
             "--max-num-seqs", "4",
             "--max-num-batched-tokens", "8192",
             "--served-model-name", self.capabilities.served_model_name,

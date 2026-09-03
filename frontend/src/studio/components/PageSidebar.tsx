@@ -14,6 +14,7 @@ interface PageSidebarProps {
   onPageSelect: (pid: number) => void
   /** Larghezza in px governata dallo splitter: se assente vale il default. */
   width?: number
+  reviewScope?: { label: string; backTo: string; backLabel: string } | null
 }
 
 export default function PageSidebar({
@@ -24,6 +25,7 @@ export default function PageSidebar({
   onProjectChange,
   onPageSelect,
   width,
+  reviewScope,
 }: PageSidebarProps) {
   const { t } = useI18n()
   const index = currentPage ? pages.findIndex((p) => p.id === currentPage.id) : -1
@@ -36,10 +38,19 @@ export default function PageSidebar({
       style={width !== undefined ? { width } : undefined}
     >
       <div className="border-b border-[color:var(--color-rule)] p-2">
+        {reviewScope && (
+          <div className="mb-2 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] p-2">
+            <div className="text-[12px] font-semibold">{reviewScope.label}</div>
+            <Link to={reviewScope.backTo} className="mt-1 inline-block text-[11px] font-semibold no-underline">
+              {reviewScope.backLabel}
+            </Link>
+          </div>
+        )}
         <Field label={t('sidebar.project')}>
           <select
             value={projectId}
             onChange={(e) => onProjectChange(e.target.value === '' ? '' : Number(e.target.value))}
+            disabled={Boolean(reviewScope)}
             className="fld"
           >
             <option value="">{t('common.chooseProject')}</option>
@@ -50,12 +61,14 @@ export default function PageSidebar({
             ))}
           </select>
         </Field>
-        <Link
-          to="/progetti"
-          className="mt-1.5 inline-block text-[11px] font-semibold uppercase tracking-[0.04em] no-underline"
-        >
-          {t('sidebar.manageProjects')}
-        </Link>
+        {!reviewScope && (
+          <Link
+            to="/progetti"
+            className="mt-1.5 inline-block text-[11px] font-semibold uppercase tracking-[0.04em] no-underline"
+          >
+            {t('sidebar.manageProjects')}
+          </Link>
+        )}
       </div>
 
       {/* Scorrere l'archivio senza tornare all'elenco: il compito di Alex. */}

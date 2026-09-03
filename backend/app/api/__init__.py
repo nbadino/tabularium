@@ -18,6 +18,7 @@ from . import (
     playground,
     prelabel,
     projects,
+    recognition,
     settings,
     system,
     training,
@@ -41,4 +42,5 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(evaluate.router)
     app.include_router(playground.router)
     app.include_router(prelabel.router)
+    app.include_router(recognition.router)
     app.include_router(cloud.router)

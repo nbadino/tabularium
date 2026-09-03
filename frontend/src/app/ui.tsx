@@ -10,6 +10,7 @@
  * modulo senza linguetta, nessun pulsante affidato alla sola icona.
  */
 import { useEffect, useId, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ReactNode } from 'react'
 import { IconAlert, IconChevron, IconClose, IconWarn } from './icons'
 import { describeError } from '../lib/errors'
@@ -337,7 +338,10 @@ export function Modal({
     }
   }, [onClose])
 
-  return (
+  // Il portale su `body` non e' un dettaglio: la modale nasce dentro sezioni
+  // che animano `clip-path` (`.swap`), e un antenato ritagliato ridefinisce il
+  // blocco contenitore di `fixed` — la finestra finirebbe tagliata in basso.
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-[rgb(17_17_17/0.55)] p-4"
       onMouseDown={(e) => {
@@ -376,7 +380,8 @@ export function Modal({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

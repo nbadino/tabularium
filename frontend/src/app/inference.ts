@@ -16,6 +16,7 @@ export interface InferenceCfg {
   url: string
   model: string
   adapterId: string
+  provider: string | null
   apiKey: string
   hasApiKey: boolean
   extraHeaders: Record<string, string>
@@ -33,6 +34,7 @@ const EMPTY: InferenceCfg = {
   url: '',
   model: '',
   adapterId: 'monkeyocrv2-parsing',
+  provider: null,
   apiKey: '',
   hasApiKey: false,
   extraHeaders: {},
@@ -153,6 +155,7 @@ export async function syncInferenceFromBackend(): Promise<InferenceCfg> {
       url: res.url,
       model: res.model,
       adapterId: res.adapter_id ?? current.adapterId,
+      provider: res.provider ?? null,
       hasApiKey: res.has_api_key ?? false,
       extraHeaders: res.extra_headers ?? {},
       timeout: res.timeout ?? 180,
@@ -206,6 +209,7 @@ export async function saveInferenceToBackend(cfg: {
     url: res.url,
     model: res.model,
     adapterId: res.adapter_id ?? current.adapterId,
+    provider: res.provider ?? null,
     apiKey: cfg.apiKey ?? current.apiKey,
     hasApiKey: res.has_api_key ?? false,
     extraHeaders: res.extra_headers ?? {},

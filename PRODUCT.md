@@ -19,16 +19,19 @@ modalità locale a utente singolo per chi non vuole login.
 
 ## Product Purpose
 
-Tabularium accompagna l'utente dall'archivio di scansioni al modello affinato: registra le
-pagine dell'archivio (immagini/PDF) con metadati, guida l'annotazione super-dettagliata
+Tabularium è un ambiente professionale per generare testo strutturato da immagini e documenti.
+L'utente sceglie un modello e dove eseguirlo — macchina locale o provider remoto — poi usa lo
+stesso flusso per riconoscere una pagina o un intero archivio, controllare e correggere i risultati
+anche a GPU spenta, ed esportarli. Registra inoltre le pagine (immagini/PDF) con metadati e guida
+l'annotazione super-dettagliata
 (blocchi semantici, tabelle con celle unite, ordine di lettura, trascrizione con convenzioni),
 esporta il dataset nel formato ufficiale ms-swift (JSONL, coordinate 0–1000, tabelle OTSL),
 genera e lancia il training di MonkeyOCRv2-Parsing (LoRA/SFT) con monitoraggio live, e valuta
 su pagine mai viste (TEDS, CER/WER, IoU layout, ordine di lettura) per iterare.
 
-Successo = il proprietario di un archivio riesce, da solo, a produrre un modello affinato che
-parsa correttamente pagine mai viste del suo corpus — senza toccare a mano JSONL, OTSL o script
-di training.
+Successo = il proprietario di un archivio riesce, da solo, a trasformare pagine in risultati
+revisionabili ed esportabili e, quando serve, a produrre un modello affinato — senza dover
+conoscere l'infrastruttura del provider né toccare a mano JSONL, OTSL o script di training.
 
 ## Positioning
 
@@ -58,6 +61,9 @@ del pipeline.
   tabelle e reading order, dataset builder, training center, valutazione e playground,
   pseudo-labeling, build servita dal backend. Sopra di esso il layer self-hosted (setup iniziale,
   login, ruoli, impostazioni istanza, gestione utenti). Roadmap e dettagli in `AGENTS.md` §12.
+- Le elaborazioni bulk sono persistite pagina per pagina: supportano risultati originali e
+  revisionati, export JSON, CSV o testo, recupero delle sole pagine fallite e rilascio del server
+  locale al termine. Una sola run modello usa la GPU alla volta.
 - Convenzioni dati non negoziabili (verificate su `core_runner.py` ufficiale): JSONL ms-swift
   con path assoluti, coordinate normalizzate 0–1000 solo in export, tabelle in OTSL, prompt
   ufficiali §2.3 di AGENTS.md.
@@ -85,13 +91,15 @@ del pipeline.
 
 ## Product Principles
 
-1. **Fedeltà all'ufficiale**: ogni convenzione dati/prompt/formato segue il repo ufficiale
+1. **Inferenza prima, infrastruttura seconda**: modello e provider sono configurazione; il flusso
+   di riconoscimento, revisione ed export resta identico ovunque venga eseguito.
+2. **Fedeltà all'ufficiale**: ogni convenzione dati/prompt/formato segue il repo ufficiale
    MonkeyOCRv2; in dubbio, verificare il codice sorgente, mai approssimare.
-2. **Guidato, non magico**: ogni correzione manuale dell'utente è dato di training; il tool
+3. **Guidato, non magico**: ogni correzione manuale dell'utente è dato di training; il tool
    mostra e insegna le convenzioni invece di nasconderle.
-3. **I dati dell'utente sono sacri**: nessuna distruzione automatica, conferme esplicite,
+4. **I dati dell'utente sono sacri**: nessuna distruzione automatica, conferme esplicite,
    log/replay sempre disponibili.
-4. **Funziona ovunque si annota**: la preparazione dati è multipiattaforma; solo il training
+5. **Funziona ovunque si annota**: la preparazione dati è multipiattaforma; solo il training
    richiede la GPU dedicata.
-5. **Iterazione misurata**: ogni ciclo annotazione→training→valutazione produce metriche
+6. **Iterazione misurata**: ogni ciclo annotazione→training→valutazione produce metriche
    (TEDS, CER/WER, IoU) che guidano il ciclo successivo.

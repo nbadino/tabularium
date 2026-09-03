@@ -25,18 +25,24 @@ export default function AccountSection() {
   return (
     <>
       <Module tab={t('settings.account')}>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label={t('settings.accountUser')}>
-            <div className="fld bg-[color:var(--color-fill)]">{user.username}</div>
-          </Field>
-          <Field label={t('settings.accountRole')}>
-            <div className="fld bg-[color:var(--color-fill)]">{t(roleKey)}</div>
-          </Field>
-          <Field label={t('settings.accountEmail')}>
-            <div className="fld bg-[color:var(--color-fill)] text-[color:var(--color-ink-2)]">
+        <dl className="grid gap-x-6 gap-y-3 border-b border-[color:var(--color-rule)] pb-3 sm:grid-cols-3">
+          <div className="min-w-0">
+            <dt className="lbl">{t('settings.accountUser')}</dt>
+            <dd className="truncate text-[13px] font-semibold">{user.username}</dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="lbl">{t('settings.accountRole')}</dt>
+            <dd className="text-[13px]">{t(roleKey)}</dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="lbl">{t('settings.accountEmail')}</dt>
+            <dd className="truncate text-[13px] text-[color:var(--color-ink-2)]" title={user.email || undefined}>
               {user.email || t('settings.accountNoEmail')}
-            </div>
-          </Field>
+            </dd>
+          </div>
+        </dl>
+
+        <div className="mt-3 grid items-end gap-3 sm:grid-cols-[minmax(220px,360px)_auto]">
           <Field label={t('settings.language')} hint={t('settings.languageHint')}>
             <select
               className="fld"
@@ -50,11 +56,12 @@ export default function AccountSection() {
               ))}
             </select>
           </Field>
+          <div>
+            <button type="button" className="btn" onClick={() => setPwOpen(true)}>
+              {t('settings.changePassword')}
+            </button>
+          </div>
         </div>
-
-        <button type="button" className="btn mt-3" onClick={() => setPwOpen(true)}>
-          {t('settings.changePassword')}
-        </button>
       </Module>
 
       {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} />}

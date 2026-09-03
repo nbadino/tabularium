@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * Le impostazioni sono cinque zone, non una colonna di sette moduli: qui si
+ * Le impostazioni sono quattro zone, non una colonna di moduli: qui si
  * verifica ciò che quella scelta promette — una zona dominante per volta, la
  * scelta leggibile nell'URL, e i comandi di scrittura riservati all'admin
  * *con* la riga che spiega perché, invece di campi spenti senza motivo.
@@ -15,7 +15,7 @@ import SettingsPage from './SettingsPage'
 /** Sonda: MemoryRouter non tocca `window.location`, la rotta si legge da qui. */
 function LocationProbe() {
   const location = useLocation()
-  return <span data-testid="location">{location.search}</span>
+  return <span data-testid="location">{location.pathname}{location.search}</span>
 }
 
 const role = { current: 'admin' as 'admin' | 'editor' }
@@ -57,6 +57,14 @@ const renderPage = () =>
     </MemoryRouter>,
   )
 
+const renderLegacyComputeLink = () =>
+  render(
+    <MemoryRouter initialEntries={['/impostazioni?s=calcolo']}>
+      <SettingsPage />
+      <LocationProbe />
+    </MemoryRouter>,
+  )
+
 beforeEach(() => {
   role.current = 'admin'
 })
@@ -69,6 +77,12 @@ describe('SettingsPage', () => {
     // Le altre zone non sono sotto, in fila: non sono proprio rese.
     expect(screen.queryByRole('region', { name: 'Identità e accesso' })).toBeNull()
     expect(screen.queryByRole('region', { name: 'In uso ora' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Modello e calcolo' })).toBeNull()
+  })
+
+  it('manda i vecchi link del calcolo all’hub Modelli', async () => {
+    renderLegacyComputeLink()
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/modelli'))
   })
 
   it('la linguetta cambia zona e la scelta resta nell’URL', async () => {

@@ -31,6 +31,11 @@ def preview_path(page_id: int) -> Path:
     return thumb_dir() / f"p{page_id}_preview.jpg"
 
 
+def pdf_image_path(page_id: int) -> Path:
+    """PNG materializzato all'import del PDF, sorgente veloce e lossless."""
+    return thumb_dir() / f"p{page_id}_source.png"
+
+
 def original_preview_path(page_id: int) -> Path:
     return thumb_dir() / f"p{page_id}_original_preview.jpg"
 
@@ -128,6 +133,24 @@ def _purge_invalid_transform(page: sqlite3.Row) -> None:
     shutil.rmtree(config.ROOT_DIR / "tiles" / f"p{page['id']}", ignore_errors=True)
 
 
+def source_missing(page: sqlite3.Row) -> HTTPException:
+    """404 che dice *quale* file manca.
+
+    I percorsi delle pagine sono assoluti nel database: rinominare o spostare
+    la cartella del progetto li invalida tutti in un colpo, e un «file sorgente
+    non presente» nudo costringe a interrogare il database per capirlo. Il path
+    atteso rende la diagnosi immediata.
+    """
+    try:
+        expected = page["abs_path"]
+    except (KeyError, IndexError):
+        expected = None
+    detail = "file sorgente non presente"
+    if expected:
+        detail = f"{detail}: {expected}"
+    return HTTPException(status_code=404, detail=detail)
+
+
 def _load_source_image(page: sqlite3.Row, use_deskew: bool = True) -> Image.Image | None:
     """Ritorna l'immagine sorgente della pagina (deskewata se attiva, altrimenti
     image originale o pdf+indice)."""
@@ -139,11 +162,27 @@ def _load_source_image(page: sqlite3.Row, use_deskew: bool = True) -> Image.Imag
     if not Path(src).exists():
         return None
     if page["source_kind"] == "pdf":
-        images = scanmod.render_pdf_pages(src)
+        # Il nome è deterministico: consente di riutilizzare e completare
+        # anche le pagine importate prima della materializzazione PNG.
+        cached = pdf_image_path(int(page["id"]))
+        if cached.exists():
+            return Image.open(cached)
+        try:
+            extracted = json.loads(page["meta_json"] or "{}").get("extracted_path")
+            if extracted and Path(extracted).exists():
+                return Image.open(extracted)
+        except (TypeError, ValueError, OSError):
+            pass
         idx = page["pdf_page"] or 0
-        if idx >= len(images):
+        rendered = scanmod.render_pdf_page(src, idx)
+        if rendered is None:
             return None
-        return images[idx][0]
+        image = rendered[0]
+        # Materializzazione lazy per i PDF già presenti nel database: la prima
+        # apertura converte solo quella pagina, senza rileggere il documento.
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        image.save(cached, format="PNG", optimize=True)
+        return Image.open(cached)
     return Image.open(src)
 
 
@@ -172,7 +211,7 @@ def maybe_auto_deskew(page: sqlite3.Row, threshold: float = 0.10) -> tuple[Image
         return Image.open(active), 0.0
     img = _load_source_image(page, use_deskew=False)
     if img is None:
-        raise HTTPException(status_code=404, detail="file sorgente non presente")
+        raise source_missing(page)
     aligned, angle = imgmod.deskew(img)
     if abs(angle) >= threshold:
         desk = deskew_path(page["id"])
@@ -229,7 +268,7 @@ def ensure_thumbnail(conn: sqlite3.Connection, page: sqlite3.Row) -> Path:
         return expected
     img = _load_source_image(page)
     if img is None:
-        raise HTTPException(status_code=404, detail="file sorgente non presente")
+        raise source_missing(page)
     expected.parent.mkdir(parents=True, exist_ok=True)
     img = img.convert("RGB")
     img.thumbnail((THUMB_SIDE, THUMB_SIDE), Image.LANCZOS)
@@ -246,7 +285,7 @@ def ensure_preview(conn: sqlite3.Connection, page: sqlite3.Row) -> Path:
         return expected
     img = _load_source_image(page)
     if img is None:
-        raise HTTPException(status_code=404, detail="file sorgente non presente")
+        raise source_missing(page)
     expected.parent.mkdir(parents=True, exist_ok=True)
     img = img.convert("RGB")
     img.thumbnail((PREVIEW_SIDE, PREVIEW_SIDE), Image.LANCZOS)
@@ -272,7 +311,7 @@ def crop_block_image(page: sqlite3.Row, bbox: tuple[int, int, int, int]) -> Imag
     """
     img = _load_source_image(page)
     if img is None:
-        raise HTTPException(status_code=404, detail="file sorgente non presente")
+        raise source_missing(page)
     x1, y1, x2, y2 = bbox
     img = img.convert("RGB")
     crop = img.crop(
@@ -309,7 +348,7 @@ def ensure_tile(page: sqlite3.Row, level: int, x: int, y: int) -> Path:
         return out
     img = _load_source_image(page)
     if img is None:
-        raise HTTPException(status_code=404, detail="file sorgente non presente")
+        raise source_missing(page)
     # level 0 è la vista più dettagliata; ogni livello successivo dimezza.
     scale = 2**level
     width = max(1, (img.width + scale - 1) // scale)

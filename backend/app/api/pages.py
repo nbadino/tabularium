@@ -55,6 +55,10 @@ def list_pages(
     if status:
         sql += " AND status=?"
         params.append(status)
+    else:
+        # Una nuova scan marca come mancanti le sorgenti rimosse, preservando
+        # annotazioni e risultati ma evitando di mostrarle nel lavoro attivo.
+        sql += " AND status != 'missing'"
     sql += " ORDER BY rel_path, pdf_page LIMIT ?"
     params.append(limit)
     with connect() as conn:
@@ -246,7 +250,7 @@ def deskew_page(
 
     img = pagesvc.load_original_source_image(page)
     if img is None:
-        raise HTTPException(status_code=404, detail="file sorgente non presente")
+        raise pagesvc.source_missing(page)
     out, angle = imgmod.deskew(img)
 
     if confirm:
@@ -335,7 +339,7 @@ def align_page_endpoint(
 
     img = pagesvc.load_original_source_image(page)
     if img is None:
-        raise HTTPException(status_code=404, detail="file sorgente non presente")
+        raise pagesvc.source_missing(page)
     aligned, angle = dewarp.align_page(img, payload.level, payload.strength)
 
     if confirm:
@@ -425,7 +429,7 @@ def generate_transform_candidate(
         page = _get_page_or_404(conn, page_id)
     image = pagesvc.load_original_source_image(page)
     if image is None:
-        raise HTTPException(status_code=404, detail="file sorgente non presente")
+        raise pagesvc.source_missing(page)
     result = dewarp.run_transform(
         image.convert("RGB"),
         payload.engine,

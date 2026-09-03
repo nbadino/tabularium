@@ -163,6 +163,7 @@ export interface ScanReport {
   registered: number
   duplicates: number
   unsupported: number
+  missing?: number
   errors: string[]
 }
 
@@ -539,6 +540,8 @@ export interface InferenceConfig {
   url: string
   model: string
   adapter_id?: string
+  provider?: string | null
+  resource_id?: string | null
   has_api_key?: boolean
   extra_headers?: Record<string, string>
   timeout?: number
@@ -558,4 +561,65 @@ export interface InferenceTestResult {
   latency_ms?: number | null
   is_cloud?: boolean
   error?: string | null
+}
+
+// --- Sessioni persistenti di riconoscimento ---------------------------------
+
+export type RecognitionRunState =
+  | 'queued'
+  | 'running'
+  | 'finished'
+  | 'finished_with_errors'
+  | 'failed'
+  | 'cancelled'
+
+export type RecognitionItemState =
+  | 'queued'
+  | 'running'
+  | 'finished'
+  | 'failed'
+  | 'cancelled'
+
+export interface RecognitionRunItem {
+  id: number
+  run_id: number
+  page_id: number
+  rel_path: string
+  page_status: string
+  state: RecognitionItemState
+  detected: number
+  inserted: number
+  blocks: number
+  drafts: number
+  result: {
+    summary?: Record<string, unknown>
+    blocks?: Array<Record<string, unknown>>
+  }
+  error: string | null
+  started_at: string | null
+  ended_at: string | null
+}
+
+export interface RecognitionRun {
+  id: number
+  project_id: number
+  state: RecognitionRunState
+  engine: 'model' | 'ocr'
+  mode: 'merge' | 'replace_drafts' | 'replace_all'
+  model_mode: string
+  model_name: string | null
+  adapter_id: string | null
+  provider: string
+  endpoint: string | null
+  stop_policy: 'none' | 'disable_inference'
+  total_pages: number
+  completed_pages: number
+  succeeded_pages: number
+  failed_pages: number
+  error: string | null
+  created_at: string
+  started_at: string | null
+  heartbeat_at: string | null
+  ended_at: string | null
+  items?: RecognitionRunItem[]
 }

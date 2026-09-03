@@ -50,6 +50,10 @@ _IT: dict[str, str] = {
         "Modello base non raggiungibile su {url}: avvia il server di inferenza "
         "(./scripts/serve_model.sh) oppure usa il motore OCR."
     ),
+    "model_endpoint_unreachable": (
+        "l'endpoint di inferenza {url} non risponde: controlla modello e "
+        "provider nella pagina Modelli prima di avviare una sessione."
+    ),
     "ocr_engine_failed": (
         "Il motore OCR «{engine}» è installato ma non riesce a partire: {exc}. "
         "Installa rapidocr-onnxruntime nell'ambiente che esegue il backend, "
@@ -173,6 +177,10 @@ _EN: dict[str, str] = {
         "Base model unreachable at {url}: start the inference server "
         "(./scripts/serve_model.sh) or use the OCR engine."
     ),
+    "model_endpoint_unreachable": (
+        "the inference endpoint {url} is not responding: check model and "
+        "provider on the Models page before starting a session."
+    ),
     "ocr_engine_failed": (
         "The OCR engine “{engine}” is installed but fails to start: {exc}. "
         "Install rapidocr-onnxruntime in the environment running the backend, "
@@ -287,6 +295,10 @@ _FR: dict[str, str] = {
     "model_unavailable": (
         "Modèle de base injoignable sur {url} : démarrez le serveur d'inférence "
         "(./scripts/serve_model.sh) ou utilisez le moteur OCR."
+    ),
+    "model_endpoint_unreachable": (
+        "le point d'accès d'inférence {url} ne répond pas : vérifiez le modèle "
+        "et le fournisseur dans la page Modèles avant de lancer une session."
     ),
     "ocr_engine_failed": (
         "Le moteur OCR « {engine} » est installé mais ne démarre pas : {exc}. "

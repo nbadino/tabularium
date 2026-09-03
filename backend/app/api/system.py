@@ -76,6 +76,20 @@ def put_secret(payload: SecretIn, user: dict = Depends(_admin)) -> SecretOut:
     return SecretOut(name=payload.name, ref=ref)
 
 
+@router.get("/api/system/secrets/{name}", response_model=SecretOut)
+def get_secret_status(name: str, _user: dict = Depends(_admin)) -> SecretOut:
+    """Dice solo se il credential esiste: il valore non lascia mai il vault."""
+    from ..services import vault
+
+    clean = name.removeprefix("vault:")
+    try:
+        configured = bool(vault.get(f"vault:{clean}"))
+    except (RuntimeError, ValueError):
+        # Vault non configurato o nome non valido: per la UI equivale ad assente.
+        configured = False
+    return SecretOut(name=clean, ref=f"vault:{clean}", configured=configured)
+
+
 @router.delete("/api/system/secrets/{name}", response_model=SecretOut)
 def delete_secret(name: str, user: dict = Depends(_admin)) -> SecretOut:
     """Revoca un credential; il valore non viene mai restituito."""
@@ -213,6 +227,7 @@ def prefill_engines() -> dict:
                 "url": cfg["url"],
                 "model": cfg["model"],
                 "adapter_id": cfg.get("adapter_id", "monkeyocrv2-parsing"),
+                "provider": cfg.get("provider"),
                 "is_cloud": False,
                 "latency_ms": None,
                 "models_available": [],
@@ -237,6 +252,7 @@ def prefill_engines() -> dict:
             "url": client.url,
             "model": client.model,
             "adapter_id": cfg.get("adapter_id", "monkeyocrv2-parsing"),
+            "provider": cfg.get("provider"),
             "is_cloud": client.is_cloud,
             "latency_ms": test_res.get("latency_ms"),
             "models_available": test_res.get("models_available", []),
@@ -253,6 +269,17 @@ def get_inference_settings() -> dict:
     from ..services import inference
 
     cfg = inference.get_inference_config()
+    # Auto-heal del caso più comune dopo un riavvio: il job tunnel resta
+    # registrato, ma il processo SSH è morto e l'URL conserva una porta
+    # inutilizzabile. Il controllo è locale e non reinstalla nulla sull'istanza.
+    if cfg.get("provider") == "vast" and str(cfg.get("url", "")).startswith(("http://127.0.0.1:", "http://localhost:")):
+        try:
+            from ..services import cloud_manager
+            if not cloud_manager.get_tunnel_status().running:
+                cloud_manager.reconcile_tunnel()
+                cfg = inference.get_inference_config()
+        except Exception:
+            pass
     enabled = cfg.get("enabled", True)
 
     if not enabled:
@@ -266,6 +293,7 @@ def get_inference_settings() -> dict:
             "extra_headers": {},
             "timeout": cfg.get("timeout", 180),
             "max_pixels": cfg.get("max_pixels"),
+            "provider": cfg.get("provider"),
             "is_cloud": False,
             "available": False,
             "latency_ms": None,
@@ -279,6 +307,7 @@ def get_inference_settings() -> dict:
         api_key=cfg["api_key"],
         extra_headers=cfg["extra_headers"],
         timeout=min(cfg.get("timeout", 180), 5),
+        provider=cfg.get("provider"),
     )
     test_res = client.test_connection(timeout=3.0)
 
@@ -291,6 +320,7 @@ def get_inference_settings() -> dict:
         "extra_headers": {},
         "timeout": cfg.get("timeout", 180),
         "max_pixels": cfg.get("max_pixels"),
+        "provider": cfg.get("provider"),
         "is_cloud": client.is_cloud,
         "available": test_res["ok"],
         "latency_ms": test_res.get("latency_ms"),
@@ -310,7 +340,17 @@ def update_inference_settings(
 
     if payload.get("url"):
         payload = {**payload, "url": validate_endpoint(str(payload["url"]))}
+    before = inference.get_inference_config()
     inference.save_inference_config(payload)
+    if payload.get("enabled") is False:
+        endpoint = str(payload.get("url") or before.get("url") or "").lower()
+        if "127.0.0.1" in endpoint or "localhost" in endpoint:
+            # In locale «disattiva» deve liberare la VRAM, non limitarsi a
+            # impedire nuove richieste. Lo stop attribuisce il PID prima di
+            # terminarlo, quindi non rischia processi estranei.
+            from ..services import serve_manager
+
+            serve_manager.stop()
     if "api_key" in payload:
         from ..services import audit as auditsvc
         with connect() as conn:

@@ -166,6 +166,11 @@ class _OuterListScanner:
         return False
 
 
+# Sentinella per `_chat(max_pixels=…)`: "non passato" → usa il tetto del
+# client. Non serve `None`, che significa genuinamente "nessun cap".
+_CLIENT_MAX_PIXELS = object()
+
+
 def _fit_pixels(
     image: Image.Image,
     *,
@@ -229,6 +234,7 @@ class VllmClient:
         max_retries: int = 2,
         adapter: ModelAdapter | None = None,
         max_pixels: int | None | object = _MAX_PIXELS_DEFAULT,
+        provider: str | None = None,
     ) -> None:
         self.url = (url or config.VLLM_URL).rstrip("/")
         self.model = model or config.VLLM_MODEL
@@ -236,6 +242,10 @@ class VllmClient:
         self.extra_headers = extra_headers if extra_headers is not None else config.VLLM_EXTRA_HEADERS
         self.timeout = timeout
         self.max_retries = max_retries
+        # Provider dichiarato dalla configurazione persistita: fa da verità
+        # anche quando l'URL mente (un tunnel SSH Vast ascolta su localhost,
+        # ma la GPU è remota). None = si ripiega sulla sola forma dell'URL.
+        self.provider = (provider or "").strip() or None
         # Default MonkeyOCRv2: i chiamanti esistenti (test compresi) costruiscono
         # `VllmClient` senza adapter e si aspettano il comportamento storico.
         self.adapter: ModelAdapter = adapter or MonkeyOCRv2ParsingAdapter()
@@ -256,7 +266,16 @@ class VllmClient:
 
     @property
     def is_cloud(self) -> bool:
-        """Indica se l'endpoint punta a un server remoto/cloud o alla macchina locale."""
+        """Indica se l'endpoint punta a un server remoto/cloud o alla macchina locale.
+
+        Il provider persistito vince sull'URL: un tunnel SSH Vast o un proxy
+        con port-forward ascoltano su ``localhost``, quindi la sola forma
+        dell'URL direbbe «locale» per una GPU che non lo è.
+        """
+        if self.provider == "local":
+            return False
+        if self.provider:
+            return True
         url_lower = self.url.lower()
         return not any(
             loc in url_lower
@@ -279,6 +298,7 @@ class VllmClient:
         prompt: str,
         max_tokens: int = 4096,
         min_pixels: int | None = None,
+        max_pixels: int | None = _CLIENT_MAX_PIXELS,
         total_timeout: float | None = None,
         stop_when_complete_list: bool = False,
         sampling: dict | None = None,
@@ -288,9 +308,20 @@ class VllmClient:
         cancel_event: threading.Event | None = None,
     ) -> str:
         buf = io.BytesIO()
-        prepared = _fit_pixels(
-            image, min_pixels=min_pixels, max_pixels=self.max_pixels
-        )
+        # Cap effettivo: default storico = tetto del client (MOCR2-style);
+        # `None` esplicito = nessun ridimensionamento client-side (il cap vero
+        # lo applica il preprocessore di vLLM dal config del checkpoint); un
+        # adapter che dichiara `native_image_resolution` esonera il proprio
+        # protocollo immagine da qualsiasi cap client (v. MinerU2.5).
+        if max_pixels is _CLIENT_MAX_PIXELS:
+            cap = (
+                None
+                if getattr(self.adapter, "native_image_resolution", False)
+                else self.max_pixels
+            )
+        else:
+            cap = max_pixels
+        prepared = _fit_pixels(image, min_pixels=min_pixels, max_pixels=cap)
         prepared.convert("RGB").save(buf, format="PNG")
         data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
         # Tutti gli endpoint OpenAI-compatible, incluso Modal, usano lo
@@ -467,34 +498,51 @@ class VllmClient:
     def layout(
         self, image: Image.Image, on_delta: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
+        total_timeout: float | None = None,
     ) -> list[dict]:
         # Layout: minimo e tetto ufficiali coincidono a 1 MP, quindi la pagina
         # arriva al VLM esattamente come in `get_layout()` del repo. Un override
         # esplicito (Impostazioni / env) sostituisce il tetto; se il tetto è
         # disattivato resta `LAYOUT_MAX_PIXELS` come rete di sicurezza.
+        prompt = _prompt_for(self.adapter, "layout", None, LAYOUT_PROMPT)
         official_size = getattr(self.adapter, "official_layout_size", None)
         if official_size:
             # MinerUClient.prepare_for_layout() usa resize() a una dimensione
             # fissa di 1036x1036. È parte del protocollo del checkpoint, non
             # un'ottimizzazione nostra: aspect ratio e pixel budget diversi
-            # cambiano il layout che il VLM vede.
+            # cambiano il layout che il VLM vede. E il tetto 1 MP del client
+            # NON tocca questa immagine: 1036x1036 = 1.073.296 pixel > cap,
+            # una seconda passata di _fit_pixels la restringeva a ~1001x1001
+            # e il modello allucinava una griglia di micro-blocchi
+            # `page_number` (riprodotto live su MinerU2.5, 2026-09-02).
             prepared = image.convert("RGB").resize(official_size, Image.Resampling.BICUBIC)
+            raw = self._chat(
+                prepared,
+                prompt,
+                task="layout",
+                max_tokens=4096,
+                max_pixels=None,
+                total_timeout=total_timeout,
+                sampling=self._sampling_for("layout"),
+                on_delta=on_delta,
+                cancel_event=cancel_event,
+            )
         else:
             prepared = _fit_pixels(
                 image,
                 min_pixels=LAYOUT_MIN_PIXELS,
                 max_pixels=self.max_pixels or LAYOUT_MAX_PIXELS,
             )
-        prompt = _prompt_for(self.adapter, "layout", None, LAYOUT_PROMPT)
-        raw = self._chat(
-            prepared,
-            prompt,
-            task="layout",
-            max_tokens=4096,
-            sampling=self._sampling_for("layout"),
-            on_delta=on_delta,
-            cancel_event=cancel_event,
-        )
+            raw = self._chat(
+                prepared,
+                prompt,
+                task="layout",
+                max_tokens=4096,
+                total_timeout=total_timeout,
+                sampling=self._sampling_for("layout"),
+                on_delta=on_delta,
+                cancel_event=cancel_event,
+            )
         cleaned = []
         for item in self._parse_items(raw):
             bbox = item.get("bbox")
@@ -536,6 +584,7 @@ class VllmClient:
         # budget; generic/end-to-end document parsing remains generous.
         if getattr(self.adapter, "adapter_id", None) == "unlimited-ocr":
             end2end_tokens = min(max_tokens, getattr(self.adapter, "end2end_max_tokens", max_tokens))
+        sampling = self._sampling_for("end2end")
         raw = self._chat(
             prepared,
             prompt,
@@ -545,7 +594,7 @@ class VllmClient:
             # Gli adapter JSON possono chiudere presto dopo la lista; questo
             # modello invece emette markdown con marker <|det|>.
             stop_when_complete_list=getattr(self.adapter, "end2end_output_format", "list") == "list",
-            sampling=self._sampling_for("end2end"),
+            sampling=sampling,
             on_delta=on_delta,
             cancel_event=cancel_event,
         )
@@ -565,7 +614,13 @@ class VllmClient:
         # normale resta una sola chiamata. Questo evita di salvare bbox come
         # [509, 21, 960, 998, 998, ...].
         first_valid = valid_items(raw)
-        if not first_valid or _should_retry_repeat_output(raw):
+        # Grounded-markdown (Unlimited-OCR) is a native protocol, not a JSON
+        # list. An empty parsed bbox list must not trigger the generic
+        # MonkeyOCR retry: the raw response is still the authoritative output
+        # to inspect and a second 8 GB generation can exceed the request
+        # budget without adding evidence.
+        native_grounded = getattr(self.adapter, "end2end_output_format", "list") == "grounded-markdown"
+        if not native_grounded and (not first_valid or _should_retry_repeat_output(raw)):
             if on_retry:
                 on_retry()
             retry_sampling = dict(sampling or {})
@@ -574,7 +629,7 @@ class VllmClient:
                 prepared,
                 prompt,
                 task="end2end",
-                max_tokens=min(max_tokens, adapter_max_tokens),
+                max_tokens=end2end_tokens,
                 total_timeout=total_timeout,
                 stop_when_complete_list=getattr(self.adapter, "end2end_output_format", "list") == "list",
                 sampling=retry_sampling,
@@ -616,6 +671,7 @@ class VllmClient:
         label: str,
         on_delta: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
+        total_timeout: float | None = None,
     ) -> str:
         task = "table" if label == "Table" else "text"
         fallback = TABLE_PROMPT if label == "Table" else TEXT_PROMPT
@@ -631,6 +687,7 @@ class VllmClient:
             prompt,
             task=task,
             max_tokens=self._output_budget(TABLE_MAX_TOKENS) if task == "table" else 3072,
+            total_timeout=total_timeout,
             sampling=self._sampling_for(task),
             on_delta=on_delta,
             cancel_event=cancel_event,
@@ -973,6 +1030,10 @@ def get_inference_config() -> dict:
     # quando il nome è riconoscibile: altrimenti un endpoint Unlimited può
     # ricevere silenziosamente il prompt/parser di MonkeyOCRv2.
     adapter_id = _adapter_for_endpoint(model, url) or rows.get("inference_adapter_id") or "monkeyocrv2-parsing"
+    provider = rows.get("inference_provider") or _provider_for_endpoint(url)
+    resource_id = rows.get("inference_resource_id") or None
+    provider_credential_ref = rows.get("inference_provider_credential_ref") or None
+    source_profile_id: int | None = None
 
     # Dal DB v10 in poi il profilo attivo è la fonte di verità atomica. La
     # lettura resta tollerante per basi appena migrate o test che non hanno
@@ -981,9 +1042,30 @@ def get_inference_config() -> dict:
         with connect() as conn:
             profile = conn.execute("SELECT * FROM compute_profiles WHERE active=1 LIMIT 1").fetchone()
         if profile:
+            source_profile_id = int(profile["id"])
             url = profile["endpoint"]
             model = profile["served_model_name"]
             adapter_id = profile["model_adapter_id"]
+            provider = profile["provider"]
+            provider_credential_ref = (
+                rows.get("inference_provider_credential_ref") or None
+                if profile["name"] == "legacy-active"
+                else profile["credential_ref"] or None
+            )
+            try:
+                hardware = json.loads(profile["hardware_profile_json"] or "{}")
+            except (TypeError, ValueError):
+                hardware = {}
+            resource_id = (
+                rows.get("inference_resource_id") or None
+                if profile["name"] == "legacy-active"
+                else str(
+                    hardware.get("resource_id")
+                    or hardware.get("instance_id")
+                    or hardware.get("pod_id")
+                    or ""
+                ) or None
+            )
             ref = profile["credential_ref"] or ""
             if ref.startswith("env:"):
                 api_key = os.environ.get(ref[4:], "")
@@ -1004,7 +1086,22 @@ def get_inference_config() -> dict:
         "timeout": timeout,
         "max_pixels": max_pixels,
         "adapter_id": adapter_id,
+        "provider": provider,
+        "resource_id": resource_id,
+        "provider_credential_ref": provider_credential_ref,
+        "source_profile_id": source_profile_id,
     }
+
+
+def _provider_for_endpoint(url: str) -> str:
+    value = str(url or "").lower()
+    if ".modal.run" in value:
+        return "modal"
+    if "runpod" in value:
+        return "runpod"
+    if any(host in value for host in ("127.0.0.1", "localhost", "0.0.0.0", "::1")):
+        return "local"
+    return "custom"
 
 
 def _adapter_for_endpoint(model: str, url: str) -> str | None:
@@ -1076,6 +1173,15 @@ def save_inference_config(cfg: dict) -> None:
         )
         if inferred:
             items.append(("inference_adapter_id", inferred))
+    identity_changed = any(key in cfg for key in ("url", "model", "adapter_id"))
+    if identity_changed:
+        provider = str(cfg.get("provider") or _provider_for_endpoint(str(cfg.get("url") or ""))).strip()
+        items.append(("inference_provider", provider))
+        items.append(("inference_resource_id", str(cfg.get("resource_id") or "").strip()))
+        items.append((
+            "inference_provider_credential_ref",
+            str(cfg.get("provider_credential_ref") or "").strip(),
+        ))
 
     with connect() as conn:
         for key, value in items:
@@ -1090,21 +1196,29 @@ def save_inference_config(cfg: dict) -> None:
         # la combinazione URL/adapter/modello incoerente della vecchia UI.
         try:
             active = conn.execute("SELECT * FROM compute_profiles WHERE active=1 LIMIT 1").fetchone()
-            if active and active["name"] == "legacy-active" and ("url" in cfg or "model" in cfg or "adapter_id" in cfg):
+            if active and active["name"] == "legacy-active" and identity_changed:
                 next_url = str(cfg.get("url", active["endpoint"])).strip()
                 next_model = str(cfg.get("model", active["served_model_name"])).strip()
                 next_adapter = str(cfg.get("adapter_id") or _adapter_for_endpoint(next_model, next_url) or active["model_adapter_id"])
                 conn.execute(
-                    "UPDATE compute_profiles SET endpoint=?, served_model_name=?, model_adapter_id=?, credential_ref=CASE WHEN ? THEN 'vault:inference' WHEN ? THEN '' ELSE credential_ref END, updated_at=datetime('now') WHERE id=?",
+                    "UPDATE compute_profiles SET endpoint=?, served_model_name=?, model_adapter_id=?, provider=?, hardware_profile_json=?, credential_ref=CASE WHEN ? THEN 'vault:inference' WHEN ? THEN '' ELSE credential_ref END, updated_at=datetime('now') WHERE id=?",
                     (
                         next_url,
                         next_model,
                         next_adapter,
+                        provider,
+                        json.dumps({"resource_id": str(cfg.get("resource_id") or "").strip()}),
                         bool(str(cfg.get("api_key") or "").strip()),
                         "api_key" in cfg,
                         active["id"],
                     ),
                 )
+            elif active and identity_changed:
+                # Una selezione diretta (server locale, Modal, RunPod, Vast o
+                # endpoint manuale) sostituisce il profilo salvato. Lasciarlo
+                # attivo farebbe sì che get_inference_config ignorasse la nuova
+                # scelta e continuasse a usare silenziosamente il vecchio URL.
+                conn.execute("UPDATE compute_profiles SET active=0, updated_at=datetime('now')")
         except sqlite3.OperationalError:
             # Basi non ancora migrate alla v10 restano compatibili.
             pass
@@ -1136,6 +1250,7 @@ def get_vllm_client(
             timeout=timeout if timeout is not None else cfg.get("timeout", 180),
             adapter=adapter,
             max_pixels=cfg.get("max_pixels"),
+            provider=cfg.get("provider"),
         )
     except TypeError:
         try:

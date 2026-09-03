@@ -104,7 +104,12 @@ def activate(profile_id: int, actor: dict | None = None) -> dict:
         conn.execute("UPDATE compute_profiles SET active=1, last_health_check=?, last_health_ok=1, last_health_error=NULL, updated_at=? WHERE id=?", (now, now, profile_id))
         # Aggiorna la vista legacy in una stessa transazione, mantenendo i
         # consumer esistenti mentre il frontend migra ai profili.
-        for key, value in (("inference_url", endpoint), ("inference_model", row["served_model_name"]), ("inference_adapter_id", row["model_adapter_id"])):
+        for key, value in (
+            ("inference_url", endpoint),
+            ("inference_model", row["served_model_name"]),
+            ("inference_adapter_id", row["model_adapter_id"]),
+            ("inference_enabled", "1"),
+        ):
             conn.execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
         audit.record(conn, actor, "compute_profile.activated", resource_type="compute_profile", resource_id=profile_id, payload={"previous": "rollback_available_in_history"})
         return _out(conn.execute("SELECT * FROM compute_profiles WHERE id=?", (profile_id,)).fetchone())

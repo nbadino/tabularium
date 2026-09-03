@@ -670,7 +670,12 @@ def start(
                 # il gcc di sistema (GCC 15 su Ubuntu recente) e FlashInfer
                 # fallisce durante la compilazione JIT.
                 env.setdefault("NVCC_CCBIN", shutil.which("g++-13") or "g++-13")
-                env.setdefault("NVCC_PREPEND_FLAGS", "-allow-unsupported-compiler")
+            # Se il compiler CUDA supportato non è installato, nvcc deve poter
+            # usare quello di sistema (su questa macchina GCC 15). Senza il
+            # flag il primo kernel FlashInfer fallisce; i modelli già in cache
+            # nascondono il problema, rendendo l'errore apparentemente
+            # intermittente per l'utente.
+            env.setdefault("NVCC_PREPEND_FLAGS", "-allow-unsupported-compiler")
     except Exception as exc:  # noqa: BLE001
         _set_phase(adapter_id, "failed", str(exc))
         raise

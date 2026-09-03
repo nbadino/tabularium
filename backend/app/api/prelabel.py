@@ -17,6 +17,21 @@ from ..services.i18n import msg, parse_lang
 from ..services import auth as authsvc
 from .deps import require_resource
 
+
+def _model_client_with_recovery():
+    """Riprova dopo aver riallacciato un tunnel cloud persistito."""
+    client = inference.get_vllm_client()
+    if client.ping():
+        return client
+    if not str(client.url).startswith(("http://127.0.0.1:", "http://localhost:")):
+        return client
+    try:
+        from ..services import cloud_manager
+        cloud_manager.reconcile_tunnel()
+        return inference.get_vllm_client()
+    except Exception:
+        return client
+
 router = APIRouter(
     tags=["prelabel"],
     dependencies=[Depends(authsvc.get_current_user)],
@@ -85,7 +100,7 @@ def prelabel(
                 status_code=400,
                 detail="L'inferenza del modello (GPU/Cloud) è disattivata. Attivala nelle impostazioni o usa l'OCR locale.",
             )
-        client = inference.get_vllm_client()
+        client = _model_client_with_recovery()
         if not client.ping():
             raise HTTPException(
                 status_code=400, detail=msg("model_unavailable", lang, url=client.url)
@@ -156,7 +171,7 @@ def prelabel_stream(
                 status_code=400,
                 detail="L'inferenza del modello (GPU/Cloud) è disattivata. Attivala nelle impostazioni o usa l'OCR locale.",
             )
-        client = inference.get_vllm_client()
+        client = _model_client_with_recovery()
         if not client.ping():
             raise HTTPException(
                 status_code=400, detail=msg("model_unavailable", lang, url=client.url)

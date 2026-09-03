@@ -369,6 +369,21 @@ def start_download(adapter_id: str) -> dict:
         return install_state(adapter_id)  # download già in corso, idempotente
 
     target = models_dir(adapter_id)
+    expected = _expected_bytes(adapter_id)
+    if expected:
+        existing_bytes = _dir_size(target)
+        free_bytes = shutil.disk_usage(target.parent).free
+        # snapshot_download può avere temporaneamente sia il file parziale sia
+        # il file finale; riserviamo 512 MiB per questo doppio uso e per non
+        # portare la partizione al 100% durante un download.
+        reserve = 512 * 1024 ** 2
+        required = max(0, expected - existing_bytes) + reserve
+        if free_bytes < required:
+            raise ValueError(
+                f"spazio disco insufficiente per '{adapter_id}': "
+                f"servono circa {required / 1024**3:.1f} GB liberi, "
+                f"disponibili {free_bytes / 1024**3:.1f} GB"
+            )
     target.mkdir(parents=True, exist_ok=True)
     log_file = _log_file(adapter_id)
     revision = adapter.capabilities.hf_revision or ""

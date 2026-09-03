@@ -20,13 +20,15 @@ from .services.i18n import localize_detail, parse_lang
 async def lifespan(_app: FastAPI):
     init_db()
     from .services import backup as backupsvc
-    from .services import serve_manager, trainer
+    from .services import cloud_manager, recognition, serve_manager, trainer
     db_check = backupsvc.integrity()
     if not db_check["ok"]:
         detail = "; ".join(db_check.get("messages") or ["integrity check fallito"])
         raise RuntimeError(f"database non integro all'avvio: {detail}")
     trainer.reconcile_jobs()
     serve_manager.reconcile_jobs()
+    recognition.reconcile_runs()
+    cloud_manager.reconcile_tunnel()
     yield
 
 

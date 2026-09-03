@@ -37,67 +37,99 @@ I vantaggi:
 
 ---
 
-## 2. Metodo 1: Vast.ai con Tunnel SSH (Scelta Consigliata)
+## 2. Metodo 1: Vast.ai dal wizard di Tabularium (Scelta Consigliata)
 
-Vast.ai è il marketplace GPU più economico al mondo (verificato 2026-08: RTX 3090 da 0,07 $/h
+Vast.ai è il marketplace GPU più economico (verificato 2026-08: RTX 3090 da 0,07 $/h
 con mediana 0,15 $/h; RTX 4090 da 0,13 $/h con mediana 0,36 $/h).
 
-### Passo 1: Noleggia un'istanza su Vast.ai
-1. Crea un account su [vast.ai](https://vast.ai/) e ricarica $5.
-2. Vai su **Search/Create Instance** e imposta i filtri:
-   - **GPU**: 1x RTX 4090 oppure 1x RTX 3090 (almeno 24GB VRAM).
-   - **Image**: `pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime` o qualsiasi template Ubuntu PyTorch standard.
-   - **Disk Space**: 40 GB (sufficiente per scaricare il modello ~2.5 GB e l'ambiente).
-3. Clicca su **Rent**.
+**L'unica cosa che devi fare sul sito del provider è creare un account, ricaricare
+il credito e generare una API Key.** Tutto il resto — chiave SSH, ricerca
+dell'offerta, noleggio, preparazione del server, tunnel — avviene dentro
+Tabularium: nessun terminale, nessuna console web, nessun commit da pubblicare.
 
-### Passo 2: Avvia il server vLLM sull'istanza Vast.ai
-1. Dalla dashboard Vast.ai, clicca sul pulsante **SSH** e copia il comando di connessione (es. `ssh -p 34567 root@198.51.100.24 -L 8080:localhost:8080`).
-2. Connettiti dal tuo terminale:
-   ```bash
-   ssh -p 34567 root@198.51.100.24
-   ```
-3. Scarica ed esegui il nostro script di setup automatico:
-   ```bash
-   export MONKEYOCR_REF=<commit-o-tag-monkeyocr-verificato>
-   export TABULARIUM_REF=<commit-o-tag-tabularium-verificato>
-   curl -fsSL "https://raw.githubusercontent.com/nbadino/tabularium/${TABULARIUM_REF}/scripts/cloud/setup_cloud_vllm.sh" | bash -s -- --ref "$MONKEYOCR_REF"
-   # Oppure se hai clonato il repo:
-   bash setup_cloud_vllm.sh --port 8888 --ref <commit-o-tag-verificato>
-   ```
-   *Lo script installa versioni pin-nate, clona il runner al ref indicato, verifica GPU/disco, genera `cloud-manifest.json`, scarica i pesi e avvia il server.*
+### Passo 0: API Key (una sola volta, sul sito)
 
-### Passo 3: Apri il Tunnel SSH sul tuo PC locale
-Sul tuo computer locale, esegui il nostro helper dedicato:
-```bash
-./scripts/cloud/ssh_tunnel.sh root@198.51.100.24 -p 34567
-```
-Ora la porta remota `8888` è inoltrata in modo sicuro e cifrato al tuo `http://127.0.0.1:8888/v1` locale!
+1. Crea l'account su [vast.ai](https://vast.ai/) e ricarica il credito (bastano $5).
+2. Vai su **Account → API Keys** (`https://cloud.vast.ai/manage-keys/`) e crea una chiave.
+   Non scegliere alcun template dalla libreria: l'immagine e lo script di avvio
+   li impone Tabularium via API.
 
-### Passo 4: Collega Tabularium
-1. Apri la Home di **Tabularium** nel browser.
-2. Nel pannello **"Inferenza Cloud & Locale"**, seleziona il preset **"Vast.ai (Tunnel SSH)"** (oppure URL `http://127.0.0.1:8888/v1`).
-3. Clicca su **"Test Connessione"**: vedrai la spia verde con la latenza in millisecondi.
-4. Clicca su **"Salva Configurazione"**.
-5. Fatto! Da questo momento, ogni operazione di annotazione assistita, rilevamento tabelle, playground ed evaluation userà la GPU Cloud.
+### Passo 1: Prima configurazione nel wizard
 
-Il tunnel CLI usa `StrictHostKeyChecking=yes` e un file `known_hosts` dedicato.
-Prima del primo collegamento registra la chiave dopo averne verificato il
-fingerprint fornito dal provider, per esempio:
+**Impostazioni → Modello e calcolo → Gestisci cloud → Vast.ai**: incolla la API
+Key e premi **"Verifica account e prepara la chiave SSH"**. In un passo:
 
-```bash
-mkdir -p "$(dirname "${TABULARIUM_SSH_KNOWN_HOSTS:-$PWD/data/known_hosts}")"
-ssh-keyscan -p 34567 198.51.100.24 >> "${TABULARIUM_SSH_KNOWN_HOSTS:-$PWD/data/known_hosts}"
-```
+- valida la chiave e mostra il credito residuo (`GET /api/v0/users/current/`,
+  campo `credit`);
+- genera una coppia ed25519 dedicata in `data/ssh/tabularium_vast_ed25519` — la
+  privata non lascia mai la macchina, l'API espone solo fingerprint e pubblica;
+- registra la pubblica sull'account (`POST /api/v0/ssh/`), così ogni istanza
+  nuova la riceve in automatico. L'operazione è idempotente;
+- risolve il commit del runner ufficiale MonkeyOCRv2 da pinnare.
 
-Per il tunnel gestito dall’interfaccia, il backend usa lo stesso percorso
-configurato da `TABULARIUM_SSH_KNOWN_HOSTS`.
+### Passo 2: Noleggia
 
-Se usi `scripts/cloud/vast_onstart.sh` come hook Vast, configura entrambe le
-revisioni prima dell’avvio: `MONKEYOCR_REF` per il runner MonkeyOCRv2 e
-`TABULARIUM_REF` per lo script Tabularium scaricato dall’hook. L’hook rifiuta
-un ref mancante e non usa più codice `main` implicito.
+Filtra per GPU e prezzo massimo, poi **"Noleggia"** (sempre con conferma
+esplicita del costo). L'istanza nasce senza hook `onstart`: Tabularium la
+prepara dopo, via SSH. Da qui il wizard interroga l'istanza ogni 8 secondi
+finché il provider non pubblica host e porta SSH.
 
----
+### Passo 3: Prepara e connetti
+
+Il pulsante **"Prepara e connetti"** sull'istanza:
+
+1. fissa la host key nel `known_hosts` dedicato (`ssh-keyscan`), perché il
+   tunnel usa `StrictHostKeyChecking=yes`;
+2. consegna `scripts/cloud/setup_cloud_vllm.sh` **sullo stdin di SSH da questo
+   checkout** e lo avvia in background su `/var/log/tabularium_setup.log`. Il
+   codice eseguito sulla GPU è quello che hai in locale, non una copia scaricata
+   da GitHub;
+3. mostra il log remoto nel modale finché vLLM non è in ascolto;
+4. apre il tunnel, salva la configurazione di inferenza su
+   `http://127.0.0.1:8888/v1` e la testa.
+
+### Cosa fa lo script sull'istanza
+
+`scripts/cloud/setup_cloud_vllm.sh`, in ordine, con il log su
+`/var/log/tabularium_setup.log` (è quello che la UI mostra e da cui ricava le
+fasi):
+
+1. verifica GPU e compute capability (minimo 8.0: vLLM gira in bfloat16);
+2. installa le dipendenze di sistema e clona il runner ufficiale al ref pinnato;
+3. **crea un virtualenv dedicato** (`~/tabularium-venv`) e ci installa vLLM e
+   PyTorch. Il venv non è un vezzo: le immagini su Ubuntu 24.04 hanno pip
+   gestito dalla distro, che rifiuta sia l'auto-aggiornamento (`RECORD file not
+   found`) sia gli install di sistema (PEP 668);
+4. scarica i pesi del modello e scrive `cloud-manifest.json`;
+5. avvia `serve.py` con i flag di serving.
+
+Le versioni installate sono **allineate all'ambiente di serving locale
+verificato** (`data/vllm-runtime`): vLLM 0.28.0, transformers 5.16.1, e con esse
+`timm`, `einops`, `pillow`, `pydantic`, `huggingface_hub`. La coppia precedente
+(vLLM 0.25.1 con transformers 4.51.3) non è più risolvibile da pip, che le
+dichiara in conflitto.
+
+### Prerequisiti locali
+
+Servono i binari di OpenSSH (`ssh`, `ssh-keygen`, `ssh-keyscan`):
+`scripts/setup_backend.sh` avvisa se mancano. Su Windows usa WSL2 o Git for
+Windows.
+
+### Note sull'API del provider
+
+Vast.ai sta migrando per rotte, non in blocco: al 2026-09 la collection delle
+istanze risponde solo su **`/api/v1/instances/`** (la v0 restituisce
+`410 deprecated_endpoint`), mentre `users/current`, `ssh` e `search/asks`
+esistono solo su **v0**. Tabularium usa la v1 per l'elenco e ricade sulla lista
+v1 anche per il dettaglio se la rotta v0 dovesse sparire.
+
+### Alternativa headless: hook `onstart`
+
+Il percorso storico resta disponibile nelle API del backend
+(`prepare_server: true` su `/api/system/cloud/vast/rent`) per gli usi non
+interattivi: in quel caso l'istanza scarica lo script da GitHub e servono due
+ref pin-nati (`monkeyocr_ref` e `tabularium_ref`, quest'ultimo un commit
+**già pubblicato**). Il wizard non lo usa proprio per non dipendere da un push.
 
 ## 3. Metodo 2: RunPod con Proxy HTTPS (Senza SSH)
 

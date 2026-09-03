@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw, ImageFont
 
@@ -266,3 +268,31 @@ def test_monkeyocr_engine_falls_back_to_deskew_when_unavailable(monkeypatch):
     assert result.actual_engine == "deskew"
     assert result.error == "monkeyocr_preprocessor_unavailable"
     assert "neural_fallback_deskew" in result.warnings
+
+
+def test_a_missing_source_says_which_file_is_missing(tmp_path: Path):
+    """I percorsi delle pagine sono assoluti nel database: rinominare la
+    cartella del progetto li invalida tutti insieme. Un «file sorgente non
+    presente» nudo costringeva a interrogare il database per capirlo."""
+    from fastapi import HTTPException
+
+    from app.services import pages as pagesvc
+
+    project_id = _setup(tmp_path / "sorgente-mancante")
+    with TestClient(app) as client:
+        page = client.get(f"/api/projects/{project_id}/pages").json()["items"][0]
+    missing = str(tmp_path / "spostato" / "altrove.tif")
+    with connect() as conn:
+        conn.execute("UPDATE pages SET abs_path=? WHERE id=?", (missing, page["id"]))
+        conn.commit()
+        row = conn.execute("SELECT * FROM pages WHERE id=?", (page["id"],)).fetchone()
+
+    error = pagesvc.source_missing(row)
+
+    assert isinstance(error, HTTPException)
+    assert error.status_code == 404
+    assert missing in error.detail
+
+    with pytest.raises(HTTPException) as raised:
+        pagesvc.maybe_auto_deskew(row)
+    assert missing in raised.value.detail

@@ -10,11 +10,26 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 APP_NAME = "Tabularium"
 VERSION = "0.1.0"
 
+# --- Radice del checkout ------------------------------------------------------
+# Serve agli script che il backend consegna a macchine remote
+# (`scripts/cloud/…`): il codice eseguito in cloud è quello di questo
+# checkout, non una copia scaricata altrove.
+REPO_DIR: Path = Path(__file__).resolve().parents[2]
+
+# Il .env va caricato dall'app stessa, non solo dai launcher: un avvio che
+# bypassa scripts/run_backend.sh (uvicorn diretto, systemd, IDE) altrimenti
+# parte senza i segreti — il vault si spegne, ogni credential risulta
+# "assente" e la UI perde la chiave API salvata senza un errore visibile.
+# `override=False`: le variabili già in ambiente vincono su quelle del file.
+load_dotenv(REPO_DIR / ".env", override=False)
+
 # --- Radice dati -------------------------------------------------------------
-_DEFAULT_ROOT = Path(__file__).resolve().parents[2] / "data"
+_DEFAULT_ROOT = REPO_DIR / "data"
 
 
 def _root() -> Path:

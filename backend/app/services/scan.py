@@ -25,6 +25,7 @@ class ScanReport:
     registered: int = 0
     duplicates: int = 0
     unsupported: int = 0
+    missing: int = 0
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -33,8 +34,29 @@ class ScanReport:
             "registered": self.registered,
             "duplicates": self.duplicates,
             "unsupported": self.unsupported,
+            "missing": self.missing,
             "errors": self.errors,
         }
+
+
+def find_missing_page_ids(conn, project_id: int, candidates: list[Candidate]) -> list[int]:
+    """Nasconde le pagine il cui file sorgente non è più nell'archivio.
+
+    Non elimina righe, blocchi o risultati: una pagina può quindi tornare
+    disponibile se il file viene ripristinato e sottoposto a una nuova scan.
+    """
+    paths = {str(c.path.resolve()) for c in candidates}
+    rows = conn.execute(
+        "SELECT id, abs_path FROM pages WHERE project_id=? AND status != 'missing'",
+        (project_id,),
+    ).fetchall()
+    return [r["id"] for r in rows if r["abs_path"] not in paths]
+
+
+def mark_missing_pages(conn, page_ids: list[int]) -> int:
+    if page_ids:
+        conn.executemany("UPDATE pages SET status='missing' WHERE id=?", ((pid,) for pid in page_ids))
+    return len(page_ids)
 
 
 def scan_archive(root_dir: str | Path) -> list[Candidate]:
@@ -54,28 +76,82 @@ def scan_archive(root_dir: str | Path) -> list[Candidate]:
 
 def render_pdf_pages(pdf_path: str | Path) -> list[tuple[object, tuple[int, int]]]:
     """Rende tutte le pagine di un PDF in immagini PIL. Richiede pypdfium2."""
+    return list(iter_pdf_pages(pdf_path))
+
+
+def iter_pdf_pages(pdf_path: str | Path):
+    """Itera le pagine con un solo PdfDocument, rilasciandone una alla volta."""
     try:
         import pypdfium2 as pdfium
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("PDF richiede pypdfium2 (pip install pypdfium2)") from exc
-
-    images: list[tuple[object, tuple[int, int]]] = []
     pdf = pdfium.PdfDocument(str(pdf_path))
     try:
         for page in pdf:
-            bitmap = page.render(scale=200 / 72)
             try:
-                pil = bitmap.to_pil().convert("RGB")
-                images.append((pil, (pil.width, pil.height)))
+                bitmap = page.render(scale=200 / 72)
+                try:
+                    pil = bitmap.to_pil().convert("RGB")
+                    yield pil, (pil.width, pil.height)
+                finally:
+                    close_bitmap = getattr(bitmap, "close", None)
+                    if callable(close_bitmap):
+                        close_bitmap()
             finally:
-                close = getattr(bitmap, "close", None)
-                if callable(close):
-                    close()
+                # pypdfium2 mantiene i PdfPage nel proprio ObjectTracker:
+                # chiuderli subito evita centinaia di weakref «dead» sui PDF
+                # multipagina e rilascia memoria prima della pagina seguente.
+                close_page = getattr(page, "close", None)
+                if callable(close_page):
+                    close_page()
     finally:
         close = getattr(pdf, "close", None)
         if callable(close):
             close()
-    return images
+
+
+
+def render_pdf_page(pdf_path: str | Path, index: int) -> tuple[object, tuple[int, int]] | None:
+    """Renderizza una sola pagina: preview/riconoscimento non devono renderizzare
+    l'intero PDF a ogni click."""
+    try:
+        import pypdfium2 as pdfium
+    except ImportError as exc:
+        raise RuntimeError("PDF richiede pypdfium2 (pip install pypdfium2)") from exc
+    pdf = pdfium.PdfDocument(str(pdf_path))
+    try:
+        if index < 0 or index >= len(pdf):
+            return None
+        page = pdf[index]
+        try:
+            bitmap = page.render(scale=200 / 72)
+            try:
+                pil = bitmap.to_pil().convert("RGB")
+                return pil, (pil.width, pil.height)
+            finally:
+                close = getattr(bitmap, "close", None)
+                if callable(close): close()
+        finally:
+            close = getattr(page, "close", None)
+            if callable(close): close()
+    finally:
+        close = getattr(pdf, "close", None)
+        if callable(close): close()
+
+
+def pdf_page_count(pdf_path: str | Path) -> int:
+    """Restituisce il numero di pagine senza renderizzare il documento."""
+    try:
+        import pypdfium2 as pdfium
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("PDF richiede pypdfium2 (pip install pypdfium2)") from exc
+    pdf = pdfium.PdfDocument(str(pdf_path))
+    try:
+        return len(pdf)
+    finally:
+        close = getattr(pdf, "close", None)
+        if callable(close):
+            close()
 
 def rel_archive(path: Path, archive_dir: str | Path) -> str:
     """Percorso della pagina relativo alla cartella archivio (assoluto se fuori)."""
@@ -140,6 +216,10 @@ def register_candidate(
             ),
         )
         if cur.rowcount == 0:
+            conn.execute(
+                "UPDATE pages SET status='new' WHERE project_id=? AND abs_path=? AND status='missing'",
+                (project_id, abs_path),
+            )
             report.duplicates += 1
             return
         page_id = cur.lastrowid
@@ -151,18 +231,19 @@ def register_candidate(
 
     # -- PDF -----------------------------------------------------------------
     try:
-        rendered = render_pdf_pages(cand.path)
+        page_count = pdf_page_count(cand.path)
     except Exception as exc:
         report.unsupported += 1
         report.errors.append(f"{cand.path.name}: {exc}")
         return
-    if not rendered:
+    if page_count <= 0:
         report.unsupported += 1
         report.errors.append(f"{cand.path.name}: {msg('no_pages_rendered', lang)}")
         return
     meta = pagemeta.parse_filename(cand.path.name)
     extra = {"publication": meta.publication} if meta.publication else {}
-    for page_idx, (pil_img, (width, height)) in enumerate(rendered):
+    for page_idx, rendered in enumerate(iter_pdf_pages(cand.path)):
+        pil_img, (width, height) = rendered
         cur = conn.execute(
             """INSERT OR IGNORE INTO pages
                (project_id, rel_path, abs_path, source_kind, pdf_page, width, height,
@@ -179,15 +260,27 @@ def register_candidate(
                 meta.issue_no,
                 # In un PDF multipagina il numero di pagina è l'indice, non il
                 # suffisso del nome file (che identifica il fascicolo intero).
-                meta.page_no if len(rendered) == 1 else str(page_idx + 1),
+                meta.page_no if page_count == 1 else str(page_idx + 1),
                 meta.page_type,
                 json.dumps(extra),
             ),
         )
         if cur.rowcount == 0:
+            conn.execute(
+                "UPDATE pages SET status='new' WHERE project_id=? AND abs_path=? AND pdf_page=? AND status='missing'",
+                (project_id, abs_path, page_idx),
+            )
             report.duplicates += 1
+            pil_img.close()
             continue
         page_id = cur.lastrowid
+        extracted = pagesvc.pdf_image_path(page_id)
+        pil_img.save(extracted, format="PNG", optimize=True)
+        conn.execute(
+            "UPDATE pages SET meta_json=? WHERE id=?",
+            (json.dumps({**extra, "extracted_path": str(extracted)}), page_id),
+        )
         thumb = pagesvc.save_pdf_thumb(pil_img, page_id)
         conn.execute("UPDATE pages SET thumb_path=? WHERE id=?", (str(thumb), page_id))
+        pil_img.close()
         report.registered += 1

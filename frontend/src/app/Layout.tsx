@@ -8,22 +8,19 @@
  * La colonna sinistra non è più sprecata su sette link fissi — nelle pagine
  * che ne hanno bisogno resta libera per il contesto (le pagine, i progetti).
  */
-import { NavLink, Outlet } from 'react-router'
+import { Link, NavLink, Outlet } from 'react-router'
 import { useEffect, useState } from 'react'
 import { apiGet } from '../lib/api'
-import { syncInferenceFromBackend } from './inference'
+import { syncInferenceFromBackend, useInference } from './inference'
 import type { HealthResponse } from '../lib/types'
 import { LOCALES, LOCALE_LABELS, useI18n } from '../i18n'
 import type { Locale } from '../i18n'
 import { useAuth } from './auth'
-import ChangePasswordModal from './ChangePasswordModal'
 import {
-  IconAnnotate,
   IconArchive,
+  IconAnnotate,
   IconDataset,
-  IconEvaluate,
   IconPlayground,
-  IconProjects,
   IconTraining,
 } from './icons'
 
@@ -35,13 +32,11 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
-  { to: '/', labelKey: 'nav.archive', Icon: IconArchive, end: true },
-  { to: '/progetti', labelKey: 'nav.projects', Icon: IconProjects },
+  { to: '/', labelKey: 'nav.recognize', Icon: IconPlayground, end: true },
   { to: '/annotazione', labelKey: 'nav.annotate', Icon: IconAnnotate },
-  { to: '/dataset', labelKey: 'nav.dataset', Icon: IconDataset },
-  { to: '/training', labelKey: 'nav.training', Icon: IconTraining },
-  { to: '/valutazione', labelKey: 'nav.evaluation', Icon: IconEvaluate },
-  { to: '/playground', labelKey: 'nav.playground', Icon: IconPlayground },
+  { to: '/risultati', labelKey: 'nav.results', Icon: IconDataset },
+  { to: '/archivio', labelKey: 'nav.archive', Icon: IconArchive },
+  { to: '/modelli', labelKey: 'nav.models', Icon: IconTraining },
 ]
 
 function LocaleSwitch() {
@@ -95,7 +90,6 @@ function BackendState() {
 function UserMenu() {
   const { t } = useI18n()
   const { user, logout } = useAuth()
-  const [pwOpen, setPwOpen] = useState(false)
   if (!user) return null
   const roleKey = `users.role${user.role.charAt(0).toUpperCase()}${user.role.slice(1)}`
   return (
@@ -114,24 +108,23 @@ function UserMenu() {
         </span>
         <span className="badge">{t(roleKey)}</span>
       </span>
-      <button type="button" onClick={() => setPwOpen(true)} className="btn btn-sm">
-        {t('layout.changePassword')}
-      </button>
       <button type="button" onClick={() => void logout()} className="btn btn-sm">
         {t('layout.logout')}
       </button>
-      {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} />}
     </div>
   )
 }
 
 export default function Layout() {
   const { t } = useI18n()
+  const inference = useInference()
   // Ogni pagina legge lo stato inferenza (chip GPU, banner, motori prefill):
   // il sync all'avvio evita di mostrare disponibilità/latenza stantie da
   // localStorage, che prima si aggiornavano solo aprendo la Home.
   useEffect(() => {
     void syncInferenceFromBackend().catch(() => {})
+    const id = setInterval(() => void syncInferenceFromBackend().catch(() => {}), 30_000)
+    return () => clearInterval(id)
   }, [])
   return (
     <div className="flex h-screen flex-col bg-[color:var(--color-sheet)]">
@@ -152,6 +145,17 @@ export default function Layout() {
             {t('app.tagline')}
           </span>
           <div className="ml-auto flex items-center gap-2">
+            <Link
+              to="/modelli"
+              className="flex min-w-0 items-center gap-1.5 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)] px-2 py-1 text-[11px] no-underline hover:bg-[color:var(--color-fill)]"
+              title={t('recognition.changeModel')}
+            >
+              <span className="max-w-[24ch] truncate font-semibold">{inference.model || t('recognition.activeModel')}</span>
+              <span className="text-[color:var(--color-ink-3)]">· {inference.isCloud ? 'Cloud' : 'Locale'}</span>
+              <span className={inference.enabled && inference.available ? 'text-[color:var(--color-ok)]' : 'text-[color:var(--color-warn)]'}>
+                {inference.enabled && inference.available ? t('recognition.modelReady') : t('recognition.modelOff')}
+              </span>
+            </Link>
             <UserMenu />
             <LocaleSwitch />
             <BackendState />

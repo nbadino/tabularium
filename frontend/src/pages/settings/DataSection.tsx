@@ -7,7 +7,7 @@
  */
 import { useEffect, useState } from 'react'
 import { apiGet, apiPost } from '../../lib/api'
-import { Badge, Modal, Module, Notice, WarnNotice } from '../../app/ui'
+import { Badge, ErrorNotice, Modal, Module, Notice, WarnNotice } from '../../app/ui'
 import { describeError } from '../../lib/errors'
 import { useI18n } from '../../i18n'
 import type { SectionProps } from './SettingsPage'
@@ -29,11 +29,19 @@ export default function DataSection({ isAdmin }: SectionProps) {
   const [busy, setBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ tone: 'ok' | 'sig'; text: string } | null>(null)
   const [confirming, setConfirming] = useState<BackupItem | null>(null)
+  const [loadError, setLoadError] = useState<unknown>(null)
 
-  const load = () =>
+  const load = () => {
+    setLoadError(null)
+    return (
     apiGet<BackupState>('/system/backup')
       .then(setState)
-      .catch(() => setState(null))
+      .catch((error) => {
+        setState(null)
+        setLoadError(error)
+      })
+    )
+  }
 
   useEffect(() => {
     void load()
@@ -83,6 +91,14 @@ export default function DataSection({ isAdmin }: SectionProps) {
 
   return (
     <div className="space-y-3">
+      {loadError != null && (
+        <div>
+          <ErrorNotice error={loadError} onDismiss={() => setLoadError(null)} />
+          <button type="button" className="btn mt-2" onClick={() => void load()}>
+            {t('common.retry')}
+          </button>
+        </div>
+      )}
       {!isAdmin && (
         <WarnNotice title={t('settings.tabData')}>{t('settings.backupAdminOnly')}</WarnNotice>
       )}
@@ -99,6 +115,9 @@ export default function DataSection({ isAdmin }: SectionProps) {
         )}
 
         {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
+        {state == null && loadError == null && (
+          <p className="mt-2 text-[12px] text-[color:var(--color-ink-3)]">{t('common.loading')}</p>
+        )}
 
         {isAdmin && (
           <button
@@ -119,15 +138,18 @@ export default function DataSection({ isAdmin }: SectionProps) {
               <div key={item.name} className="flex flex-wrap items-center gap-2 px-3 py-2 text-[12px]">
                 <span className="mono truncate">{item.name}</span>
                 <span className="mono text-[11px] text-[color:var(--color-ink-3)]">
-                  {Math.round(item.size / 1024)} KB
+                  {new Intl.NumberFormat(undefined, { style: 'unit', unit: item.size >= 1_048_576 ? 'megabyte' : 'kilobyte', maximumFractionDigits: 1 }).format(item.size / (item.size >= 1_048_576 ? 1_048_576 : 1024))}
                 </span>
+                <time className="text-[11px] text-[color:var(--color-ink-3)]" dateTime={item.modified_at}>
+                  {new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(item.modified_at))}
+                </time>
                 <span className="ml-auto flex items-center gap-2">
                   <a className="btn btn-sm" href={`/api/system/backup/${encodeURIComponent(item.name)}`}>
                     {t('settings.backupDownload')}
                   </a>
                   <button
                     type="button"
-                    className="btn btn-sm"
+                    className="btn btn-sm btn-danger"
                     disabled={busy != null}
                     onClick={() => setConfirming(item)}
                   >
@@ -136,9 +158,14 @@ export default function DataSection({ isAdmin }: SectionProps) {
                 </span>
               </div>
             ))}
-            {(state?.items ?? []).length === 0 && (
+            {state != null && state.items.length === 0 && (
               <p className="px-3 py-2 text-[12px] text-[color:var(--color-ink-3)]">
                 {t('settings.backupEmpty')}
+              </p>
+            )}
+            {state == null && (
+              <p className="px-3 py-2 text-[12px] text-[color:var(--color-ink-3)]">
+                {loadError == null ? t('common.loading') : t('settings.backupUnavailable')}
               </p>
             )}
           </div>
@@ -156,7 +183,7 @@ export default function DataSection({ isAdmin }: SectionProps) {
               </button>
               <button
                 type="button"
-                className="btn btn-primary"
+                className="btn btn-danger"
                 onClick={() => void restore(confirming)}
               >
                 {t('settings.backupRestore')}

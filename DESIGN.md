@@ -109,8 +109,21 @@ vivo non è un server pronto, e finché l'endpoint tace la UI dice «caricamento
 Rail multi-riga persistente in alto, non una sidebar da sette link.
 Riga 1: identità, lingua, stato del backend. Riga 2: le sezioni come linguette bordo a bordo
 (`.navtab`), l'attiva su fondo nero con la piastra rossa da 3px sotto.
-Il rail regge più di sette voci senza ridisegnarsi e scorre orizzontalmente al proprio interno.
+Le quattro destinazioni primarie sono **Riconosci, Risultati, Archivio, Modelli**. Dataset,
+training, valutazione e configurazione dei provider restano strumenti contestuali dentro queste
+aree: non sono percorsi globali concorrenti. Il rail scorre orizzontalmente al proprio interno.
 La colonna sinistra resta libera per il **contesto** (pagine, progetti), mai per i link globali.
+
+Modello e luogo di esecuzione sono sempre visibili nello stesso indicatore globale. Cambiare da
+locale a un provider remoto non cambia il flusso operativo: selezione pagine, avanzamento,
+risultati, revisione ed export conservano componenti, stati e vocabolario.
+
+Nell'hub Modelli la destinazione decide il gesto: la libreria dichiara in testa «dove gira»
+(profilo attivo) e ogni riga offre come azione primaria il deploy su quel provider — non il
+download — quando la destinazione è remota e il modello è deployabile. «Deploya su Vast.ai» apre
+la scheda del provider con il modello già scelto: la selezione non si rifà da capo. Le azioni
+locali restano in riga, secondarie, perché la destinazione può cambiare; il modello in uso porta
+il badge «In uso ora».
 
 Nello studio il rail destro è **una zona sola**: il contenuto della pagina. L'output del modello
 arriva in diretta in cima, i blocchi si correggono riga per riga sotto, e l'ordine di lettura si
@@ -122,30 +135,23 @@ Quella lista è anche l'equivalente DOM del canvas: i blocchi disegnati su Konva
 DOM, quindi devono vivere qui come righe vere, navigabili da tastiera (frecce, Alt+frecce per
 riordinare, Canc) e leggibili da uno screen reader.
 
-E dentro una pagina, quando gli argomenti sono più d'uno: Impostazioni ha cinque zone
-(Account / Istanza / Modello e calcolo / Dati e backup / Ambiente) rese con le stesse linguette,
-la scelta persistita nell'URL (`?s=`). La densità regge un form fitto, non cinque argomenti in fila.
+E dentro una pagina, quando gli argomenti sono più d'uno: Impostazioni ha quattro zone
+(Account / Istanza / Dati e backup / Ambiente) rese con le stesse linguette, la scelta persistita
+nell'URL (`?s=`). Modello e provider non sono duplicati qui: appartengono all'hub Modelli.
+La densità regge un form fitto, non quattro argomenti in fila.
 
 ## Il percorso
 
-Sei fasi — Progetto, Scansione, Annotazione, Dataset, Training, Valutazione — calcolate
-dallo stato reale del corpus in un solo posto (`frontend/src/app/pipeline.ts`), mai da un
-contatore salvato. Tre stati soltanto: `done`, `current`, `blocked`; esiste **sempre una sola
-fase corrente**, ed è la prima non soddisfatta.
+Il percorso primario è **seleziona pagine → riconosci → controlla i risultati → correggi o
+esporta**. Le sessioni bulk appartengono al backend, sono persistite pagina per pagina e
+continuano anche se il browser cambia schermata. Terminata la generazione, l'inferenza può
+essere disattivata: risultati e correzioni non dipendono più dalla GPU.
 
-`blocked` significa che manca un prerequisito, mai che l'utente ha sbagliato: la riga dice
-cosa richiede quella fase, e il pulsante porta dove si sblocca.
-
-Due rese, una sola fonte (`frontend/src/app/Pipeline.tsx`):
-- `Pipeline` — la mappa completa sulla home. La fase corrente è l'unica regione dominante:
-  numero su piastra rossa piena, fondo `--color-sig-wash`, il perché scritto e l'azione.
-  **Contiene il prossimo passo invece di affiancarlo** — non esiste una seconda card che
-  ripete la stessa cosa altrove.
-- `PipelineStrip` — la striscia compatta sulle pagine di fase, dove la domanda non è «cosa
-  faccio adesso» ma «perché non posso procedere».
-
-La Valutazione non ha uno stato persistito lato server: resta l'ultima fase disponibile e non
-diventa mai `done`. Dichiararla completata sarebbe una bugia comoda.
+Il vecchio percorso obbligato in sei fasi — Progetto, Scansione, Annotazione, Dataset, Training,
+Valutazione — non compare più nell'Archivio: imponeva il fine-tuning anche a chi voleva soltanto
+riconoscere ed esportare. L'Archivio è ora una rassegna operativa con tre uscite esplicite:
+aprire una pagina, gestire le sorgenti o riconoscere una selezione. Dataset, training e
+valutazione restano strumenti del Modello e delle singole attività, non tappe globali.
 
 Nota di composizione: la fase corrente non usa un bordo sinistro colorato — è il tell del
 template. Il rilievo viene dalla piastra e dal fondo, cioè dalla grammatica del mondo.

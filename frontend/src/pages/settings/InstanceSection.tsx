@@ -17,12 +17,18 @@ import type { SectionProps } from './SettingsPage'
 export default function InstanceSection({ isAdmin }: SectionProps) {
   const { t } = useI18n()
   const [settings, setSettings] = useState<InstanceSettings | null>(null)
+  const [baseline, setBaseline] = useState<InstanceSettings | null>(null)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<unknown>(null)
 
   useEffect(() => {
-    apiGet<InstanceSettings>('/settings').then(setSettings).catch(setError)
+    apiGet<InstanceSettings>('/settings')
+      .then((value) => {
+        setSettings(value)
+        setBaseline(value)
+      })
+      .catch(setError)
   }, [])
 
   const save = async (e: FormEvent) => {
@@ -32,7 +38,12 @@ export default function InstanceSection({ isAdmin }: SectionProps) {
     setError(null)
     setSaved(false)
     try {
-      setSettings(await apiPut<InstanceSettings>('/settings', settings))
+      const next = await apiPut<InstanceSettings>('/settings', {
+        ...settings,
+        instance_name: settings.instance_name.trim(),
+      })
+      setSettings(next)
+      setBaseline(next)
       setSaved(true)
     } catch (err) {
       setError(err)
@@ -40,6 +51,10 @@ export default function InstanceSection({ isAdmin }: SectionProps) {
       setBusy(false)
     }
   }
+
+  const changed = settings != null && baseline != null
+    && JSON.stringify(settings) !== JSON.stringify(baseline)
+  const valid = Boolean(settings?.instance_name.trim())
 
   return (
     <div className="space-y-3">
@@ -59,21 +74,29 @@ export default function InstanceSection({ isAdmin }: SectionProps) {
                 <input
                   className="fld"
                   value={settings.instance_name}
+                  maxLength={100}
+                  required
+                  aria-invalid={!valid}
                   disabled={!isAdmin}
-                  onChange={(e) => setSettings({ ...settings, instance_name: e.target.value })}
+                  onChange={(e) => {
+                    setSaved(false)
+                    setSettings({ ...settings, instance_name: e.target.value })
+                  }}
                 />
+                {!valid && <p className="mt-1 text-[11px] text-[color:var(--color-sig-text)]">{t('settings.instanceNameRequired')}</p>}
               </Field>
               <Field label={t('settings.defaultRole')} hint={t('settings.defaultRoleHint')}>
                 <select
                   className="fld"
                   value={settings.default_new_user_role}
                   disabled={!isAdmin}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    setSaved(false)
                     setSettings({
                       ...settings,
                       default_new_user_role: e.target.value as 'editor' | 'viewer',
                     })
-                  }
+                  }}
                 >
                   <option value="editor">{t('users.roleEditor')}</option>
                   <option value="viewer">{t('users.roleViewer')}</option>
@@ -87,7 +110,10 @@ export default function InstanceSection({ isAdmin }: SectionProps) {
                 className="h-4 w-4 accent-[color:var(--color-sig)]"
                 checked={settings.allow_registration}
                 disabled={!isAdmin}
-                onChange={(e) => setSettings({ ...settings, allow_registration: e.target.checked })}
+                onChange={(e) => {
+                  setSaved(false)
+                  setSettings({ ...settings, allow_registration: e.target.checked })
+                }}
               />
               {t('settings.allowRegistration')}
             </label>
@@ -98,7 +124,7 @@ export default function InstanceSection({ isAdmin }: SectionProps) {
             {saved && <Notice tone="ok">{t('settings.saved')}</Notice>}
 
             {isAdmin && (
-              <button type="submit" disabled={busy} className="btn btn-primary mt-3">
+              <button type="submit" disabled={busy || !changed || !valid} className="btn btn-primary mt-3">
                 {busy ? t('settings.saving') : t('settings.save')}
               </button>
             )}

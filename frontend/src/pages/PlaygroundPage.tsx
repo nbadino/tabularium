@@ -48,8 +48,6 @@ export default function PlaygroundPage() {
       const res = await apiPost<PlaygroundResult>('/playground/parse', {
         project_id: projectId,
         page_id: pageId,
-        server_url: inference.url.trim() || null,
-        model: inference.model.trim() || null,
       })
       setResult(res)
       const im = new Image()

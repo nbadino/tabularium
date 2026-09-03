@@ -51,6 +51,7 @@ export default function ProjectDetailPage() {
   const [project, setProject] = useState<Project | null>(null)
   const [pages, setPages] = useState<PageItem[]>([])
   const [busy, setBusy] = useState(false)
+  const [scanProgress, setScanProgress] = useState<{ current: number; total: number; file?: string }>({ current: 0, total: 0 })
   const [report, setReport] = useState<ScanReport | null>(() => loadReport(projectId))
   const [error, setError] = useState<unknown>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -147,7 +148,25 @@ export default function ProjectDetailPage() {
     setBusy(true)
     setError(null)
     try {
-      const rep = await apiPost<ScanReport>(`/projects/${projectId}/scan`)
+      const started = await apiPost<{ job_id: string }>(`/projects/${projectId}/scan/start`)
+      let job: { status: string; report?: ScanReport; error?: string; current?: number; total?: number; current_file?: string } = { status: 'running' }
+      for (;;) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500))
+        job = await apiGet<typeof job>(`/projects/${projectId}/scan/jobs/${started.job_id}`)
+        setScanProgress({ current: job.current ?? 0, total: job.total ?? 0, file: job.current_file })
+        if (job.status !== 'running') break
+      }
+      if (job.status === 'error') throw new Error(job.error || 'Scansione fallita')
+      const rep = job.report ?? { found_files: 0, registered: 0, duplicates: 0, unsupported: 0, errors: [] }
+      if ((rep.missing ?? 0) > 0) {
+        const confirmed = window.confirm(
+          `${rep.missing} pagine appartengono a file non più presenti nell'archivio.\n\n` +
+          'Vuoi eliminarle dall’elenco del progetto? Annotazioni e risultati verranno conservati.'
+        )
+        if (confirmed) {
+          await apiPost<ScanReport>(`/projects/${projectId}/scan?confirm_missing=true`)
+        }
+      }
       setReport(rep)
       sessionStorage.setItem(reportKey(projectId), JSON.stringify(rep))
       const r = await apiGet<{ items: PageItem[] }>(`/projects/${projectId}/pages`)
@@ -157,6 +176,7 @@ export default function ProjectDetailPage() {
       setError(e)
     } finally {
       setBusy(false)
+      setScanProgress({ current: 0, total: 0 })
     }
   }
 
@@ -440,14 +460,16 @@ export default function ProjectDetailPage() {
           <Module tab={t('project.scanningTitle')}>
             <p className="text-[13px]">{t('project.scanningBody')}</p>
             <p className="mt-1 max-w-[80ch] text-[12px] text-[color:var(--color-ink-2)]">
-              {t('project.scanningHint')}
+              {scanProgress.total > 0
+                ? `File ${scanProgress.current}/${scanProgress.total}${scanProgress.file ? ` · ${scanProgress.file}` : ''}`
+                : t('project.scanningHint')}
             </p>
             <div
               className="mt-2 h-1.5 overflow-hidden border border-[color:var(--color-rule-strong)]"
               role="progressbar"
               aria-label={t('project.scanningLabel')}
             >
-              <div className="h-full w-1/3 animate-pulse bg-[color:var(--color-sig)]" />
+              <div className="h-full animate-pulse bg-[color:var(--color-sig)] transition-[width] duration-300" style={{ width: scanProgress.total ? `${Math.max(3, (scanProgress.current / scanProgress.total) * 100)}%` : '25%' }} />
             </div>
           </Module>
         </div>

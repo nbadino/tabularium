@@ -14,6 +14,24 @@ function joinPath(path: string): string {
  * all'utente: `describeError` in `lib/errors.ts` li traduce in
  * {titolo, messaggio, suggerimento}. Non mostrare mai un ApiError grezzo.
  */
+/** Estrae il `detail` di FastAPI dal corpo: senza, la UI mostra solo "→ 400". */
+function describeBody(body: string): string {
+  const raw = (body || '').trim()
+  if (!raw) return ''
+  try {
+    const parsed = JSON.parse(raw)
+    const detail = parsed?.detail
+    if (typeof detail === 'string') return detail
+    if (Array.isArray(detail)) {
+      const msgs = detail.map((item) => item?.msg).filter((msg) => typeof msg === 'string')
+      if (msgs.length) return msgs.join('; ')
+    }
+  } catch {
+    /* corpo non JSON: si mostra il testo grezzo */
+  }
+  return raw.length > 300 ? `${raw.slice(0, 300)}…` : raw
+}
+
 export class ApiError extends Error {
   readonly method: string
   readonly path: string
@@ -27,7 +45,8 @@ export class ApiError extends Error {
     status: number | null,
     body: string,
   ) {
-    super(`API ${method} ${path} → ${status ?? 'nessuna risposta'}`)
+    const described = describeBody(body)
+    super(`API ${method} ${path} → ${status ?? 'nessuna risposta'}${described ? `: ${described}` : ''}`)
     this.name = 'ApiError'
     this.method = method
     this.path = path
@@ -54,6 +73,19 @@ export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
 
 export async function apiDelete<T>(path: string): Promise<T> {
   return api<T>('DELETE', path)
+}
+
+/** Scarica un file mantenendo la stessa gestione errori/localizzazione delle API JSON. */
+export async function apiDownload(path: string): Promise<Blob> {
+  const url = joinPath(path)
+  let res: Response
+  try {
+    res = await fetch(url, { headers: { 'Accept-Language': getLocale() } })
+  } catch (e) {
+    throw new ApiError('GET', path, null, e instanceof Error ? e.message : String(e))
+  }
+  if (!res.ok) throw new ApiError('GET', path, res.status, await res.text())
+  return res.blob()
 }
 
 async function api<T>(method: string, path: string, body?: unknown): Promise<T> {

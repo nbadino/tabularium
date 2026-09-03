@@ -1,5 +1,5 @@
 /**
- * Impostazioni: cinque zone, una sola dominante per volta.
+ * Impostazioni: quattro zone amministrative, una sola dominante per volta.
  *
  * Prima era una colonna unica di sette moduli impilati — account, generale,
  * card inferenza, profili compute, backup, modello per il prefill, ambiente —
@@ -7,16 +7,15 @@
  * diceva quale fosse quella in vigore. La densità del mosaico regge un form
  * fitto, non sette argomenti diversi in fila.
  *
- * Qui vale la stessa grammatica del rail dello studio (v. DESIGN.md, §
- * Navigazione): le zone sono linguette, ne domina una, e la scelta resta
- * nell'URL (`?s=`) così un link porta esattamente dove serve.
+ * Modello, provider ed endpoint vivono invece nell'hub Modelli: duplicarli
+ * qui creava due fonti apparenti della stessa configurazione. Le zone restano
+ * in linguette e la scelta resta nell'URL (`?s=`).
  */
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../app/auth'
 import type { User } from '../../lib/types'
-import { useSearchParams } from 'react-router'
+import { Navigate, useSearchParams } from 'react-router'
 import AccountSection from './AccountSection'
-import ComputeSection from './ComputeSection'
 import DataSection from './DataSection'
 import EnvironmentSection from './EnvironmentSection'
 import InstanceSection from './InstanceSection'
@@ -33,7 +32,6 @@ const SECTIONS: Array<{
 }> = [
   { id: 'account', labelKey: 'settings.tabAccount', Section: AccountSection },
   { id: 'istanza', labelKey: 'settings.tabInstance', Section: InstanceSection },
-  { id: 'calcolo', labelKey: 'settings.tabCompute', Section: ComputeSection },
   { id: 'dati', labelKey: 'settings.tabData', Section: DataSection },
   { id: 'ambiente', labelKey: 'settings.tabEnv', Section: EnvironmentSection },
 ]
@@ -42,6 +40,10 @@ export default function SettingsPage() {
   const { t } = useI18n()
   const { user } = useAuth()
   const [params, setParams] = useSearchParams()
+
+  // Compatibilità con i vecchi link: modello e provider ora hanno una sola
+  // sede, l'hub Modelli, invece di essere duplicati nelle impostazioni.
+  if (params.get('s') === 'calcolo') return <Navigate to="/modelli" replace />
 
   const current = SECTIONS.find((s) => s.id === params.get('s')) ?? SECTIONS[0]
   const isAdmin = (user as User | null)?.role === 'admin'

@@ -31,6 +31,10 @@ class PrelabelOptions:
     # già struttura e contenuto (Unlimited-OCR, MonkeyOCRv2 END2END).
     model_mode: str = "native"
     table_promote: bool = True
+    # Presente quando l'orchestrazione arriva da una run bulk persistente.
+    # Collega ogni bozza alla sua provenienza senza cambiare il comportamento
+    # storico del prefill sulla singola pagina.
+    recognition_run_id: int | None = None
 
 
 def _replaced_blocks(conn, page_id: int, mode: str) -> dict:
@@ -366,6 +370,10 @@ def model_prelabel_events(
             ).fetchone()
             if page is None:
                 raise HTTPException(status_code=404, detail=msg("page_not_in_project", lang, id=pid))
+            # Il SELECT apre una transazione di lettura. Chiuderla prima di
+            # chiamare il modello evita che l'inferenza (minuti) trattenga il
+            # lock e faccia fallire «elimina annotazioni»/autosave concorrenti.
+            conn.commit()
             yield {"type": "page", "page_id": pid}
             try:
                 image, applied_angle = pagesvc.maybe_auto_deskew(page)
@@ -516,6 +524,14 @@ def model_prelabel_events(
                     tables += 1
 
             replaced = _replaced_blocks(conn, pid, opts.mode)
+            # Il DELETE di `_replaced_blocks` apre una transazione di
+            # scrittura che, senza commit, resterebbe aperta attraverso TUTTA
+            # l'inferenza della pagina (minuti): ogni altra scrittura concorrente
+            # (sync delle annotazioni, run di riconoscimento) attenderebbe il
+            # busy_timeout e poi fallirebbe con 500 "database is locked".
+            # Rilasciamo subito il lock; i blocchi nuovi arrivano sotto, un
+            # commit ciascuno.
+            conn.commit()
             grids = 0
             table_sources: list[str] = []
             for i, k in enumerate(kept, start=1):
@@ -543,9 +559,14 @@ def model_prelabel_events(
                         )
                     except Exception as exc:  # noqa: BLE001
                         k["error"] = f"{k['bbox']}: {exc}"
+                if cancel_event is not None and cancel_event.is_set():
+                    # Stop prima di qualsiasi scrittura: con il commit per
+                    # blocco (sotto) ogni INSERT è già definitivo, quindi qui
+                    # non esiste più un rollback che possa rimediare.
+                    return
                 cur = conn.execute(
                     "INSERT INTO blocks (page_id, label, kind, points, content, order_idx, "
-                    "prefill_source, confirmed) VALUES (?,?,?,?,?,?,?,0)",
+                    "prefill_source, confirmed, recognition_run_id) VALUES (?,?,?,?,?,?,?,0,?)",
                     (
                         pid,
                         k["label"],
@@ -554,14 +575,9 @@ def model_prelabel_events(
                         k.get("content", ""),
                         i,
                         f"model:{client.model}:{mm}",
+                        opts.recognition_run_id,
                     ),
                 )
-                if cancel_event is not None and cancel_event.is_set():
-                    # Non lasciare una bozza appena inserita dopo Stop. Il
-                    # controllo è prima di qualsiasi griglia/evento; il
-                    # rollback della connessione elimina anche questo INSERT.
-                    conn.rollback()
-                    return
                 grid_json = None
                 if k["label"] == "Table":
                     # END2END può già contenere OTSL. Se non è valido (o il layout
@@ -610,6 +626,13 @@ def model_prelabel_events(
                         k["table_source"] = source
                         table_sources.append(source)
                         grid_json = grid
+                # Commit subito dopo ogni scrittura: l'evento che segue dichiara
+                # "ciò che la UI mostra esiste davvero lato server" — ma una riga
+                # dentro una transazione aperta non è visibile alle altre
+                # connessioni. E soprattutto: tra un blocco e l'altro c'è
+                # inferenza (secondo stadio, crop tabellari) e il lock di
+                # scrittura non deve sopravvivere a quei secondi.
+                conn.commit()
 
                 yield {
                     "type": "block",
@@ -687,6 +710,7 @@ def ocr_prelabel_events(
             ).fetchone()
             if page is None:
                 raise HTTPException(status_code=404, detail=msg("page_not_in_project", lang, id=pid))
+            conn.commit()
             yield {"type": "page", "page_id": pid}
             try:
                 image, applied_angle = pagesvc.maybe_auto_deskew(page)
@@ -766,11 +790,14 @@ def ocr_prelabel_events(
             outputs.sort(key=lambda o: (o["bbox"][1], o["bbox"][0]))
 
             replaced = _replaced_blocks(conn, pid, opts.mode)
+            # Come in model_prelabel_events: rilasciare subito il lock di
+            # scrittura aperto dal DELETE, prima dell'inferenza sui crop.
+            conn.commit()
             grids = 0
             for i, o in enumerate(outputs, start=1):
                 cur = conn.execute(
                     "INSERT INTO blocks (page_id, label, kind, points, content, order_idx, "
-                    "prefill_source, confirmed) VALUES (?,?,?,?,?,?,?,0)",
+                    "prefill_source, confirmed, recognition_run_id) VALUES (?,?,?,?,?,?,?,0,?)",
                     (
                         pid,
                         o["label"],
@@ -781,6 +808,7 @@ def ocr_prelabel_events(
                         o["content"],
                         i,
                         o["prefill"],
+                        opts.recognition_run_id,
                     ),
                 )
                 grid_json = None
@@ -795,6 +823,8 @@ def ocr_prelabel_events(
                         )
                         grids += 1
                         grid_json = grid
+                # Commit per blocco: v. model_prelabel_events.
+                conn.commit()
 
                 yield {
                     "type": "block",

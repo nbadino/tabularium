@@ -359,7 +359,7 @@ export default function TableCellsEditor({
             </span>
           )}
           {weakBoundaries > 0 && (
-            <span className="ml-3 text-[color:var(--color-warn,#b45309)]">
+            <span className="ml-3 text-[color:var(--color-warn)]">
               {t('table.detectWeak', { n: weakBoundaries })}
             </span>
           )}
@@ -367,7 +367,7 @@ export default function TableCellsEditor({
               un conto: quante celle hanno un confine che nessun varco prova.
               Sono esattamente quelle da guardare per prime. */}
           {(detectInfo.diagnostics.row_columns_unproven ?? 0) > 0 && (
-            <span className="ml-3 text-[color:var(--color-warn,#b45309)]">
+            <span className="ml-3 text-[color:var(--color-warn)]">
               {t('table.detectDrift', {
                 n: detectInfo.diagnostics.row_columns_unproven ?? 0,
               })}

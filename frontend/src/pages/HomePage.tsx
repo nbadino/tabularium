@@ -13,8 +13,6 @@ import { apiGet } from '../lib/api'
 import type { PageItem, Project } from '../lib/types'
 import { statusLabel, STATUS_RANK, STATUS_TONE } from '../lib/vocab'
 import { Badge, ErrorNotice, Module } from '../app/ui'
-import { Pipeline } from '../app/Pipeline'
-import { buildPipeline, usePipelineState } from '../app/pipeline'
 import { pickActive, writeActiveProject } from '../app/activeProject'
 import { IconArchive } from '../app/icons'
 import { useI18n } from '../i18n'
@@ -24,23 +22,25 @@ function PageCell({ page }: { page: PageItem }) {
   const { t } = useI18n()
   return (
     <li className="relative border-b border-r border-[color:var(--color-rule)] bg-[color:var(--color-sheet)]">
-      <div className="lighttable aspect-[3/4] overflow-hidden">
-        <img
-          src={`/api/pages/${page.id}/thumbnail`}
-          alt={t('home.thumbnailAlt', { path: page.rel_path })}
-          loading="lazy"
-          className="h-full w-full bg-white object-cover object-top"
-        />
-      </div>
-      <div className="flex items-center gap-1.5 border-t border-[color:var(--color-rule)] px-1.5 py-1">
-        <span
-          className="mono min-w-0 flex-1 truncate text-[11px] text-[color:var(--color-ink-2)]"
-          title={page.rel_path}
-        >
-          {page.rel_path}
-        </span>
-        <Badge tone={STATUS_TONE[page.status] ?? 'neutral'}>{statusLabel(page.status)}</Badge>
-      </div>
+      <Link to={`/annotazione?page=${page.id}`} className="block text-[color:var(--color-ink)] no-underline hover:bg-[color:var(--color-fill)]">
+        <div className="lighttable aspect-[3/4] overflow-hidden">
+          <img
+            src={`/api/pages/${page.id}/thumbnail`}
+            alt={t('home.thumbnailAlt', { path: page.rel_path })}
+            loading="lazy"
+            className="h-full w-full bg-white object-cover object-top"
+          />
+        </div>
+        <div className="flex items-center gap-1.5 border-t border-[color:var(--color-rule)] px-1.5 py-1">
+          <span
+            className="mono min-w-0 flex-1 truncate text-[11px] text-[color:var(--color-ink-2)]"
+            title={page.rel_path}
+          >
+            {page.rel_path}
+          </span>
+          <Badge tone={STATUS_TONE[page.status] ?? 'neutral'}>{statusLabel(page.status)}</Badge>
+        </div>
+      </Link>
     </li>
   )
 }
@@ -83,11 +83,6 @@ export default function HomePage() {
   }, [projectId])
 
   const project = projects.find((p) => p.id === projectId) ?? null
-  const { workflow: wf, dataset, training } = usePipelineState(projectId)
-  const stages = buildPipeline({ project, workflow: wf, dataset, training })
-  // Il passo successivo è la fase corrente della mappa: una sola fonte.
-  const current = stages.find((st) => st.state === 'current') ?? stages[stages.length - 1]
-
   // Il muro si ordina per avanzamento: il lavoro da fare viene per primo.
   const sorted = useMemo(
     () =>
@@ -100,7 +95,12 @@ export default function HomePage() {
   )
   const shown = filter ? sorted.filter((p) => p.status === filter) : sorted
 
-  const counts = wf?.counts ?? {}
+  const counts = pages.reduce<Record<string, number>>((out, page) => {
+    out[page.status] = (out[page.status] ?? 0) + 1
+    return out
+  }, {})
+  const worked = pages.filter((page) => page.status !== 'new').length
+  const progress = pages.length ? worked / pages.length : 0
   const statuses = Object.keys(counts).sort(
     (a, b) => (STATUS_RANK[a] ?? 9) - (STATUS_RANK[b] ?? 9),
   )
@@ -142,40 +142,40 @@ export default function HomePage() {
           )}
         </div>
 
-        {wf && wf.total_pages > 0 && (
+        {pages.length > 0 && (
           <div className="ml-auto flex items-end gap-4">
             <div>
               <span className="lbl !mb-0">{t('home.pages')}</span>
               <span className="mono text-[22px] font-semibold leading-none">
-                {wf.total_pages}
+                {pages.length}
               </span>
             </div>
             <div>
               <span className="lbl !mb-0">{t('home.worked')}</span>
               <span className="mono text-[22px] font-semibold leading-none">
-                {wf.approved_pages}
+                {worked}
                 <span className="text-[13px] font-normal text-[color:var(--color-ink-3)]">
                   {' '}
-                  / {wf.total_pages}
+                  / {pages.length}
                 </span>
               </span>
             </div>
             {/* Avanzamento come barra rigata, non come anello decorativo. */}
             <div className="w-40">
               <span className="lbl !mb-0.5">
-                {t('home.progress', { pct: (wf.progress * 100).toFixed(0) })}
+                {t('home.progress', { pct: (progress * 100).toFixed(0) })}
               </span>
               <div
                 className="h-2 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)]"
                 role="progressbar"
-                aria-valuenow={Math.round(wf.progress * 100)}
+                aria-valuenow={Math.round(progress * 100)}
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-label={t('home.progressLabel')}
               >
                 <div
                   className="h-full bg-[color:var(--color-sig)]"
-                  style={{ width: `${wf.progress * 100}%` }}
+                  style={{ width: `${progress * 100}%` }}
                 />
               </div>
             </div>
@@ -183,9 +183,9 @@ export default function HomePage() {
         )}
       </div>
 
-      {/* --- il percorso: dove sei, cosa manca, cosa fare adesso -------------- */}
-      <div className="mb-3">
-        <Pipeline stages={stages} />
+      <div className="mb-3 flex flex-wrap gap-2">
+        <Link to="/" className="btn btn-primary no-underline">{t('home.recognizePages')}</Link>
+        <Link to={projectId == null ? '/progetti' : `/progetti/${projectId}`} className="btn no-underline">{t('home.manageArchive')}</Link>
       </div>
 
       {/* --- il muro ---------------------------------------------------------- */}
@@ -249,8 +249,8 @@ export default function HomePage() {
                 {t('home.showAll')}
               </button>
             ) : (
-              <Link to={current.action.to} className="btn btn-primary no-underline">
-                {current.action.label}
+              <Link to={projects.length === 0 ? '/progetti' : `/progetti/${projectId}`} className="btn btn-primary no-underline">
+                {projects.length === 0 ? t('home.createArchive') : t('home.manageArchive')}
               </Link>
             )}
           </div>

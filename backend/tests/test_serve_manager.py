@@ -270,6 +270,7 @@ def test_generic_vllm_adapter_auto_provisions_runtime_when_missing(monkeypatch):
 
     assert calls == ["ensure_ready"]
     assert captured["env"]["PATH"].startswith("/fake/vllm-runtime/bin")
+    assert captured["env"]["NVCC_PREPEND_FLAGS"] == "-allow-unsupported-compiler"
 
 
 def test_generic_vllm_adapter_skips_provisioning_when_already_on_path(monkeypatch):

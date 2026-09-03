@@ -33,3 +33,6 @@ def test_profile_activation_is_atomic_and_verified(monkeypatch):
     assert active["active"] is True
     assert active["served_model_name"] == "MonkeyOCRv2-test"
     assert [p for p in compute_profiles.list_profiles() if p["active"]][0]["id"] == created["id"]
+    with db.connect() as conn:
+        enabled = conn.execute("SELECT value FROM meta WHERE key='inference_enabled'").fetchone()
+    assert enabled["value"] == "1"

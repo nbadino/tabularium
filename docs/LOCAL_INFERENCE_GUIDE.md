@@ -56,9 +56,32 @@ nell'ambiente condiviso descritto sopra. MonkeyOCRv2 fa eccezione solo per il
 ambiente, ma legge il proprio checkout del repo ufficiale (§2, anch'esso
 clonato in automatico).
 
+### 1.1 Autenticazione Hugging Face
+
+I repository pubblici possono essere scaricati anche senza autenticazione, ma
+per checkpoint grandi è consigliato usare un token Hugging Face: le richieste
+anonime hanno limiti più severi e possono rallentare o interrompere il download.
+Dal Registro modelli l’amministratore può ora premere **Collega Hugging Face**:
+Tabularium avvia il flusso OAuth Device Code ufficiale, apre la pagina HF nel
+browser e mostra il codice breve da autorizzare. Il token viene salvato dalla
+libreria `huggingface_hub` nella cache dell’utente del backend e non viene mai
+restituito al browser, al DB o ai log.
+
+Per ambienti senza UI del browser resta disponibile il comando ufficiale:
+
+```bash
+backend/.venv/bin/hf auth login
+```
+
+In alternativa, avvia Tabularium con `HF_TOKEN` nell'ambiente del backend. Il
+registry eredita automaticamente il token salvato o la variabile d'ambiente;
+non inserirlo nel repository, nei log o nelle richieste API. Dopo
+l'autorizzazione, riprendi il download dalla UI: i file parziali verranno
+riutilizzati.
+
 ---
 
-### 1.1 Stop-before-start: una GPU, un modello
+### 1.2 Stop-before-start: una GPU, un modello
 
 Una GPU consumer non regge due modelli, quindi avviarne uno ferma sempre quello
 in servizio. «Fermare» significa *attendere che il processo sia morto*, non
@@ -166,7 +189,7 @@ vllm serve <model_path> --port <porta> \
   --logits-processors mineru_vl_utils:MinerULogitsProcessor \
   --dtype bfloat16 \
   --gpu-memory-utilization 0.75 \
-  --max-model-len 16384 \
+  --max-model-len 8192 \
   --max-num-seqs 4 \
   --max-num-batched-tokens 8192 \
   --served-model-name mineru2.5
@@ -176,13 +199,14 @@ vllm serve <model_path> --port <porta> \
   `opendatalab/mineru-vl-utils`): senza, il modello va in loop di ripetizione.
   Installare `mineru-vl-utils` **senza** l'extra `[vllm]` (dichiara vLLM
   `<0.22.0`; qui si usa 0.21.0 nel template cloud, compatibile).
-- `--dtype`/`--gpu-memory-utilization`/`--max-model-len`/`--max-num-seqs`/
-  `--max-num-batched-tokens`: **non raccomandati da nessuna guida ufficiale**
-  (nessuna VRAM minima dichiarata, solo benchmark su A100) — valori scelti per
-  8 GB, da validare empiricamente. Il `config.json` del checkpoint dichiara
-  `max_position_embeddings=32768` a livello top-level ma `8192` nella
-  sotto-struct `text_config`: discrepanza non spiegata da OpenDataLab, 16384 è
-  una scelta intermedia prudente.
+- `--dtype`/`--gpu-memory-utilization`/`--max-num-seqs`/
+  `--max-num-batched-tokens` non sono raccomandati da una guida ufficiale per
+  una GPU consumer (nessuna VRAM minima dichiarata, solo benchmark su A100) —
+  sono valori scelti per 8 GB e da validare empiricamente. Il checkpoint
+  dichiara `max_position_embeddings=32768` al livello top-level ma `8192` nella
+  `text_config`; vLLM usa il limite effettivo di 8192, quindi Tabularium lo
+  rispetta senza usare `VLLM_ALLOW_LONG_MAX_MODEL_LEN`, che può produrre NaN o
+  accessi CUDA fuori limite.
 - Checkpoint ~2.5 GB: margine comodo su 8 GB anche coi valori sopra.
 
 ---
@@ -469,11 +493,11 @@ utilizzabile per confronti e per qualche pagina, non per macinare il corpus.
 |---|---|---|---|---|
 | MonkeyOCRv2-B-Parsing | script dedicato | `modal_vllm.py` | ~1.5 GB | tarato, in produzione |
 | MinerU2.5 | `vllm serve` | `modal_mineru.py` | ~2.5 GB | comodo |
-| dots.mocr | `vllm serve` | `modal_dots_ocr.py` | ~6.1 GB | margine stretto, offload probabile |
+| dots.mocr | `vllm serve` | `modal_dots_ocr.py` | ~6.1 GB | OOM misurato su RTX 4060 8 GB, anche con offload |
 | PaddleOCR-VL-1.6 | `vllm serve` | `modal_paddleocr_vl.py` | ~1.8 GB | comodo |
 | Unlimited-OCR | Docker | `modal_unlimited_ocr.py` | ~6 GB | margine stretto |
-| GLM-OCR | `vllm serve` | `modal_glm_ocr.py` | ~2.7 GB | comodo |
-| DeepSeek-OCR-2 | `vllm serve` | `modal_deepseek_ocr.py` | ~6 GB | margine stretto |
+| GLM-OCR | `vllm serve` | `modal_glm_ocr.py` | ~2.7 GB | OOM/cache misurato su RTX 4060 8 GB |
+| DeepSeek-OCR-2 | `vllm serve` | `modal_deepseek_ocr.py` | ~6 GB | funziona con offload CPU 4 GB |
 | Qwen3-VL-8B | `vllm serve` | `modal_qwen3_vl.py` | ~16.3 GB | oltre 8 GB, warning atteso |
 | Modello custom | `vllm serve` generico | — | variabile | warning secondo dimensione reale |
 

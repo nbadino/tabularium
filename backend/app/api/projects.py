@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 import uuid
+import threading
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 
@@ -37,6 +38,32 @@ router = APIRouter(
     tags=["projects"],
     dependencies=[Depends(authsvc.get_current_user)],
 )
+
+_scan_jobs: dict[str, dict] = {}
+_scan_jobs_lock = threading.Lock()
+
+
+def _run_scan_job(job_id: str, project_id: int, lang: str, confirm_missing: bool) -> None:
+    try:
+        with connect() as conn:
+            project = _get_project_or_404(conn, project_id)
+            archive_dir = project["archive_dir"]
+            candidates = scanmod.scan_archive(archive_dir)
+            missing_ids = scanmod.find_missing_page_ids(conn, project_id, candidates)
+            report = scanmod.ScanReport(found_files=len(candidates), missing=len(missing_ids))
+            if confirm_missing:
+                scanmod.mark_missing_pages(conn, missing_ids)
+            with _scan_jobs_lock:
+                _scan_jobs[job_id].update(total=len(candidates), phase="files")
+            for index, cand in enumerate(candidates, 1):
+                scanmod.register_candidate(conn, project_id, cand, Path(archive_dir), report, lang=lang)
+                with _scan_jobs_lock:
+                    _scan_jobs[job_id].update(current=index, current_file=cand.path.name, report=report.to_dict())
+        with _scan_jobs_lock:
+            _scan_jobs[job_id].update(status="done", report=report.to_dict(), phase="completed")
+    except Exception as exc:
+        with _scan_jobs_lock:
+            _scan_jobs[job_id].update(status="error", error=str(exc), phase="failed")
 
 # Page type ammessi (estensione della tassonomia giornale) — usati nel frontend.
 PAGE_TYPES = [
@@ -90,7 +117,7 @@ def _get_project_or_404(conn, project_id: int):
 
 def _project_out(conn, row) -> ProjectOut:
     count = conn.execute(
-        "SELECT COUNT(*) AS n FROM pages WHERE project_id=?", (row["id"],)
+        "SELECT COUNT(*) AS n FROM pages WHERE project_id=? AND status != 'missing'", (row["id"],)
     ).fetchone()["n"]
     try:
         settings = json.loads(row["settings_json"] or "{}")
@@ -582,10 +609,34 @@ def delete_project(
     return {"deleted": True, "project": project["name"]}
 
 
+@router.post("/api/projects/{project_id}/scan/start")
+def start_scan(project_id: int, request: Request, confirm_missing: bool = Query(default=False), _auth: dict = Depends(require_resource(write=True))):
+    lang = parse_lang(request.headers.get("accept-language"))
+    with connect() as conn:
+        project = _get_project_or_404(conn, project_id)
+        if not project["archive_dir"] or not Path(project["archive_dir"]).is_dir():
+            raise HTTPException(status_code=400, detail="archive_dir non valida")
+    job_id = uuid.uuid4().hex
+    with _scan_jobs_lock:
+        _scan_jobs[job_id] = {"id": job_id, "status": "running", "current": 0, "total": 0, "phase": "discovering", "report": None}
+    threading.Thread(target=_run_scan_job, args=(job_id, project_id, lang, confirm_missing), daemon=True).start()
+    return {"job_id": job_id}
+
+
+@router.get("/api/projects/{project_id}/scan/jobs/{job_id}")
+def scan_job(project_id: int, job_id: str, _auth: dict = Depends(require_resource(write=False))):
+    with _scan_jobs_lock:
+        job = _scan_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="scan job non trovato")
+    return job
+
+
 @router.post("/api/projects/{project_id}/scan", response_model=ScanReportOut)
 def scan_project(
     project_id: int,
     request: Request,
+    confirm_missing: bool = Query(default=False),
     _auth: dict = Depends(require_resource(write=True)),
 ) -> ScanReportOut:
     lang = parse_lang(request.headers.get("accept-language"))
@@ -595,7 +646,11 @@ def scan_project(
         if not archive_dir or not Path(archive_dir).is_dir():
             raise HTTPException(status_code=400, detail="archive_dir non valida")
         candidates = scanmod.scan_archive(archive_dir)
+        missing_ids = scanmod.find_missing_page_ids(conn, project_id, candidates)
         report = scanmod.ScanReport(found_files=len(candidates))
+        report.missing = len(missing_ids)
+        if confirm_missing:
+            scanmod.mark_missing_pages(conn, missing_ids)
         for cand in candidates:
             scanmod.register_candidate(conn, project_id, cand, Path(archive_dir), report, lang=lang)
         return ScanReportOut(**report.to_dict())

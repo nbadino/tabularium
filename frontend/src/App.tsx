@@ -5,6 +5,9 @@ import AuthGate from './app/AuthGate'
 import Layout from './app/Layout'
 import { useAuth } from './app/auth'
 const HomePage = lazy(() => import('./pages/HomePage'))
+const RecognizePage = lazy(() => import('./pages/RecognizePage'))
+const ResultsPage = lazy(() => import('./pages/ResultsPage'))
+const ModelsHubPage = lazy(() => import('./pages/ModelsHubPage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
 const AnnotationPage = lazy(() => import('./pages/AnnotationPage'))
@@ -119,7 +122,10 @@ export default function App() {
         <AuthGate>
           <Routes>
             <Route element={<Layout />}>
-              <Route index element={<HomePage />} />
+              <Route index element={<RecognizePage />} />
+              <Route path="risultati" element={<ResultsPage />} />
+              <Route path="archivio" element={<HomePage />} />
+              <Route path="modelli" element={<ModelsHubPage />} />
               <Route path="progetti" element={<ProjectsPage />} />
               <Route path="progetti/:id" element={<ProjectDetailPage />} />
               <Route path="annotazione" element={<AnnotationPage />} />

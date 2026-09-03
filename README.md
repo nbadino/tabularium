@@ -170,6 +170,11 @@ variables, nothing to install by hand:
    or **add your own** Hugging Face repo) → **Download**.
 3. Once downloaded → **Start as local server**.
 
+The adapter catalog includes experimental/download-only entries as well as
+models verified on the current machine. See [benchmarks.md](benchmarks.md) for
+the tested GPU profiles and the exact local serving status; a catalog entry is
+not by itself a promise that every checkpoint fits an 8 GB GPU.
+
 The first time you start *any* model, Tabularium creates a dedicated Python
 environment and installs vLLM into it by itself (a couple of minutes,
 one-time only); for `MonkeyOCRv2-Parsing` it also clones the
@@ -178,6 +183,16 @@ serving, automatically. `TABULARIUM_TRAIN_REPO` / `TABULARIUM_TRAIN_PYTHON` /
 `TABULARIUM_SERVE_PYTHON` still exist as **optional overrides** if you already
 have your own checkout or environment — they are never required.
 
+### Vast.ai: prepare, reconnect, change model
+
+From **Cloud → Vast.ai**, save the Vast API key, select a running instance and
+choose the model from the recipe selector. **Prepare and connect** is
+idempotent: an already-ready server with the same model is reused; selecting a
+different model restarts only the remote serving process, reuses cached weights
+when available, and recreates/verifies the SSH tunnel. The UI shows provisioning
+logs and connection status. Archive scans run as background jobs with a real
+file counter, so refreshing the page does not lose the scan status.
+
 ```bash
 ./scripts/train_on_gpu.sh    # fine-tuning helper (separate from serving)
 ```
@@ -185,6 +200,21 @@ have your own checkout or environment — they are never required.
 Exact vLLM flags verified per model, and how the size warning works when a
 checkpoint may not fit your GPU, are documented in
 [docs/LOCAL_INFERENCE_GUIDE.md](docs/LOCAL_INFERENCE_GUIDE.md).
+
+To compare already-running local endpoints with the same page, use the
+non-destructive benchmark (one `--target` per server):
+
+```bash
+PYTHONPATH=backend data/vllm-runtime/bin/python scripts/benchmark_models.py \
+  --image test/1502-a-BANCO-SAN-GIORGIO-originale.jpg \
+  --target monkeyocrv2-parsing,http://127.0.0.1:8888/v1,MonkeyOCRv2 \
+  --target mineru2.5,http://127.0.0.1:8889/v1,mineru2.5 \
+  --task layout --repeat 2 --output data/benchmarks/run.json
+```
+
+The report records success/failure, wall latency, TTFT, tokens/s, output
+validity and token usage. Use `--task end2end` for adapters whose layout
+protocol is not verified; benchmark results are never written as labels.
 
 A GPU can also be rented on demand — Tabularium has built-in cloud instance
 management (SSH tunnel, RunPod proxy, serverless) documented in

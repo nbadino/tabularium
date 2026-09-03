@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 
 from ..services import auth as authsvc
 from ..services import custom_models as custom_models_svc
-from ..services import inference, model_registry, serve_manager
+from ..services import inference, model_registry, serve_manager, huggingface_auth
 from ..services.model_adapters import get_adapter
 
 router = APIRouter(tags=["models"], dependencies=[Depends(authsvc.get_current_user)])
@@ -52,6 +52,30 @@ def remove_custom_model(adapter_id: str, _admin: dict = Depends(_admin)) -> dict
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True}
+
+
+@router.get("/api/models/huggingface/auth")
+def huggingface_auth_status(_admin: dict = Depends(_admin)) -> dict:
+    return huggingface_auth.status()
+
+
+@router.post("/api/models/huggingface/auth/start")
+def huggingface_auth_start(_admin: dict = Depends(_admin)) -> dict:
+    return huggingface_auth.start()
+
+
+@router.post("/api/models/huggingface/auth/token")
+def huggingface_auth_token(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Collega l'account con un token utente: unico meccanismo esposto dal Hub."""
+    try:
+        return huggingface_auth.connect(str(payload.get("token") or ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/models/huggingface/auth/logout")
+def huggingface_auth_logout(_admin: dict = Depends(_admin)) -> dict:
+    return huggingface_auth.disconnect()
 
 
 @router.post("/api/models/{adapter_id}/download")

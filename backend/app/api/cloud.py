@@ -73,6 +73,15 @@ def start_cloud_tunnel(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             remote_port=remote_port,
             owner_id=_admin.get("id"),
         )
+        # La porta locale può essere scelta dinamicamente (per evitare
+        # collisioni con un runtime locale). Persistiamo subito l'endpoint
+        # reale: la pagina Riconosci non deve restare ancorata alla vecchia
+        # 8888 quando il tunnel è attivo su un'altra porta.
+        from ..services import inference
+        inference.save_inference_config({
+            "url": f"http://127.0.0.1:{st.local_port}/v1",
+            "provider": "vast",
+        })
         return {
             "ok": True,
             "running": st.running,
@@ -124,6 +133,11 @@ def search_vast_offers(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             max_dph=payload.get("max_dph"),
             min_reliability=payload.get("min_reliability", 0.95),
             instance_type=payload.get("instance_type", "on-demand"),
+            disk_gb=int(payload.get("disk_gb") or 40),
+            min_gpu_ram_gb=payload.get("min_gpu_ram_gb"),
+            min_inet_down=payload.get("min_inet_down"),
+            min_cuda=payload.get("min_cuda"),
+            verified_only=bool(payload.get("verified_only", False)),
         )
         return {"items": items}
     except Exception as exc:
@@ -140,7 +154,9 @@ def rent_vast(payload: dict, _admin: dict = Depends(_admin)) -> dict:
         result = cloud_manager.rent_vast_instance(
             _credential(payload),
             offer_id,
-            image=payload.get("image", "vastai/pytorch:cuda-12.4.1-auto"),
+            image=payload.get("image", ""),
+            cuda_max_good=payload.get("cuda_max_good"),
+            adapter_id=payload.get("adapter_id") or "",
             disk_gb=payload.get("disk_gb", 40),
             model=payload.get("model", "zenosai/MonkeyOCRv2-B-Parsing"),
             port=payload.get("port", 8888),
@@ -178,6 +194,159 @@ def control_vast(payload: dict, _admin: dict = Depends(_admin)) -> dict:
         return res
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# --- Vast.ai: prima configurazione guidata -------------------------------------
+@router.post("/api/system/cloud/vast/account")
+def vast_account(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Preflight: valida la API Key e riporta il credito residuo dell'account."""
+    from ..services import cloud_manager
+
+    try:
+        return cloud_manager.vast_account(_credential(payload))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/api/system/cloud/vast/ssh-key")
+def get_vast_ssh_key(_admin: dict = Depends(_admin)) -> dict:
+    """Stato della chiave SSH dedicata al cloud (mai la privata nella risposta)."""
+    from ..services import cloud_manager
+
+    try:
+        key = cloud_manager.local_ssh_key()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "exists": key["exists"],
+        "fingerprint": key["fingerprint"],
+        "key_type": key["key_type"],
+        "public_key": key["public_key"],
+        "key_path": key["key_path"],
+    }
+
+
+@router.post("/api/system/cloud/vast/ssh-key")
+def ensure_vast_ssh_key(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Genera la chiave dedicata e la registra sull'account Vast.ai.
+
+    Idempotente: rieseguirla su un account già configurato non crea duplicati.
+    Con `instance_id` la allega anche a un'istanza creata prima della chiave.
+    """
+    from ..services import cloud_manager
+
+    api_key = _credential(payload)
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API Key di Vast.ai obbligatoria.")
+    try:
+        result = cloud_manager.ensure_vast_ssh_key(api_key)
+        instance_id = payload.get("instance_id")
+        if instance_id:
+            result["attached"] = cloud_manager.attach_vast_ssh_key(api_key, int(instance_id))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result
+
+
+@router.post("/api/system/cloud/vast/instance")
+def get_vast_instance(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Stato di una singola istanza: il wizard lo interroga in polling."""
+    from ..services import cloud_manager
+
+    api_key = _credential(payload)
+    instance_id = payload.get("instance_id")
+    if not api_key or not instance_id:
+        raise HTTPException(status_code=400, detail="API Key e ID istanza obbligatori.")
+    try:
+        return cloud_manager.get_vast_instance(api_key, int(instance_id), owner_id=_admin.get("id"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/system/cloud/vast/hostkey")
+def pin_vast_host_key(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Fissa la host key dell'istanza nel known_hosts usato dal tunnel."""
+    from ..services import cloud_manager
+
+    host = str(payload.get("host") or "").strip()
+    port = payload.get("port")
+    if not host or not port:
+        raise HTTPException(status_code=400, detail="Host e porta SSH obbligatori.")
+    try:
+        return cloud_manager.pin_ssh_host_key(host, int(port))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get("/api/system/cloud/vast/monkeyocr-ref")
+def resolve_monkeyocr_ref(_admin: dict = Depends(_admin)) -> dict:
+    """Ref pin-nabile del runner ufficiale, così l'utente non digita SHA a mano."""
+    from ..services import cloud_manager
+
+    try:
+        return cloud_manager.resolve_monkeyocr_ref()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get("/api/system/cloud/vast/models")
+def list_vast_models(_admin: dict = Depends(_admin)) -> dict:
+    """Modelli servibili su GPU a noleggio, con la ricetta che li governa."""
+    from ..services import serve_recipes
+
+    return {"items": serve_recipes.remote_models()}
+
+
+@router.post("/api/system/cloud/vast/provision")
+def provision_vast_server(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Consegna lo script di setup all'istanza via SSH e lo avvia in background.
+
+    Non serve alcun commit pubblicato: lo script inviato è quello del checkout
+    locale, quindi il server remoto esegue esattamente il codice in uso qui.
+    """
+    from ..services import cloud_manager
+
+    host = str(payload.get("host") or "").strip()
+    port = payload.get("port")
+    if not host or not port:
+        raise HTTPException(status_code=400, detail="Host e porta SSH obbligatori.")
+    try:
+        return cloud_manager.provision_vast_server(
+            host,
+            int(port),
+            user=str(payload.get("user") or "root"),
+            model=payload.get("model") or "",
+            adapter_id=payload.get("adapter_id") or "monkeyocrv2-parsing",
+            remote_port=int(payload.get("remote_port") or 8888),
+            monkeyocr_ref=str(payload.get("monkeyocr_ref") or ""),
+            server_api_key=_credential(payload, "server_api_key", "server_credential_ref"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/api/system/cloud/vast/provision/log")
+def read_provision_log(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Coda del log di setup remoto: è l'avanzamento mostrato nel wizard."""
+    from ..services import cloud_manager
+
+    host = str(payload.get("host") or "").strip()
+    port = payload.get("port")
+    if not host or not port:
+        raise HTTPException(status_code=400, detail="Host e porta SSH obbligatori.")
+    try:
+        return cloud_manager.provision_log(
+            host, int(port), user=str(payload.get("user") or "root"),
+            lines=int(payload.get("lines") or 80),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 # --- Gestione Pod RunPod da UI -------------------------------------------------

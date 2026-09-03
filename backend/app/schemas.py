@@ -213,6 +213,7 @@ class ScanReportOut(BaseModel):
     registered: int = 0
     duplicates: int = 0
     unsupported: int = 0
+    missing: int = 0
     errors: list[str] = []
 
 

@@ -4,6 +4,9 @@ pydantic>=2.13,<3
 pillow>=12,<13
 numpy>=2,<3
 requests>=2.32,<3
+# Client delle API cloud (Vast.ai/RunPod) in services/cloud_manager.py.
+httpx>=0.28,<1
+python-dotenv>=1.0,<2
 python-multipart>=0.0.20,<1
 cryptography>=44,<46
 # Download pesi dal registro modelli (model_registry.py)

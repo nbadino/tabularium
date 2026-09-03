@@ -2,11 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 import { apiDelete, apiGet, apiPost } from '../lib/api'
 import { useI18n } from '../i18n'
 import { Badge, Modal, Progress } from './ui'
+import { useInference } from './inference'
 import { IconWarn } from './icons'
 
 interface ModelsModalProps {
   open: boolean
   onClose: () => void
+  /** Provider del profilo attivo: decide quale azione è primaria in ogni
+   *  riga (servire in locale o deployare sul provider remoto). */
+  activeProvider: string | null
+  /** «Deploya su <provider>»: gestita dall'hub, che apre il pannello del
+   *  provider con il modello già scelto. */
+  onDeploy: (adapterId: string, displayName: string) => void
+  /** Porta alla scelta della destinazione (profili di esecuzione). */
+  onChangeDestination: () => void
 }
 
 interface ModelItem {
@@ -83,6 +92,14 @@ interface ServeStatus {
   phase?: string | null
   elapsed_s?: number | null
   log_tail?: string
+}
+
+interface HuggingFaceAuthState {
+  state: 'disconnected' | 'awaiting_authorization' | 'connected' | 'error' | string
+  verification_uri_complete?: string | null
+  user_code?: string | null
+  username?: string | null
+  error?: string | null
 }
 
 function fmtBytes(n: number): string {
@@ -240,8 +257,14 @@ function ServeProgress({ status, name }: { status: ServeStatus; name: string }) 
  * `CloudControlModal.tsx` (istanze/tunnel) per non far dipendere download dei
  * pesi dalla gestione della connessione cloud.
  */
-export function ModelsModal({ open, onClose }: ModelsModalProps) {
+export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeDestination }: ModelsModalProps) {
   const { t } = useI18n()
+  const inf = useInference()
+  const REMOTE_PROVIDERS = ['vast', 'runpod', 'modal'] as const
+  const remote = activeProvider != null && (REMOTE_PROVIDERS as readonly string[]).includes(activeProvider)
+  const destinationLabel = activeProvider
+    ? t(`recognition.provider.${activeProvider}`)
+    : t('recognition.locationLocal')
   const [models, setModels] = useState<ModelItem[]>([])
   const [busy, setBusy] = useState<Record<string, boolean>>({})
   const [notice, setNotice] = useState<string | null>(null)
@@ -251,6 +274,8 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
   const [customForm, setCustomForm] = useState<CustomModelForm>(EMPTY_CUSTOM_FORM)
   const [customBusy, setCustomBusy] = useState(false)
   const [rates, setRates] = useState<Record<string, number | null>>({})
+  const [servePort, setServePort] = useState('8889')
+  const [hfAuth, setHfAuth] = useState<HuggingFaceAuthState>({ state: 'disconnected' })
   // Primo campione (istante, byte) di ogni download in corso: la velocità è
   // la media da lì, non l'ultimo scatto — meno ballerina e più utile.
   const firstSample = useRef<Record<string, { t: number; bytes: number }>>({})
@@ -302,10 +327,38 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
     }
   }
 
+  const loadHfAuth = async () => {
+    try {
+      setHfAuth(await apiGet<HuggingFaceAuthState>('/models/huggingface/auth'))
+    } catch {
+      /* authentication status is auxiliary to the model registry */
+    }
+  }
+
+  const handleHfAuth = async () => {
+    // Reserve the popup synchronously from the click, otherwise browsers may
+    // block the OAuth tab after the awaited API request.
+    const popup = window.open('', '_blank', 'noopener,noreferrer')
+    try {
+      const next = await apiPost<HuggingFaceAuthState>('/models/huggingface/auth/start', {})
+      setHfAuth(next)
+      if (next.verification_uri_complete) {
+        if (popup) popup.location.href = next.verification_uri_complete
+        else window.open(next.verification_uri_complete, '_blank', 'noopener,noreferrer')
+      } else {
+        popup?.close()
+      }
+    } catch (e) {
+      popup?.close()
+      setNotice(String(e))
+    }
+  }
+
   useEffect(() => {
     if (!open) return
     void load()
     void loadServeStatus()
+    void loadHfAuth()
   }, [open])
 
   useEffect(() => {
@@ -313,6 +366,12 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
     const id = setInterval(() => void loadServeStatus(), 3000)
     return () => clearInterval(id)
   }, [open])
+
+  useEffect(() => {
+    if (!open || hfAuth.state !== 'awaiting_authorization') return
+    const id = setInterval(() => void loadHfAuth(), 3000)
+    return () => clearInterval(id)
+  }, [open, hfAuth.state])
 
   useEffect(() => {
     if (!open || !models.some((m) => m.downloading || (m.adapter_id === 'paddleocr-vl' && m.runtime_state === 'installing'))) return
@@ -385,7 +444,11 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
     setBusy((b) => ({ ...b, [adapterId]: true }))
     setNotice(null)
     try {
-      const status = await apiPost<ServeStatus>(`/models/${adapterId}/serve/start`, { port: 8888 })
+      const parsedPort = Number(servePort)
+      if (!Number.isInteger(parsedPort) || parsedPort < 1024 || parsedPort > 65535) {
+        throw new Error(t('cloud.models.invalidPort'))
+      }
+      const status = await apiPost<ServeStatus>(`/models/${adapterId}/serve/start`, { port: parsedPort })
       setServeStatus(status)
       setNotice(t('cloud.models.serveStartingNotice'))
       await loadServeStatus()
@@ -463,8 +526,49 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
       )}
     >
       <div className="space-y-4 p-4 text-[13px] leading-relaxed">
+          {/* La destinazione decide che cosa significa «prendere un modello»:
+              in locale è scaricare e avviare, su un provider remoto è
+              deployarlo là. Mostrarla qui evita di scoprirlo dalle azioni. */}
+          <div className="flex flex-wrap items-center justify-between gap-2 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-panel)] px-3 py-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="lbl !mb-0">{t('cloud.models.destinationLabel')}</span>
+              <Badge tone={remote ? 'ok' : 'neutral'}>{destinationLabel}</Badge>
+              {remote && <span className="text-[11px] text-[color:var(--color-ink-2)]">{t('cloud.models.destinationRemoteHint')}</span>}
+            </div>
+            <button type="button" className="btn btn-sm" onClick={onChangeDestination}>
+              {t('cloud.models.changeDestination')}
+            </button>
+          </div>
+
           <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
             <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('cloud.models.intro')}</p>
+            <label className="mt-2 flex max-w-[18rem] items-center gap-2 text-[11px]">
+              <span className="lbl !mb-0">{t('cloud.models.servePort')}</span>
+              <input className="fld fld-mono w-24" type="number" min={1024} max={65535}
+                value={servePort} onChange={(e) => setServePort(e.target.value)}
+                aria-describedby="serve-port-hint" />
+              <span id="serve-port-hint" className="text-[color:var(--color-ink-3)]">{t('cloud.models.servePortHint')}</span>
+            </label>
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[color:var(--color-rule)] pt-3">
+              <span className="text-[11px] text-[color:var(--color-ink-2)]">
+                {hfAuth.state === 'connected'
+                  ? t('cloud.models.hfConnected', { username: hfAuth.username || '' })
+                  : hfAuth.state === 'awaiting_authorization'
+                    ? t('cloud.models.hfAwaiting', { code: hfAuth.user_code || '' })
+                    : t('cloud.models.hfNotConnected')}
+              </span>
+              {hfAuth.state === 'awaiting_authorization' && hfAuth.verification_uri_complete && (
+                <button type="button" className="btn btn-sm" onClick={() => window.open(hfAuth.verification_uri_complete!, '_blank', 'noopener,noreferrer')}>
+                  {t('cloud.models.hfOpenLogin')}
+                </button>
+              )}
+              {hfAuth.state !== 'connected' && hfAuth.state !== 'awaiting_authorization' && (
+                <button type="button" className="btn btn-sm btn-primary" onClick={() => void handleHfAuth()}>
+                  {t('cloud.models.hfConnect')}
+                </button>
+              )}
+              {hfAuth.error && <span className="text-[11px] text-[color:var(--color-sig-text)]">{hfAuth.error}</span>}
+            </div>
           </div>
 
           <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
@@ -597,6 +701,9 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
                         </Badge>
                       )}
                       {m.supports_native && <Badge tone="ok">{t('cloud.models.prefillReady')}</Badge>}
+                      {inf.enabled && inf.adapterId === m.adapter_id && (
+                        <Badge tone="ok">{t('cloud.models.inUseNow')}</Badge>
+                      )}
                       {m.export_ready && <Badge tone="ok">{t('cloud.models.exportReady')}</Badge>}
                       {m.cloud_serve_ready && <Badge tone="ok">{t('cloud.models.cloudReady')}</Badge>}
                       {m.adapter_id === 'paddleocr-vl' && m.installed && m.runtime_state && m.runtime_state !== 'ready' && (
@@ -640,6 +747,19 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
                   </div>
 
                   <div className="flex items-center gap-2">
+                    {/* Destinazione remota + modello deployabile: il primo gesto
+                        è portarlo là, non scaricarlo qui. Le azioni locali
+                        restano accessibili perché la destinazione può cambiare. */}
+                    {remote && m.cloud_serve_ready && !m.downloading && (
+                      <button
+                        type="button"
+                        onClick={() => onDeploy(m.adapter_id, m.display_name)}
+                        disabled={rowBusy}
+                        className="btn btn-sm btn-primary"
+                      >
+                        {t('cloud.models.deployOn', { provider: destinationLabel })}
+                      </button>
+                    )}
                     {m.downloading ? (
                       <button
                         type="button"
@@ -700,7 +820,7 @@ export function ModelsModal({ open, onClose }: ModelsModalProps) {
                           type="button"
                           onClick={() => void handleDownload(m.adapter_id)}
                           disabled={rowBusy}
-                          className="btn btn-sm btn-primary"
+                          className={`btn btn-sm ${remote && m.cloud_serve_ready ? '' : 'btn-primary'}`}
                         >
                           {rowBusy ? t('cloud.models.downloadStarting') : t('cloud.models.download')}
                         </button>

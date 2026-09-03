@@ -1,6 +1,6 @@
 # AGENTS.md — Tabularium
 
-Dashboard locale multipiattaforma per il **fine-tuning guidato di MonkeyOCRv2-Parsing**
+Ambiente locale multipiattaforma per il **riconoscimento documentale e il fine-tuning guidato di MonkeyOCRv2-Parsing**
 su **giornali storici "Historic Shipping Index" (1900s)**, focalizzato su **layout multi-colonna complesso
 e forma tabulare densa** (registri di movimenti navali, *casualties*, *maritime intelligence*).
 
@@ -12,16 +12,21 @@ convenzioni dati, roadmap progressiva e regole operative.
 
 ## 1. Missione
 
-Costruire uno strumento unico che accompagni l'utente dall'archivio di foto al modello affinato:
+Costruire uno strumento unico che accompagni l'utente dall'archivio di immagini al testo
+strutturato e, quando serve, al modello affinato. La UX primaria è indipendente
+dall'infrastruttura: si sceglie modello e provider una volta, poi riconoscimento, revisione ed
+export restano identici in locale, su Vast.ai, Modal o altri endpoint compatibili.
 
 1. **Registra** le pagine dell'archivio (scansioni, PDF multi-pagina) con metadati (data, annata, pagina).
-2. **Annota manualmente in modo guidato e super-dettagliato** la struttura del documento:
+2. **Riconosce** una o molte pagine in sessioni persistenti, esportabili oppure revisionabili
+   successivamente anche con l'inferenza disattivata.
+3. **Annota manualmente in modo guidato e super-dettagliato** la struttura del documento:
    blocchi semantici + **tabelle complesse con celle unite** + **ordine di lettura** + **trascrizione**.
-3. **Esporta** il dataset nell'unico formato che l'addestramento ufficiale accetta
+4. **Esporta** risultati e dataset nell'unico formato che l'addestramento ufficiale accetta
    (JSONL ms-swift, coordinate normalizzate 0–1000, tabelle in OTSL).
-4. **Addestra** MonkeyOCRv2-Parsing (LoRA o full-SFT) generando e lanciando gli script
+5. **Addestra** MonkeyOCRv2-Parsing (LoRA o full-SFT) generando e lanciando gli script
    ufficiali, con monitoraggio live di log, loss e GPU.
-5. **Valuta** su pagine mai viste (layout/IoU, ordine di lettura, TEDS per tabelle, CER/WER per testo)
+6. **Valuta** su pagine mai viste (layout/IoU, ordine di lettura, TEDS per tabelle, CER/WER per testo)
    e **itera**.
 
 Vincolo trasversale: **multipiattaforma** (Windows/Linux/macOS) per la UI e la preparazione dati;
@@ -722,6 +727,18 @@ tabella dei fallimenti peggiori per guidare la nuova iterazione di annotazione.
   script `build_frontend`/`run` (bash+PowerShell), guida d'uso e setup GPU nel README,
   benchmark d'uso = flusso §README. Nota: accorpare la build di produzione (Vite) prima di
   disinstallare `frontend/node_modules` se si ricompila.
+- **M9 — Modello, provider e destinazione** — l'hub Modelli è il solo luogo di configurazione
+  modello/provider (Impostazioni non lo duplica: v. `DESIGN.md` § Navigazione). Il profilo attivo
+  è la fonte di verità atomica (`compute_profiles`, DB v10+); `get_inference_config()` espone
+  anche `provider`, `resource_id` e `source_profile_id`, e il client VLLM li usa così che
+  «`is_cloud`» non si deduca dall'URL (un tunnel SSH Vast ascolta su `localhost` ma è cloud).
+  La libreria modelli dichiara la destinazione in testa e adatta l'azione primaria a riga:
+  in locale = scarica/avvia, su provider remoto = **deploy** (Vast/RunPod/Modal) con la scheda
+  del provider aperta sul modello già scelto (`focusProvider`/`focusAdapterId`). L'avvio di una
+  sessione di riconoscimento sonda l'endpoint (409 `model_endpoint_unreachable` localizzato)
+  invece di accodare pagine destinate a fallire; la VRAM locale non viene evocata per run remote;
+  lo stop con `disable_inference` arresta la risorsa **identificata** (`resource_id` +
+  credenziale del provider), mai la prima che capita nell'account.
 
 Ogni milestone termina con la sezione "Verifica": cosa lanciare per testare (vedi §13).
 

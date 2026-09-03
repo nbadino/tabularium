@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link, useSearchParams } from 'react-router'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
 import { loadImageSize, PixelSize, scaleRatio } from '../lib/coords'
-import type { BlockOut, LabelDef, PageItem } from '../lib/types'
+import type { BlockOut, LabelDef, PageItem, RecognitionRun } from '../lib/types'
 import StudioCanvas from '../studio/StudioCanvas'
 import PageSidebar from '../studio/components/PageSidebar'
 import ContentPane from '../studio/components/ContentPane'
@@ -71,9 +72,14 @@ function loadSplit(): { sidebar: number; content: number } {
 
 export default function AnnotationPage() {
   const { t } = useI18n()
+  const [searchParams] = useSearchParams()
+  const requestedProject = Number(searchParams.get('project')) || null
+  const requestedPage = Number(searchParams.get('page')) || null
+  const requestedRun = Number(searchParams.get('run')) || null
   const inf = useInference()
   const [projectId, setProjectId] = useState<number | ''>('')
   const [pages, setPages] = useState<PageItem[]>([])
+  const [reviewRun, setReviewRun] = useState<RecognitionRun | null>(null)
   const [page, setPage] = useState<PageItem | null>(null)
   const [labels, setLabels] = useState<LabelDef[]>([])
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -428,16 +434,31 @@ export default function AnnotationPage() {
     setPage(null)
     pageIdRef.current = null
     setPages([])
+    setReviewRun(null)
     setPreviewUrl(null)
     ann.reset()
     if (pid === '') return
     try {
-      const [pr, pg, queue] = await Promise.all([
+      const runPromise = requestedRun && (requestedProject == null || requestedProject === pid)
+        ? apiGet<RecognitionRun>(`/projects/${pid}/recognition-runs/${requestedRun}`)
+        : Promise.resolve(null)
+      const [pr, pg, queue, scopedRun] = await Promise.all([
         apiGet<{ items: PageItem[] }>(`/projects/${pid}/pages`),
         apiGet<{ labels: LabelDef[] }>(`/projects/${pid}/labels`),
         apiGet<{ items: Array<{ id: number; reason: string }> }>(`/projects/${pid}/annotation-queue?limit=1`),
+        runPromise,
       ])
-      setPages(pr.items)
+      if (scopedRun) {
+        const byId = new Map(pr.items.map((item) => [item.id, item]))
+        setPages(
+          (scopedRun.items ?? [])
+            .map((item) => byId.get(item.page_id))
+            .filter((item): item is PageItem => Boolean(item)),
+        )
+        setReviewRun(scopedRun)
+      } else {
+        setPages(pr.items)
+      }
       setNextTask(queue.items[0] ?? null)
       setLabels(pg.labels)
       ann.setActiveLabel(pg.labels.some((l) => l.name === 'Text') ? 'Text' : pg.labels[0]?.name ?? 'Text')
@@ -445,6 +466,46 @@ export default function AnnotationPage() {
       setError(String(e))
     }
   }
+
+  // Una run bulk è persistente e il backend salva ogni blocco appena viene
+  // emesso.  Lo Studio osserva la stessa risorsa: così «Vedi nello studio»
+  // diventa una superficie live, anche con una pagina ancora in lavorazione.
+  useEffect(() => {
+    if (!reviewRun || !requestedRun || !page) return
+    let stopped = false
+    const updateOutput = (run: RecognitionRun) => {
+      const item = run.items?.find((candidate) => candidate.page_id === page.id)
+      const blocks = item?.result?.blocks ?? []
+      const text = blocks
+        .map((block) => {
+          const label = String(block.label ?? block.kind ?? '').trim()
+          const content = String(block.content ?? '').trim()
+          return content ? (label ? `[${label}]\n${content}` : content) : label
+        })
+        .filter(Boolean)
+        .join('\n\n')
+      setLiveOutput(text ? { phase: item?.state === 'finished' ? 'completed' : 'streaming', text } : null)
+    }
+    updateOutput(reviewRun)
+    if (reviewRun.state !== 'queued' && reviewRun.state !== 'running') return
+    const tick = async () => {
+      try {
+        const next = await apiGet<RecognitionRun>(`/projects/${reviewRun.project_id}/recognition-runs/${reviewRun.id}`)
+        if (!stopped) {
+          setReviewRun(next)
+          updateOutput(next)
+        }
+      } catch {
+        // Il canvas resta utilizzabile anche durante un'interruzione breve
+        // del polling; il risultato salvato riapparirà al tick successivo.
+      }
+    }
+    const timer = window.setInterval(() => void tick(), 1200)
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+    }
+  }, [reviewRun?.id, reviewRun?.state, page?.id, requestedRun])
 
   // --- motori di prefill disponibili -------------------------------------------
   // Il default non può essere fisso: `ocr` non riconosce le tabelle, `model` sì.
@@ -537,6 +598,29 @@ export default function AnnotationPage() {
     (pid) => void onProjectChange(pid),
     (e) => setError(String(e)),
   )
+
+  // I risultati bulk aprono direttamente la pagina da verificare. Il link è
+  // riproducibile e non dipende dal progetto ricordato nell'ultimo browser.
+  useEffect(() => {
+    if (
+      requestedProject != null &&
+      projectId !== requestedProject &&
+      projects.some((project) => project.id === requestedProject)
+    ) {
+      void onProjectChange(requestedProject)
+    }
+  }, [requestedProject, projectId, projects])
+
+  useEffect(() => {
+    if (
+      requestedPage != null &&
+      page?.id !== requestedPage &&
+      pages.some((candidate) => candidate.id === requestedPage) &&
+      !navBusy
+    ) {
+      void onPageSelect(requestedPage)
+    }
+  }, [requestedPage, page?.id, pages, navBusy])
 
   // --- seleziona pagina -------------------------------------------------------
   const onPageSelect = async (pid: number) => {
@@ -710,8 +794,11 @@ export default function AnnotationPage() {
     { id: 'pan' as Tool, labelKey: 'annotate.pan', key: 'H', Icon: IconHand },
   ]
 
+  const reviewIndex = reviewRun && page ? pages.findIndex((item) => item.id === page.id) : -1
+  const nextReviewPage = reviewIndex >= 0 ? pages[reviewIndex + 1] ?? null : pages[0] ?? null
   const openNextTask = () => {
-    if (nextTask) void onPageSelect(nextTask.id)
+    if (reviewRun && nextReviewPage) void onPageSelect(nextReviewPage.id)
+    else if (nextTask) void onPageSelect(nextTask.id)
   }
 
   // --- guida contestuale --------------------------------------------------------
@@ -739,6 +826,14 @@ export default function AnnotationPage() {
             {t(`annotate.view${mode[0].toUpperCase()}${mode.slice(1)}` as 'annotate.viewAll' | 'annotate.viewCanvas' | 'annotate.viewTranscription')}
           </button>
         ))}
+        {reviewRun && (
+          <span className="ml-auto flex items-center gap-2 text-[11px]">
+            <b>{t('annotate.reviewRun', { id: reviewRun.id, count: pages.length })}</b>
+            <Link to={`/risultati?project=${reviewRun.project_id}&run=${reviewRun.id}`} className="btn btn-sm no-underline">
+              {t('annotate.backToResults')}
+            </Link>
+          </span>
+        )}
       </div>
       <div className="flex min-h-0 flex-1 overflow-hidden">
       {studioMode === 'all' && <PageSidebar
@@ -749,6 +844,11 @@ export default function AnnotationPage() {
         onProjectChange={onProjectChange}
         onPageSelect={onPageSelect}
         width={split.sidebar}
+        reviewScope={reviewRun ? {
+          label: t('annotate.reviewRun', { id: reviewRun.id, count: pages.length }),
+          backTo: `/risultati?project=${reviewRun.project_id}&run=${reviewRun.id}`,
+          backLabel: t('annotate.backToResults'),
+        } : null}
       />}
 
       {studioMode === 'all' && <Splitter
@@ -938,9 +1038,9 @@ export default function AnnotationPage() {
             </button>
             <button
               onClick={openNextTask}
-              disabled={!nextTask}
+              disabled={reviewRun ? !nextReviewPage : !nextTask}
               className="btn"
-              title={nextTask?.reason}
+              title={reviewRun ? t('annotate.nextRunPage') : nextTask?.reason}
             >
               <IconNext size={12} />
               {t('annotate.nextTask')}

@@ -11,7 +11,7 @@ import sqlite3
 
 from . import config
 
-SCHEMA_VERSION = "14"
+SCHEMA_VERSION = "15"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -128,6 +128,15 @@ _LEGACY_COLUMN_MIGRATIONS = [
     # Self-hosted: ogni progetto ha un proprietario (NULL per i progetti esistenti:
     # vengono assegnati all'amministratore al primo setup, v. services/auth.py).
     ("projects", "owner_id", "ALTER TABLE projects ADD COLUMN owner_id INTEGER"),
+    # SQLite non offre `ADD COLUMN IF NOT EXISTS`. La migrazione per presenza
+    # rende l'aggiunta idempotente anche nei test/restore che riallineano la
+    # versione registrata lasciando intatte le tabelle più nuove.
+    (
+        "blocks",
+        "recognition_run_id",
+        "ALTER TABLE blocks ADD COLUMN recognition_run_id INTEGER "
+        "REFERENCES recognition_runs(id) ON DELETE SET NULL",
+    ),
 ]
 
 # La versione 6 è la *baseline*: le versioni precedenti sono assorbite dallo
@@ -262,6 +271,63 @@ _MIGRATIONS: list[tuple[str, str]] = [
             extra_args TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
+    """),
+    ("15", """
+        -- Una run di riconoscimento è indipendente dalla connessione del
+        -- browser: conserva configurazione, avanzamento e risultato per
+        -- pagina, così il compute può essere disattivato prima della review.
+        CREATE TABLE IF NOT EXISTS recognition_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
+            state TEXT NOT NULL CHECK(state IN (
+                'queued','running','finished','finished_with_errors','failed','cancelled'
+            )),
+            engine TEXT NOT NULL CHECK(engine IN ('model','ocr')),
+            mode TEXT NOT NULL DEFAULT 'replace_drafts',
+            model_mode TEXT NOT NULL DEFAULT 'native',
+            model_name TEXT,
+            adapter_id TEXT,
+            provider TEXT NOT NULL DEFAULT 'local',
+            endpoint TEXT,
+            stop_policy TEXT NOT NULL DEFAULT 'none'
+                CHECK(stop_policy IN ('none','disable_inference')),
+            total_pages INTEGER NOT NULL DEFAULT 0,
+            completed_pages INTEGER NOT NULL DEFAULT 0,
+            succeeded_pages INTEGER NOT NULL DEFAULT 0,
+            failed_pages INTEGER NOT NULL DEFAULT 0,
+            error TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            started_at TEXT,
+            heartbeat_at TEXT,
+            ended_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_recognition_runs_project
+            ON recognition_runs(project_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_recognition_runs_state
+            ON recognition_runs(state, heartbeat_at);
+
+        CREATE TABLE IF NOT EXISTS recognition_run_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL REFERENCES recognition_runs(id) ON DELETE CASCADE,
+            page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+            state TEXT NOT NULL CHECK(state IN (
+                'queued','running','finished','failed','cancelled'
+            )),
+            detected INTEGER NOT NULL DEFAULT 0,
+            inserted INTEGER NOT NULL DEFAULT 0,
+            result_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT,
+            started_at TEXT,
+            ended_at TEXT,
+            UNIQUE(run_id, page_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_recognition_items_run
+            ON recognition_run_items(run_id, state, id);
+
+        CREATE INDEX IF NOT EXISTS idx_blocks_recognition_run
+            ON blocks(recognition_run_id);
     """),
 ]
 
