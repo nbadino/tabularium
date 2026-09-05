@@ -4,3 +4,7 @@ pytest>=9,<10
 httpx2>=2,<3
 # Smoke E2E con browser reale (scripts/e2e_workflow.py).
 selenium>=4,<5
+# A runtime OpenCV resta opzionale: `pages.py` espone deskew/perspective solo
+# se `find_spec("cv2")` la trova. I test però percorrono quei rami senza
+# guardie, quindi qui è obbligatoria.
+opencv-python-headless>=4.10,<6
