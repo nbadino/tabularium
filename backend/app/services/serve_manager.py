@@ -38,7 +38,7 @@ from typing import Any
 
 from .. import config
 from ..db import connect
-from . import local_runtime, vendor_repos
+from . import local_runtime, process_probe, vendor_repos
 from .model_adapters import get_adapter
 from .model_registry import (
     ensure_draft,
@@ -437,11 +437,8 @@ def _is_our_serving_process(pid: str | int) -> bool:
     Tutto il resto — un Jupyter, un server dell'utente — non si tocca.
     """
     pid = int(pid)
-    try:
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
-            "utf-8", errors="replace"
-        )
-    except OSError:
+    cmdline = process_probe.process_cmdline(pid)
+    if cmdline is None:
         return False
     if str(config.MODELS_DIR) in cmdline:
         return True
@@ -775,11 +772,7 @@ def _pid_alive(pid: int) -> bool:
         return True  # esiste, ma non è nostro
     except Exception:  # noqa: BLE001
         return False
-    try:
-        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
-        return stat.rsplit(")", 1)[-1].split()[0] != "Z"
-    except (OSError, IndexError):
-        return True
+    return not process_probe.is_zombie(pid)
 
 
 def _terminate(pid: int, process_group: int | None = None, timeout: float = 20.0) -> bool:
