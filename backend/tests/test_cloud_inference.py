@@ -10,6 +10,7 @@ from app.db import connect, init_db
 from app.main import app
 from app.services import inference as infmod
 from app.services import cloud_manager
+from app.services import process_probe
 from app.services import vault
 
 
@@ -1026,7 +1027,7 @@ def test_is_ssh_process_reads_a_nul_separated_cmdline(monkeypatch, tmp_path):
     proc_dir.mkdir()
     (proc_dir / "cmdline").write_bytes(b"ssh\x00-N\x00-L\x008888:127.0.0.1:8888\x00root@ssh3.vast.ai\x00")
 
-    real_path = cloud_manager.Path
+    real_path = process_probe.Path
 
     class FakePath(type(real_path())):
         def __new__(cls, value):
@@ -1035,7 +1036,8 @@ def test_is_ssh_process_reads_a_nul_separated_cmdline(monkeypatch, tmp_path):
                 return real_path(str(tmp_path / text.split("/proc/")[1]))
             return real_path(text)
 
-    monkeypatch.setattr(cloud_manager, "Path", FakePath)
+    monkeypatch.setattr(process_probe.sys, "platform", "linux")
+    monkeypatch.setattr(process_probe, "Path", FakePath)
     assert cloud_manager._is_ssh_process(12345) is True
 
 
@@ -1043,7 +1045,7 @@ def test_pid_alive_rejects_zombie_process(monkeypatch, tmp_path):
     proc_dir = tmp_path / "33338"
     proc_dir.mkdir()
     (proc_dir / "stat").write_text("33338 (ssh) Z 1 2 3\n", encoding="utf-8")
-    real_path = cloud_manager.Path
+    real_path = process_probe.Path
 
     class FakePath(type(real_path())):
         def __new__(cls, value):
@@ -1052,8 +1054,48 @@ def test_pid_alive_rejects_zombie_process(monkeypatch, tmp_path):
                 return real_path(str(tmp_path / text.split("/proc/")[1]))
             return real_path(text)
 
-    monkeypatch.setattr(cloud_manager, "Path", FakePath)
+    monkeypatch.setattr(process_probe.sys, "platform", "linux")
+    monkeypatch.setattr(process_probe, "Path", FakePath)
     monkeypatch.setattr(cloud_manager.os, "kill", lambda _pid, _sig: None)
+    assert cloud_manager._pid_alive(33338) is False
+
+
+def test_macos_falls_back_to_ps_instead_of_proc(monkeypatch):
+    """Su macOS `/proc` non esiste: senza il fallback `ps`, `process_cmdline`
+    tornava sempre None e ogni processo risultava non attribuibile — il tunnel
+    diventava impossibile da fermare e quindi da riaprire."""
+    calls: list[list[str]] = []
+
+    class Done:
+        returncode = 0
+        stdout = "ssh -N -L 8888:127.0.0.1:8888 root@ssh3.vast.ai\n"
+
+    def fake_run(argv, **_kwargs):
+        calls.append(argv)
+        return Done()
+
+    monkeypatch.setattr(process_probe.sys, "platform", "darwin")
+    monkeypatch.setattr(process_probe.subprocess, "run", fake_run)
+
+    assert cloud_manager._is_ssh_process(12345) is True
+    # `-ww` evita il troncamento alla larghezza del terminale: senza, le righe
+    # di comando lunghe arriverebbero tagliate proprio dove sta l'attribuzione.
+    assert "-ww" in calls[0]
+
+
+def test_macos_zombie_is_detected_through_ps(monkeypatch):
+    """`ps` riporta lo stato con flag posizionali (`Z`, `S+`): conta la prima
+    lettera, altrimenti uno zombie passa per vivo e il job resta appeso."""
+
+    class Done:
+        returncode = 0
+        stdout = "Z+\n"
+
+    monkeypatch.setattr(process_probe.sys, "platform", "darwin")
+    monkeypatch.setattr(process_probe.subprocess, "run", lambda *_a, **_k: Done())
+    monkeypatch.setattr(cloud_manager.os, "kill", lambda _pid, _sig: None)
+
+    assert process_probe.is_zombie(33338) is True
     assert cloud_manager._pid_alive(33338) is False
 
 

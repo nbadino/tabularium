@@ -25,6 +25,7 @@ import httpx
 
 from .. import config
 from ..db import connect
+from . import process_probe
 
 # Stato singleton in memoria per il tunnel SSH attivo
 _ACTIVE_TUNNEL_PROC: subprocess.Popen | None = None
@@ -53,13 +54,8 @@ def _pid_alive(pid: int | None) -> bool:
         # inoltrare alcuna connessione. Trattarlo come vivo lasciava il job
         # `ssh_tunnel` running per sempre e conservava un endpoint locale ormai
         # morto.
-        if os.name == "posix":
-            try:
-                state = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").split()
-                if len(state) > 2 and state[2] == "Z":
-                    return False
-            except (OSError, UnicodeError):
-                pass
+        if process_probe.is_zombie(pid):
+            return False
         return True
     except (OSError, ProcessLookupError):
         return False
@@ -69,13 +65,8 @@ def _is_ssh_process(pid: int) -> bool:
     """Evita di segnalare un PID riciclato dopo un riavvio del backend."""
     if os.name != "posix":
         return False
-    try:
-        # `cmdline` separa gli argomenti con NUL: la sequenza da sostituire è il
-        # byte zero, non la stringa letterale "\x00" — con quella il confronto
-        # sul nome non riusciva mai e ogni tunnel persistito risultava
-        # "non verificabile", impedendo di fermarlo e quindi di riaprirlo.
-        command = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\x00", b" ").decode(errors="ignore")
-    except (OSError, UnicodeError):
+    command = process_probe.process_cmdline(pid)
+    if command is None:
         return False
     return Path(command.split(" ", 1)[0]).name == "ssh" or " ssh " in f" {command} "
 
