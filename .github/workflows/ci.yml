@@ -124,10 +124,20 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      # Chrome e chromedriver dalla stessa azione, così le versioni sono per
+      # costruzione allineate. Non basta installare solo Chrome: l'immagine
+      # `ubuntu-latest` porta già un chromedriver sul PATH, e Selenium Manager
+      # preferisce quello, che resta indietro rispetto al browser appena
+      # installato. Il percorso del driver va quindi passato esplicito
+      # (`TABULARIUM_CHROMEDRIVER`, che `e2e_workflow.py` già legge), altrimenti
+      # si ricade sul PATH e si torna a
+      # `SessionNotCreatedException: This version of ChromeDriver only supports
+      # Chrome version 152`.
       - name: Chrome e chromedriver
         id: chrome
         uses: browser-actions/setup-chrome@v1
-      - uses: nanasess/setup-chromedriver@v2
+        with:
+          install-chromedriver: true
       - name: Installa dipendenze
         run: |
           pip install -r backend/requirements.txt -r backend/requirements-dev.txt
@@ -151,6 +161,7 @@ jobs:
         run: python3 scripts/e2e_workflow.py
         env:
           TABULARIUM_CHROMIUM: ${{ steps.chrome.outputs.chrome-path }}
+          TABULARIUM_CHROMEDRIVER: ${{ steps.chrome.outputs.chromedriver-path }}
       - name: Log del server in caso di fallimento
         if: failure()
         uses: actions/upload-artifact@v4
