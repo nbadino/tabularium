@@ -10,7 +10,16 @@ BASE_URL="${TABULARIUM_E2E_URL:-http://127.0.0.1:8787}"
 # nell'invocazione non sono cosmetiche: su macOS ogni percorso plausibile
 # contiene uno spazio (`Google Chrome.app`, `Chromium.app`), e senza di esse
 # la variabile viene spezzata in parole prima di arrivare a exec.
-CHROME_BIN="${TABULARIUM_CHROMIUM:-chromium}"
+CHROME_BIN="${TABULARIUM_CHROMIUM:-}"
+if [ -z "$CHROME_BIN" ]; then
+  # Su macOS non esiste un `chromium` nel PATH: i browser stanno nei bundle.
+  for candidate in chromium \
+    "/Applications/Chromium.app/Contents/MacOS/Chromium" \
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; do
+    if command -v "$candidate" >/dev/null 2>&1; then CHROME_BIN="$candidate"; break; fi
+  done
+  CHROME_BIN="${CHROME_BIN:-chromium}"
+fi
 command -v "$CHROME_BIN" >/dev/null 2>&1 || {
   echo "e2e smoke: Chromium non trovato (impostare TABULARIUM_CHROMIUM)" >&2
   exit 1

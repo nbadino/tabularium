@@ -34,6 +34,9 @@ def _chrome_options(root: Path) -> Options:
             "/usr/bin/chromium-browser",
             "/usr/bin/chromium",
             "/snap/bin/chromium",
+            # macOS: nessun `chromium` nel PATH, i browser stanno nei bundle.
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         ):
             if Path(candidate).exists():
                 binary = candidate

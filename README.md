@@ -114,7 +114,7 @@ management. Passwords and session tokens are stored only as hashes.
 |---|---|
 | OS | Linux, macOS or Windows |
 | Python | 3.11–3.13 (backend; CI-verified) |
-| Node.js | ≥ 20 (used by `run.sh`/`run.ps1` to build or refresh the frontend) |
+| Node.js | 20–22 verified in CI (used by `run.sh`/`run.ps1` to build or refresh the frontend); newer versions work too |
 | Storage | SQLite (bundled), plus disk space for your scans |
 | GPU | NVIDIA, ≥ 8 GB VRAM — **only** for model prefill / inference / fine-tuning |
 
