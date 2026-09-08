@@ -141,3 +141,8 @@ def ensure_dirs() -> None:
     """Crea le directory necessarie al primo avvio."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    # `thumbs/` non è solo cache: l'import di un PDF ci scrive il PNG
+    # sorgente (`scan.py`, `pil_img.save(pdf_image_path(page_id))`) prima di
+    # confermare la pagina. Senza la cartella l'import muore con
+    # `FileNotFoundError` a metà transazione e non registra nulla.
+    (ROOT_DIR / "thumbs").mkdir(parents=True, exist_ok=True)
