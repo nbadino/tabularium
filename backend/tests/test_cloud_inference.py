@@ -1,6 +1,8 @@
 """Test per inferenza remota/cloud, persistenza configurazione e endpoint di sistema."""
 from __future__ import annotations
 
+import shlex
+
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -673,7 +675,12 @@ def test_provision_sends_local_script_over_ssh(monkeypatch, tmp_path):
     assert "TABULARIUM_SERVER_API_KEY=server-secret" in remote
     # La verifica della host key resta attiva anche nel provisioning.
     assert "StrictHostKeyChecking=yes" in captured["cmd"]
-    assert f"UserKnownHostsFile={tmp_path / 'known_hosts'}" in captured["cmd"]
+    # Il percorso e' citato per il parser di ssh, che altrimenti leggerebbe il
+    # valore come una lista di file separati da spazi: si verifica quindi che
+    # dopo la divisione resti quel singolo file, non la stringa esatta.
+    khs = [a for a in captured["cmd"] if a.startswith("UserKnownHostsFile=")]
+    assert len(khs) == 1
+    assert shlex.split(khs[0].split("=", 1)[1]) == [str(tmp_path / "known_hosts")]
 
 
 def test_provision_retries_transient_ssh_authentication(monkeypatch, tmp_path):

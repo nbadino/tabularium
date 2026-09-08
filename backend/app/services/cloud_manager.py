@@ -45,6 +45,25 @@ class TunnelStatus:
     error: str | None = None
 
 
+def _known_hosts_option() -> str:
+    """`UserKnownHostsFile` con il percorso fra virgolette.
+
+    ssh interpreta il valore come una **lista di file separati da spazi**, non
+    come un percorso singolo. Se il data root contiene uno spazio (su macOS un
+    `~/Library/CloudStorage/OneDrive-.../University of X/...` e' normale, e su
+    Windows `C:/Users/Nome Cognome/...` pure) il percorso viene spezzato in
+    piu' nomi inesistenti: ssh non trova alcuna chiave host e rifiuta con
+
+        No ED25519 host key is known for [host]:porta
+        and you have requested strict checking.
+
+    anche quando il `known_hosts` e' corretto e contiene la chiave giusta.
+    Le virgolette servono al parser di ssh, non alla shell: gli argomenti sono
+    gia' passati come lista a subprocess.
+    """
+    return f'UserKnownHostsFile="{config.SSH_KNOWN_HOSTS}"'
+
+
 def _pid_alive(pid: int | None) -> bool:
     if not pid or pid <= 0:
         return False
@@ -206,7 +225,7 @@ def start_ssh_tunnel(
         "-o",
         "StrictHostKeyChecking=yes",
         "-o",
-        f"UserKnownHostsFile={config.SSH_KNOWN_HOSTS}",
+        _known_hosts_option(),
         "-o",
         "ServerAliveInterval=15",
         "-o",
@@ -1188,7 +1207,7 @@ def _ssh_base_args(host: str, port: int, user: str) -> list[str]:
         "-F", "/dev/null",
         "-p", str(port),
         "-o", "StrictHostKeyChecking=yes",
-        "-o", f"UserKnownHostsFile={config.SSH_KNOWN_HOSTS}",
+        "-o", _known_hosts_option(),
         "-o", "ConnectTimeout=15",
         "-o", "BatchMode=yes",
     ]
