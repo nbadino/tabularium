@@ -1245,3 +1245,45 @@ def test_manifest_does_not_require_a_git_checkout():
     script = (Path(__file__).resolve().parents[2] / "scripts" / "cloud" / "setup_cloud_vllm.sh").read_text()
     assert 'subprocess.check_output(["git", "rev-parse", "HEAD"]' not in script
     assert 'RECIPE_RUNTIME", "monkeyocr") == "monkeyocr"' in script
+
+
+def test_setup_checks_the_driver_cuda_before_downloading():
+    """La compute capability non basta: conta anche la CUDA del driver.
+
+    Una 3060 ha capability 8.6 e supera il controllo esistente, ma con un
+    driver fermo alla 12.x il PyTorch dell'indice cu130 muore con «The NVIDIA
+    driver on your system is too old (found version 12060)» — dopo aver
+    scaricato i wheel e consumato minuti di noleggio a pagamento. Il controllo
+    deve stare *prima* dell'installazione.
+    """
+    script = (Path(__file__).resolve().parents[2] / "scripts" / "cloud" / "setup_cloud_vllm.sh").read_text()
+
+    assert "MIN_CUDA_DRIVER" in script
+    # La soglia segue la CUDA con cui e' compilato il torch installato, non un
+    # numero scritto a mano che invecchierebbe da solo.
+    assert 'MIN_CUDA_DRIVER="${MIN_CUDA_DRIVER:-$CUDA_TOOLKIT_VERSION}"' in script
+    # Deve precedere l'installazione, altrimenti non risparmia nulla: il
+    # messaggio d'errore compare prima del primo pip install pesante.
+    assert script.index("Max CUDA") < script.index("Installazione dipendenze Python")
+
+
+def test_driver_cuda_is_read_from_the_nvidia_smi_header():
+    """`nvidia-smi` non espone la CUDA del driver fra i campi `--query-gpu`:
+    va letta dall'intestazione, che riporta `CUDA Version: 12.2`."""
+    import re
+    import subprocess
+
+    script = (Path(__file__).resolve().parents[2] / "scripts" / "cloud" / "setup_cloud_vllm.sh").read_text()
+    match = re.search(r"DRIVER_CUDA=\$\(nvidia-smi[^\n]*\)", script)
+    assert match, "manca la lettura della CUDA del driver"
+
+    # La stessa riga sed della macchina reale, contro l'intestazione reale.
+    header = (
+        "| NVIDIA-SMI 535.161.07             Driver Version: 535.161.07   "
+        "CUDA Version: 12.2        |"
+    )
+    got = subprocess.run(
+        ["sed", "-n", r"s/.*CUDA Version: *\([0-9][0-9.]*\).*/\1/p"],
+        input=header, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert got == "12.2"

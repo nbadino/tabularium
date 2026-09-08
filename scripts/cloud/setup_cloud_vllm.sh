@@ -39,6 +39,10 @@ CUDA_TOOLKIT_PKG="${CUDA_TOOLKIT_PKG:-13-0}"
 MONKEYOCR_REF="${MONKEYOCR_REF:-}"
 MIN_DISK_GB="${MIN_DISK_GB:-10}"
 MIN_COMPUTE_CAP="${MIN_COMPUTE_CAP:-8.0}"
+# Il driver deve saper eseguire la CUDA con cui e' compilato il PyTorch che
+# installiamo (indice cu130): un driver piu' vecchio fa fallire vLLM molto
+# dopo, con "The NVIDIA driver on your system is too old".
+MIN_CUDA_DRIVER="${MIN_CUDA_DRIVER:-$CUDA_TOOLKIT_VERSION}"
 # Ambiente Python isolato: le immagini recenti (Ubuntu 24.04) hanno pip gestito
 # dalla distro, che rifiuta sia l'auto-aggiornamento sia gli install di sistema
 # (PEP 668). Un venv rende il setup indipendente dall'immagine scelta.
@@ -117,6 +121,24 @@ if command -v nvidia-smi &>/dev/null; then
     exit 1
   fi
   echo ">> Compute capability verificata: $COMPUTE_CAP (minima $MIN_COMPUTE_CAP)"
+
+  # La compute capability dice cosa sa fare la GPU, non cosa sa eseguire il
+  # driver. Sono due cose diverse: una 3060 ha capability 8.6 e passa il
+  # controllo sopra, ma con un driver fermo alla 12.x il PyTorch cu130 muore
+  # con "The NVIDIA driver on your system is too old (found version 12060)" —
+  # dopo aver scaricato qualche gigabyte di wheel e diversi minuti di
+  # noleggio. Meglio saperlo adesso.
+  DRIVER_CUDA=$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: *\([0-9][0-9.]*\).*/\1/p' | head -n1)
+  if [ -z "$DRIVER_CUDA" ]; then
+    echo ">> CUDA del driver non leggibile: proseguo senza il controllo." >&2
+  elif ! awk -v actual="$DRIVER_CUDA" -v minimum="$MIN_CUDA_DRIVER" \
+      'BEGIN { exit !(actual + 0 >= minimum + 0) }'; then
+    echo "!! Il driver di questa macchina arriva a CUDA $DRIVER_CUDA, ma servono almeno $MIN_CUDA_DRIVER." >&2
+    echo "!! Noleggia un'istanza che dichiari \"Max CUDA\" $MIN_CUDA_DRIVER o superiore: qui vLLM non partirebbe." >&2
+    exit 1
+  else
+    echo ">> CUDA del driver verificata: $DRIVER_CUDA (minima $MIN_CUDA_DRIVER)"
+  fi
 else
   echo "!! nvidia-smi non trovato: serve una GPU NVIDIA funzionante." >&2
   exit 1
