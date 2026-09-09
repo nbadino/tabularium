@@ -325,6 +325,35 @@ def provision_vast_server(payload: dict, _admin: dict = Depends(_admin)) -> dict
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # 409: l'istanza c'è e risponde, ma non ci fa entrare. Un 502 indistinto
+    # costava un noleggio intero per capire che il problema era la chiave.
+    except cloud_manager.VastSshError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/api/system/cloud/vast/ssh-check")
+def check_vast_ssh(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Preflight SSH: verifica l'endpoint prima di spenderci una preparazione.
+
+    Vale sia per l'endpoint pubblicato da Vast.ai sia per quello inserito a
+    mano nell'override, che senza questa rotta si potrebbe provare solo
+    lanciando il provisioning.
+    """
+    from ..services import cloud_manager
+
+    host = str(payload.get("host") or "").strip()
+    port = payload.get("port")
+    if not host or not port:
+        raise HTTPException(status_code=400, detail="Host e porta SSH obbligatori.")
+    try:
+        return cloud_manager.check_ssh_access(
+            host, int(port), user=str(payload.get("user") or "root"),
+            attempts=int(payload.get("attempts") or 1),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

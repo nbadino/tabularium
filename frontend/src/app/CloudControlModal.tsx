@@ -38,6 +38,14 @@ interface RentedInstance {
   dph_total: number | null
   ssh_host: string | null
   ssh_port: number | null
+  // Vast.ai pubblica due vie diverse verso la stessa istanza: l'IP della
+  // macchina («Direct SSH Connect») e il forwarder ssh*.vast.ai. Il backend le
+  // tiene separate perché non sono combinabili e non falliscono allo stesso modo.
+  ssh_direct_host?: string | null
+  ssh_direct_port?: number | null
+  ssh_proxy_host?: string | null
+  ssh_proxy_port?: number | null
+  ssh_via?: 'direct' | 'proxy' | 'unknown'
   is_running: boolean
   label: string
   cost_estimate?: { estimated_usd: number; hours: number; hourly_rate: number }
@@ -135,6 +143,27 @@ function guessProvider(url: string): Provider {
   if (url.includes('proxy.runpod.net') || url.includes('api.runpod.ai')) return 'runpod'
   if (url.includes('127.0.0.1') || url.includes('localhost')) return 'vast'
   return url ? 'manual' : 'vast'
+}
+
+/**
+ * Endpoint SSH su cui agire: l'override dell'utente vince su quello dell'API.
+ *
+ * Serve al caso in cui Vast.ai pubblica solo il forwarder `ssh*.vast.ai` (che
+ * può rifiutare la chiave) e tiene `public_ipaddr` a `null`: l'indirizzo
+ * diretto esiste allora solo nella console del provider. L'override vale per
+ * intero o per niente — host di una via e porta dell'altra non descrivono
+ * nessuna destinazione reale.
+ */
+export function resolveSshEndpoint(
+  inst: Pick<RentedInstance, 'ssh_host' | 'ssh_port'>,
+  overrideHost: string,
+  overridePort: string,
+): { host: string; port: number } | null {
+  const host = overrideHost.trim()
+  const port = parseInt(overridePort.trim(), 10)
+  if (host && Number.isFinite(port) && port > 0 && port < 65536) return { host, port }
+  if (inst.ssh_host && inst.ssh_port) return { host: inst.ssh_host, port: inst.ssh_port }
+  return null
 }
 
 /** Quale template Modal è già in uso: si legge dal nome dell'app nell'URL salvato. */
@@ -240,6 +269,12 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   const [sshHost, setSshHost] = useState('')
   const [sshPort, setSshPort] = useState('')
   const [sshUser, setSshUser] = useState('root')
+  // Override dell'endpoint SSH: quando Vast.ai non pubblica `public_ipaddr`
+  // l'unico posto dove l'indirizzo diretto esiste è la console del provider.
+  // La porta invece arriva dall'API, quindi si precompila.
+  const [vastDirectHost, setVastDirectHost] = useState('')
+  const [vastDirectPort, setVastDirectPort] = useState('')
+  const [vastDirectChecking, setVastDirectChecking] = useState(false)
   const [tunnelState, setTunnelState] = useState<TunnelState>({ running: false })
   const [tunnelBusy, setTunnelBusy] = useState(false)
 
@@ -632,11 +667,66 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
     }
   }
 
+  /**
+   * Precompila l'override con la mappatura della 22 pubblicata dall'API.
+   *
+   * Quando manca `public_ipaddr` la porta diretta c'è comunque: all'utente
+   * resta da incollare solo l'host, che è l'unica metà non ottenibile. Non
+   * sovrascrive mai quello che ha già scritto.
+   */
+  const prefillDirectEndpoint = (items: RentedInstance[]) => {
+    const candidate = items.find((inst) => inst.is_running && inst.ssh_direct_port)
+    if (!candidate) return
+    setVastDirectPort((current) => current.trim() || String(candidate.ssh_direct_port))
+    if (candidate.ssh_direct_host) {
+      setVastDirectHost((current) => current.trim() || String(candidate.ssh_direct_host))
+    }
+  }
+
+  /** Endpoint su cui lavorare: l'override vince, altrimenti quello dell'API. */
+  const effectiveEndpoint = (inst: RentedInstance) =>
+    resolveSshEndpoint(inst, vastDirectHost, vastDirectPort)
+
+  // Un'istanza accesa che Vast.ai pubblica solo via forwarder: è lo scenario in
+  // cui la chiave può essere rifiutata e l'override diventa l'unica strada.
+  const vastNeedsDirectOverride = vastInstances.some(
+    (inst) => inst.is_running && inst.ssh_via === 'proxy',
+  )
+
+  /** Prova l'endpoint prima di spenderci una preparazione (o un noleggio). */
+  const handleCheckDirectSsh = async () => {
+    const host = vastDirectHost.trim()
+    const port = parseInt(vastDirectPort.trim(), 10)
+    if (!host || !Number.isFinite(port) || port <= 0) {
+      setVastNotice(t('cloud.control.missingHostPort'))
+      return
+    }
+    setVastDirectChecking(true)
+    try {
+      // La host key va fissata prima: senza, il preflight fallirebbe sulla
+      // verifica invece che dire qualcosa sull'accesso.
+      await apiPost('/system/cloud/vast/hostkey', { host, port })
+      const res = await apiPost<{ ok: boolean; reason: string; message?: string }>(
+        '/system/cloud/vast/ssh-check',
+        { host, port, user: sshUser.trim() || 'root', attempts: 2 },
+      )
+      setVastNotice(
+        res.ok
+          ? t('cloud.control.sshCheckOk', { host, port: String(port) })
+          : res.message || t('cloud.control.sshCheckFailed', { host, port: String(port) }),
+      )
+    } catch (e) {
+      setVastNotice(t('cloud.control.sshCheckFailed', { host, port: String(port) }) + ` ${String(e)}`)
+    } finally {
+      setVastDirectChecking(false)
+    }
+  }
+
   /** Pin della host key: idempotente, richiesto prima di ogni uso di SSH. */
-  const pinHostKey = async (inst: RentedInstance) => {
+  const pinHostKey = async (endpoint: { host: string; port: number }) => {
     const pin = await apiPost<{ host: string; port: number; key_types: string[] }>(
       '/system/cloud/vast/hostkey',
-      { host: inst.ssh_host, port: inst.ssh_port },
+      { host: endpoint.host, port: endpoint.port },
     )
     setVastNotice(
       t('cloud.control.hostKeyPinned', {
@@ -649,7 +739,8 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
 
   /** Prepara la GPU: script consegnato via SSH dal checkout locale. */
   const handleProvisionVast = async (inst: RentedInstance) => {
-    if (!inst.ssh_host || !inst.ssh_port) {
+    const endpoint = effectiveEndpoint(inst)
+    if (!endpoint) {
       setVastNotice(t('cloud.control.noSsh'))
       return
     }
@@ -668,10 +759,10 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
       // rende davvero autosufficiente «Prepara e connetti» in entrambi i casi.
       await apiPost('/system/cloud/vast/ssh-key', { ...credential, instance_id: inst.id })
       await refreshVastSshKey()
-      await pinHostKey(inst)
+      await pinHostKey(endpoint)
       const res = await apiPost<{ served_model_name: string; already_ready?: boolean }>('/system/cloud/vast/provision', {
-        host: inst.ssh_host,
-        port: inst.ssh_port,
+        host: endpoint.host,
+        port: endpoint.port,
         monkeyocr_ref: ref,
         adapter_id: vastAdapter,
         // Vuoto = il checkpoint ufficiale della ricetta; valorizzato = un tuo
@@ -680,15 +771,15 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
         remote_port: 8888,
       })
       setVastServedName(res.served_model_name)
-      setSshHost(inst.ssh_host)
-      setSshPort(String(inst.ssh_port))
+      setSshHost(endpoint.host)
+      setSshPort(String(endpoint.port))
       setVastProvisionLog([])
-      setVastProvisionTarget({ host: inst.ssh_host, port: inst.ssh_port })
+      setVastProvisionTarget({ host: endpoint.host, port: endpoint.port })
       if (res.already_ready) {
         // Il server remoto è già pronto: non serve aspettare il log di setup;
         // apriamo subito il solo tunnel e poi il probe mostrerà la conferma.
         setVastNotice(t('cloud.control.serverAlreadyReady'))
-        await handleStartTunnel(inst.ssh_host, inst.ssh_port)
+        await handleStartTunnel(endpoint.host, endpoint.port)
       } else {
         setVastNotice(t('cloud.control.provisionStarted'))
       }
@@ -750,6 +841,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
       const res = await apiPost<{ items: RentedInstance[] }>('/system/cloud/vast/instances', credential)
       setVastInstances(res.items)
       setVastLoaded(true)
+      prefillDirectEndpoint(res.items)
       if (!quiet) {
         setVastNotice(
           res.items.length === 0
@@ -850,24 +942,25 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   }
 
   const handleConnectVast = async (inst: RentedInstance) => {
-    if (!inst.ssh_host || !inst.ssh_port) {
+    const endpoint = effectiveEndpoint(inst)
+    if (!endpoint) {
       setVastNotice(t('cloud.control.noSsh'))
       return
     }
-    setSshHost(inst.ssh_host)
-    setSshPort(String(inst.ssh_port))
+    setSshHost(endpoint.host)
+    setSshPort(String(endpoint.port))
     // La host key va fissata prima del tunnel: il backend usa
     // StrictHostKeyChecking=yes e senza pinning la connessione fallirebbe.
     setTunnelBusy(true)
     try {
-      await pinHostKey(inst)
+      await pinHostKey(endpoint)
     } catch (e) {
       setVastNotice(t('cloud.control.hostKeyError', { error: String(e) }))
       return
     } finally {
       setTunnelBusy(false)
     }
-    await handleStartTunnel(inst.ssh_host, inst.ssh_port)
+    await handleStartTunnel(endpoint.host, endpoint.port)
   }
 
   // --- RunPod ---
@@ -1112,11 +1205,17 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
       )}
       <div className="divide-y divide-[color:var(--color-rule)]">
         {items.map((inst) => {
+          // Con l'override attivo l'istanza si prepara su un endpoint diverso
+          // da quello pubblicato: il confronto deve guardare quello vero,
+          // altrimenti la scheda resta muta mentre il setup è in corso.
+          const target = onProvision ? effectiveEndpoint(inst) : null
+          const targetHost = target?.host ?? inst.ssh_host
+          const targetPort = target?.port ?? inst.ssh_port
           const isPreparing = Boolean(
-            onProvision && vastProvisionTarget?.host === inst.ssh_host && vastProvisionTarget?.port === inst.ssh_port,
+            onProvision && vastProvisionTarget?.host === targetHost && vastProvisionTarget?.port === targetPort,
           )
           const isConnected = Boolean(
-            onProvision && inferenceOk && tunnelState.running && tunnelState.host === inst.ssh_host,
+            onProvision && inferenceOk && tunnelState.running && tunnelState.host === targetHost,
           )
           return (
           <div key={inst.id} className="flex flex-wrap items-center justify-between gap-3 p-3">
@@ -1136,7 +1235,9 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
                 )}
               </div>
               <div className="mono mt-0.5 text-[11px] text-[color:var(--color-ink-3)]">
-                ID: {inst.id} {inst.ssh_host && `· SSH: ${inst.ssh_host}:${inst.ssh_port}`}
+                ID: {inst.id} {targetHost && `· SSH: ${targetHost}:${targetPort}`}
+                {inst.ssh_via === 'proxy' && ` · ${t('cloud.control.sshViaProxy')}`}
+                {inst.ssh_via === 'direct' && ` · ${t('cloud.control.sshViaDirect')}`}
               </div>
               {!inst.is_running && onProvision && (
                 <div className="mt-0.5 text-[11px] text-[color:var(--color-ink-2)]">
@@ -1153,7 +1254,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
                     <button
                       type="button"
                       onClick={() => onProvision(inst)}
-                      disabled={busy || tunnelBusy || isPreparing || !inst.ssh_host || !inst.ssh_port}
+                      disabled={busy || tunnelBusy || isPreparing || !targetHost || !targetPort}
                       className="btn btn-sm btn-primary"
                     >
                       {isPreparing
@@ -1462,6 +1563,58 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
               () => void handleLoadVast(),
               vastLoaded,
             )}
+
+            {/* `defaultOpen` è solo lo stato iniziale del Collapsible, e la lista
+                delle istanze arriva dopo il mount: la `key` lo fa rimontare quando
+                compare un'istanza raggiungibile solo via proxy, che è il caso in
+                cui questo pannello serve davvero. I campi vivono qui fuori, quindi
+                il rimontaggio non perde nulla di scritto. */}
+            <Collapsible
+              key={vastNeedsDirectOverride ? 'direct-ssh-open' : 'direct-ssh'}
+              tab={t('cloud.control.directSshTitle')}
+              quiet
+              defaultOpen={vastNeedsDirectOverride}
+            >
+              <div className="grid gap-3 sm:grid-cols-2">
+                <p className="text-[12px] text-[color:var(--color-ink-2)] sm:col-span-2">
+                  {t('cloud.control.directSshHint')}
+                </p>
+                <Field label={t('cloud.control.directHostLabel')} hint={t('cloud.control.directHostHint')}>
+                  <input
+                    value={vastDirectHost}
+                    onChange={(e) => setVastDirectHost(e.target.value)}
+                    placeholder="173.239.92.155"
+                    className="fld fld-mono"
+                  />
+                </Field>
+                <Field label={t('cloud.control.directPortLabel')} hint={t('cloud.control.directPortHint')}>
+                  <input
+                    value={vastDirectPort}
+                    onChange={(e) => setVastDirectPort(e.target.value)}
+                    placeholder="41934"
+                    className="fld fld-mono"
+                  />
+                </Field>
+                <div className="flex items-end gap-2 sm:col-span-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleCheckDirectSsh()}
+                    disabled={vastDirectChecking || !vastDirectHost.trim() || !vastDirectPort.trim()}
+                    className="btn btn-sm"
+                  >
+                    {vastDirectChecking ? t('cloud.control.sshChecking') : t('cloud.control.sshCheckRun')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setVastDirectHost(''); setVastDirectPort('') }}
+                    disabled={vastDirectChecking || (!vastDirectHost.trim() && !vastDirectPort.trim())}
+                    className="btn btn-sm"
+                  >
+                    {t('cloud.control.directSshClear')}
+                  </button>
+                </div>
+              </div>
+            </Collapsible>
 
             {(vastProvisionTarget || vastProvisionLog.length > 0) && (
               <Module tab={t('cloud.control.provisionLogLabel')} quiet flush>

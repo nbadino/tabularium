@@ -1005,40 +1005,78 @@ def attach_vast_ssh_key(api_key: str, instance_id: int) -> dict[str, Any]:
 
 # --- Stato istanza e host key --------------------------------------------------
 
-def _vast_ssh_endpoint(inst: dict[str, Any]) -> tuple[str | None, int | None]:
-    """Estrae l'endpoint SSH da entrambe le forme restituite da Vast.ai.
-
-    La CLI ufficiale usa prima ``ssh_host``/``ssh_port`` e poi ripiega su
-    ``public_ipaddr`` + ``ports['22/tcp'][0]['HostPort']``. La collection v1
-    può pubblicare solo la seconda forma: ignorarla lasciava un'istanza
-    realmente raggiungibile bloccata per sempre su «avvio» nella UI.
-    """
-    raw_ports = inst.get("ports") or {}
-    port_value: Any = inst.get("ssh_port")
-    if not port_value and isinstance(raw_ports, dict):
-        ssh_mapping = raw_ports.get("22/tcp") or raw_ports.get("22")
-        if isinstance(ssh_mapping, list) and ssh_mapping:
-            first = ssh_mapping[0]
-            if isinstance(first, dict):
-                port_value = first.get("HostPort") or first.get("host_port")
-        elif isinstance(ssh_mapping, dict):
-            port_value = ssh_mapping.get("HostPort") or ssh_mapping.get("host_port")
-        elif ssh_mapping:
-            port_value = ssh_mapping
+def _coerce_port(value: Any) -> int | None:
+    """Porta valida o `None`: Vast.ai pubblica i numeri anche come stringa."""
     try:
-        ssh_port = int(port_value) if port_value else None
+        port = int(value) if value else None
     except (TypeError, ValueError):
-        ssh_port = None
-    if ssh_port is not None and not (0 < ssh_port < 65536):
-        ssh_port = None
-    host_value = inst.get("ssh_host") or inst.get("public_ipaddr")
-    ssh_host = str(host_value).strip() if host_value else None
-    return (ssh_host or None), ssh_port
+        return None
+    return port if port is not None and 0 < port < 65536 else None
+
+
+def _mapped_ssh_port(raw_ports: Any) -> int | None:
+    """Porta host mappata sulla 22 del container, nella forma `ports` della CLI."""
+    if not isinstance(raw_ports, dict):
+        return None
+    mapping = raw_ports.get("22/tcp") or raw_ports.get("22")
+    if isinstance(mapping, list):
+        mapping = mapping[0] if mapping else None
+    if isinstance(mapping, dict):
+        return _coerce_port(mapping.get("HostPort") or mapping.get("host_port"))
+    return _coerce_port(mapping)
+
+
+def _clean_host(value: Any) -> str | None:
+    """Host non vuoto o `None`: Vast.ai riempie i campi assenti con `null`."""
+    host = str(value).strip() if value else ""
+    return host or None
+
+
+def vast_ssh_endpoints(inst: dict[str, Any]) -> dict[str, tuple[str | None, int | None]]:
+    """Le due vie verso l'istanza, tenute separate.
+
+    * `direct`: `public_ipaddr` + `ports['22/tcp'][0]['HostPort']`, la riga
+      «Direct SSH Connect» della console — parla con la macchina dell'host.
+    * `proxy`: `ssh_host` + `ssh_port`, i forwarder `ssh*.vast.ai`.
+
+    Sono due destinazioni diverse e non sono combinabili: incrociare l'host di
+    una con la porta dell'altra produce un endpoint che non esiste.
+    """
+    return {
+        "direct": (_clean_host(inst.get("public_ipaddr")), _mapped_ssh_port(inst.get("ports") or {})),
+        "proxy": (_clean_host(inst.get("ssh_host")), _coerce_port(inst.get("ssh_port"))),
+    }
+
+
+def _vast_ssh_endpoint(inst: dict[str, Any]) -> tuple[str | None, int | None]:
+    """Endpoint SSH preferito dell'istanza: prima il diretto, poi il proxy.
+
+    L'ordine è quello di `vastai ssh-url --direct`, e non è un dettaglio
+    estetico: i forwarder `ssh*.vast.ai` accettano solo le chiavi propagate
+    dall'account, e su un'istanza già accesa possono rifiutare la nostra
+    (`Permission denied (publickey)`) mentre la porta diretta della stessa
+    istanza risponde. Quando Vast.ai non pubblica `public_ipaddr` — capita, e
+    allora nemmeno la CLI ufficiale sa costruire l'URL diretto — resta il
+    proxy, e l'host va indicato a mano dalla UI.
+    """
+    endpoints = vast_ssh_endpoints(inst)
+    for kind in ("direct", "proxy"):
+        host, port = endpoints[kind]
+        if host and port:
+            return host, port
+    # Nessuna coppia completa: si riporta ciò che c'è della via che almeno un
+    # host ce l'ha, mai un ibrido. `ssh_ready` resterà falso e il wizard
+    # continuerà ad aspettare, che è il comportamento corretto.
+    direct, proxy = endpoints["direct"], endpoints["proxy"]
+    return (direct[0] or proxy[0]), (direct[1] if direct[0] else proxy[1])
 
 
 def _normalize_vast_instance(inst: dict[str, Any]) -> dict[str, Any]:
     is_running = str(inst.get("actual_status") or "").lower() == "running"
+    endpoints = vast_ssh_endpoints(inst)
     ssh_host, ssh_port = _vast_ssh_endpoint(inst)
+    direct_host, direct_port = endpoints["direct"]
+    proxy_host, proxy_port = endpoints["proxy"]
     return {
         "id": inst.get("id"),
         "status": inst.get("actual_status") or inst.get("status_msg") or "unknown",
@@ -1047,6 +1085,16 @@ def _normalize_vast_instance(inst: dict[str, Any]) -> dict[str, Any]:
         "dph_total": inst.get("dph_total"),
         "ssh_host": ssh_host,
         "ssh_port": ssh_port,
+        # Le due vie restano visibili alla UI: quando manca `public_ipaddr` la
+        # porta diretta c'è comunque, e serve a precompilare l'override in cui
+        # l'utente incolla l'IP letto dalla console del provider.
+        "ssh_direct_host": direct_host,
+        "ssh_direct_port": direct_port,
+        "ssh_proxy_host": proxy_host,
+        "ssh_proxy_port": proxy_port,
+        "ssh_via": "direct" if (ssh_host and ssh_host == direct_host and ssh_port == direct_port) else (
+            "proxy" if (ssh_host and ssh_host == proxy_host and ssh_port == proxy_port) else "unknown"
+        ),
         "is_running": is_running,
         "label": inst.get("label") or f"{inst.get('num_gpus', 1)}x {inst.get('gpu_name', 'GPU')}",
         "ports": inst.get("ports", {}),
@@ -1218,6 +1266,145 @@ def _ssh_base_args(host: str, port: int, user: str) -> list[str]:
     return args
 
 
+class VastSshError(RuntimeError):
+    """Fallimento SSH con una causa riconosciuta, non un errore generico.
+
+    Serve a distinguere «la chiave è stata rifiutata» da «il provisioning è
+    andato male»: senza, l'unico modo di scoprire quale dei due fosse era
+    noleggiare un'altra istanza e riprovare.
+    """
+
+    def __init__(self, message: str, *, reason: str, detail: str = "") -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.detail = detail
+
+
+# Marcatori cercati in stderr di `ssh`. Il codice di uscita non basta: 255 vale
+# per «chiave rifiutata», «host irraggiungibile» e «host key cambiata», che
+# richiedono all'utente tre azioni completamente diverse.
+_SSH_FAILURE_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("hostkey", (
+        "host key verification failed",
+        "remote host identification has changed",
+        "no matching host key",
+    )),
+    ("auth", (
+        "permission denied",
+        "no supported authentication",
+        "too many authentication failures",
+        "authentication failed",
+    )),
+    ("refused", ("connection refused", "connection closed", "connection reset")),
+    ("timeout", ("connection timed out", "operation timed out", "timed out")),
+    ("dns", ("could not resolve hostname", "name or service not known", "nodename nor servname")),
+)
+
+# Cause per cui vale la pena riprovare: Vast.ai propaga la chiave al container
+# già acceso con qualche secondo di ritardo, e sshd può non essere ancora su.
+_SSH_RETRYABLE = frozenset({"auth", "refused", "timeout"})
+
+
+def _classify_ssh_failure(returncode: int, stderr: str) -> tuple[str, str]:
+    """Traduce l'uscita di `ssh` in una causa nominata + la riga rilevante."""
+    text = (stderr or "").strip()
+    lowered = text.lower()
+    for reason, markers in _SSH_FAILURE_MARKERS:
+        if any(marker in lowered for marker in markers):
+            hit = next(
+                (line.strip() for line in text.splitlines() if any(m in line.lower() for m in markers)),
+                text,
+            )
+            return reason, hit
+    last_line = text.splitlines()[-1].strip() if text else ""
+    return ("unknown" if returncode else "ok"), last_line
+
+
+# Testi utente delle cause SSH. Sono anche chiavi del catalogo i18n del
+# backend (`services/i18n.py`): l'adattatore inverso riconosce l'italiano e lo
+# traduce nella lingua della richiesta, quindi le due copie devono restare
+# identiche carattere per carattere.
+_SSH_FAILURE_TEMPLATES: dict[str, str] = {
+    "auth": (
+        "L'istanza {host}:{port} ha rifiutato la chiave SSH di Tabularium. Se questo è un "
+        "forwarder ssh*.vast.ai, prova l'indirizzo diretto: nella console Vast.ai è la riga "
+        "«Direct SSH Connect». ({detail})"
+    ),
+    "hostkey": (
+        "La host key di {host}:{port} non corrisponde a quella registrata: l'istanza è stata "
+        "ricreata sullo stesso endpoint oppure l'host è cambiato. ({detail})"
+    ),
+    "dns": "Host SSH {host} non risolvibile: controlla l'indirizzo. ({detail})",
+    "unreachable": (
+        "Nessuna risposta SSH da {host}:{port}: l'istanza potrebbe non aver ancora avviato "
+        "sshd, oppure la porta non è raggiungibile. ({detail})"
+    ),
+    "unknown": "SSH verso {host}:{port} è uscito con un errore non riconosciuto. ({detail})",
+}
+
+
+def _ssh_failure_message(reason: str, host: str, port: int, detail: str) -> str:
+    """Messaggio che l'utente legge: dice cosa è successo e cosa può fare."""
+    template = _SSH_FAILURE_TEMPLATES.get(reason, _SSH_FAILURE_TEMPLATES["unknown"])
+    return template.format(host=host, port=port, detail=(detail or "").strip()[:200])
+
+
+def check_ssh_access(
+    host: str,
+    port: int,
+    *,
+    user: str = "root",
+    attempts: int = 3,
+    delay: float = 2.0,
+) -> dict[str, Any]:
+    """Apre una connessione SSH nuda e la classifica, senza toccare l'istanza.
+
+    Il comando remoto è `true`: nessun effetto collaterale, l'unica cosa che si
+    misura è se l'autenticazione passa. È il preflight che rende leggibile un
+    fallimento che altrimenti arriva alla UI come un 502 indistinguibile da un
+    errore di provisioning.
+    """
+    cmd = _ssh_base_args(host, port, user) + ["true"]
+    # Tetto ai tentativi: il numero arriva anche dalla rotta, e una richiesta
+    # HTTP non deve poter restare appesa su una serie di attese.
+    attempts = max(1, min(5, int(attempts)))
+    reason, detail = "unknown", ""
+    for attempt in range(attempts):
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+        except FileNotFoundError as exc:
+            raise RuntimeError("Comando ssh non disponibile sul sistema") from exc
+        except subprocess.TimeoutExpired:
+            reason, detail = "timeout", "ssh non ha risposto entro 30 s"
+        else:
+            if proc.returncode == 0:
+                return {
+                    "ok": True, "reason": "ok", "detail": "",
+                    "host": host, "port": int(port), "user": user, "attempts": attempt + 1,
+                }
+            reason, detail = _classify_ssh_failure(proc.returncode, proc.stderr)
+        if reason not in _SSH_RETRYABLE or attempt + 1 >= attempts:
+            break
+        time.sleep(delay)
+    return {
+        "ok": False,
+        "reason": reason,
+        "detail": detail[:400],
+        "message": _ssh_failure_message(reason, host, int(port), detail),
+        "host": host,
+        "port": int(port),
+        "user": user,
+    }
+
+
+def ensure_ssh_access(host: str, port: int, *, user: str = "root", attempts: int = 3) -> dict[str, Any]:
+    """`check_ssh_access` che solleva: usata prima di consegnare lo script."""
+    access = check_ssh_access(host, port, user=user, attempts=attempts)
+    if not access["ok"]:
+        raise VastSshError(access["message"], reason=access["reason"], detail=access["detail"])
+    return access
+
+
 def probe_vast_server(host: str, port: int, *, user: str = "root", remote_port: int = 8888) -> dict[str, Any]:
     """Controllo remoto non distruttivo: server vLLM già pronto o no."""
     remote_port = int(remote_port)
@@ -1314,6 +1501,13 @@ def provision_vast_server(
     recipe = build_provision_recipe(
         adapter_id, model=model, remote_port=remote_port, server_api_key=server_api_key,
     )
+    # Preflight prima di qualsiasi altra cosa: `probe_vast_server` inghiotte
+    # ogni errore per rispondere «non pronto», quindi una chiave rifiutata
+    # arriverebbe fin qui travestita da istanza da preparare. I tentativi
+    # ripetuti stanno qui perché è qui che si misura l'autenticazione: dopo
+    # `attach ssh` Vast.ai impiega qualche secondo a propagare la chiave al
+    # container già acceso.
+    ensure_ssh_access(host, port, user=user)
     existing = probe_vast_server(host, port, user=user, remote_port=remote_port)
     if existing["ready"] and existing["model"] == recipe["served_model_name"]:
         return {
@@ -1355,9 +1549,9 @@ def provision_vast_server(
     )
     cmd = _ssh_base_args(host, port, user) + [remote]
     proc = None
-    # Dopo `attach ssh` Vast.ai può impiegare alcuni secondi a propagare la
-    # chiave al container già acceso. Un singolo tentativo rendeva
-    # «Prepara e connetti» apparentemente rotto sulle istanze esistenti.
+    # Il preflight ha già assorbito la propagazione della chiave; qui i
+    # tentativi coprono il caso in cui la sessione cada durante il
+    # trasferimento dello script.
     for attempt in range(3):
         try:
             with script.open("rb") as payload:
@@ -1382,6 +1576,14 @@ def provision_vast_server(
     if "tabularium-provision-empty" in proc.stdout:
         raise RuntimeError("Script di setup arrivato vuoto sull'istanza: riprova la preparazione.")
     if proc.returncode != 0 or "tabularium-provision-started" not in proc.stdout:
+        # Il preflight è passato, quindi un 255 qui è una caduta successiva:
+        # resta comunque utile nominarne la causa invece di riportare solo il
+        # codice di uscita.
+        reason, detail = _classify_ssh_failure(proc.returncode, proc.stderr)
+        if proc.returncode == 255 and reason != "unknown":
+            raise VastSshError(
+                _ssh_failure_message(reason, host, int(port), detail), reason=reason, detail=detail,
+            )
         raise RuntimeError(
             f"Provisioning non avviato (codice {proc.returncode}): "
             f"{(proc.stderr or proc.stdout).strip()[:400]}"

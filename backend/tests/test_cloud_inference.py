@@ -606,6 +606,163 @@ def test_vast_instance_rejects_invalid_ports_fallback():
     assert port is None
 
 
+def test_vast_endpoint_prefers_the_direct_address(monkeypatch):
+    """Con l'IP pubblico si passa dalla macchina, non dal forwarder.
+
+    È l'ordine di `vastai ssh-url --direct`: i proxy ssh*.vast.ai accettano solo
+    le chiavi propagate dall'account e possono rifiutare la nostra su
+    un'istanza già accesa, mentre la porta diretta risponde.
+    """
+    host, port = cloud_manager._vast_ssh_endpoint({
+        "ssh_host": "ssh7.vast.ai",
+        "ssh_port": 34880,
+        "public_ipaddr": "173.239.92.155",
+        "ports": {"22/tcp": [{"HostIp": "0.0.0.0", "HostPort": "41934"}]},
+    })
+    assert (host, port) == ("173.239.92.155", 41934)
+
+
+def test_vast_endpoint_falls_back_to_the_proxy_without_public_ip(monkeypatch):
+    """Caso reale (istanza 50434880): Vast.ai non pubblica `public_ipaddr`.
+
+    La 22 è mappata su una porta diretta, ma senza indirizzo non è compilabile
+    un endpoint: si resta sul proxy — e l'IP lo dovrà indicare l'utente, che è
+    l'unico posto in cui è scritto (riga «Direct SSH Connect» della console).
+    """
+    inst = {
+        "id": 50434880,
+        "actual_status": "running",
+        "ssh_host": "ssh7.vast.ai",
+        "ssh_port": 34880,
+        "public_ipaddr": None,
+        "ports": {"22/tcp": [{"HostIp": "0.0.0.0", "HostPort": "41934"}]},
+    }
+    assert cloud_manager._vast_ssh_endpoint(inst) == ("ssh7.vast.ai", 34880)
+    endpoints = cloud_manager.vast_ssh_endpoints(inst)
+    # La porta diretta resta esposta: serve a precompilare l'override della UI,
+    # dove all'utente manca solo l'host.
+    assert endpoints["direct"] == (None, 41934)
+    assert endpoints["proxy"] == ("ssh7.vast.ai", 34880)
+
+    init_db()
+    calls: list = []
+    _fake_vast_client(monkeypatch, {("GET", "/instances/50434880/"): {"instances": inst}}, calls)
+    item = cloud_manager.get_vast_instance("token", 50434880)
+    assert item["ssh_via"] == "proxy"
+    assert item["ssh_direct_port"] == 41934
+    assert item["ssh_direct_host"] is None
+
+
+def test_vast_endpoint_never_mixes_the_two_routes():
+    """Host del proxy + porta diretta = un endpoint che non esiste."""
+    host, port = cloud_manager._vast_ssh_endpoint({
+        "ssh_host": "ssh7.vast.ai",
+        "ports": {"22/tcp": [{"HostPort": "41934"}]},
+    })
+    assert (host, port) == ("ssh7.vast.ai", None)
+
+
+def test_ssh_preflight_names_a_refused_key(monkeypatch, tmp_path):
+    """Il caso che costava un noleggio per essere diagnosticato."""
+    monkeypatch.setattr(cloud_manager.config, "SSH_KNOWN_HOSTS", tmp_path / "known_hosts")
+    monkeypatch.setattr(cloud_manager.time, "sleep", lambda _seconds: None)
+
+    class Result:
+        returncode = 255
+        stdout = ""
+        stderr = "root@ssh7.vast.ai: Permission denied (publickey).\n"
+
+    monkeypatch.setattr(cloud_manager.subprocess, "run", lambda *a, **k: Result())
+    access = cloud_manager.check_ssh_access("ssh7.vast.ai", 34880)
+    assert access["ok"] is False
+    assert access["reason"] == "auth"
+    assert "Direct SSH Connect" in access["message"]
+
+
+def test_ssh_preflight_separates_the_host_key_from_the_credentials(monkeypatch, tmp_path):
+    """Host key cambiata e chiave rifiutata chiedono due azioni diverse."""
+    monkeypatch.setattr(cloud_manager.config, "SSH_KNOWN_HOSTS", tmp_path / "known_hosts")
+    monkeypatch.setattr(cloud_manager.time, "sleep", lambda _seconds: None)
+    attempts = []
+
+    class Result:
+        returncode = 255
+        stdout = ""
+        stderr = "Host key verification failed.\n"
+
+    def fake_run(*_a, **_k):
+        attempts.append(1)
+        return Result()
+
+    monkeypatch.setattr(cloud_manager.subprocess, "run", fake_run)
+    access = cloud_manager.check_ssh_access("ssh7.vast.ai", 34880, attempts=3)
+    assert access["reason"] == "hostkey"
+    # Una host key sbagliata non cambia riprovando: un solo tentativo.
+    assert len(attempts) == 1
+
+
+def test_provision_stops_on_a_refused_key_without_sending_the_script(monkeypatch, tmp_path):
+    """La chiave rifiutata non deve travestirsi da errore di provisioning."""
+    monkeypatch.setattr(cloud_manager.config, "SSH_KNOWN_HOSTS", tmp_path / "known_hosts")
+    monkeypatch.setattr(cloud_manager.time, "sleep", lambda _seconds: None)
+    sent = []
+
+    class Result:
+        returncode = 255
+        stdout = ""
+        stderr = "Permission denied (publickey).\n"
+
+    def fake_run(cmd, stdin=None, **_kwargs):
+        if stdin is not None:
+            sent.append(cmd)
+        return Result()
+
+    monkeypatch.setattr(cloud_manager.subprocess, "run", fake_run)
+    with pytest.raises(cloud_manager.VastSshError) as err:
+        cloud_manager.provision_vast_server("ssh7.vast.ai", 34880, monkeyocr_ref="abc123")
+    assert err.value.reason == "auth"
+    assert sent == []
+
+
+def test_provision_ssh_refusal_answers_409_not_502(monkeypatch, tmp_path):
+    """In UI un 502 generico era indistinguibile da un setup andato male."""
+    monkeypatch.setattr(cloud_manager.config, "SSH_KNOWN_HOSTS", tmp_path / "known_hosts")
+    monkeypatch.setattr(cloud_manager.time, "sleep", lambda _seconds: None)
+
+    class Result:
+        returncode = 255
+        stdout = ""
+        stderr = "Permission denied (publickey).\n"
+
+    monkeypatch.setattr(cloud_manager.subprocess, "run", lambda *a, **k: Result())
+    with TestClient(app) as client:
+        res = client.post(
+            "/api/system/cloud/vast/provision",
+            json={"host": "ssh7.vast.ai", "port": 34880, "monkeyocr_ref": "abc123"},
+        )
+    assert res.status_code == 409
+    assert "chiave SSH" in res.json()["detail"]
+
+
+def test_ssh_check_route_reports_the_cause(monkeypatch, tmp_path):
+    """Il preflight è interrogabile da solo: l'override si prova senza noleggi."""
+    monkeypatch.setattr(cloud_manager.config, "SSH_KNOWN_HOSTS", tmp_path / "known_hosts")
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(cloud_manager.subprocess, "run", lambda *a, **k: Result())
+    with TestClient(app) as client:
+        res = client.post(
+            "/api/system/cloud/vast/ssh-check",
+            json={"host": "173.239.92.155", "port": 41934},
+        )
+    assert res.status_code == 200
+    assert res.json()["ok"] is True
+
+
 def test_pin_ssh_host_key_writes_known_hosts(monkeypatch, tmp_path):
     known_hosts = tmp_path / "known_hosts"
     monkeypatch.setattr(cloud_manager.config, "SSH_KNOWN_HOSTS", known_hosts)
@@ -684,6 +841,11 @@ def test_provision_sends_local_script_over_ssh(monkeypatch, tmp_path):
 
 
 def test_provision_retries_transient_ssh_authentication(monkeypatch, tmp_path):
+    """Dopo `attach ssh` la chiave impiega qualche secondo a propagarsi.
+
+    Il preflight assorbe quell'attesa: i primi rifiuti non devono diventare un
+    errore mostrato all'utente.
+    """
     monkeypatch.setattr(cloud_manager.config, "SSH_KNOWN_HOSTS", tmp_path / "known_hosts")
     attempts = []
 
@@ -694,7 +856,7 @@ def test_provision_retries_transient_ssh_authentication(monkeypatch, tmp_path):
             self.stdout = "" if returncode else "tabularium-provision-started\n"
 
     def fake_run(cmd, stdin=None, **kwargs):
-        attempts.append(1)
+        attempts.append(cmd[-1])
         if stdin is not None:
             stdin.read()
         return Result(255 if len(attempts) < 3 else 0)
@@ -705,7 +867,9 @@ def test_provision_retries_transient_ssh_authentication(monkeypatch, tmp_path):
         "ssh5.vast.ai", 34567, monkeyocr_ref="abc123",
     )
     assert result["ok"] is True
-    assert len(attempts) == 3
+    # Due rifiuti assorbiti dal preflight, poi la connessione passa: da lì in
+    # poi si va avanti senza altri tentativi di autenticazione.
+    assert attempts[:3] == ["true", "true", "true"]
 
 
 def test_provision_rejects_injection_in_ref_and_host(monkeypatch, tmp_path):
@@ -856,11 +1020,20 @@ def test_provision_rejects_a_truncated_transfer(monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_manager.config, "SSH_KNOWN_HOSTS", tmp_path / "known_hosts")
 
     class Result:
-        returncode = 1
-        stdout = "tabularium-provision-empty\n"
-        stderr = ""
+        def __init__(self, returncode, stdout=""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = ""
 
-    monkeypatch.setattr(cloud_manager.subprocess, "run", lambda *a, **k: Result())
+    def fake_run(cmd, stdin=None, **kwargs):
+        if stdin is not None:
+            stdin.read()
+        # Il preflight passa (l'accesso c'è): a fallire è la consegna.
+        if cmd[-1] == "true":
+            return Result(0)
+        return Result(1, "tabularium-provision-empty\n")
+
+    monkeypatch.setattr(cloud_manager.subprocess, "run", fake_run)
     with pytest.raises(RuntimeError, match="vuoto"):
         cloud_manager.provision_vast_server("ssh5.vast.ai", 34567, monkeyocr_ref="abc")
 

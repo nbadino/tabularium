@@ -42,6 +42,24 @@ _IT: dict[str, str] = {
     "tile_invalid": "tile non valido",
     "tile_out_image": "tile fuori immagine",
     "vllm_unreachable": "vLLM non raggiungibile ({url}): {exc}",
+    # --- SSH verso le GPU a noleggio (cloud_manager) ------------------------
+    # Testi allineati a `_SSH_FAILURE_TEMPLATES`: qui servono all'adattatore
+    # inverso, che riconosce l'italiano e lo traduce.
+    "ssh_key_refused": (
+        "L'istanza {host}:{port} ha rifiutato la chiave SSH di Tabularium. Se questo è un "
+        "forwarder ssh*.vast.ai, prova l'indirizzo diretto: nella console Vast.ai è la riga "
+        "«Direct SSH Connect». ({detail})"
+    ),
+    "ssh_hostkey_mismatch": (
+        "La host key di {host}:{port} non corrisponde a quella registrata: l'istanza è stata "
+        "ricreata sullo stesso endpoint oppure l'host è cambiato. ({detail})"
+    ),
+    "ssh_host_unresolved": "Host SSH {host} non risolvibile: controlla l'indirizzo. ({detail})",
+    "ssh_unreachable": (
+        "Nessuna risposta SSH da {host}:{port}: l'istanza potrebbe non aver ancora avviato "
+        "sshd, oppure la porta non è raggiungibile. ({detail})"
+    ),
+    "ssh_failed": "SSH verso {host}:{port} è uscito con un errore non riconosciuto. ({detail})",
     "ocr_unavailable": (
         "Nessun motore OCR disponibile: installare rapidocr-onnxruntime o paddleocr "
         "(o impostare TABULARIUM_OCR_ENGINE)."
@@ -169,6 +187,21 @@ _EN: dict[str, str] = {
     "tile_invalid": "invalid tile",
     "tile_out_image": "tile outside the image",
     "vllm_unreachable": "vLLM unreachable ({url}): {exc}",
+    "ssh_key_refused": (
+        "Instance {host}:{port} refused Tabularium's SSH key. If this is an ssh*.vast.ai "
+        "forwarder, try the direct address instead: the Vast.ai console shows it on the "
+        "\u201cDirect SSH Connect\u201d line. ({detail})"
+    ),
+    "ssh_hostkey_mismatch": (
+        "The host key of {host}:{port} does not match the pinned one: the instance was "
+        "recreated on the same endpoint, or the host changed. ({detail})"
+    ),
+    "ssh_host_unresolved": "SSH host {host} cannot be resolved: check the address. ({detail})",
+    "ssh_unreachable": (
+        "No SSH answer from {host}:{port}: the instance may not have started sshd yet, or the "
+        "port is unreachable. ({detail})"
+    ),
+    "ssh_failed": "SSH to {host}:{port} exited with an unrecognized error. ({detail})",
     "ocr_unavailable": (
         "No OCR engine available: install rapidocr-onnxruntime or paddleocr "
         "(or set TABULARIUM_OCR_ENGINE)."
@@ -288,6 +321,21 @@ _FR: dict[str, str] = {
     "tile_invalid": "tuile invalide",
     "tile_out_image": "tuile hors de l'image",
     "vllm_unreachable": "vLLM injoignable ({url}) : {exc}",
+    "ssh_key_refused": (
+        "L'instance {host}:{port} a refusé la clé SSH de Tabularium. S'il s'agit d'un relais "
+        "ssh*.vast.ai, essayez l'adresse directe : la console Vast.ai l'affiche sur la ligne "
+        "« Direct SSH Connect ». ({detail})"
+    ),
+    "ssh_hostkey_mismatch": (
+        "La clé d'hôte de {host}:{port} ne correspond pas à celle enregistrée : l'instance a été "
+        "recréée sur le même point d'accès, ou l'hôte a changé. ({detail})"
+    ),
+    "ssh_host_unresolved": "Hôte SSH {host} introuvable : vérifiez l'adresse. ({detail})",
+    "ssh_unreachable": (
+        "Aucune réponse SSH de {host}:{port} : l'instance n'a peut-être pas encore démarré sshd, "
+        "ou le port est injoignable. ({detail})"
+    ),
+    "ssh_failed": "SSH vers {host}:{port} s'est terminé sur une erreur non reconnue. ({detail})",
     "ocr_unavailable": (
         "Aucun moteur OCR disponible : installez rapidocr-onnxruntime ou "
         "paddleocr (ou définissez TABULARIUM_OCR_ENGINE)."

@@ -739,6 +739,23 @@ tabella dei fallimenti peggiori per guidare la nuova iterazione di annotazione.
   invece di accodare pagine destinate a fallire; la VRAM locale non viene evocata per run remote;
   lo stop con `disable_inference` arresta la risorsa **identificata** (`resource_id` +
   credenziale del provider), mai la prima che capita nell'account.
+  - **SSH verso Vast.ai: due vie, mai mescolate.** L'istanza espone l'IP della macchina
+    (`public_ipaddr` + `ports['22/tcp'][0].HostPort`, la riga «Direct SSH Connect» della
+    console) e i forwarder `ssh*.vast.ai` (`ssh_host`/`ssh_port`). `_vast_ssh_endpoint()`
+    preferisce la diretta — come `vastai ssh-url --direct` — e ripiega sul proxy solo con la
+    coppia completa: incrociare l'host di una via con la porta dell'altra produce un endpoint
+    inesistente. Vast.ai però può tenere `public_ipaddr` a `null` anche su un'istanza accesa
+    e raggiungibile (verificato sull'istanza 50434880 su rotta v0 di dettaglio e v1 di lista;
+    in quel caso nemmeno la CLI ufficiale sa costruire l'URL diretto, e nessuna rotta
+    accessibile a chi noleggia pubblica l'indirizzo — le offerte non portano `public_ipaddr`
+    e `/machines/` è dell'host). Per questo il pannello Vast ha un **override host/porta**,
+    precompilato con la mappatura della 22 che l'API pubblica comunque: all'utente resta da
+    incollare l'IP letto dalla console.
+  - **Preflight SSH prima di consegnare qualsiasi cosa** (`check_ssh_access`/`ensure_ssh_access`,
+    rotta `POST /api/system/cloud/vast/ssh-check`): apre una connessione nuda (`ssh … true`) e
+    nomina la causa del fallimento — chiave rifiutata, host key cambiata, host irrisolvibile,
+    porta muta. La chiave rifiutata risponde **409** e non più 502 indistinto: prima era
+    indistinguibile da un errore di provisioning e diagnosticarla costava un noleggio intero.
 
 Ogni milestone termina con la sezione "Verifica": cosa lanciare per testare (vedi §13).
 
