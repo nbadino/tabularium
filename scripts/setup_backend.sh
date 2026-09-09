@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Setup ambiente backend: venv + dipendenze (Python 3.11–3.13).
 set -euo pipefail
-cd "$(dirname "$0")/../backend" || exit 1
+# `$0` può essere relativo: risolvi la root PRIMA di spostarti, altrimenti
+# ogni `dirname "$0"` successivo parte da backend/ e non risolve più.
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT/backend" || exit 1
 
 PY=${PYTHON:-python3}
 if ! PY_VERSION=$(
@@ -31,7 +34,7 @@ if ! python -c 'import cryptography; print("cryptography " + cryptography.__vers
 fi
 # Chiave del vault: cifra i credential dei provider salvati dall'interfaccia.
 # Vive nel .env (gitignored, 600), mai nel database accanto al ciphertext.
-ENV_FILE="$(cd "$(dirname "$0")/.." && pwd)/.env"
+ENV_FILE="$ROOT/.env"
 if ! grep -q "^TABULARIUM_VAULT_KEY=" "$ENV_FILE" 2>/dev/null; then
   KEY=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
   printf '\n# Cifratura dei credential salvati dalla UI (generata da setup_backend.sh).\nTABULARIUM_VAULT_KEY=%s\n' "$KEY" >> "$ENV_FILE"
