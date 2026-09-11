@@ -1513,7 +1513,7 @@ export const it = {
     passwordHint: 'Minimo 8 caratteri.',
     login: 'Accedi',
     register: 'Crea un account',
-      setupTitle: 'Accesso a Vast.ai',
+    setupTitle: 'Prima configurazione',
     setupSubtitle:
       'Nessun utente è ancora registrato. Crea l’amministratore dell’istanza: sarà l’unico account con accesso completo.',
     setupSubmit: 'Crea amministratore',

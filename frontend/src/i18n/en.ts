@@ -1511,7 +1511,7 @@ export const en: Dict = {
     passwordHint: 'Minimum 8 characters.',
     login: 'Sign in',
     register: 'Create account',
-      setupTitle: 'Vast.ai access',
+    setupTitle: 'First-run setup',
     setupSubtitle:
       'No user has been registered yet. Create the instance administrator: the only account with full access.',
     setupSubmit: 'Create administrator',

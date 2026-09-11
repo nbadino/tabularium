@@ -1512,7 +1512,7 @@ export const fr: Dict = {
     passwordHint: '8 caractères minimum.',
     login: 'Se connecter',
     register: 'Créer un compte',
-      setupTitle: 'Accès Vast.ai',
+    setupTitle: 'Configuration initiale',
     setupSubtitle:
       'Aucun utilisateur n’est enregistré. Créez l’administrateur de l’instance : le seul compte disposant d’un accès complet.',
     setupSubmit: 'Créer l’administrateur',
