@@ -4,6 +4,7 @@ Avvio:  uvicorn app.main:app --port 8787
 """
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -25,6 +26,11 @@ async def lifespan(_app: FastAPI):
     if not db_check["ok"]:
         detail = "; ".join(db_check.get("messages") or ["integrity check fallito"])
         raise RuntimeError(f"database non integro all'avvio: {detail}")
+    # Non blocca l'avvio: chi ha perso la chiave deve poter entrare e
+    # reinserire i credential. Deve però saperlo prima di cercarli nella UI.
+    from .services import vault
+    if problem := vault.key_problem():
+        logging.getLogger("uvicorn.error").warning(problem)
     trainer.reconcile_jobs()
     serve_manager.reconcile_jobs()
     recognition.reconcile_runs()
