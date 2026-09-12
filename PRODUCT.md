@@ -72,6 +72,10 @@ del pipeline.
 - Backend senza PyTorch: training/inferenza girano in processi/env separati (subprocess, vLLM,
   SSE per i log); il dashboard non dipende mai dal training in esecuzione.
 - Storage: SQLite + filesystem; percorsi mai hard-coded (env var `TABULARIUM_ROOT`).
+- Inferenza locale oggi solo su Linux con GPU NVIDIA: `backend/app/api/system.py` espone
+  `local_cuda` vero soltanto quando `platform.system() == "Linux"`. Su macOS nessun modello
+  locale parte e l'unica strada praticabile è un provider remoto; su Windows serve WSL2.
+  Limitazione corrente e non vincolo di prodotto: il supporto locale su Mac è previsto.
 - In decisamente deciso: destinazione del rilascio pubblico (licenza, repo pubblico, momento).
 
 ## Brand Commitments
