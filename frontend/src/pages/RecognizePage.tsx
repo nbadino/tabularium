@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import { ApiError } from '../lib/api'
-import type { ComputeProfile, PageItem, RecognitionRun } from '../lib/types'
+import type { ComputeProfile, PageItem, PrefillEngines, RecognitionRun, SystemInfo } from '../lib/types'
 import { Badge, ErrorNotice, Field, Module, Notice, Progress } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { syncInferenceFromBackend, useInference } from '../app/inference'
 import { useAuth } from '../app/auth'
-import { IconPlayground } from '../app/icons'
+import { IconArchive, IconPlayground } from '../app/icons'
 import { useI18n } from '../i18n'
 
 function runLabel(run: RecognitionRun, t: (key: string) => string): string {
@@ -95,13 +95,27 @@ export default function RecognizePage() {
   const [profileBusy, setProfileBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [backendRestartRequired, setBackendRestartRequired] = useState(false)
+  const [engines, setEngines] = useState<PrefillEngines | null>(null)
+  const [caps, setCaps] = useState<SystemInfo['capabilities'] | null>(null)
+  const [engineTouched, setEngineTouched] = useState(false)
 
   useEffect(() => {
     void Promise.all([
       apiGet<ComputeProfile[]>('/system/compute-profiles').then(setProfiles),
       apiGet<{ items: ModelRuntimeInfo[] }>('/models').then((out) => setModelRuntime(out.items)),
+      apiGet<PrefillEngines>('/system/prefill-engines').then(setEngines),
+      apiGet<SystemInfo>('/system/info').then((info) => setCaps(info.capabilities ?? null)),
     ]).catch(() => {})
   }, [])
+
+  // Il motore di default lo decide il backend, non questa pagina: su
+  // un'installazione senza GPU «modello» è una voce disabilitata, e trovarla
+  // già selezionata manda l'utente dritto in un vicolo cieco. La scelta
+  // esplicita dell'utente vince sempre su quella suggerita.
+  useEffect(() => {
+    if (engineTouched || !engines?.recommended) return
+    setEngine(engines.recommended)
+  }, [engines?.recommended, engineTouched])
 
   const activateProfile = async (profileId: number) => {
     const profile = profiles.find((item) => item.id === profileId)
@@ -186,7 +200,15 @@ export default function RecognizePage() {
   const runtimeWarning = modelRuntime.find((item) => item.adapter_id === inference.adapterId)
   // «Pronto» = raggiungibile davvero (ping del backend), non solo attivato:
   // un endpoint configurato ma giù non deve sembrare operativo.
-  const modelReady = engine === 'ocr' || (inference.enabled && inference.available)
+  // «Pronto» dell'OCR non è un'assunzione: se il motore non è installato nel
+  // backend l'elaborazione muore con un messaggio di pip. Finché il backend
+  // non risponde restiamo sul comportamento precedente, per non gridare al lupo.
+  const ocrReady = engines ? engines.ocr.available : true
+  const modelReady = engine === 'ocr' ? ocrReady : inference.enabled && inference.available
+  // Su una macchina senza CUDA locale «l'endpoint non risponde» è il sintomo,
+  // non la causa: mostrarli entrambi manda a controllare un endpoint che non
+  // potrà mai rispondere. Vince la causa, che dice anche come uscirne.
+  const noLocalGpu = engine === 'model' && !inference.isCloud && caps?.local_cuda === false
   const toggle = (id: number) => setSelected((before) => {
     const next = new Set(before)
     if (next.has(id)) next.delete(id)
@@ -259,7 +281,32 @@ export default function RecognizePage() {
             <button type="button" className="btn" disabled={selected.size === 0} onClick={() => setSelected(new Set())}>{t('recognition.clearSelection')}</button>
           </div>
           {pages.length === 0 ? (
-            <p className="p-4 text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.emptyPages')}</p>
+            <div className="flex flex-col items-start gap-2 p-6">
+              <IconArchive size={22} />
+              <p className="text-[13px] font-semibold">
+                {projects.length === 0
+                  ? t('recognition.emptyNoArchive')
+                  : projectId === ''
+                    ? t('recognition.emptyChooseProject')
+                    : t('recognition.emptyPages')}
+              </p>
+              <p className="max-w-[60ch] text-[12px] text-[color:var(--color-ink-2)]">
+                {projects.length === 0
+                  ? t('recognition.emptyNoArchiveBody')
+                  : projectId === ''
+                    ? t('recognition.emptyChooseProjectBody')
+                    : t('recognition.emptyPagesBody')}
+              </p>
+              {projects.length === 0 ? (
+                <Link to="/progetti" className="btn btn-primary no-underline">
+                  {t('recognition.emptyCreateArchive')}
+                </Link>
+              ) : projectId !== '' ? (
+                <Link to={`/progetti/${projectId}`} className="btn no-underline">
+                  {t('recognition.emptyOpenProject')}
+                </Link>
+              ) : null}
+            </div>
           ) : (
             <ul className="grid grid-cols-2 border-l border-t border-[color:var(--color-rule)] sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-7">
               {visiblePages.map((page) => {
@@ -283,7 +330,14 @@ export default function RecognizePage() {
         <div className="space-y-3">
           <Module tab={t('recognition.newRun')}>
             <Field label={t('recognition.engine')}>
-              <select value={engine} onChange={(e) => setEngine(e.target.value as 'model' | 'ocr')} className="fld">
+              <select
+                value={engine}
+                onChange={(e) => {
+                  setEngineTouched(true)
+                  setEngine(e.target.value as 'model' | 'ocr')
+                }}
+                className="fld"
+              >
                 <option value="model" disabled={!inference.enabled}>{t('recognition.servedModel')}</option>
                 <option value="ocr">{t('recognition.localOcr')}</option>
               </select>
@@ -317,8 +371,19 @@ export default function RecognizePage() {
             {engine === 'model' && !inference.isCloud && runtimeWarning?.local_serve_blocker && (
               <Notice tone="sig">{runtimeWarning.local_serve_blocker}</Notice>
             )}
-            {engine === 'model' && inference.enabled && !inference.available && (
+            {engine === 'model' && inference.enabled && !inference.available && !noLocalGpu && (
               <Notice tone="warn">{t('recognition.unreachableNotice', { url: inference.url })}</Notice>
+            )}
+            {engine === 'ocr' && engines && !engines.ocr.available && (
+              <Notice tone="sig">{t('recognition.ocrMissingNotice')}</Notice>
+            )}
+            {noLocalGpu && (
+              <Notice tone="warn">
+                <b className="font-semibold">{t('recognition.noLocalGpu')}</b>{' '}
+                {caps?.cuda_note === 'WSL2'
+                  ? t('recognition.noLocalGpuWslBody')
+                  : t('recognition.noLocalGpuBody')}
+              </Notice>
             )}
             <div className="mt-3 border-y border-[color:var(--color-rule)] py-2">
               <div className="flex items-center justify-between gap-3">
@@ -332,7 +397,9 @@ export default function RecognizePage() {
                 </div>
                 <Badge tone={modelReady ? 'ok' : 'warn'}>
                   {engine === 'ocr'
-                    ? t('recognition.modelReady')
+                    ? ocrReady
+                      ? t('recognition.modelReady')
+                      : t('recognition.ocrMissing')
                     : !inference.enabled
                       ? t('recognition.modelOff')
                       : modelReady
@@ -340,7 +407,9 @@ export default function RecognizePage() {
                         : t('recognition.modelUnreachable')}
                 </Badge>
               </div>
-              <Link to="/modelli" className="mt-2 inline-block text-[11px] font-semibold no-underline">{t('recognition.changeModel')}</Link>
+              <Link to="/modelli" className="mt-2 inline-block text-[11px] font-semibold no-underline">
+                {inference.enabled ? t('recognition.changeModel') : t('recognition.chooseModel')}
+              </Link>
             </div>
             {engine === 'model' && canManageInference && (
               <label className="mt-3 flex items-start gap-2 text-[12px]">

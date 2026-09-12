@@ -60,7 +60,26 @@ export const it = {
     selectAll: 'Seleziona tutte',
     clearSelection: 'Deseleziona',
     selected: '{n} selezionate',
-    emptyPages: 'Questo archivio non contiene ancora pagine.',
+    emptyPages: 'Questo archivio non contiene ancora pagine',
+    emptyNoArchive: 'Nessun archivio registrato',
+    emptyNoArchiveBody:
+      'Un progetto punta a una cartella di scansioni o PDF. Creane uno e lancia la scansione: le pagine compaiono qui, pronte da riconoscere.',
+    emptyCreateArchive: 'Crea il primo archivio',
+    emptyChooseProject: 'Scegli un archivio',
+    emptyChooseProjectBody:
+      'Seleziona qui sopra l’archivio su cui vuoi lavorare: le sue pagine compaiono in questa griglia.',
+    emptyPagesBody:
+      'La cartella è registrata ma nessuna pagina è ancora stata letta. Apri il progetto e lancia la scansione.',
+    emptyOpenProject: 'Apri il progetto',
+    ocrMissing: 'Non installato',
+    ocrMissingNotice:
+      'L’OCR locale non è installato in questo ambiente, quindi non può elaborare nulla — e comunque non legge le tabelle. Configura un modello servito, anche su un provider remoto.',
+    noLocalGpu: 'Questa macchina non può eseguire modelli in locale',
+    noLocalGpuBody:
+      'Il serving CUDA locale è supportato su Linux. Punta a un provider remoto: selezione, avanzamento, risultati ed export restano identici.',
+    noLocalGpuWslBody:
+      'Su Windows il percorso supportato è WSL2, non il Python nativo. In alternativa punta a un provider remoto: il flusso resta identico.',
+    chooseModel: 'Scegli un modello',
     stopAfter: 'Disattiva il modello al termine',
     stopAfterHint: 'I risultati restano salvati e possono essere corretti o esportati senza GPU.',
     start: 'Avvia riconoscimento',

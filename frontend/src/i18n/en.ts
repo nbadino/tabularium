@@ -61,7 +61,26 @@ export const en: Dict = {
     selectAll: 'Select all',
     clearSelection: 'Clear selection',
     selected: '{n} selected',
-    emptyPages: 'This archive does not contain any pages yet.',
+    emptyPages: 'This archive does not contain any pages yet',
+    emptyNoArchive: 'No archive registered',
+    emptyNoArchiveBody:
+      'A project points at a folder of scans or PDFs. Create one and run the scan: its pages show up here, ready to recognise.',
+    emptyCreateArchive: 'Create the first archive',
+    emptyChooseProject: 'Choose an archive',
+    emptyChooseProjectBody:
+      'Pick the archive you want to work on above: its pages fill this grid.',
+    emptyPagesBody:
+      'The folder is registered but no page has been read yet. Open the project and run the scan.',
+    emptyOpenProject: 'Open the project',
+    ocrMissing: 'Not installed',
+    ocrMissingNotice:
+      'Local OCR is not installed in this environment, so it cannot process anything — and it does not read tables either. Configure a served model, remote provider included.',
+    noLocalGpu: 'This machine cannot run models locally',
+    noLocalGpuBody:
+      'Local CUDA serving is supported on Linux. Point at a remote provider: selection, progress, results and export stay identical.',
+    noLocalGpuWslBody:
+      'On Windows the supported path is WSL2, not native Python. Otherwise point at a remote provider: the flow stays identical.',
+    chooseModel: 'Choose a model',
     stopAfter: 'Disable the model when finished',
     stopAfterHint: 'Results remain saved and can be corrected or exported without a GPU.',
     start: 'Start recognition',

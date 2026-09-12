@@ -61,7 +61,26 @@ export const fr: Dict = {
     selectAll: 'Tout sélectionner',
     clearSelection: 'Désélectionner',
     selected: '{n} sélectionnées',
-    emptyPages: 'Cette archive ne contient pas encore de pages.',
+    emptyPages: 'Cette archive ne contient pas encore de pages',
+    emptyNoArchive: 'Aucun fonds enregistré',
+    emptyNoArchiveBody:
+      'Un projet pointe vers un dossier de numérisations ou de PDF. Créez-en un et lancez l’analyse : ses pages apparaissent ici, prêtes à être reconnues.',
+    emptyCreateArchive: 'Créer le premier fonds',
+    emptyChooseProject: 'Choisissez un fonds',
+    emptyChooseProjectBody:
+      'Sélectionnez ci-dessus le fonds sur lequel travailler : ses pages remplissent cette grille.',
+    emptyPagesBody:
+      'Le dossier est enregistré mais aucune page n’a encore été lue. Ouvrez le projet et lancez l’analyse.',
+    emptyOpenProject: 'Ouvrir le projet',
+    ocrMissing: 'Non installé',
+    ocrMissingNotice:
+      'L’OCR local n’est pas installé dans cet environnement : il ne peut rien traiter — et il ne lit pas les tableaux. Configurez un modèle servi, y compris chez un fournisseur distant.',
+    noLocalGpu: 'Cette machine ne peut pas exécuter de modèles en local',
+    noLocalGpuBody:
+      'Le service CUDA local est pris en charge sous Linux. Pointez vers un fournisseur distant : sélection, progression, résultats et export restent identiques.',
+    noLocalGpuWslBody:
+      'Sous Windows, le chemin pris en charge est WSL2, et non Python natif. Sinon, pointez vers un fournisseur distant : le flux reste identique.',
+    chooseModel: 'Choisir un modèle',
     stopAfter: 'Désactiver le modèle à la fin',
     stopAfterHint: 'Les résultats restent enregistrés et peuvent être corrigés ou exportés sans GPU.',
     start: 'Démarrer la reconnaissance',
