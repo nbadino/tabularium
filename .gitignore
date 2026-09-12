@@ -22,6 +22,10 @@ uploads/
 .DS_Store
 .idea/
 .vscode/
+# Artefatti dei plugin dell'agente: locali alla macchina, mai del progetto
+.claude-flow/
+agentdb.rvf
+agentdb.rvf.lock
 *.log
 # Checkout esterni vendor-ati: ricreati con scripts/setup_docscanner.sh (AGENTS.md 2)
 vendor/

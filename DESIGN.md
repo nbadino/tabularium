@@ -109,9 +109,13 @@ vivo non è un server pronto, e finché l'endpoint tace la UI dice «caricamento
 Rail multi-riga persistente in alto, non una sidebar da sette link.
 Riga 1: identità, lingua, stato del backend. Riga 2: le sezioni come linguette bordo a bordo
 (`.navtab`), l'attiva su fondo nero con la piastra rossa da 3px sotto.
-Le quattro destinazioni primarie sono **Riconosci, Risultati, Archivio, Modelli**. Dataset,
-training, valutazione e configurazione dei provider restano strumenti contestuali dentro queste
-aree: non sono percorsi globali concorrenti. Il rail scorre orizzontalmente al proprio interno.
+Le destinazioni globali sono cinque. Quattro portano il percorso primario — **Riconosci,
+Risultati, Archivio, Modelli** — e la quinta, **Annotazione**, è il banco di lavoro: ci si
+arriva quasi sempre da una pagina o da una run, ma tiene la sua linguetta perché una sessione
+lunga ci rientra di continuo, e senza una pagina scelta dice quale sceglierne. Dataset,
+training, valutazione e configurazione dei provider restano invece strumenti contestuali dentro
+queste aree: non sono percorsi globali concorrenti. Il rail scorre orizzontalmente al proprio
+interno.
 La colonna sinistra resta libera per il **contesto** (pagine, progetti), mai per i link globali.
 
 Modello e luogo di esecuzione sono sempre visibili nello stesso indicatore globale. Cambiare da
