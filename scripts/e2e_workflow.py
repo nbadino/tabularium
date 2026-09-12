@@ -82,21 +82,37 @@ def main() -> int:
         pages = requests.get(f"{BASE}/api/projects/{project_id}/pages", timeout=10).json()["items"]
         assert len(pages) == 1, pages
         page = pages[0]
-        assert requests.put(
+        _put_ann = requests.put(
             f"{BASE}/api/pages/{page['id']}/annotations",
-            json={"items": [{"label": "Table", "kind": "rect", "points": [[20, 20], [850, 600]], "content": "", "order_idx": 0, "confirmed": True}]},
+            json={"items": [
+                {"label": "Table", "kind": "rect", "points": [[20, 20], [850, 600]], "content": "", "order_idx": 0, "confirmed": True},
+                # La riga di un blocco `Table` mostra l'editor della griglia al
+                # posto della textarea di trascrizione (v. `ContentPane`): per
+                # verificare l'autosave del contenuto serve un blocco non
+                # tabellare, altrimenti si scrive in una cella della griglia.
+                # Contenuto non vuoto: l'approvazione più sotto pretende una
+                # trascrizione per ogni blocco (`compute_readiness`). La UI lo
+                # sostituisce comunque nel passo successivo.
+                {"label": "Text", "kind": "rect", "points": [[20, 620], [850, 700]], "content": "Riga di prova.", "order_idx": 1, "confirmed": True},
+            ]},
             timeout=10,
-        ).ok
-        block = requests.get(f"{BASE}/api/pages/{page['id']}/annotations", timeout=10).json()["items"][0]
-        assert requests.put(
+        )
+        assert _put_ann.ok, _put_ann.text
+        items = requests.get(f"{BASE}/api/pages/{page['id']}/annotations", timeout=10).json()["items"]
+        block = next(item for item in items if item["label"] == "Table")
+        text_block = next(item for item in items if item["label"] == "Text")
+        _put_table = requests.put(
             f"{BASE}/api/blocks/{block['id']}/table",
             json={"rows": 2, "cols": 2, "cells": [{"r": 0, "c": 0, "rowspan": 1, "colspan": 1, "text": "Vessel"}]},
             timeout=10,
-        ).ok
+        )
+        assert _put_table.ok, _put_table.text
         # page_type si imposta con la PATCH; lo stato va in approvazione con
         # l'endpoint dedicato: la transizione di stato è protetta (self-hosted).
-        assert requests.patch(f"{BASE}/api/pages/{page['id']}", json={"page_type": "shipping"}, timeout=10).ok
-        assert requests.post(f"{BASE}/api/pages/{page['id']}/approve", timeout=10).ok
+        _patch_page = requests.patch(f"{BASE}/api/pages/{page['id']}", json={"page_type": "shipping"}, timeout=10)
+        assert _patch_page.ok, _patch_page.text
+        _approve = requests.post(f"{BASE}/api/pages/{page['id']}/approve", timeout=10)
+        assert _approve.ok, _approve.text
 
         # Snapshot dataset via API (la UI viene comunque caricata e verificata
         # subito dopo; evita una dipendenza dal timing del select React).
@@ -117,18 +133,28 @@ def main() -> int:
         wait_for(driver, EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-block]"))).click()
         # Modifica controllata del contenuto: l'indicatore Salvato prova il
         # debounce autosave, non solo il salvataggio esplicito.
-        textarea = wait_for(driver, EC.presence_of_element_located((By.TAG_NAME, "textarea")))
+        # `aria-label` e non il primo `textarea` della pagina: le celle della
+        # griglia sono textarea anch'esse e in DOM vengono prima. L'etichetta
+        # del blocco non è tradotta, quindi il selettore regge in ogni lingua.
+        content_box = (By.XPATH, "//textarea[contains(@aria-label, 'Text')]")
+        textarea = wait_for(driver, EC.presence_of_element_located(content_box))
         textarea.click()
         textarea.clear()
         textarea.send_keys("Synthetic maritime record.")
-        wait_for(driver, lambda d: "Synthetic maritime record." in d.find_element(By.TAG_NAME, "textarea").get_attribute("value"))
+        wait_for(driver, lambda d: "Synthetic maritime record." in d.find_element(*content_box).get_attribute("value"))
         # L'indicatore può sparire rapidamente; il contratto forte è il dato
         # persistito letto dal backend dopo il debounce.
         import time
         time.sleep(2)
         persisted = requests.get(f"{BASE}/api/pages/{page['id']}/annotations", timeout=10).json()["items"]
-        assert any(item["content"] == "Synthetic maritime record." for item in persisted)
-        wait_for(driver, EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'editor tabella') or contains(., 'table editor') or contains(., 'éditeur')]"))).click()
+        assert any(
+            item["id"] == text_block["id"] and item["content"] == "Synthetic maritime record."
+            for item in persisted
+        ), persisted
+        # Nessun pulsante "apri editor tabella": per un blocco `Table` la riga
+        # di `ContentPane` monta l'editor della griglia direttamente. La chiave
+        # i18n `annotate.openTableEditor` è rimasta senza componente che la usi,
+        # e questa attesa cercava un controllo che non esiste più.
         wait_for(driver, EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Salva griglia') or contains(., 'Save grid') or contains(., 'Enregistrer')]"))).click()
         wait_for(driver, EC.presence_of_element_located((By.XPATH, "//*[contains(., 'OTSL generato') or contains(., 'OTSL generated') or contains(., 'OTSL généré')]")))
 
