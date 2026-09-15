@@ -7,6 +7,7 @@ import { useProjects, writeActiveProject } from '../app/activeProject'
 import { syncInferenceFromBackend, toggleInferenceEnabled, useInference } from '../app/inference'
 import { useI18n } from '../i18n'
 import { useAuth } from '../app/auth'
+import { pageLabel } from '../lib/pageLabel'
 
 const isActive = (run: RecognitionRun | null) => run?.state === 'queued' || run?.state === 'running'
 
@@ -20,6 +21,17 @@ const stateKey = (state: string) => {
     cancelled: 'recognition.statusCancelled',
   }
   return keys[state] ?? state
+}
+
+function providerLabel(provider: string, engine: RecognitionRun['engine'], t: (key: string) => string): string {
+  const effectiveProvider = engine === 'ocr' ? 'local' : provider
+  return ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom'].includes(effectiveProvider)
+    ? t(`recognition.provider.${effectiveProvider}`)
+    : effectiveProvider
+}
+
+function runTitle(run: RecognitionRun, t: (key: string) => string): string {
+  return run.model_name || (run.engine === 'ocr' ? t('recognition.localOcr') : t('recognition.servedModel'))
 }
 
 export default function ResultsPage() {
@@ -84,7 +96,8 @@ export default function ResultsPage() {
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
-      anchor.download = `tabularium-run-${run.id}-${scope}.${exportFormat === 'text' ? 'txt' : 'json'}`
+      const extension = exportFormat === 'text' ? 'txt' : exportFormat
+      anchor.download = `tabularium-run-${run.id}-${scope}.${extension}`
       anchor.click()
       URL.revokeObjectURL(url)
     } catch (e) {
@@ -139,8 +152,8 @@ export default function ResultsPage() {
                 {runs.map((item) => (
                   <li key={item.id}>
                     <button type="button" onClick={() => projectId !== '' && void openRun(projectId, item.id)} className={`w-full p-2 text-left ${run?.id === item.id ? 'bg-[color:var(--color-sig-wash)] outline outline-2 -outline-offset-2 outline-[color:var(--color-sig)]' : 'hover:bg-[color:var(--color-fill)]'}`}>
-                      <span className="flex items-center gap-2"><b className="mono text-[11px]">#{item.id}</b><span className="min-w-0 flex-1 truncate text-[12px]">{item.model_name || item.engine}</span></span>
-                      <span className="mt-1 block text-[11px] text-[color:var(--color-ink-3)]">{item.completed_pages}/{item.total_pages} · {item.provider}</span>
+                      <span className="flex items-center gap-2"><b className="mono text-[11px]">#{item.id}</b><span className="min-w-0 flex-1 truncate text-[12px]">{runTitle(item, t)}</span></span>
+                      <span className="mt-1 block text-[11px] text-[color:var(--color-ink-3)]">{item.completed_pages}/{item.total_pages} · {providerLabel(item.provider, item.engine, t)}</span>
                     </button>
                   </li>
                 ))}
@@ -153,11 +166,11 @@ export default function ResultsPage() {
           <Module tab={t('recognition.resultsTitle')} quiet><p className="text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.pickRun')}</p></Module>
         ) : (
           <div className="space-y-3">
-            <Module tab={`${t('recognition.resultsTitle')} · #${run.id}`} aux={<Badge tone={isActive(run) ? 'progress' : run.failed_pages ? 'warn' : 'ok'}>{run.model_name || run.engine}</Badge>}>
+            <Module tab={`${t('recognition.resultsTitle')} · #${run.id}`} aux={<Badge tone={isActive(run) ? 'progress' : run.failed_pages ? 'warn' : 'ok'}>{runTitle(run, t)}</Badge>}>
               <Progress value={pct} label={t('recognition.progress', { done: run.completed_pages, total: run.total_pages })} />
               <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px]">
                 <span>{t('recognition.progress', { done: run.completed_pages, total: run.total_pages })}</span>
-                <span className="mono text-[11px] text-[color:var(--color-ink-3)]">{run.provider} · {run.adapter_id}</span>
+                <span className="mono text-[11px] text-[color:var(--color-ink-3)]">{providerLabel(run.provider, run.engine, t)} · {run.adapter_id}</span>
                 <span className="ml-auto flex flex-wrap gap-2">
                   {nextReview && (
                     <Link to={`/annotazione?project=${run.project_id}&page=${nextReview.page_id}&run=${run.id}`} className="btn btn-primary no-underline">
@@ -190,7 +203,7 @@ export default function ResultsPage() {
                   <li key={item.id} className="grid gap-2 p-2 sm:grid-cols-[56px_minmax(0,1fr)_auto] sm:items-center">
                     <img src={`/api/pages/${item.page_id}/thumbnail`} alt="" className="h-16 w-12 border border-[color:var(--color-rule)] bg-white object-cover object-top" />
                     <div className="min-w-0">
-                      <div className="mono truncate text-[12px] font-semibold" title={item.rel_path}>{item.rel_path}</div>
+                      <div className="mono truncate text-[12px] font-semibold" title={pageLabel(item)}>{pageLabel(item)}</div>
                       <div className="mt-1 flex flex-wrap gap-1.5">
                         <Badge tone={item.state === 'finished' ? 'ok' : item.state === 'failed' ? 'sig' : 'progress'}>{t(stateKey(item.state))}</Badge>
                         <Badge>{t('recognition.blocks', { n: item.blocks })}</Badge>

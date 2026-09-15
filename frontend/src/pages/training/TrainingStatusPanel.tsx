@@ -8,12 +8,16 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { useState } from 'react'
 import type { GpuInfo, TrainingStatus } from '../../lib/types'
 import { runStateLabel, RUN_STATE_TONE } from '../../lib/vocab'
-import { Badge, Module, WarnNotice } from '../../app/ui'
+import { Link } from 'react-router'
+import { apiPost } from '../../lib/api'
+import { Badge, Module, Notice, WarnNotice } from '../../app/ui'
 import { useI18n } from '../../i18n'
 
 interface TrainingStatusPanelProps {
+  projectId: number | ''
   status: TrainingStatus | null
   gpuList: GpuInfo[]
   metricsData: Array<{ i: number; loss?: number; lr?: number }>
@@ -36,6 +40,7 @@ function stateNote(t: (k: string) => string, state: string): string {
 }
 
 export default function TrainingStatusPanel({
+  projectId,
   status,
   gpuList,
   metricsData,
@@ -47,6 +52,25 @@ export default function TrainingStatusPanel({
   const { t, tn } = useI18n()
   const hasLr = metricsData.some((m) => m.lr != null)
   const note = stateNote(t, state)
+  const [registeringModel, setRegisteringModel] = useState(false)
+  const [registeredModel, setRegisteredModel] = useState<string | null>(null)
+  const [registerError, setRegisterError] = useState<string | null>(null)
+
+  const registerModel = async () => {
+    if (projectId === '' || !status?.run?.run_id) return
+    setRegisteringModel(true)
+    setRegisterError(null)
+    try {
+      const model = await apiPost<{ display_name?: string }>(`/projects/${projectId}/training/register-model`, {
+        run_id: status.run.run_id,
+      })
+      setRegisteredModel(model.display_name ?? t('training.registeredModel'))
+    } catch (e) {
+      setRegisterError(String(e))
+    } finally {
+      setRegisteringModel(false)
+    }
+  }
 
   return (
     <div className="space-y-3">
@@ -70,6 +94,19 @@ export default function TrainingStatusPanel({
           <p className="mt-1.5 max-w-[80ch] text-[12px] text-[color:var(--color-ink-2)]">
             {note}
           </p>
+        )}
+        {state === 'finished' && (
+          <div className="mt-3 border-t border-[color:var(--color-rule)] pt-2">
+            <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('training.checkpointReady')}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button type="button" className="btn btn-primary" onClick={() => void registerModel()} disabled={registeringModel || registeredModel !== null}>
+                {registeringModel ? t('training.registeringModel') : t('training.useCheckpoint')}
+              </button>
+              {registeredModel && <Link to="/modelli" className="btn no-underline">{t('training.chooseProvider')}</Link>}
+            </div>
+            {registeredModel && <Notice tone="ok">{t('training.modelRegistered', { name: registeredModel })}</Notice>}
+            {registerError && <Notice tone="warn">{registerError}</Notice>}
+          </div>
         )}
         {state === '—' && (
           <p className="mt-1.5 text-[12px] text-[color:var(--color-ink-2)]">

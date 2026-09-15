@@ -8,6 +8,7 @@ import { pageTypeLabel, pages as pagesN, statusLabel, STATUS_TONE } from '../lib
 import { Badge, Collapsible, ErrorNotice, Field, Modal, Module, WarnNotice } from '../app/ui'
 import { IconCheck, IconPrev, IconScan, IconTrash } from '../app/icons'
 import { useI18n, tn } from '../i18n'
+import { pageLabel } from '../lib/pageLabel'
 
 type StudyProtocol = {
   corpus_scope: string
@@ -348,6 +349,7 @@ export default function ProjectDetailPage() {
           </button>
         </div>
       </div>
+      <p className="mb-3 -mt-2 text-[11px] text-[color:var(--color-ink-2)]">{t('project.importHint')}</p>
 
       {error != null && (
         <div className="mb-3">
@@ -648,20 +650,20 @@ export default function ProjectDetailPage() {
                         type="checkbox"
                         checked={selected.has(p.id)}
                         onChange={() => toggleOne(p.id)}
-                        aria-label={t('project.selectPage', { path: p.rel_path })}
+                        aria-label={t('project.selectPage', { path: pageLabel(p) })}
                       />
                     </td>
                     <td className={td}>
                       <img
                         src={`/api/pages/${p.id}/thumbnail`}
-                        alt={t('project.thumbnailAlt', { path: p.rel_path })}
+                        alt={t('project.thumbnailAlt', { path: pageLabel(p) })}
                         loading="lazy"
                         className="h-10 w-8 border border-[color:var(--color-rule)] bg-white object-cover object-top"
                       />
                     </td>
                     <td className={`${td} min-w-0`}>
-                      <span className="mono block max-w-[24rem] truncate" title={p.rel_path}>
-                        {p.rel_path}
+                      <span className="mono block max-w-[24rem] truncate" title={pageLabel(p)}>
+                        {pageLabel(p)}
                       </span>
                       <span className="mono text-[11px] text-[color:var(--color-ink-3)]">
                         {p.width}×{p.height}

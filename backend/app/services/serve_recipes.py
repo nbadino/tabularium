@@ -192,6 +192,9 @@ def serve_argv(
     port: int,
     host: str = "0.0.0.0",
     api_key: str = "",
+    lora_path: str = "",
+    lora_name: str = "",
+    served_model_name: str | None = None,
 ) -> list[str]:
     """Comando di serving completo, ricetta più infrastruttura."""
     if recipe.runtime == "monkeyocr":
@@ -202,7 +205,9 @@ def serve_argv(
         argv = ["-m", "vllm.entrypoints.cli.main", "serve", model_path]
     argv += ["--host", host, "--port", str(int(port))]
     argv += list(recipe.serve_args)
-    argv += ["--served-model-name", recipe.served_model_name]
+    if lora_path.strip():
+        argv += ["--enable-lora", "--lora-modules", f"{lora_name.strip() or recipe.served_model_name}={lora_path.strip()}"]
+    argv += ["--served-model-name", served_model_name or recipe.served_model_name]
     if api_key.strip():
         argv += ["--api-key", api_key.strip()]
     return argv

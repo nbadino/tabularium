@@ -240,7 +240,8 @@ def collect_pages_with_blocks(project_id: int) -> dict[int, dict]:
     page_data: dict[int, dict] = {}
     with connect() as conn:
         pages = conn.execute(
-            "SELECT * FROM pages WHERE project_id=? ORDER BY id", (project_id,)
+            "SELECT * FROM pages WHERE project_id=? AND status != 'missing' ORDER BY id",
+            (project_id,),
         ).fetchall()
         for page in pages:
             blocks = conn.execute(
@@ -396,7 +397,8 @@ def build_datasets(
     pages = [d["page"] for d in page_data.values()]
     with connect() as conn:
         total_pages = conn.execute(
-            "SELECT COUNT(*) AS n FROM pages WHERE project_id=?", (project_id,)
+            "SELECT COUNT(*) AS n FROM pages WHERE project_id=? AND status != 'missing'",
+            (project_id,),
         ).fetchone()["n"]
 
     # --- split per pagina ----------------------------------------------------

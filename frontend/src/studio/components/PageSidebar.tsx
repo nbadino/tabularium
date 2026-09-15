@@ -1,9 +1,11 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import type { PageItem, Project } from '../../lib/types'
 import { statusLabel, STATUS_TONE } from '../../lib/vocab'
 import { Badge, Field } from '../../app/ui'
 import { IconNext, IconPrev } from '../../app/icons'
 import { useI18n, tn } from '../../i18n'
+import { pageLabel, pageShortLabel } from '../../lib/pageLabel'
 
 interface PageSidebarProps {
   projects: Project[]
@@ -17,6 +19,8 @@ interface PageSidebarProps {
   reviewScope?: { label: string; backTo: string; backLabel: string } | null
 }
 
+const INITIAL_PAGE_LIMIT = 100
+
 export default function PageSidebar({
   projects,
   projectId,
@@ -28,9 +32,29 @@ export default function PageSidebar({
   reviewScope,
 }: PageSidebarProps) {
   const { t } = useI18n()
-  const index = currentPage ? pages.findIndex((p) => p.id === currentPage.id) : -1
-  const prev = index > 0 ? pages[index - 1] : null
-  const next = index >= 0 && index < pages.length - 1 ? pages[index + 1] : null
+  const [pageQuery, setPageQuery] = useState('')
+  const [pageLimit, setPageLimit] = useState(INITIAL_PAGE_LIMIT)
+  const needle = pageQuery.trim().toLocaleLowerCase()
+  const visiblePages = needle
+    ? pages.filter((page) => pageLabel(page).toLocaleLowerCase().includes(needle))
+    : pages
+  const index = currentPage ? visiblePages.findIndex((p) => p.id === currentPage.id) : -1
+  const prev = index > 0 ? visiblePages[index - 1] : null
+  const next = index >= 0
+    ? index < visiblePages.length - 1 ? visiblePages[index + 1] : null
+    : visiblePages[0] ?? null
+  const renderedPages = (() => {
+    const initial = visiblePages.slice(0, pageLimit)
+    if (!currentPage || initial.some((page) => page.id === currentPage.id) || !visiblePages.some((page) => page.id === currentPage.id)) {
+      return initial
+    }
+    return [...initial.slice(0, Math.max(0, pageLimit - 1)), currentPage]
+  })()
+
+  useEffect(() => {
+    setPageQuery('')
+    setPageLimit(INITIAL_PAGE_LIMIT)
+  }, [projectId])
 
   return (
     <aside
@@ -69,6 +93,19 @@ export default function PageSidebar({
             {t('sidebar.manageProjects')}
           </Link>
         )}
+        {pages.length > 0 && (
+          <Field label={t('sidebar.pageSearch')}>
+            <input
+              value={pageQuery}
+              onChange={(event) => {
+                setPageQuery(event.target.value)
+                setPageLimit(INITIAL_PAGE_LIMIT)
+              }}
+              placeholder={t('sidebar.pageSearchPlaceholder')}
+              className="fld"
+            />
+          </Field>
+        )}
       </div>
 
       {/* Scorrere l'archivio senza tornare all'elenco: il compito di Alex. */}
@@ -85,7 +122,11 @@ export default function PageSidebar({
             <IconPrev size={11} />
           </button>
           <span className="mono flex-1 text-center text-[11px] text-[color:var(--color-ink-2)]">
-            {index >= 0 ? `${index + 1} / ${pages.length}` : tn('sidebar.pagesCount', pages.length)}
+            {index >= 0
+              ? `${index + 1} / ${visiblePages.length}`
+              : needle
+                ? `— / ${visiblePages.length}`
+                : tn('sidebar.pagesCount', pages.length)}
           </span>
           <button
             type="button"
@@ -111,7 +152,12 @@ export default function PageSidebar({
             {t('sidebar.noPages')}
           </li>
         )}
-        {pages.map((p) => {
+        {projectId !== '' && pages.length > 0 && visiblePages.length === 0 && (
+          <li className="p-2 text-[12px] text-[color:var(--color-ink-2)]">
+            {t('sidebar.noPageMatches')}
+          </li>
+        )}
+        {renderedPages.map((p) => {
           const on = currentPage?.id === p.id
           return (
             <li key={p.id}>
@@ -132,8 +178,8 @@ export default function PageSidebar({
                   className="h-14 w-11 shrink-0 border border-[color:var(--color-rule)] bg-white object-cover object-top"
                 />
                 <span className="flex min-w-0 flex-1 flex-col gap-1">
-                  <span className="mono truncate text-[11px]" title={p.rel_path}>
-                    {p.rel_path}
+                  <span className="mono truncate text-[11px]" title={pageLabel(p)}>
+                    {pageShortLabel(p)}
                   </span>
                   <Badge tone={STATUS_TONE[p.status] ?? 'neutral'}>{statusLabel(p.status)}</Badge>
                 </span>
@@ -142,6 +188,17 @@ export default function PageSidebar({
           )
         })}
       </ul>
+      {renderedPages.length < visiblePages.length && (
+        <div className="border-t border-[color:var(--color-rule)] p-2">
+          <button
+            type="button"
+            className="btn btn-sm w-full"
+            onClick={() => setPageLimit((before) => before + INITIAL_PAGE_LIMIT)}
+          >
+            {t('sidebar.showMorePages', { n: visiblePages.length - renderedPages.length })}
+          </button>
+        </div>
+      )}
     </aside>
   )
 }

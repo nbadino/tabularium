@@ -1,6 +1,7 @@
 import type { Project, TrainConfigBody } from '../../lib/types'
+import { Link } from 'react-router'
 import { trainTypeLabel } from '../../lib/vocab'
-import { Collapsible, Field, Module } from '../../app/ui'
+import { Collapsible, Field, Module, Notice } from '../../app/ui'
 import { IconPlayground } from '../../app/icons'
 import { BASE_CFG, matchPreset, PRESETS } from './presets'
 import { useI18n } from '../../i18n'
@@ -37,6 +38,7 @@ interface TrainingConfigFormProps {
   cfg: TrainConfigBody
   busy: boolean
   isActive: boolean
+  datasetReady: boolean
   stopArmed: boolean
   onProjectChange: (pid: number | '') => void
   onConfigChange: (patch: Partial<TrainConfigBody>) => void
@@ -50,6 +52,7 @@ export default function TrainingConfigForm({
   cfg,
   busy,
   isActive,
+  datasetReady,
   stopArmed,
   onProjectChange,
   onConfigChange,
@@ -113,7 +116,7 @@ export default function TrainingConfigForm({
 
       <Module tab={t('training.essentials')}>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label={t('training.baseModel')}>
+          <Field label={t('training.baseModel')} hint={t('training.baseModelHint')}>
             <select
               value={cfg.model}
               onChange={(e) => {
@@ -280,10 +283,18 @@ export default function TrainingConfigForm({
       </Module>
 
       <Module tab={t('training.launch')}>
+        {projectId !== '' && !datasetReady && (
+          <Notice tone="warn">
+            <span>{t('pipeline.steps.trainNeeds')}</span>{' '}
+            <Link to="/dataset" className="font-semibold underline underline-offset-2">
+              {t('pipeline.steps.datasetAction')}
+            </Link>
+          </Notice>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={onStart}
-            disabled={busy || projectId === '' || isActive}
+            disabled={busy || projectId === '' || isActive || !datasetReady}
             className="btn btn-primary"
           >
             <IconPlayground size={13} />

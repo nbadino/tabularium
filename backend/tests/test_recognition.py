@@ -95,6 +95,42 @@ def test_bulk_run_persists_pages_and_exports_raw_and_reviewed(tmp_path, monkeypa
         assert "Recognized text" in csv_export.text
 
 
+def test_ocr_run_does_not_inherit_cloud_provider(tmp_path, monkeypatch):
+    from app.db import connect
+    from app.services import recognition
+
+    monkeypatch.setattr(recognition, "_start_worker", lambda _run_id: None)
+    monkeypatch.setattr(
+        recognition.inference,
+        "get_inference_config",
+        lambda: {
+            "enabled": True,
+            "provider": "vast",
+            "model": "MonkeyOCRv2",
+            "adapter_id": "monkeyocrv2-parsing",
+            "url": "http://127.0.0.1:9000/v1",
+        },
+    )
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        created = recognition.create_run(
+            project_id,
+            [page_ids[0]],
+            engine="ocr",
+            stop_policy="none",
+        )
+
+        with connect() as conn:
+            run = conn.execute(
+                "SELECT provider FROM recognition_runs WHERE id=?", (created["id"],)
+            ).fetchone()
+            job = conn.execute(
+                "SELECT provider FROM jobs WHERE id=?", (created["job_id"],)
+            ).fetchone()
+        assert run["provider"] == "local"
+        assert job["provider"] == "local"
+
+
 def test_run_rejects_pages_from_another_project(tmp_path, monkeypatch):
     from app.services import recognition
 

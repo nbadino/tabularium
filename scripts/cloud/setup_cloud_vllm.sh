@@ -72,8 +72,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-: "${MONKEYOCR_REF:?MONKEYOCR_REF obbligatorio: usare un commit SHA o un tag verificato}"
-
 # Ricetta di serving generata dal backend (`serve_recipes.py`): versione di
 # vLLM, dipendenze extra e flag ufficiali del modello. Senza, si resta sul
 # percorso storico MonkeyOCRv2.
@@ -96,6 +94,10 @@ EOF
   VENV_DIR=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('venv_dir') or '$VENV_DIR')")
   mapfile -t SERVE_ARGV < <(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; [print(a) for a in json.load(sys.stdin)['argv']]")
   echo ">> Ricetta ufficiale: $(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; r=json.load(sys.stdin); print(r['adapter_id'], '· vLLM', r['vllm_version'], '·', r['runtime'])")"
+fi
+
+if [ "$RECIPE_RUNTIME" = "monkeyocr" ]; then
+  : "${MONKEYOCR_REF:?MONKEYOCR_REF obbligatorio per MonkeyOCRv2: usare un commit SHA o un tag verificato}"
 fi
 
 # La cartella dei pesi segue il modello scelto. Con un percorso fisso, cambiare

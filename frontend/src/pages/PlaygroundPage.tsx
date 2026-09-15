@@ -3,11 +3,12 @@ import { Link } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import type { PageItem, PlaygroundResult } from '../lib/types'
 import { blocks } from '../lib/vocab'
-import { ErrorNotice, Field, Module } from '../app/ui'
+import { ErrorNotice, Field, Module, Notice } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { useInference } from '../app/inference'
 import { IconCopy, IconPlayground } from '../app/icons'
 import { useI18n, tn } from '../i18n'
+import { pageLabel } from '../lib/pageLabel'
 
 export default function PlaygroundPage() {
   const { t } = useI18n()
@@ -76,6 +77,7 @@ export default function PlaygroundPage() {
 
   const kx = (v: number) => (img && img.w ? (v / 1000) * img.w : 0)
   const ky = (v: number) => (img && img.h ? (v / 1000) * img.h : 0)
+  const inferenceReady = inference.enabled && inference.available
 
   return (
     <div className="p-3">
@@ -95,6 +97,16 @@ export default function PlaygroundPage() {
           <Link to="/impostazioni" className="btn btn-sm">
             {t('cloud.card.inferenceConfigure')}
           </Link>
+        </div>
+      )}
+      {inference.enabled && !inference.available && (
+        <div className="mb-3">
+          <Notice tone="warn">
+            <span>{t('recognition.unreachableNotice', { url: inference.url })}</span>{' '}
+            <Link to="/modelli" className="font-semibold underline underline-offset-2">
+              {t('recognition.changeModel')}
+            </Link>
+          </Notice>
         </div>
       )}
 
@@ -133,7 +145,7 @@ export default function PlaygroundPage() {
                 </option>
                 {pages.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.rel_path}
+                    {pageLabel(p)}
                   </option>
                 ))}
               </select>
@@ -143,7 +155,7 @@ export default function PlaygroundPage() {
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               onClick={() => void analyse()}
-              disabled={busy || !pageId}
+              disabled={busy || !pageId || !inferenceReady}
               className="btn btn-primary"
             >
               <IconPlayground size={13} />

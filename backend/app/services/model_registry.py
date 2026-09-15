@@ -63,6 +63,20 @@ def models_dir(adapter_id: str) -> Path:
     return config.MODELS_DIR / adapter_id
 
 
+def model_path(adapter_id: str) -> Path:
+    """Percorso effettivo dei pesi, inclusi checkpoint locali registrati."""
+    d = models_dir(adapter_id)
+    if adapter_id.startswith('custom-'):
+        from . import custom_models
+        row = custom_models.get(adapter_id)
+        source = str(row.get('source_path') or '').strip() if row else ''
+        if source:
+            candidate = Path(source).resolve()
+            if candidate.is_dir():
+                return candidate
+    return d
+
+
 def draft_dir(adapter_id: str) -> Path:
     """Cartella del draft per speculative decoding (DFlash su MonkeyOCRv2).
 
@@ -181,16 +195,27 @@ def is_installed(adapter_id: str) -> bool:
     """Vero solo se il checkpoint ha sia `config.json` sia i pesi: un download
     interrotto a metà non deve sembrare 'installato' (config.json arriva
     presto, i file `.safetensors`/`.bin` grandi arrivano per ultimi)."""
-    d = models_dir(adapter_id)
+    d = model_path(adapter_id)
     if not d.is_dir():
         return False
+    from . import custom_models
+    row = custom_models.get(adapter_id) if adapter_id.startswith('custom-') else None
+    if row and str(row.get('source_train_type') or '').lower() == 'lora':
+        # Un adapter LoRA è valido solo insieme ai pesi del modello base.
+        if not (d / "adapter_config.json").exists():
+            return False
+        if not (list(d.glob("adapter_model*.safetensors")) or list(d.glob("adapter_model*.bin"))):
+            return False
+        base_id = str(row.get('base_adapter_id') or '').strip()
+        return bool(base_id) and is_installed(base_id)
     if not (d / "config.json").exists():
         return False
     return bool(list(d.glob("*.safetensors")) or list(d.glob("*.bin")))
 
 
 def install_state(adapter_id: str) -> dict:
-    d = models_dir(adapter_id)
+    storage = models_dir(adapter_id)
+    d = model_path(adapter_id)
     stored = _read_state(adapter_id)
     active = _ACTIVE.get(adapter_id)
     downloading = active is not None and active["proc"].poll() is None
@@ -216,7 +241,7 @@ def install_state(adapter_id: str) -> dict:
         "updated_at": stored.get("updated_at"),
     }
     if adapter_id == "paddleocr-vl":
-        runtime = paddle_runtime.status()
+        runtime = paddle_runtime.status(probe=False)
         state["runtime_ready"] = runtime["ready"]
         state["runtime_state"] = runtime["state"]
         state["runtime_error"] = runtime["error"]
@@ -230,7 +255,7 @@ def ensure_runtime_async(adapter_id: str) -> None:
     """Configura in background il runtime ufficiale richiesto dall'adapter."""
     if adapter_id != "paddleocr-vl" or not is_installed(adapter_id):
         return
-    runtime = paddle_runtime.status()
+    runtime = paddle_runtime.status(probe=False)
     if runtime["ready"] or adapter_id in _RUNTIME_ACTIVE:
         return
     _RUNTIME_ACTIVE.add(adapter_id)
@@ -256,7 +281,11 @@ def _expected_bytes(adapter_id: str) -> int | None:
     return int(approx * 1024 ** 3) if approx else None
 
 
-def vram_warning(adapter, size_bytes: int | None = None) -> str | None:
+def vram_warning(
+    adapter,
+    size_bytes: int | None = None,
+    gpus: list[dict] | None = None,
+) -> str | None:
     """Avviso soft sulla dimensione del checkpoint vs. VRAM libera rilevata.
 
     Non è un preflight bloccante come `services/vram.py` per il training: qui
@@ -269,11 +298,12 @@ def vram_warning(adapter, size_bytes: int | None = None) -> str | None:
     size_gb = (size_bytes / (1024 ** 3)) if size_bytes else adapter.capabilities.approx_size_gb
     if not size_gb:
         return None
-    try:
-        from . import trainer_metrics
-        gpus = trainer_metrics.gpu_snapshot()
-    except Exception:  # noqa: BLE001
-        gpus = []
+    if gpus is None:
+        try:
+            from . import trainer_metrics
+            gpus = trainer_metrics.gpu_snapshot()
+        except Exception:  # noqa: BLE001
+            gpus = []
     if not gpus:
         return None
     # Capacità della scheda, non memoria libera adesso: avviare un modello ferma
@@ -321,9 +351,21 @@ def _docker_gpu_blocker() -> str | None:
 
 
 def list_models() -> list[dict]:
+    # La telemetria GPU può attendere nvidia-smi fino a 8 secondi. Il registro
+    # contiene più adapter, ma la macchina è una sola: una misura per risposta
+    # basta per tutti e impedisce un ritardo moltiplicato per ogni riga.
+    try:
+        from . import trainer_metrics
+        gpus = trainer_metrics.gpu_snapshot()
+    except Exception:  # noqa: BLE001
+        gpus = []
     items = []
     for cap in list_adapters():
         adapter = get_adapter(cap["adapter_id"])
+        custom_checkpoint = False
+        if cap["adapter_id"].startswith('custom-'):
+            from . import custom_models
+            custom_checkpoint = bool((custom_models.get(cap["adapter_id"]) or {}).get('source_run_id'))
         ensure_runtime_async(cap["adapter_id"])
         modes = supported_prefill_modes(adapter)
         try:
@@ -339,12 +381,14 @@ def list_models() -> list[dict]:
             "local_serve_ready": local_serve_ready,
             "cloud_serve_ready": cap["adapter_id"] in _CLOUD_TEMPLATES,
             "cloud_template": _CLOUD_TEMPLATES.get(cap["adapter_id"]),
+            "downloadable": not custom_checkpoint,
+            "checkpoint_detached": custom_checkpoint and not state.get("installed"),
             "download_only": (
                 not local_serve_ready
                 and cap["adapter_id"] not in _CLOUD_TEMPLATES
                 and not modes["supports_native"]
             ),
-            "vram_warning": vram_warning(adapter, state.get("size_bytes") or None),
+            "vram_warning": vram_warning(adapter, state.get("size_bytes") or None, gpus),
             "draft_repo": cap.get("draft_hf_repo") or None,
             "draft_installed": bool(cap.get("draft_hf_repo")) and draft_installed(cap["adapter_id"]),
             "draft_unusable": draft_unusable_reason(cap["adapter_id"]) if cap.get("draft_hf_repo") else None,
@@ -360,6 +404,11 @@ def list_models() -> list[dict]:
 
 def start_download(adapter_id: str) -> dict:
     adapter = get_adapter(adapter_id)
+    if adapter_id.startswith('custom-'):
+        from . import custom_models
+        row = custom_models.get(adapter_id)
+        if row and row.get('source_run_id'):
+            raise ValueError("un checkpoint fine tuned va registrato di nuovo dalla run, non scaricato come modello base")
     repo = adapter.capabilities.hf_repo
     if not repo:
         raise ValueError(f"adapter '{adapter_id}' non ha un repo Hugging Face configurato")
@@ -456,6 +505,15 @@ def delete_model(adapter_id: str) -> dict:
     d = models_dir(adapter_id)
     if d.exists():
         shutil.rmtree(d)
+    if adapter_id.startswith('custom-'):
+        # Un checkpoint prodotto dal training vive nella run e non va perso
+        # quando si rimuove il modello dal Registro: si elimina solo il
+        # riferimento usato dal serving, così può essere registrato di nuovo.
+        from . import custom_models
+        row = custom_models.get(adapter_id)
+        if row and row.get('source_path'):
+            with connect() as conn:
+                conn.execute('UPDATE custom_models SET source_path=NULL WHERE id=?', (adapter_id,))
     # Il draft segue il checkpoint: lasciarlo indietro terrebbe in vita anche il
     # marcatore `.unusable`, che deve poter essere azzerato riscaricando.
     draft = draft_dir(adapter_id)

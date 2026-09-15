@@ -1440,6 +1440,10 @@ def build_provision_recipe(
     model: str = "",
     remote_port: int = 8888,
     server_api_key: str = "",
+    model_dir: str = "",
+    lora_path: str = "",
+    lora_name: str = "",
+    served_model_name: str | None = None,
 ) -> dict[str, Any]:
     """Traduce la ricetta ufficiale del modello in istruzioni per l'istanza.
 
@@ -1453,12 +1457,12 @@ def build_provision_recipe(
     hf_repo = str(model or "").strip() or recipe.hf_repo
     if not _MODEL.fullmatch(hf_repo):
         raise ValueError("Nome modello non valido.")
-    model_dir = f"{REMOTE_MODEL_ROOT}/{hf_repo.rsplit('/', 1)[-1]}"
+    effective_model_dir = model_dir.strip() or f"{REMOTE_MODEL_ROOT}/{hf_repo.rsplit('/', 1)[-1]}"
     return {
         "adapter_id": recipe.adapter_id,
         "runtime": recipe.runtime,
         "hf_repo": hf_repo,
-        "model_dir": model_dir,
+        "model_dir": effective_model_dir,
         "vllm_version": recipe.vllm_version,
         # Con l'immagine dedicata vLLM è già installato: rimpiazzarlo con una
         # wheel pip cancellerebbe proprio l'architettura per cui è stata scelta.
@@ -1468,9 +1472,15 @@ def build_provision_recipe(
         "pip_extra": list(recipe.pip_extra),
         "needs_monkeyocr_repo": recipe.runtime == "monkeyocr",
         "argv": serve_recipes.serve_argv(
-            recipe, model_path=model_dir, port=int(remote_port), api_key=server_api_key,
+            recipe,
+            model_path=effective_model_dir,
+            port=int(remote_port),
+            api_key=server_api_key,
+            lora_path=lora_path,
+            lora_name=lora_name,
+            served_model_name=served_model_name,
         ),
-        "served_model_name": recipe.served_model_name,
+        "served_model_name": served_model_name or recipe.served_model_name,
     }
 
 
@@ -1485,6 +1495,10 @@ def provision_vast_server(
     monkeyocr_ref: str,
     server_api_key: str = "",
     gpu_mem: str = "0.90",
+    model_dir: str = "",
+    lora_path: str = "",
+    lora_name: str = "",
+    served_model_name: str | None = None,
 ) -> dict[str, Any]:
     """Copia lo script di setup sull'istanza e lo avvia in background.
 
@@ -1493,14 +1507,23 @@ def provision_vast_server(
     variabile d'ambiente, non come argomento, per non finire in `ps`.
     """
     ref = str(monkeyocr_ref or "").strip()
-    if not _REF.fullmatch(ref):
-        raise ValueError("monkeyocr_ref obbligatorio e senza metacaratteri (commit SHA o tag).")
     # Costruisci prima la ricetta: un server già attivo va riusato solo se
     # espone proprio il modello richiesto; cambiando modello bisogna riavviare
     # il processo remoto, senza reinstallare l'ambiente inutilmente.
     recipe = build_provision_recipe(
-        adapter_id, model=model, remote_port=remote_port, server_api_key=server_api_key,
+        adapter_id,
+        model=model,
+        remote_port=remote_port,
+        server_api_key=server_api_key,
+        model_dir=model_dir,
+        lora_path=lora_path,
+        lora_name=lora_name,
+        served_model_name=served_model_name,
     )
+    if recipe["runtime"] == "monkeyocr" and not _REF.fullmatch(ref):
+        raise ValueError("monkeyocr_ref obbligatorio per la recipe MonkeyOCRv2 e senza metacaratteri (commit SHA o tag).")
+    if recipe["runtime"] != "monkeyocr" and ref and not _REF.fullmatch(ref):
+        raise ValueError("monkeyocr_ref non valido.")
     # Preflight prima di qualsiasi altra cosa: `probe_vast_server` inghiotte
     # ogni errore per rispondere «non pronto», quindi una chiave rifiutata
     # arriverebbe fin qui travestita da istanza da preparare. I tentativi
@@ -1599,6 +1622,99 @@ def provision_vast_server(
         "monkeyocr_ref": ref,
         "log_path": REMOTE_LOG_PATH,
     }
+
+
+def publish_vast_checkpoint(
+    host: str,
+    port: int,
+    *,
+    adapter_id: str,
+    remote_port: int = 8888,
+    user: str = "root",
+    server_api_key: str = "",
+    monkeyocr_ref: str,
+    gpu_mem: str = "0.90",
+) -> dict[str, Any]:
+    """Trasferisce un modello fine tuned registrato e lo serve su Vast.ai.
+
+    I checkpoint prodotti dall'app sono artefatti locali: non vengono trattati
+    come repo Hugging Face. Il trasferimento avviene via SCP dopo il controllo
+    SSH, poi il setup remoto riusa la recipe dell'adapter base. Per LoRA la
+    directory trasferita viene passata a vLLM come adapter; per full-SFT è il
+    percorso dei pesi principali.
+    """
+    from . import custom_models, serve_recipes
+
+    row = custom_models.get(str(adapter_id or "").strip())
+    if row is None or not row.get("source_path"):
+        raise ValueError("modello fine tuned locale non trovato")
+    base_id = str(row.get("base_adapter_id") or "").strip()
+    if not base_id:
+        raise ValueError("il modello fine tuned non dichiara il modello base")
+    recipe = serve_recipes.recipe_for(base_id)
+    source = Path(str(row["source_path"])).resolve()
+    data_root = config.DATA_DIR.resolve()
+    if not source.is_dir() or not source.is_relative_to(data_root):
+        raise ValueError("percorso del checkpoint non valido")
+    train_type = str(row.get("source_train_type") or "full").lower()
+    if train_type == "lora" and recipe.runtime == "monkeyocr":
+        raise ValueError("il serving cloud del checkpoint LoRA MonkeyOCRv2 richiede una recipe vLLM con LoRA esplicito")
+    if train_type == "lora":
+        complete = (source / "adapter_config.json").exists() and bool(
+            list(source.glob("adapter_model*.safetensors"))
+            or list(source.glob("adapter_model*.bin"))
+        )
+    else:
+        complete = (source / "config.json").exists() and bool(
+            list(source.glob("*.safetensors")) or list(source.glob("*.bin"))
+        )
+    if not complete:
+        raise ValueError("il checkpoint non è completo")
+    ensure_ssh_access(host, port, user=user)
+    remote_dir = f"{REMOTE_MODEL_ROOT}/tabularium-checkpoints/{re.sub(r'[^A-Za-z0-9_.-]', '-', str(adapter_id))}"
+    remote_target = f"{user}@{host}:{remote_dir}/"
+    mkdir = _ssh_base_args(host, port, user) + [f"mkdir -p {shlex.quote(remote_dir)}"]
+    made = subprocess.run(mkdir, capture_output=True, text=True, timeout=30, check=False)
+    if made.returncode != 0:
+        raise RuntimeError(f"cartella remota non creata: {(made.stderr or made.stdout).strip()[:400]}")
+    scp = ["scp", "-F", "/dev/null", "-P", str(int(port)), "-o", "StrictHostKeyChecking=yes", "-o", _known_hosts_option(), "-o", "ConnectTimeout=15", "-o", "BatchMode=yes"]
+    key = ssh_key_path()
+    if key.exists():
+        scp.extend(["-i", str(key), "-o", "IdentitiesOnly=yes"])
+    scp.extend(["-r", str(source / "."), remote_target])
+    transferred = subprocess.run(scp, capture_output=True, text=True, timeout=3600, check=False)
+    if transferred.returncode != 0:
+        raise RuntimeError(f"trasferimento checkpoint fallito: {(transferred.stderr or transferred.stdout).strip()[:500]}")
+    if train_type == "lora":
+        provision = provision_vast_server(
+            host,
+            port,
+            user=user,
+            model=recipe.hf_repo,
+            adapter_id=base_id,
+            remote_port=remote_port,
+            server_api_key=server_api_key,
+            monkeyocr_ref=monkeyocr_ref,
+            gpu_mem=gpu_mem,
+            lora_path=remote_dir,
+            lora_name=str(row["served_model_name"]),
+            served_model_name=str(row["served_model_name"]),
+        )
+    else:
+        provision = provision_vast_server(
+            host,
+            port,
+            user=user,
+            model=recipe.hf_repo,
+            adapter_id=base_id,
+            remote_port=remote_port,
+            server_api_key=server_api_key,
+            monkeyocr_ref=monkeyocr_ref,
+            gpu_mem=gpu_mem,
+            model_dir=remote_dir,
+            served_model_name=str(row["served_model_name"]),
+        )
+    return {**provision, "uploaded": True, "adapter_id": adapter_id, "train_type": train_type, "remote_model_dir": remote_dir}
 
 
 # Fasi riconosciute dal log di `setup_cloud_vllm.sh`, dall'ultima alla prima:

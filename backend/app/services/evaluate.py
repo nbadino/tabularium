@@ -187,12 +187,18 @@ def _evaluate_page(
         pred_items = client.layout(image) if image is not None else []
     except Exception as exc:  # noqa: BLE001
         warnings.append(msg("inference_failed", lang, id=page["id"], exc=exc))
-        return {"page_id": page["id"], "rel_path": page["rel_path"], "error": str(exc)}
+        return {
+            "page_id": page["id"],
+            "rel_path": page["rel_path"],
+            "pdf_page": page["pdf_page"],
+            "error": str(exc),
+        }
 
     # riordina per label/ordine (qualsiasi ordine emesso dal modello = reading order)
     page_result = {
         "page_id": page["id"],
         "rel_path": page["rel_path"],
+        "pdf_page": page["pdf_page"],
         "layout": layout_match(gt_items, pred_items),
         "order": order_metrics(
             [g["label"] for g in gt_items], [p["label"] for p in pred_items]

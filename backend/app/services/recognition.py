@@ -94,7 +94,7 @@ def _run_out(row, *, include_items: bool = True) -> dict[str, Any]:
         return out
     with connect() as conn:
         items = conn.execute(
-            """SELECT i.*, p.rel_path, p.status AS page_status,
+            """SELECT i.*, p.rel_path, p.pdf_page, p.status AS page_status,
                       (SELECT COUNT(*) FROM blocks b
                         WHERE b.recognition_run_id=i.run_id AND b.page_id=i.page_id) AS blocks,
                       (SELECT COUNT(*) FROM blocks b
@@ -200,7 +200,11 @@ def create_run(
                     status_code=409,
                     detail=msg("model_endpoint_unreachable", lang, url=cfg.get("url") or ""),
                 )
-        provider = _provider(cfg)
+        # L'OCR è un percorso locale alternativo: non deve ereditare il
+        # provider dell'endpoint modello precedentemente configurato (per
+        # esempio Vast.ai), altrimenti storico e lifecycle descrivono una
+        # risorsa cloud che questa run non usa.
+        provider = _provider(cfg) if engine == "model" else "local"
         job = conn.execute(
             """INSERT INTO jobs
                (kind, owner_id, project_id, provider, state, heartbeat_at,

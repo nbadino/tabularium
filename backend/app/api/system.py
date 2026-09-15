@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import platform
 import sys
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -26,6 +27,9 @@ from ..db import connect
 from ..services import auth as authsvc
 
 router = APIRouter(tags=["system"])
+
+_INFERENCE_HEALTH_TTL = 10.0
+_inference_health_cache: tuple[str, float, dict] | None = None
 
 
 def _admin(user: dict = Depends(authsvc.get_current_user)) -> dict:
@@ -309,7 +313,16 @@ def get_inference_settings() -> dict:
         timeout=min(cfg.get("timeout", 180), 5),
         provider=cfg.get("provider"),
     )
-    test_res = client.test_connection(timeout=3.0)
+    global _inference_health_cache
+    cache_key = "\x1f".join(
+        (client.url, client.model, str(cfg.get("provider") or ""), str(bool(cfg.get("api_key"))))
+    )
+    cached = _inference_health_cache
+    if cached is not None and cached[0] == cache_key and time.monotonic() - cached[1] < _INFERENCE_HEALTH_TTL:
+        test_res = dict(cached[2])
+    else:
+        test_res = client.test_connection(timeout=3.0)
+        _inference_health_cache = (cache_key, time.monotonic(), dict(test_res))
 
     return {
         "enabled": True,
@@ -338,10 +351,15 @@ def update_inference_settings(
     authsvc.require_admin(user)
     from ..services import inference
 
+    global _inference_health_cache
+
     if payload.get("url"):
         payload = {**payload, "url": validate_endpoint(str(payload["url"]))}
     before = inference.get_inference_config()
     inference.save_inference_config(payload)
+    # Un nuovo endpoint, modello o credential deve avere uno stato di salute
+    # fresco: il TTL serve solo alle letture ripetute della stessa schermata.
+    _inference_health_cache = None
     if payload.get("enabled") is False:
         endpoint = str(payload.get("url") or before.get("url") or "").lower()
         if "127.0.0.1" in endpoint or "localhost" in endpoint:

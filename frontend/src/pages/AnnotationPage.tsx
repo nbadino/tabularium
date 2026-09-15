@@ -35,6 +35,7 @@ import {
 } from '../app/icons'
 
 import { useInference } from '../app/inference'
+import { pageLabel } from '../lib/pageLabel'
 
 // --- larghezze dei pannelli dello studio (splitter, persistite) --------------
 // La scelta segue l'utente tra le sessioni; un valore corrotto o assente
@@ -802,10 +803,11 @@ export default function AnnotationPage() {
   }
 
   // --- guida contestuale --------------------------------------------------------
-  const prefillCount = ann.blocks.filter((b) => b.prefill).length
+  const prefillCount = prefillDrafts.length + ann.blocks.filter((b) => b.prefill).length
+  const contentCount = prefillDrafts.length + ann.blocks.length
   const guideHint = !page
     ? t('annotate.selectHint')
-    : ann.blocks.length === 0
+    : contentCount === 0
       ? t('annotate.guideStart')
       : prefillCount > 0
         ? t('annotate.guideFix', { n: prefillCount })
@@ -1076,7 +1078,7 @@ export default function AnnotationPage() {
           <div className="ml-auto flex items-center gap-2">
             {page && (
               <span className="mono text-[11px] text-[color:var(--color-ink-3)]">
-                {page.rel_path} · {page.width}×{page.height}
+                {pageLabel(page)} · {page.width}×{page.height}
               </span>
             )}
           </div>

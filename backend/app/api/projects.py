@@ -301,14 +301,15 @@ def project_workflow(
     with connect() as conn:
         _get_project_or_404(conn, project_id)
         status_rows = conn.execute(
-            "SELECT status, COUNT(*) AS n FROM pages WHERE project_id=? GROUP BY status",
+            "SELECT status, COUNT(*) AS n FROM pages "
+            "WHERE project_id=? AND status != 'missing' GROUP BY status",
             (project_id,),
         ).fetchall()
         counts = {row["status"]: row["n"] for row in status_rows}
         next_page = conn.execute(
             "SELECT p.id, p.rel_path, p.status, p.issue_date, p.issue_no, p.page_no, "
             "COUNT(b.id) AS blocks FROM pages p LEFT JOIN blocks b ON b.page_id=p.id "
-            "WHERE p.project_id=? GROUP BY p.id "
+            "WHERE p.project_id=? AND p.status != 'missing' GROUP BY p.id "
             "ORDER BY CASE p.status WHEN 'new' THEN 0 WHEN 'annotated' THEN 1 "
             "WHEN 'qa' THEN 2 WHEN 'review' THEN 3 ELSE 4 END, p.rel_path LIMIT 1",
             (project_id,),

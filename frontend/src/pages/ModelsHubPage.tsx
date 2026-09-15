@@ -1,64 +1,66 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
-import { Badge, ErrorNotice, Module } from '../app/ui'
+import { Badge, ErrorNotice, Modal, Module } from '../app/ui'
 import { syncInferenceFromBackend, useInference } from '../app/inference'
-import { useAuth } from '../app/auth'
 import { ModelsModal } from '../app/ModelsModal'
 import { CloudControlModal } from '../app/CloudControlModal'
-import { apiGet, apiPost } from '../lib/api'
-import type { ComputeProfile } from '../lib/types'
 import { useI18n } from '../i18n'
 
 export default function ModelsHubPage() {
   const { t } = useI18n()
   const inference = useInference()
-  const auth = useAuth()
-  const canManage = !auth.enabled || auth.user?.role === 'admin'
-  const [profiles, setProfiles] = useState<ComputeProfile[]>([])
   const [modelsOpen, setModelsOpen] = useState(false)
   const [providersOpen, setProvidersOpen] = useState(false)
   /** Scheda provider da aprire quando l'apertura nasce da «Deploya qui». */
-  const [focusProvider, setFocusProvider] = useState<'vast' | 'runpod' | 'modal' | 'manual' | null>(null)
+  const [focusProvider, setFocusProvider] = useState<'local' | 'vast' | 'runpod' | 'modal' | 'manual' | null>(null)
   const [focusAdapterId, setFocusAdapterId] = useState<string | null>(null)
   const [focusModelLabel, setFocusModelLabel] = useState<string | null>(null)
-  const [busy, setBusy] = useState<number | null>(null)
+  const [destinationChoiceOpen, setDestinationChoiceOpen] = useState(false)
+  const [selectedModel, setSelectedModel] = useState<{ id: string; label: string } | null>(null)
   const [error, setError] = useState<unknown>(null)
 
   useEffect(() => {
-    void Promise.all([
-      syncInferenceFromBackend(),
-      apiGet<ComputeProfile[]>('/system/compute-profiles').then(setProfiles),
-    ]).catch(setError)
+    void syncInferenceFromBackend().catch(setError)
   }, [])
 
-  const activeProfile = profiles.find((profile) => profile.active) ?? null
-  const destination = activeProfile?.provider ?? inference.provider ?? 'local'
+  const destination = inference.provider ?? 'local'
 
-  const activate = async (profile: ComputeProfile) => {
-    if (!canManage || profile.active) return
-    setBusy(profile.id)
-    setError(null)
-    try {
-      const active = await apiPost<ComputeProfile>(`/system/compute-profiles/${profile.id}/activate`)
-      setProfiles((before) => before.map((item) => ({ ...item, active: item.id === active.id })))
-      await syncInferenceFromBackend()
-    } catch (e) {
-      setError(e)
-    } finally {
-      setBusy(null)
-    }
+  /** La libreria seleziona soltanto il modello. La destinazione viene scelta
+   *  nel passaggio successivo, senza ereditare silenziosamente il provider
+   *  della configurazione precedente. */
+  const handleDeploy = (adapterId: string, displayName: string) => {
+    setSelectedModel({ id: adapterId, label: displayName })
+    setModelsOpen(false)
+    setDestinationChoiceOpen(true)
   }
 
-  /** «Deploya su <provider>» dalla libreria: apre il pannello del provider
-   *  con il modello già scelto, così la selezione non si rifà da capo. */
-  const handleDeploy = (adapterId: string, displayName: string) => {
-    setFocusAdapterId(adapterId)
-    setFocusModelLabel(displayName)
-    setFocusProvider(
-      destination === 'vast' || destination === 'runpod' || destination === 'modal'
-        ? destination
-        : 'manual',
-    )
+  const handleChooseExecution = () => {
+    if (selectedModel) {
+      setDestinationChoiceOpen(true)
+      return
+    }
+    // Una configurazione precedente contiene già un modello valido: lo
+    // rendiamo esplicito nella stessa schermata modello → destinazione,
+    // invece di dedurre silenziosamente il provider dall'URL.
+    if (inference.model && inference.adapterId) {
+      setSelectedModel({ id: inference.adapterId, label: inference.model })
+      setDestinationChoiceOpen(true)
+      return
+    }
+    setModelsOpen(true)
+  }
+
+  const chooseDestination = (provider: 'local' | 'vast' | 'runpod' | 'modal' | 'manual') => {
+    if (!selectedModel) return
+    setFocusAdapterId(selectedModel.id)
+    setFocusModelLabel(selectedModel.label)
+    setDestinationChoiceOpen(false)
+    if (provider === 'local') {
+      setFocusProvider('local')
+      setModelsOpen(true)
+      return
+    }
+    setFocusProvider(provider)
     setModelsOpen(false)
     setProvidersOpen(true)
   }
@@ -74,16 +76,36 @@ export default function ModelsHubPage() {
 
       <div className="mb-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.45fr)]">
         <Module
-          tab={t('recognition.activeModel')}
-          aux={<Badge tone={inference.enabled && inference.available ? 'ok' : 'warn'}>{inference.enabled ? t('recognition.modelReady') : t('recognition.modelOff')}</Badge>}
+          tab={t('modelsHub.activeSetup')}
+          aux={<Badge tone={inference.enabled && inference.available ? 'ok' : 'warn'}>
+            {inference.enabled && inference.available
+              ? t('recognition.modelReady')
+              : inference.model && !inference.available
+                ? t('recognition.modelUnavailable')
+                : inference.model
+                ? t('modelsHub.modelConfigured')
+                : t('modelsHub.chooseModelFirst')}
+          </Badge>}
         >
-          <div className="text-[18px] font-bold">{inference.model || '—'}</div>
+          <p className="mb-2 text-[12px] text-[color:var(--color-ink-2)]">{t('modelsHub.activeSetupHint')}</p>
+          <div className="text-[18px] font-bold">{selectedModel?.label || inference.model || t('modelsHub.chooseModelFirst')}</div>
           <div className="mono mt-1 truncate text-[11px] text-[color:var(--color-ink-3)]">
-            {inference.adapterId} · {t(`recognition.provider.${destination}`)}
+            {selectedModel
+              ? `${selectedModel.id} · ${t('modelsHub.chooseExecution')}`
+              : inference.model
+                ? `${inference.adapterId} · ${t(inference.enabled && inference.available ? 'modelsHub.chooseExecution' : 'modelsHub.lastDestination')}: ${t(`recognition.provider.${destination}`)}`
+                : t('modelsHub.chooseExecution')}
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" className="btn btn-primary" onClick={() => setModelsOpen(true)}>{t('modelsHub.modelLibrary')}</button>
-            <button type="button" className="btn" onClick={() => setProvidersOpen(true)}>{t('modelsHub.executionProviders')}</button>
+            <button type="button" className="btn btn-primary" onClick={() => { setSelectedModel(null); setModelsOpen(true) }}>{selectedModel?.label ?? t('modelsHub.chooseModelFirst')}</button>
+            <button
+              type="button"
+              className="btn"
+              onClick={handleChooseExecution}
+              disabled={!selectedModel && !(inference.model && inference.adapterId)}
+            >
+              {t('modelsHub.chooseExecution')}
+            </button>
           </div>
         </Module>
 
@@ -96,51 +118,37 @@ export default function ModelsHubPage() {
         </Module>
       </div>
 
-      <Module tab={t('modelsHub.executionProfiles')} quiet flush>
-        {profiles.length === 0 ? (
-          <div className="p-4 text-[12px] text-[color:var(--color-ink-3)]">{t('modelsHub.noExecutionProfiles')}</div>
-        ) : (
-          <div className="divide-y divide-[color:var(--color-rule)]">
-            {profiles.map((profile) => (
-              <div key={profile.id} className="flex flex-wrap items-center justify-between gap-3 p-3">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <b className="text-[13px]">{profile.name}</b>
-                    <Badge>{t(`recognition.provider.${profile.provider}`)}</Badge>
-                  </div>
-                  <div className="mono mt-1 truncate text-[11px] text-[color:var(--color-ink-3)]">
-                    {profile.served_model_name} · {profile.endpoint}
-                  </div>
-                </div>
-                {profile.active ? (
-                  <Badge tone="ok">{t('modelsHub.profileActive')}</Badge>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    disabled={!canManage || busy != null}
-                    onClick={() => void activate(profile)}
-                  >
-                    {busy === profile.id ? t('common.loading') : t('modelsHub.activateProfile')}
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </Module>
-
       <ModelsModal
         open={modelsOpen}
         onClose={() => setModelsOpen(false)}
-        activeProvider={destination}
+        activeProvider={focusProvider === 'local' ? 'local' : null}
+        selectedAdapterId={focusProvider === 'local' ? focusAdapterId : null}
         onDeploy={handleDeploy}
-        onChangeDestination={() => { setModelsOpen(false); setProvidersOpen(true) }}
+        onChangeDestination={() => setDestinationChoiceOpen(true)}
       />
+      {selectedModel && destinationChoiceOpen && (
+        <Modal title={t('modelsHub.chooseDestinationTitle')} onClose={() => setDestinationChoiceOpen(false)}>
+          <div className="space-y-4 p-4 text-[13px]">
+            <div className="border border-[color:var(--color-rule-strong)] bg-[color:var(--color-panel)] p-3">
+              <span className="lbl">{t('modelsHub.selectedModel')}</span>
+              <div className="mt-1 text-[18px] font-bold">{selectedModel.label}</div>
+              <p className="mt-1 text-[12px] text-[color:var(--color-ink-2)]">{t('modelsHub.chooseDestinationHint')}</p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {(['local', 'vast', 'runpod', 'modal', 'manual'] as const).map((provider) => (
+                <button key={provider} type="button" className="border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] p-3 text-left hover:border-[color:var(--color-sig)]" onClick={() => chooseDestination(provider)}>
+                  <span className="block font-bold">{t(`recognition.provider.${provider}`)}</span>
+                  <span className="mt-1 block text-[11px] text-[color:var(--color-ink-2)]">{t(`modelsHub.destination.${provider}`)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </Modal>
+      )}
       <CloudControlModal
         open={providersOpen}
         onClose={() => { setProvidersOpen(false); setFocusProvider(null); setFocusAdapterId(null); setFocusModelLabel(null) }}
-        focusProvider={focusProvider}
+        focusProvider={focusProvider === 'local' ? null : focusProvider}
         focusAdapterId={focusAdapterId}
         focusModelLabel={focusModelLabel}
       />

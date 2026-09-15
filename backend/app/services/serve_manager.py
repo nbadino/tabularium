@@ -45,6 +45,7 @@ from .model_registry import (
     install_state,
     is_installed,
     mark_draft_unusable,
+    model_path as model_weights_path,
     models_dir,
 )
 
@@ -566,7 +567,7 @@ def start(
     if not is_installed(adapter_id):
         raise ValueError(f"'{adapter_id}' non è installato: scaricalo prima di servirlo")
 
-    model_path = str(models_dir(adapter_id))
+    model_path = str(model_weights_path(adapter_id))
     env = os.environ.copy()
     _set_phase(adapter_id, "launching")
 

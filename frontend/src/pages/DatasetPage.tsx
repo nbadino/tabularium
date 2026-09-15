@@ -8,6 +8,7 @@ import { buildPipeline, usePipelineState } from '../app/pipeline'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { IconDataset, IconPlus } from '../app/icons'
 import { useI18n, tn } from '../i18n'
+import { useInference } from '../app/inference'
 
 function fmtSize(n: number): string {
   if (n < 1024) return `${n} B`
@@ -17,6 +18,7 @@ function fmtSize(n: number): string {
 
 export default function DatasetPage() {
   const { t } = useI18n()
+  const inference = useInference()
   const [projectId, setProjectId] = useState<number | ''>('')
   const [ratio, setRatio] = useState(0.9)
   const [seed, setSeed] = useState(42)
@@ -24,6 +26,7 @@ export default function DatasetPage() {
   const [approvedOnly, setApprovedOnly] = useState(true)
   const [pilotOnly, setPilotOnly] = useState(false)
   const [adapterId, setAdapterId] = useState('monkeyocrv2-parsing')
+  const adapterTouched = useRef(false)
   const [adapters, setAdapters] = useState<Array<{ adapter_id: string; display_name: string; tasks: string[]; training_types: string[]; export_ready?: boolean }>>([])
   const [building, setBuilding] = useState(false)
   const [paddleBuilding, setPaddleBuilding] = useState(false)
@@ -34,6 +37,12 @@ export default function DatasetPage() {
   const [paddleManifest, setPaddleManifest] = useState<{ counts?: { layout?: Record<string, number>; vlm?: Record<string, number> }; files?: Record<string, string>; warnings?: string[] } | null>(null)
   const [status, setStatus] = useState<DatasetStatus>({ built: false, report: null })
   const [error, setError] = useState<unknown>(null)
+  const activeAdapterNotExportable = Boolean(
+    inference.model &&
+      inference.adapterId &&
+      adapters.length > 0 &&
+      !adapters.some((adapter) => adapter.adapter_id === inference.adapterId),
+  )
 
   useEffect(() => {
     apiGet<{ items: Array<{ adapter_id: string; display_name: string; tasks: string[]; training_types: string[]; export_ready?: boolean }> }>('/system/model-adapters')
@@ -45,6 +54,13 @@ export default function DatasetPage() {
       .then((r) => setAdapters(r.items.filter((a) => a.export_ready !== false)))
       .catch(() => setAdapters([]))
   }, [])
+
+  useEffect(() => {
+    if (adapterTouched.current || !inference.adapterId || !adapters.length) return
+    if (adapters.some((adapter) => adapter.adapter_id === inference.adapterId)) {
+      setAdapterId(inference.adapterId)
+    }
+  }, [adapters, inference.adapterId])
 
   const onProject = async (pid: number | '') => {
     setProjectId(pid)
@@ -232,8 +248,8 @@ export default function DatasetPage() {
                     className="fld fld-mono"
                   />
                 </Field>
-                <Field label={t('dataset.adapter')} hint={t('dataset.adapterHint')}>
-                  <select value={adapterId} onChange={(e) => setAdapterId(e.target.value)} className="fld">
+                  <Field label={t('dataset.adapter')} hint={t('dataset.adapterHint')}>
+                  <select value={adapterId} onChange={(e) => { adapterTouched.current = true; setAdapterId(e.target.value) }} className="fld">
                     {(adapters.length ? adapters : [{ adapter_id: 'monkeyocrv2-parsing', display_name: 'MonkeyOCRv2 Parsing', tasks: [], training_types: [] }]).map((a) => <option key={a.adapter_id} value={a.adapter_id}>{a.display_name}</option>)}
                   </select>
                 </Field>
@@ -244,6 +260,11 @@ export default function DatasetPage() {
               </div>
             </Collapsible>
           </div>
+          {activeAdapterNotExportable && (
+            <WarnNotice title={t('dataset.inferenceAdapterNotExportableTitle')}>
+              {t('dataset.inferenceAdapterNotExportableBody', { model: inference.model })}
+            </WarnNotice>
+          )}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               onClick={() => void build()}
@@ -257,54 +278,35 @@ export default function DatasetPage() {
                   ? t('dataset.confirmOverwrite')
                   : t('dataset.buildBtn')}
             </button>
-            {buildArmed && (
-              <span className="text-[11px] text-[color:var(--color-sig-text)]">
-                {t('dataset.overwriteNote')}
-              </span>
-            )}
-            <button onClick={() => void buildPaddle()} disabled={paddleBuilding || projectId === ''} className="btn">
-              {paddleBuilding ? t('dataset.paddleBuilding') : t('dataset.paddleBuild')}
-            </button>
-            <button onClick={() => void preparePaddleTraining()} disabled={paddleTraining || projectId === '' || !paddleManifest} className="btn">
-              {paddleTraining ? t('dataset.paddleTraining') : t('dataset.paddlePrepareTraining')}
-            </button>
-            <button onClick={() => void prepareAlternativeTraining('glm')} disabled={alternativeBuilding || projectId === ''} className="btn">
-              {t('dataset.glmPrepareTraining')}
-            </button>
-            <button onClick={() => void prepareAlternativeTraining('deepseek')} disabled={alternativeBuilding || projectId === ''} className="btn">
-              {t('dataset.deepseekPrepareTraining')}
-            </button>
-            <button onClick={() => void prepareAlternativeTraining('dots-ocr')} disabled={alternativeBuilding || projectId === ''} className="btn">
-              {t('dataset.dotsPrepareTraining')}
-            </button>
-            <button onClick={() => void prepareAlternativeTraining('unlimited-ocr')} disabled={alternativeBuilding || projectId === ''} className="btn">
-              {t('dataset.unlimitedPrepareTraining')}
-            </button>
-            <button onClick={() => void prepareAlternativeTraining('mineru2.5')} disabled={alternativeBuilding || projectId === ''} className="btn">
-              {t('dataset.mineruPrepareTraining')}
-            </button>
+            {buildArmed && <span className="text-[11px] text-[color:var(--color-sig-text)]">{t('dataset.overwriteNote')}</span>}
           </div>
-          {paddleManifest && (
-            <p className="mt-2 mono text-[11px] text-[color:var(--color-ok)]">
-              {t('dataset.paddleReady', { train: paddleManifest.counts?.vlm?.train ?? 0, val: paddleManifest.counts?.vlm?.val ?? 0 })}
-            </p>
-          )}
-          {paddleRecipe && (
-            <div className="mt-2 border-l-2 border-[color:var(--color-rule-strong)] pl-2 text-[11px]">
-              <p className="mono text-[color:var(--color-ok)]">{t('dataset.paddleRecipeReady')}</p>
-              {!paddleRecipe.preflight?.ready && (
-                <p className="mt-1 text-[color:var(--color-sig-text)]">
-                  {(paddleRecipe.preflight?.errors ?? []).join(' · ')}
-                </p>
+          <div className="mt-3">
+            <Collapsible tab={t('dataset.alternatives')} quiet aux={t('dataset.optional')}>
+              <p className="mb-2 max-w-[75ch] text-[12px] text-[color:var(--color-ink-2)]">{t('dataset.alternativesHint')}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button onClick={() => void buildPaddle()} disabled={paddleBuilding || projectId === ''} className="btn">
+                  {paddleBuilding ? t('dataset.paddleBuilding') : t('dataset.paddleBuild')}
+                </button>
+                <button onClick={() => void preparePaddleTraining()} disabled={paddleTraining || projectId === '' || !paddleManifest} className="btn">
+                  {paddleTraining ? t('dataset.paddleTraining') : t('dataset.paddlePrepareTraining')}
+                </button>
+                <button onClick={() => void prepareAlternativeTraining('glm')} disabled={alternativeBuilding || projectId === ''} className="btn">{t('dataset.glmPrepareTraining')}</button>
+                <button onClick={() => void prepareAlternativeTraining('deepseek')} disabled={alternativeBuilding || projectId === ''} className="btn">{t('dataset.deepseekPrepareTraining')}</button>
+                <button onClick={() => void prepareAlternativeTraining('dots-ocr')} disabled={alternativeBuilding || projectId === ''} className="btn">{t('dataset.dotsPrepareTraining')}</button>
+                <button onClick={() => void prepareAlternativeTraining('unlimited-ocr')} disabled={alternativeBuilding || projectId === ''} className="btn">{t('dataset.unlimitedPrepareTraining')}</button>
+                <button onClick={() => void prepareAlternativeTraining('mineru2.5')} disabled={alternativeBuilding || projectId === ''} className="btn">{t('dataset.mineruPrepareTraining')}</button>
+              </div>
+              {paddleManifest && <p className="mt-2 mono text-[11px] text-[color:var(--color-ok)]">{t('dataset.paddleReady', { train: paddleManifest.counts?.vlm?.train ?? 0, val: paddleManifest.counts?.vlm?.val ?? 0 })}</p>}
+              {paddleRecipe && (
+                <div className="mt-2 border-l-2 border-[color:var(--color-rule-strong)] pl-2 text-[11px]">
+                  <p className="mono text-[color:var(--color-ok)]">{t('dataset.paddleRecipeReady')}</p>
+                  {!paddleRecipe.preflight?.ready && <p className="mt-1 text-[color:var(--color-sig-text)]">{(paddleRecipe.preflight?.errors ?? []).join(' · ')}</p>}
+                  {paddleRecipe.files && <p className="mt-1 mono text-[color:var(--color-ink-2)]">{Object.values(paddleRecipe.files).join(' · ')}</p>}
+                </div>
               )}
-              {paddleRecipe.files && <p className="mt-1 mono text-[color:var(--color-ink-2)]">{Object.values(paddleRecipe.files).join(' · ')}</p>}
-            </div>
-          )}
-          {alternativeRecipe && (
-            <p className="mt-2 mono text-[11px] text-[color:var(--color-ok)]">
-              {alternativeRecipe.adapter_id}: {alternativeRecipe.status ?? t('dataset.recipeReady')}
-            </p>
-          )}
+              {alternativeRecipe && <p className="mt-2 mono text-[11px] text-[color:var(--color-ok)]">{alternativeRecipe.adapter_id}: {alternativeRecipe.status ?? t('dataset.recipeReady')}</p>}
+            </Collapsible>
+          </div>
         </Module>
       </div>
 

@@ -229,6 +229,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   // Deploy guidato: l'apertura nasce da «Deploya su <provider>» e deve
   // dichiararsi, o il pannello è indistinguibile da un'apertura normale.
   const guided = Boolean(open && focusAdapterId && focusProvider && focusProvider !== 'manual')
+  const publishingCheckpoint = Boolean(guided && focusProvider === 'modal' && focusAdapterId?.startsWith('custom-'))
   const FOCUS_PROVIDER_LABEL: Record<string, string> = {
     vast: 'Vast.ai',
     runpod: 'RunPod',
@@ -300,6 +301,15 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
       /* storage non disponibile: la scelta resta valida per la sessione */
     }
   }
+  // In un deploy guidato il modello scelto dall'utente ha precedenza sulla
+  // preferenza Modal rimasta in localStorage. Così anche il primo render usa
+  // subito la template corretta, senza mostrare per un istante il profilo
+  // MonkeyOCRv2 mentre l'effetto di sincronizzazione aggiorna lo stato.
+  const effectiveModalTemplate = guided && focusProvider === 'modal' && focusAdapterId
+    ? focusAdapterId.startsWith('custom-')
+      ? 'monkeyocrv2'
+      : TEMPLATE_BY_ADAPTER[focusAdapterId] ?? 'monkeyocrv2'
+    : modalTemplate
   const [modalStatus, setModalStatus] = useState<ModalStatus | null>(null)
   const [modalApiKey, setModalApiKey] = useState('')
   const [modalKeepWarm, setModalKeepWarm] = useState(
@@ -313,6 +323,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   const [manualUrl, setManualUrl] = useState(inf.url)
   const [manualModel, setManualModel] = useState(inf.model)
   const [manualKey, setManualKey] = useState(inf.apiKey)
+  const showMonkeyRunner = vastAdapter === 'monkeyocrv2-parsing' || vastAdapter.startsWith('custom-')
 
   const [copied, setCopied] = useState<string | null>(null)
   const copy = (text: string, id: string) => copyToClipboard(text, () => { setCopied(id); setTimeout(() => setCopied(null), 2000) })
@@ -320,13 +331,13 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   useEffect(() => {
     if (!open) return
     setManualUrl(inf.url)
-    setManualModel(inf.model)
+    setManualModel(focusProvider === 'manual' && focusModelLabel ? focusModelLabel : inf.model)
     setManualKey(inf.apiKey)
     void pollTunnelStatus()
     void refreshVastSshKey()
     void refreshVastKeyStatus()
     void refreshVastModels()
-  }, [open])
+  }, [open, focusProvider, focusModelLabel])
 
   // Apertura «guidata» dalla libreria modelli: il modello è già stato scelto,
   // qui si atterra sulla scheda giusta con quel modello preselezionato.
@@ -335,7 +346,11 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
     if (focusProvider === 'vast') setVastAdapter(focusAdapterId)
     if (focusProvider === 'modal') {
       const template = TEMPLATE_BY_ADAPTER[focusAdapterId]
-      if (template) setModalTemplate(template)
+      // Un checkpoint custom è servibile solo con il runner Monkey completo:
+      // il provider è già scelto, quindi qui non lasciamo riaprire la scelta
+      // del modello/template.
+      if (focusAdapterId.startsWith('custom-')) setModalTemplate('monkeyocrv2')
+      else if (template) setModalTemplate(template)
     }
   }, [open, focusProvider, focusAdapterId])
 
@@ -366,7 +381,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
     let stop = false
     const tick = async () => {
       try {
-        const res = await apiGet<ModalStatus>(`/system/cloud/modal?template=${modalTemplate}`)
+        const res = await apiGet<ModalStatus>(`/system/cloud/modal?template=${effectiveModalTemplate}`)
         if (!stop) setModalStatus(res)
       } catch {
         /* ignore */
@@ -378,7 +393,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
       stop = true
       clearInterval(id)
     }
-  }, [open, modalTemplate])
+  }, [open, effectiveModalTemplate])
 
   // Dopo il noleggio l'istanza impiega minuti ad accendersi: si interroga
   // finché Vast.ai non pubblica host e porta SSH (`ssh_ready`).
@@ -531,7 +546,12 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
       try {
         const probe = await testInferenceConnection({ url: localUrl, model: vastServedName })
         if (stopped || !probe.ok) return
-        await saveInferenceToBackend({ enabled: true, url: localUrl, model: vastServedName })
+        await saveInferenceToBackend({
+          enabled: true,
+          url: localUrl,
+          model: vastServedName,
+          adapterId: vastAdapter,
+        })
         if (!stopped) {
           setInferenceOk(true)
           setVastNotice(t('cloud.control.endpointReady', { url: localUrl }))
@@ -790,6 +810,42 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
     }
   }
 
+  const handlePublishVast = async (inst: RentedInstance) => {
+    if (!focusAdapterId || !focusAdapterId.startsWith('custom-')) return
+    const endpoint = effectiveEndpoint(inst)
+    if (!endpoint) {
+      setVastNotice(t('cloud.control.noSsh'))
+      return
+    }
+    const credential = vastCredential()
+    if (!credential) {
+      setVastNotice(t('cloud.control.missingKey'))
+      return
+    }
+    setVastBusy(true)
+    try {
+      setVastNotice(t('cloud.control.checkpointUploading'))
+      const res = await apiPost<{ served_model_name: string }>('/system/cloud/vast/publish-checkpoint', {
+        ...credential,
+        host: endpoint.host,
+        port: endpoint.port,
+        adapter_id: focusAdapterId,
+        // Il backend richiede il ref solo se il modello base usa la recipe
+        // MonkeyOCRv2. Per gli altri runtime il checkpoint non deve dipendere
+        // da una chiamata GitHub aggiuntiva.
+        monkeyocr_ref: vastMonkeyRef.trim(),
+        remote_port: 8888,
+      })
+      setVastServedName(res.served_model_name)
+      setVastNotice(t('cloud.control.checkpointUploaded'))
+      await handleStartTunnel(endpoint.host, endpoint.port)
+    } catch (e) {
+      setVastNotice(t('cloud.control.checkpointUploadError', { error: String(e) }))
+    } finally {
+      setVastBusy(false)
+    }
+  }
+
   /** Prima configurazione: preflight account + chiave SSH registrata sull'account. */
   const handleVastSetup = async () => {
     const credential = vastCredential()
@@ -1009,7 +1065,13 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   const handleUseRunpodProxy = async (pod: RentedInstance) => {
     const url = `https://${pod.id}-8888.proxy.runpod.net/v1`
     try {
-      await saveInferenceToBackend({ enabled: true, url, apiKey: runpodApiKey.trim() || undefined })
+      await saveInferenceToBackend({
+        enabled: true,
+        url,
+        model: guided && focusModelLabel ? focusModelLabel : undefined,
+        apiKey: runpodApiKey.trim() || undefined,
+        adapterId: guided && focusAdapterId ? focusAdapterId : inf.adapterId,
+      })
       await testInferenceConnection({ url, apiKey: runpodApiKey.trim() || undefined })
       setRunpodNotice(t('cloud.control.runpodProxySet', { url }))
     } catch (e) {
@@ -1036,11 +1098,28 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
     setModalNotice(null)
     try {
       await apiPost('/system/cloud/modal/deploy', {
-        template: modalTemplate,
+        template: effectiveModalTemplate,
         api_key: modalApiKey.trim() || null,
         keep_warm: modalKeepWarm,
       })
       setModalNotice(t('cloud.control.modalDeployStarted'))
+    } catch (e) {
+      setModalNotice(t('cloud.control.modalTaskError', { error: String(e) }))
+    } finally {
+      setModalBusy(false)
+    }
+  }
+
+  const handleModalPublish = async () => {
+    if (!focusAdapterId) return
+    setModalBusy(true)
+    setModalNotice(null)
+    try {
+      await apiPost('/system/cloud/modal/publish-checkpoint', {
+        adapter_id: focusAdapterId,
+        keep_warm: modalKeepWarm,
+      })
+      setModalNotice(t('cloud.control.modalCheckpointStarted'))
     } catch (e) {
       setModalNotice(t('cloud.control.modalTaskError', { error: String(e) }))
     } finally {
@@ -1053,7 +1132,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
     setModalBusy(true)
     setModalNotice(null)
     try {
-      await apiPost('/system/cloud/modal/stop', { template: modalTemplate })
+      await apiPost('/system/cloud/modal/stop', { template: effectiveModalTemplate })
       setModalNotice(t('cloud.control.modalStopStarted'))
     } catch (e) {
       setModalNotice(t('cloud.control.modalTaskError', { error: String(e) }))
@@ -1066,13 +1145,13 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
     const endpoint = modalStatus?.endpoint
     if (!endpoint) return
     const url = endpoint.replace(/\/$/, '') + '/v1'
-    const target = MODAL_TEMPLATE_TARGET[modalTemplate] ?? MODAL_TEMPLATE_TARGET.monkeyocrv2
+    const target = MODAL_TEMPLATE_TARGET[effectiveModalTemplate] ?? MODAL_TEMPLATE_TARGET.monkeyocrv2
     try {
       const connection = {
         enabled: true,
         url,
-        model: target.model,
-        adapterId: target.adapterId,
+        model: guided && focusModelLabel ? focusModelLabel : target.model,
+        adapterId: guided && focusAdapterId ? focusAdapterId : target.adapterId,
         apiKey: modalApiKey.trim() || undefined,
       }
       // Verifica prima l'endpoint reale e il nome modello esposto da /v1/models:
@@ -1094,6 +1173,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
         url: manualUrl,
         model: manualModel,
         apiKey: manualKey,
+        adapterId: focusAdapterId ?? undefined,
       }
       await testInferenceConnection(connection)
       await saveInferenceToBackend(connection)
@@ -1183,6 +1263,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
     onStop: (id: number | string) => void,
     onDelete: (id: number | string) => void,
     onProvision?: (inst: RentedInstance) => void,
+    onPublish?: (inst: RentedInstance) => void,
     onReload?: () => void,
     loaded = true,
   ) => (
@@ -1266,6 +1347,16 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
                       {connectLabel}
                     </button>
                   )}
+                  {onPublish && (
+                    <button
+                      type="button"
+                      onClick={() => onPublish(inst)}
+                      disabled={busy || tunnelBusy || !targetHost || !targetPort}
+                      className="btn btn-sm btn-primary"
+                    >
+                      {t('cloud.control.publishCheckpoint')}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => onStop(inst.id)}
@@ -1313,14 +1404,17 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
     </div>
   )
 
+  const currentProvider = inf.provider ?? (inf.url ? guessProvider(inf.url) : null)
   const activeProviderLabel =
-    initialProvider === 'modal'
-      ? MODAL_TEMPLATES.find((m) => m.id === guessModalTemplate(inf.url))?.label ?? 'Modal'
-      : initialProvider === 'vast'
-        ? 'Vast.ai'
-        : initialProvider === 'runpod'
-          ? 'RunPod'
-          : t('cloud.control.tabManual')
+    currentProvider === 'modal'
+      ? t('recognition.provider.modal')
+      : currentProvider === 'vast'
+        ? t('recognition.provider.vast')
+        : currentProvider === 'runpod'
+          ? t('recognition.provider.runpod')
+          : currentProvider === 'local'
+            ? t('recognition.provider.local')
+            : t('cloud.control.tabManual')
 
   return (
     <Modal title={t('cloud.control.title')} onClose={onClose} wide>
@@ -1419,7 +1513,9 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
                 {/* L'istruzione serve solo finché manca qualcosa: dopo, il
                     pannello è lo stato dell'accesso, non un promemoria. */}
                 {!(vastAccount && vastSshKey?.exists) && (
-                  <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('cloud.control.setupBody')}</p>
+                  <p className="text-[12px] text-[color:var(--color-ink-2)]">
+                    {t(showMonkeyRunner ? 'cloud.control.setupBody' : 'cloud.control.setupBodyGeneric')}
+                  </p>
                 )}
                 <div className="flex flex-wrap items-center gap-2">
                   {vastAccount && (
@@ -1437,7 +1533,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
                         })
                       : t('cloud.control.setupKeyMissing')}
                   </Badge>
-                  {vastMonkeyRef && !vastRunnerOpen && (
+                  {showMonkeyRunner && vastMonkeyRef && !vastRunnerOpen && (
                     <>
                       <Badge tone="neutral">
                         {t('cloud.control.runnerBadge', { ref: vastMonkeyRef.slice(0, 8) })}
@@ -1451,18 +1547,28 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
                 {vastAccount && !vastAccount.balance_ok && (
                   <p className="text-[12px] text-[color:var(--color-warn)]">{t('cloud.control.setupNoCredit')}</p>
                 )}
-                <Field label={t('cloud.control.modelLabel')} hint={t('cloud.control.modelHint')}>
-                  <select
-                    value={vastAdapter}
-                    onChange={(e) => setVastAdapter(e.target.value)}
-                    className="fld fld-mono"
-                  >
-                    {vastModels.map((item) => (
-                      <option key={item.adapter_id} value={item.adapter_id}>
-                        {item.hf_repo}
-                      </option>
-                    ))}
-                  </select>
+                <Field
+                  label={t('cloud.control.modelLabel')}
+                  hint={guided ? t('cloud.control.guidedModelHint') : t('cloud.control.modelHint')}
+                >
+                  {guided ? (
+                    <div className="border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet-dim)] px-2 py-1.5">
+                      <div className="font-semibold">{focusModelLabel || focusAdapterId}</div>
+                      <div className="mono mt-0.5 text-[11px] text-[color:var(--color-ink-3)]">{focusAdapterId}</div>
+                    </div>
+                  ) : (
+                    <select
+                      value={vastAdapter}
+                      onChange={(e) => setVastAdapter(e.target.value)}
+                      className="fld fld-mono"
+                    >
+                      {vastModels.map((item) => (
+                        <option key={item.adapter_id} value={item.adapter_id}>
+                          {item.hf_repo}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </Field>
                 {vastModels.find((item) => item.adapter_id === vastAdapter)?.needs_own_image && (
                   <p className="text-[11px] text-[color:var(--color-ink-2)]">
@@ -1471,15 +1577,17 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
                     })}
                   </p>
                 )}
-                <Field label={t('cloud.control.modelCustom')} hint={t('cloud.control.modelCustomHint')}>
-                  <input
-                    value={vastModelCustom}
-                    onChange={(e) => setVastModelCustom(e.target.value)}
-                    placeholder="org/checkpoint"
-                    className="fld fld-mono"
-                  />
-                </Field>
-                {(vastRunnerOpen || !vastMonkeyRef) && (
+                {!guided && (
+                  <Field label={t('cloud.control.modelCustom')} hint={t('cloud.control.modelCustomHint')}>
+                    <input
+                      value={vastModelCustom}
+                      onChange={(e) => setVastModelCustom(e.target.value)}
+                      placeholder="org/checkpoint"
+                      className="fld fld-mono"
+                    />
+                  </Field>
+                )}
+                {showMonkeyRunner && (vastRunnerOpen || !vastMonkeyRef) && (
                   <Field label={t('cloud.control.monkeyRefLabel')} hint={t('cloud.control.monkeyRefHint')}>
                     <input
                       value={vastMonkeyRef}
@@ -1559,7 +1667,12 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
               (id) => void handleControlVast(id, 'start'),
               (id) => void handleControlVast(id, 'stop'),
               (id) => void handleControlVast(id, 'delete'),
-              (inst) => void handleProvisionVast(inst),
+              guided && focusProvider === 'vast' && focusAdapterId?.startsWith('custom-')
+                ? undefined
+                : (inst) => void handleProvisionVast(inst),
+              guided && focusProvider === 'vast' && focusAdapterId?.startsWith('custom-')
+                ? (inst) => void handlePublishVast(inst)
+                : undefined,
               () => void handleLoadVast(),
               vastLoaded,
             )}
@@ -1664,6 +1777,14 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
           <div className="space-y-3">
             <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('cloud.control.runpodBody')}</p>
 
+            {guided && focusProvider === 'runpod' && (
+              <div className="border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet-dim)] p-2 text-[12px]">
+                <span className="lbl">{t('cloud.control.modelLabel')}</span>
+                <div className="mt-1 font-semibold">{focusModelLabel || focusAdapterId}</div>
+                <p className="mt-1 text-[11px] text-[color:var(--color-ink-2)]">{t('cloud.control.guidedModelHint')}</p>
+              </div>
+            )}
+
             {runpodNotice && (
               <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-3 py-2 text-[12px]">
                 {runpodNotice}
@@ -1718,7 +1839,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
           // Si apre anche se la template guardata l'ultima volta (deploy in
           // corso o appena fatto) non è quella attiva per l'inferenza: non
           // deve sparire dalla vista a un refresh (v. commento su modalTemplate).
-          defaultOpen={initialProvider === 'modal' || modalTemplate !== 'monkeyocrv2'}
+          defaultOpen={initialProvider === 'modal' || effectiveModalTemplate !== 'monkeyocrv2'}
           aux={<Badge tone={modalStatus?.token ? 'ok' : 'neutral'}>{modalStatus?.token ? t('cloud.control.modalTokenOk') : t('cloud.control.modalTokenMissing')}</Badge>}
         >
           <div className="space-y-3">
@@ -1727,13 +1848,16 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
             <div>
               <span className="lbl !mb-1">{t('cloud.control.modalModelLabel')}</span>
               <div className="flex flex-wrap gap-1.5">
-                {MODAL_TEMPLATES.map((tpl) => (
+                {(guided
+                  ? MODAL_TEMPLATES.filter((tpl) => tpl.id === (TEMPLATE_BY_ADAPTER[focusAdapterId ?? ''] ?? 'monkeyocrv2'))
+                  : MODAL_TEMPLATES
+                ).map((tpl) => (
                   <button
                     key={tpl.id}
                     type="button"
                     onClick={() => setModalTemplate(tpl.id)}
-                    disabled={!!runningTask}
-                    className={`btn btn-sm ${modalTemplate === tpl.id ? 'btn-primary' : ''}`}
+                    disabled={!!runningTask || publishingCheckpoint}
+                    className={`btn btn-sm ${effectiveModalTemplate === tpl.id ? 'btn-primary' : ''}`}
                   >
                     {tpl.label}
                   </button>
@@ -1741,22 +1865,22 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
               </div>
             </div>
 
-            {modalTemplate === 'paddleocr-vl' && (
+            {effectiveModalTemplate === 'paddleocr-vl' && (
               <p className="border border-[color:var(--color-warn-rule)] bg-[color:var(--color-warn-wash)] p-2 text-[12px] text-[color:var(--color-warn)]">
                 {t('cloud.control.modalPaddleCaveat')}
               </p>
             )}
-            {modalTemplate === 'monkeyocrv2' && (
+            {effectiveModalTemplate === 'monkeyocrv2' && (
               <p className="border border-[color:var(--color-ok)] bg-[color:var(--color-ok-wash)] p-2 text-[12px] text-[color:var(--color-ok)]">
                 {t('cloud.control.modalMonkeyPerformance')}
               </p>
             )}
-            {modalTemplate === 'mineru' && (
+            {effectiveModalTemplate === 'mineru' && (
               <p className="border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-2 text-[12px] text-[color:var(--color-ink-2)]">
                 {t('cloud.control.modalMineruCaveat')}
               </p>
             )}
-            {modalTemplate === 'unlimited-ocr' && (
+            {effectiveModalTemplate === 'unlimited-ocr' && (
               <p className="border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-2 text-[12px] text-[color:var(--color-ink-2)]">
                 {t('cloud.control.modalUnlimitedCaveat')}
               </p>
@@ -1796,11 +1920,16 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
               )}
               {modalStatus?.token && !runningTask && (
                 <div>
-                  <button type="button" onClick={() => void handleModalDeploy()} disabled={modalBusy} className="btn btn-primary">
-                    {modalStatus.endpoint ? t('cloud.control.modalRedeploy') : t('cloud.control.modalDeploy')}
+                  <button type="button" onClick={() => void (publishingCheckpoint ? handleModalPublish() : handleModalDeploy())} disabled={modalBusy} className="btn btn-primary">
+                    {publishingCheckpoint
+                      ? t('cloud.control.modalPublishCheckpoint')
+                      : modalStatus.endpoint ? t('cloud.control.modalRedeploy') : t('cloud.control.modalDeploy')}
                   </button>
-                  {!modalStatus.endpoint && (
+                  {!modalStatus.endpoint && !publishingCheckpoint && (
                     <p className="mt-1 text-[11px] text-[color:var(--color-ink-3)]">{t('cloud.control.modalDeployHint')}</p>
+                  )}
+                  {publishingCheckpoint && (
+                    <p className="mt-1 text-[11px] text-[color:var(--color-ink-3)]">{t('cloud.control.modalPublishCheckpointHint')}</p>
                   )}
                 </div>
               )}

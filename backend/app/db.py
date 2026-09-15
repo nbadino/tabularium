@@ -7,11 +7,12 @@ migrazione esplicita e ordinata (v. ``_apply_migrations``).
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 
 from . import config
 
-SCHEMA_VERSION = "15"
+SCHEMA_VERSION = "17"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -329,6 +330,20 @@ _MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_blocks_recognition_run
             ON blocks(recognition_run_id);
     """),
+    ("16", """
+        -- Un checkpoint prodotto dal fine-tuning può diventare un modello
+        -- locale riutilizzabile. Manteniamo il riferimento al run e
+        -- all'adapter base: prompt, OTSL e serializzazione restano quelli
+        -- verificati dell'adapter, mentre il serving usa il checkpoint.
+        ALTER TABLE custom_models ADD COLUMN source_path TEXT;
+        ALTER TABLE custom_models ADD COLUMN base_adapter_id TEXT;
+        ALTER TABLE custom_models ADD COLUMN source_run_id TEXT;
+    """),
+    ("17", """
+        -- Una run LoRA produce un adapter, non un modello completo: il
+        -- serving deve caricare il modello base e applicare questo adapter.
+        ALTER TABLE custom_models ADD COLUMN source_train_type TEXT;
+    """),
 ]
 
 
@@ -391,7 +406,10 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     for version, ddl in sorted(_MIGRATIONS, key=lambda m: int(m[0])):
         if int(version) <= current:
             continue
-        conn.executescript(ddl)
+        if version in {"16", "17"}:
+            _execute_additive_migration(conn, ddl)
+        else:
+            conn.executescript(ddl)
         current = int(version)
         conn.execute(
             "UPDATE meta SET value=? WHERE key='schema_version'",
@@ -402,6 +420,33 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             f"schema incompleto: il DB è alla versione {current} ma il codice "
             f"attende {SCHEMA_VERSION}; manca una migrazione in _MIGRATIONS"
         )
+
+
+def _execute_additive_migration(conn: sqlite3.Connection, ddl: str) -> None:
+    """Esegue una migrazione mantenendo ``ADD COLUMN`` idempotente.
+
+    I database ripristinati possono avere lo schema più recente della versione
+    registrata in ``meta``. SQLite non supporta ``ADD COLUMN IF NOT EXISTS``;
+    perciò ignoriamo solo un'aggiunta già presente e lasciamo propagare ogni
+    altro errore.
+    """
+    for statement in ddl.split(";"):
+        sql = re.sub(r"(?m)^\s*--[^\n]*(?:\n|$)", "", statement).strip()
+        if not sql:
+            continue
+        match = re.match(
+            r"ALTER\s+TABLE\s+([\w\"]+)\s+ADD\s+COLUMN\s+([\w\"]+)",
+            sql,
+            re.IGNORECASE,
+        )
+        if not match:
+            conn.execute(sql)
+            continue
+        table = match.group(1).strip('"')
+        column = match.group(2).strip('"')
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in columns:
+            conn.execute(sql)
 
 
 def init_db() -> None:

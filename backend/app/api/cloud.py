@@ -333,6 +333,35 @@ def provision_vast_server(payload: dict, _admin: dict = Depends(_admin)) -> dict
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@router.post("/api/system/cloud/vast/publish-checkpoint")
+def publish_vast_checkpoint(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Trasferisce un checkpoint fine tuned locale e lo serve su Vast.ai."""
+    from ..services import cloud_manager
+
+    host = str(payload.get("host") or "").strip()
+    port = payload.get("port")
+    adapter_id = str(payload.get("adapter_id") or "").strip()
+    if not host or not port or not adapter_id:
+        raise HTTPException(status_code=400, detail="Host, porta SSH e modello fine tuned obbligatori.")
+    try:
+        return cloud_manager.publish_vast_checkpoint(
+            host,
+            int(port),
+            user=str(payload.get("user") or "root"),
+            adapter_id=adapter_id,
+            remote_port=int(payload.get("remote_port") or 8888),
+            server_api_key=_credential(payload, "server_api_key", "server_credential_ref"),
+            monkeyocr_ref=str(payload.get("monkeyocr_ref") or ""),
+            gpu_mem=str(payload.get("gpu_mem") or "0.90"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except cloud_manager.VastSshError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @router.post("/api/system/cloud/vast/ssh-check")
 def check_vast_ssh(payload: dict, _admin: dict = Depends(_admin)) -> dict:
     """Preflight SSH: verifica l'endpoint prima di spenderci una preparazione.
@@ -480,6 +509,26 @@ def start_modal_deploy(payload: dict, _admin: dict = Depends(_admin)) -> dict:
         code = 409 if isinstance(exc, RuntimeError) else 400
         raise HTTPException(status_code=code, detail=str(exc)) from exc
     return {"ok": True, "status": modal_manager.status(template_id)}
+
+
+@router.post("/api/system/cloud/modal/publish-checkpoint")
+def publish_modal_checkpoint(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Carica un checkpoint fine tuned completo nel volume Modal e lo deploya."""
+    from ..services import modal_manager
+
+    adapter_id = str(payload.get("adapter_id") or "").strip()
+    if not adapter_id:
+        raise HTTPException(status_code=400, detail="Modello fine tuned obbligatorio.")
+    try:
+        modal_manager.start_checkpoint_deploy(
+            adapter_id,
+            keep_warm=bool(payload.get("keep_warm", False)),
+            owner_id=_admin.get("id"),
+        )
+    except (RuntimeError, ValueError) as exc:
+        code = 409 if isinstance(exc, RuntimeError) else 400
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    return {"ok": True, "status": modal_manager.status("monkeyocrv2")}
 
 
 @router.post("/api/system/cloud/modal/stop")

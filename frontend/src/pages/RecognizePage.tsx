@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import { ApiError } from '../lib/api'
-import type { ComputeProfile, PageItem, PrefillEngines, RecognitionRun, SystemInfo } from '../lib/types'
+import type { PageItem, PrefillEngines, RecognitionRun, SystemInfo } from '../lib/types'
 import { Badge, ErrorNotice, Field, Module, Notice, Progress } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
-import { syncInferenceFromBackend, useInference } from '../app/inference'
+import { useInference } from '../app/inference'
 import { useAuth } from '../app/auth'
 import { IconArchive, IconPlayground } from '../app/icons'
 import { useI18n } from '../i18n'
+import { pageLabel, pageShortLabel } from '../lib/pageLabel'
 
 function runLabel(run: RecognitionRun, t: (key: string) => string): string {
   const key = {
@@ -29,6 +30,16 @@ function runTone(run: RecognitionRun): 'neutral' | 'progress' | 'ok' | 'warn' | 
   return 'progress'
 }
 
+function runProvider(run: RecognitionRun): string {
+  return run.engine === 'ocr' ? 'local' : run.provider
+}
+
+function runTitle(run: RecognitionRun, t: (key: string) => string): string {
+  return run.model_name || (run.engine === 'ocr' ? t('recognition.localOcr') : t('recognition.servedModel'))
+}
+
+const INITIAL_PAGE_LIMIT = 100
+
 interface ModelRuntimeInfo {
   adapter_id: string
   vram_warning: string | null
@@ -39,12 +50,16 @@ function RunSummary({ run, onCancel }: { run: RecognitionRun; onCancel: () => vo
   const { t } = useI18n()
   const active = run.state === 'queued' || run.state === 'running'
   const pct = run.total_pages ? (run.completed_pages / run.total_pages) * 100 : 0
+  const provider = runProvider(run)
+  const providerKey = ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom'].includes(provider)
+    ? `recognition.provider.${provider}`
+    : null
   return (
     <Module tab={active ? t('recognition.current') : t('recognition.recent')} aux={<Badge tone={runTone(run)}>{runLabel(run, t)}</Badge>}>
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-        <strong className="text-[16px]">{run.model_name || run.engine}</strong>
+        <strong className="text-[16px]">{runTitle(run, t)}</strong>
         <span className="mono text-[11px] text-[color:var(--color-ink-3)]">
-          {run.provider} · #{run.id}
+          {providerKey ? t(providerKey) : provider} · #{run.id}
         </span>
       </div>
       <div className="mt-3">
@@ -84,15 +99,15 @@ export default function RecognizePage() {
   const canManageInference = !auth.enabled || auth.user?.role === 'admin'
   const [projectId, setProjectId] = useState<number | ''>('')
   const [pages, setPages] = useState<PageItem[]>([])
+  const [pageQuery, setPageQuery] = useState('')
+  const [pageLimit, setPageLimit] = useState(INITIAL_PAGE_LIMIT)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [runs, setRuns] = useState<RecognitionRun[]>([])
-  const [profiles, setProfiles] = useState<ComputeProfile[]>([])
   const [modelRuntime, setModelRuntime] = useState<ModelRuntimeInfo[]>([])
   const [current, setCurrent] = useState<RecognitionRun | null>(null)
   const [engine, setEngine] = useState<'model' | 'ocr'>('model')
   const [disableAfter, setDisableAfter] = useState(true)
   const [busy, setBusy] = useState(false)
-  const [profileBusy, setProfileBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [backendRestartRequired, setBackendRestartRequired] = useState(false)
   const [engines, setEngines] = useState<PrefillEngines | null>(null)
@@ -101,7 +116,6 @@ export default function RecognizePage() {
 
   useEffect(() => {
     void Promise.all([
-      apiGet<ComputeProfile[]>('/system/compute-profiles').then(setProfiles),
       apiGet<{ items: ModelRuntimeInfo[] }>('/models').then((out) => setModelRuntime(out.items)),
       apiGet<PrefillEngines>('/system/prefill-engines').then(setEngines),
       apiGet<SystemInfo>('/system/info').then((info) => setCaps(info.capabilities ?? null)),
@@ -116,22 +130,6 @@ export default function RecognizePage() {
     if (engineTouched || !engines?.recommended) return
     setEngine(engines.recommended)
   }, [engines?.recommended, engineTouched])
-
-  const activateProfile = async (profileId: number) => {
-    const profile = profiles.find((item) => item.id === profileId)
-    if (!profile || profile.active || !canManageInference) return
-    setProfileBusy(true)
-    setError(null)
-    try {
-      const active = await apiPost<ComputeProfile>(`/system/compute-profiles/${profile.id}/activate`)
-      setProfiles((before) => before.map((item) => ({ ...item, active: item.id === active.id })))
-      await syncInferenceFromBackend()
-    } catch (e) {
-      setError(e)
-    } finally {
-      setProfileBusy(false)
-    }
-  }
 
   const loadRuns = async (pid: number) => {
     try {
@@ -157,6 +155,8 @@ export default function RecognizePage() {
     setProjectId(pid)
     writeActiveProject(pid === '' ? null : pid)
     setPages([])
+    setPageQuery('')
+    setPageLimit(INITIAL_PAGE_LIMIT)
     setRuns([])
     setCurrent(null)
     setSelected(new Set())
@@ -196,7 +196,12 @@ export default function RecognizePage() {
     }
   }, [current?.id, current?.state])
 
-  const visiblePages = useMemo(() => pages, [pages])
+  const visiblePages = useMemo(() => {
+    const query = pageQuery.trim().toLocaleLowerCase()
+    if (!query) return pages
+    return pages.filter((page) => pageLabel(page).toLocaleLowerCase().includes(query))
+  }, [pages, pageQuery])
+  const renderedPages = visiblePages.slice(0, pageLimit)
   const runtimeWarning = modelRuntime.find((item) => item.adapter_id === inference.adapterId)
   // «Pronto» = raggiungibile davvero (ping del backend), non solo attivato:
   // un endpoint configurato ma giù non deve sembrare operativo.
@@ -277,7 +282,17 @@ export default function RecognizePage() {
                 </select>
               </Field>
             </div>
-            <button type="button" className="btn" disabled={pages.length === 0} onClick={() => setSelected(new Set(visiblePages.map((page) => page.id)))}>{t('recognition.selectAll')}</button>
+            <div className="min-w-56 flex-1">
+              <Field label={t('recognition.filterPages')}>
+                <input
+                  value={pageQuery}
+                  onChange={(e) => setPageQuery(e.target.value)}
+                  className="fld"
+                  placeholder={t('recognition.filterPagesHint')}
+                />
+              </Field>
+            </div>
+            <button type="button" className="btn" disabled={visiblePages.length === 0} onClick={() => setSelected((before) => new Set([...before, ...visiblePages.map((page) => page.id)]))}>{t('recognition.selectAll')}</button>
             <button type="button" className="btn" disabled={selected.size === 0} onClick={() => setSelected(new Set())}>{t('recognition.clearSelection')}</button>
           </div>
           {pages.length === 0 ? (
@@ -307,23 +322,34 @@ export default function RecognizePage() {
                 </Link>
               ) : null}
             </div>
+          ) : visiblePages.length === 0 ? (
+            <div className="p-6 text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.noFilteredPages')}</div>
           ) : (
-            <ul className="grid grid-cols-2 border-l border-t border-[color:var(--color-rule)] sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-7">
-              {visiblePages.map((page) => {
-                const checked = selected.has(page.id)
-                return (
-                  <li key={page.id} className="border-b border-r border-[color:var(--color-rule)]">
-                    <label className={`block cursor-pointer ${checked ? 'bg-[color:var(--color-sig-wash)] outline outline-2 -outline-offset-2 outline-[color:var(--color-sig)]' : 'hover:bg-[color:var(--color-fill)]'}`}>
-                      <img src={`/api/pages/${page.id}/thumbnail`} alt="" loading="lazy" className="aspect-[3/4] w-full bg-white object-cover object-top" />
-                      <span className="flex items-center gap-2 border-t border-[color:var(--color-rule)] p-1.5">
-                        <input type="checkbox" checked={checked} onChange={() => toggle(page.id)} />
-                        <span className="mono min-w-0 truncate text-[11px]" title={page.rel_path}>{page.rel_path}</span>
-                      </span>
-                    </label>
-                  </li>
-                )
-              })}
-            </ul>
+            <>
+              <ul className="grid grid-cols-2 border-l border-t border-[color:var(--color-rule)] sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-7">
+                {renderedPages.map((page) => {
+                  const checked = selected.has(page.id)
+                  return (
+                    <li key={page.id} className="border-b border-r border-[color:var(--color-rule)]">
+                      <label className={`block cursor-pointer ${checked ? 'bg-[color:var(--color-sig-wash)] outline outline-2 -outline-offset-2 outline-[color:var(--color-sig)]' : 'hover:bg-[color:var(--color-fill)]'}`}>
+                        <img src={`/api/pages/${page.id}/thumbnail`} alt="" loading="lazy" className="aspect-[3/4] w-full bg-white object-cover object-top" />
+                        <span className="flex items-center gap-2 border-t border-[color:var(--color-rule)] p-1.5">
+                          <input type="checkbox" checked={checked} onChange={() => toggle(page.id)} />
+                          <span className="mono min-w-0 truncate text-[11px]" title={pageLabel(page)}>{pageShortLabel(page)}</span>
+                        </span>
+                      </label>
+                    </li>
+                  )
+                })}
+              </ul>
+              {renderedPages.length < visiblePages.length && (
+                <div className="flex items-center justify-center border-x border-b border-[color:var(--color-rule)] p-2">
+                  <button type="button" className="btn btn-sm" onClick={() => setPageLimit((before) => before + INITIAL_PAGE_LIMIT)}>
+                    {t('recognition.showMorePages', { n: visiblePages.length - renderedPages.length })}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </Module>
 
@@ -338,33 +364,13 @@ export default function RecognizePage() {
                 }}
                 className="fld"
               >
-                <option value="model" disabled={!inference.enabled}>{t('recognition.servedModel')}</option>
+                <option value="model" disabled={!inference.enabled || !inference.available}>{t('recognition.servedModel')}</option>
                 <option value="ocr">{t('recognition.localOcr')}</option>
               </select>
             </Field>
-            {engine === 'model' && profiles.length > 0 && (
-              <div className="mt-3">
-                <Field label={t('recognition.computeProfile')}>
-                  <select
-                    value={profiles.find((profile) => profile.active)?.id ?? ''}
-                    onChange={(e) => void activateProfile(Number(e.target.value))}
-                    disabled={!canManageInference || profileBusy}
-                    className="fld"
-                  >
-                    {profiles
-                      .filter((profile) => profile.purpose !== 'training')
-                      .map((profile) => (
-                        <option key={profile.id} value={profile.id}>
-                          {profile.name} · {profile.served_model_name} · {t(`recognition.provider.${profile.provider}`)}
-                        </option>
-                      ))}
-                  </select>
-                </Field>
-                <p className="mt-1 text-[11px] text-[color:var(--color-ink-3)]">
-                  {profileBusy ? t('recognition.activatingProfile') : t('recognition.computeProfileHint')}
-                </p>
-              </div>
-            )}
+            <p className="mt-1 text-[11px] text-[color:var(--color-ink-2)]">
+              {t(engine === 'model' ? 'recognition.servedModelHint' : 'recognition.localOcrHint')}
+            </p>
             {engine === 'model' && !inference.isCloud && runtimeWarning?.vram_warning && (
               <Notice tone="warn">{runtimeWarning.vram_warning}</Notice>
             )}
@@ -391,7 +397,7 @@ export default function RecognizePage() {
                   <div className="text-[13px] font-semibold">{engine === 'model' ? inference.model || '—' : t('recognition.localOcr')}</div>
                   <div className="mono truncate text-[11px] text-[color:var(--color-ink-3)]">
                     {engine === 'model'
-                      ? t(inference.isCloud ? 'recognition.locationCloud' : 'recognition.locationLocal')
+                      ? `${t(inference.isCloud ? 'recognition.locationCloud' : 'recognition.locationLocal')} · ${inference.provider ? t(`recognition.provider.${inference.provider}`) : ''}`
                       : t('recognition.locationCpu')}
                   </div>
                 </div>
@@ -429,7 +435,7 @@ export default function RecognizePage() {
                   <li key={run.id}>
                     <Link to={`/risultati?project=${run.project_id}&run=${run.id}`} className="flex items-center gap-2 p-2 text-[12px] no-underline hover:bg-[color:var(--color-fill)]">
                       <span className="mono text-[11px]">#{run.id}</span>
-                      <span className="min-w-0 flex-1 truncate">{run.model_name || run.engine}</span>
+                      <span className="min-w-0 flex-1 truncate">{runTitle(run, t)}</span>
                       <Badge tone={runTone(run)}>{runLabel(run, t)}</Badge>
                     </Link>
                   </li>

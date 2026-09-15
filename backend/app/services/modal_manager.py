@@ -25,6 +25,7 @@ import subprocess
 import sys
 import threading
 import time
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -103,6 +104,7 @@ TEMPLATES: dict[str, ModalTemplate] = {
     )
 }
 DEFAULT_TEMPLATE = "monkeyocrv2"
+WEIGHTS_VOLUME_NAME = "monkeyocrv2-weights"
 
 
 def list_templates() -> list[dict]:
@@ -232,6 +234,7 @@ def _start(
     env: dict[str, str] | None = None,
     template_id: str | None = None,
     owner_id: int | None = None,
+    executable: str | None = None,
 ) -> None:
     global _task
     with _task_lock:
@@ -239,7 +242,7 @@ def _start(
             raise RuntimeError("un task Modal è già in corso")
         if _persisted_running() is not None:
             raise RuntimeError("un task Modal è già in corso")
-        exe = _find_modal()
+        exe = executable or _find_modal()
         if exe is None:
             raise RuntimeError(
                 "CLI modal non trovata: installarla con "
@@ -339,6 +342,53 @@ def start_deploy(
         env["TABULARIUM_VLLM_API_KEY"] = api_key
     env["TABULARIUM_MODAL_MIN_CONTAINERS"] = "1" if keep_warm else "0"
     _start("deploy", ["deploy", str(template.script)], env=env, template_id=template.id, owner_id=owner_id)
+
+
+def start_checkpoint_deploy(
+    adapter_id: str,
+    *,
+    keep_warm: bool = False,
+    owner_id: int | None = None,
+) -> None:
+    """Carica un checkpoint Monkey completo nel volume e aggiorna Modal.
+
+    Il checkpoint è già stato validato/mergiato dalla registrazione della run;
+    Modal riceve solo pesi completi e il runner ufficiale continua a gestire
+    prompt, preprocessore e serializzazione.
+    """
+    from . import custom_models
+
+    template = _template("monkeyocrv2")
+    row = custom_models.get(str(adapter_id or "").strip())
+    source = Path(str((row or {}).get("source_path") or "")).resolve()
+    data_root = config.DATA_DIR.resolve()
+    if row is None or not source.is_dir() or not source.is_relative_to(data_root):
+        raise ValueError("modello fine tuned locale non trovato")
+    if not (source / "config.json").exists() or not (
+        list(source.glob("*.safetensors")) or list(source.glob("*.bin"))
+    ):
+        raise ValueError("il checkpoint non è un modello completo")
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]", "-", str(adapter_id))
+    modal_bin = _find_modal()
+    if modal_bin is None:
+        raise RuntimeError("CLI Modal non trovata")
+    env = dict(os.environ)
+    env["MODAL_BIN"] = modal_bin
+    env["TABULARIUM_MODAL_MIN_CONTAINERS"] = "1" if keep_warm else "0"
+    env["TABULARIUM_MODAL_MODEL_PATH"] = f"checkpoints/{safe_id}"
+    env["TABULARIUM_MODAL_SERVED_MODEL"] = str(row.get("served_model_name") or adapter_id)
+    env["TABULARIUM_MODAL_DFLASH"] = "0"
+    worker = REPO_ROOT / "scripts" / "cloud" / "modal_publish_checkpoint.sh"
+    if not worker.exists():
+        raise RuntimeError(f"script di upload Modal non trovato: {worker}")
+    _start(
+        "deploy",
+        [str(worker), WEIGHTS_VOLUME_NAME, str(source), f"checkpoints/{safe_id}", str(template.script)],
+        env=env,
+        template_id=template.id,
+        owner_id=owner_id,
+        executable="/bin/bash",
+    )
 
 
 def stop_app(template_id: str | None = None, owner_id: int | None = None) -> None:

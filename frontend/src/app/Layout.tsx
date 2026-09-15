@@ -8,7 +8,7 @@
  * La colonna sinistra non è più sprecata su sette link fissi — nelle pagine
  * che ne hanno bisogno resta libera per il contesto (le pagine, i progetti).
  */
-import { Link, NavLink, Outlet } from 'react-router'
+import { Link, NavLink, Outlet, useLocation } from 'react-router'
 import { useEffect, useState } from 'react'
 import { apiGet } from '../lib/api'
 import { syncInferenceFromBackend, useInference } from './inference'
@@ -20,6 +20,7 @@ import {
   IconArchive,
   IconAnnotate,
   IconDataset,
+  IconEvaluate,
   IconPlayground,
   IconTraining,
 } from './icons'
@@ -37,6 +38,10 @@ const NAV: NavItem[] = [
   { to: '/risultati', labelKey: 'nav.results', Icon: IconDataset },
   { to: '/archivio', labelKey: 'nav.archive', Icon: IconArchive },
   { to: '/modelli', labelKey: 'nav.models', Icon: IconTraining },
+  { to: '/dataset', labelKey: 'nav.dataset', Icon: IconDataset },
+  { to: '/training', labelKey: 'nav.training', Icon: IconTraining },
+  { to: '/valutazione', labelKey: 'nav.evaluation', Icon: IconEvaluate },
+  { to: '/playground', labelKey: 'nav.playground', Icon: IconPlayground },
 ]
 
 function LocaleSwitch() {
@@ -118,6 +123,7 @@ function UserMenu() {
 export default function Layout() {
   const { t } = useI18n()
   const inference = useInference()
+  const location = useLocation()
   // Ogni pagina legge lo stato inferenza (chip GPU, banner, motori prefill):
   // il sync all'avvio evita di mostrare disponibilità/latenza stantie da
   // localStorage, che prima si aggiornavano solo aprendo la Home.
@@ -145,17 +151,36 @@ export default function Layout() {
             {t('app.tagline')}
           </span>
           <div className="ml-auto flex items-center gap-2">
+            {location.pathname !== '/modelli' && (() => {
+              const providerKey = inference.provider && ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom'].includes(inference.provider)
+                ? `recognition.provider.${inference.provider}`
+                : null
+              const providerLabel = providerKey
+                ? t(providerKey)
+                : inference.isCloud
+                  ? t('recognition.locationCloud')
+                  : t('recognition.locationLocal')
+              const statusLabel = inference.enabled && inference.available
+                ? t('recognition.modelReady')
+                : !inference.enabled
+                  ? t('recognition.modelOff')
+                  : inference.model
+                    ? t('recognition.modelUnavailable')
+                    : t('recognition.modelOff')
+              return (
             <Link
               to="/modelli"
               className="flex min-w-0 items-center gap-1.5 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)] px-2 py-1 text-[11px] no-underline hover:bg-[color:var(--color-fill)]"
               title={t('recognition.changeModel')}
             >
               <span className="max-w-[24ch] truncate font-semibold">{inference.model || t('recognition.activeModel')}</span>
-              <span className="text-[color:var(--color-ink-3)]">· {inference.isCloud ? 'Cloud' : 'Locale'}</span>
+              <span className="text-[color:var(--color-ink-3)]">· {providerLabel}</span>
               <span className={inference.enabled && inference.available ? 'text-[color:var(--color-ok)]' : 'text-[color:var(--color-warn)]'}>
-                {inference.enabled && inference.available ? t('recognition.modelReady') : t('recognition.modelOff')}
+                {statusLabel}
               </span>
             </Link>
+              )
+            })()}
             <UserMenu />
             <LocaleSwitch />
             <BackendState />

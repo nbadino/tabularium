@@ -481,6 +481,7 @@ export interface OrderMetrics {
 export interface EvalPage {
   page_id: number
   rel_path: string
+  pdf_page?: number | null
   error?: string
   layout: {
     n_gt: number
@@ -585,6 +586,7 @@ export interface RecognitionRunItem {
   run_id: number
   page_id: number
   rel_path: string
+  pdf_page?: number | null
   page_status: string
   state: RecognitionItemState
   detected: number

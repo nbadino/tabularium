@@ -3,14 +3,23 @@ from __future__ import annotations
 
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 
 _NUM = r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?"
+_GPU_CACHE_TTL = 10.0
+_gpu_cache: tuple[float, list[dict]] | None = None
+_gpu_cache_lock = threading.Lock()
 
 
 def gpu_snapshot() -> list[dict]:
     """Snapshot GPU via nvidia-smi (lista vuota se assente)."""
+    global _gpu_cache
+    now = time.monotonic()
+    with _gpu_cache_lock:
+        if _gpu_cache is not None and now - _gpu_cache[0] < _GPU_CACHE_TTL:
+            return [dict(gpu) for gpu in _gpu_cache[1]]
     try:
         out = subprocess.run(
             [
@@ -24,8 +33,12 @@ def gpu_snapshot() -> list[dict]:
             check=False,
         )
     except Exception:  # noqa: BLE001
+        with _gpu_cache_lock:
+            _gpu_cache = (now, [])
         return []
     if out.returncode != 0:
+        with _gpu_cache_lock:
+            _gpu_cache = (now, [])
         return []
     gpus = []
     for line in out.stdout.strip().splitlines():
@@ -41,7 +54,9 @@ def gpu_snapshot() -> list[dict]:
                     "temp": int(float(parts[5])),
                 }
             )
-    return gpus
+    with _gpu_cache_lock:
+        _gpu_cache = (time.monotonic(), gpus)
+    return [dict(gpu) for gpu in gpus]
 
 
 def parse_metrics_line(line: str) -> dict | None:

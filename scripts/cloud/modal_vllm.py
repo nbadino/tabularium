@@ -43,6 +43,8 @@ import modal
 
 APP_NAME = "tabularium-vllm"
 MODEL_ID = os.environ.get("TABULARIUM_MODAL_MODEL", "zenosai/MonkeyOCRv2-B-Parsing")
+MODEL_VOLUME_PATH = os.environ.get("TABULARIUM_MODAL_MODEL_PATH", "").strip()
+SERVED_MODEL_NAME = os.environ.get("TABULARIUM_MODAL_SERVED_MODEL", "").strip()
 DFLASH_MODEL_ID = os.environ.get(
     "TABULARIUM_MODAL_DFLASH_MODEL", "zenosai/MonkeyOCRv2-B-Parsing-DFlash"
 )
@@ -131,14 +133,17 @@ def serve():
     # MODEL_ID può puntare anche a -S-Parsing o a un checkpoint fine-tuned:
     # non riusare una cartella B hard-coded, altrimenti un cambio env continua
     # silenziosamente a servire i pesi precedenti.
-    model_dir = f"/weights/{Path(MODEL_ID).name}"
-    if not os.path.isdir(model_dir) or not os.listdir(model_dir):
+    model_dir = f"/weights/{MODEL_VOLUME_PATH}" if MODEL_VOLUME_PATH else f"/weights/{Path(MODEL_ID).name}"
+    if MODEL_VOLUME_PATH:
+        if not os.path.isdir(model_dir) or not os.listdir(model_dir):
+            raise RuntimeError(f"checkpoint custom non trovato nel volume: {model_dir}")
+    elif not os.path.isdir(model_dir) or not os.listdir(model_dir):
         print(f">> Scarico il checkpoint {MODEL_ID} in {model_dir}")
         snapshot_download(repo_id=MODEL_ID, local_dir=model_dir)
         weights.commit()
 
     draft_dir = f"/weights/{Path(DFLASH_MODEL_ID).name}"
-    if USE_DFLASH:
+    if USE_DFLASH and not MODEL_VOLUME_PATH:
         if MODEL_ID != "zenosai/MonkeyOCRv2-B-Parsing":
             raise RuntimeError(
                 "DFlash è supportato dalla ricetta ufficiale solo con "
@@ -173,6 +178,8 @@ def serve():
     if USE_DFLASH:
         # serve.py ufficiale espone il draft con l'opzione breve -d.
         argv.extend(["-d", draft_dir, "--dflash-num-speculative-tokens", str(DFLASH_TOKENS)])
+    if SERVED_MODEL_NAME:
+        argv.extend(["--served-model-name", SERVED_MODEL_NAME])
     api_key = os.environ.get("TABULARIUM_VLLM_API_KEY", "").strip()
     if api_key:
         argv.extend(["--", "--api-key", api_key])

@@ -3,13 +3,14 @@ import { Link } from 'react-router'
 import { apiPost } from '../lib/api'
 import type { EvalPage, EvalReport } from '../lib/types'
 import { pages } from '../lib/vocab'
-import { ErrorNotice, Field, Module, WarnNotice } from '../app/ui'
+import { ErrorNotice, Field, Module, Notice, WarnNotice } from '../app/ui'
 import { PipelineStrip } from '../app/PipelineView'
 import { buildPipeline, usePipelineState } from '../app/pipeline'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { useInference } from '../app/inference'
 import { IconEvaluate, IconPlayground } from '../app/icons'
 import { useI18n, tn } from '../i18n'
+import { pageLabel } from '../lib/pageLabel'
 
 const pct = (v: number | null | undefined) => (v == null ? '—' : `${(v * 100).toFixed(1)}%`)
 const num = (v: number | null | undefined, d = 3) => (v == null ? '—' : v.toFixed(d))
@@ -80,6 +81,8 @@ export default function EvaluationPage() {
   const project = projects.find((p) => p.id === projectId) ?? null
   const { workflow, dataset, training } = usePipelineState(projectId === '' ? null : projectId)
   const stages = buildPipeline({ project, workflow, dataset, training })
+  const trainingReady = training?.run?.state === 'finished'
+  const inferenceReady = inference.enabled && inference.available
 
   const a = report?.aggregates
 
@@ -140,9 +143,25 @@ export default function EvaluationPage() {
               </label>
             </div>
           </div>
+          {projectId !== '' && !trainingReady && (
+            <Notice tone="warn">
+              <span>{t('pipeline.steps.evaluateNeeds')}</span>{' '}
+              <Link to="/training" className="font-semibold underline underline-offset-2">
+                {t('pipeline.steps.trainAction')}
+              </Link>
+            </Notice>
+          )}
+          {trainingReady && !inferenceReady && (
+            <Notice tone="warn">
+              <span>{t('recognition.unreachableNotice', { url: inference.url })}</span>{' '}
+              <Link to="/modelli" className="font-semibold underline underline-offset-2">
+                {t('recognition.changeModel')}
+              </Link>
+            </Notice>
+          )}
           <button
             onClick={() => void run()}
-            disabled={running || projectId === ''}
+            disabled={running || projectId === '' || !trainingReady || !inferenceReady}
             className="btn btn-primary mt-3"
           >
             <IconPlayground size={13} />
@@ -238,7 +257,7 @@ export default function EvaluationPage() {
                           : 'hover:bg-[color:var(--color-fill)]'
                       }`}
                     >
-                      <span className="mono min-w-0 flex-1 truncate">{p.rel_path}</span>
+                      <span className="mono min-w-0 flex-1 truncate">{pageLabel(p)}</span>
                       {p.error ? (
                         <span className="shrink-0 text-[color:var(--color-sig-text)]">{t('evaluate.error')}</span>
                       ) : (
@@ -256,7 +275,7 @@ export default function EvaluationPage() {
               <Module
                 tab={t('evaluate.overlay')}
                 quiet
-                aux={<span className="mono truncate">{selPage.rel_path}</span>}
+                aux={<span className="mono truncate">{pageLabel(selPage)}</span>}
               >
                 <PageOverlay
                   pageId={selPage.page_id}

@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
@@ -932,25 +932,69 @@ class CustomVllmAdapter(_StubAdapter):
     def __init__(self, row: dict) -> None:
         self.adapter_id = row["id"]
         self._row = row
-        self.capabilities = ModelCapabilities(
-            adapter_id=row["id"],
-            display_name=row["display_name"],
-            tasks=(),
-            coordinate_system="unverified",
-            table_format=None,
-            training_types=(),
-            inference_modes=("vllm",),
-            hardware=("cuda",),
-            hf_repo=row["hf_repo"],
-            hf_revision=row.get("hf_revision"),
-            approx_size_gb=None,
-            license_note="Verificare la licenza sulla scheda Hugging Face del repo.",
-            train_toolchain="none",
-            serve_backend="vllm-openai",
-            served_model_name=row["served_model_name"],
-        )
+        self._base = None
+        base_id = str(row.get("base_adapter_id") or "").strip()
+        if base_id:
+            try:
+                self._base = get_adapter(base_id)
+            except ValueError:
+                self._base = None
+        if self._base is not None:
+            self.capabilities = replace(
+                self._base.capabilities,
+                adapter_id=row["id"],
+                display_name=row["display_name"],
+                served_model_name=row["served_model_name"],
+                hf_revision=row.get("hf_revision") or self._base.capabilities.hf_revision,
+            )
+        else:
+            self.capabilities = ModelCapabilities(
+                adapter_id=row["id"],
+                display_name=row["display_name"],
+                tasks=(),
+                coordinate_system="unverified",
+                table_format=None,
+                training_types=(),
+                inference_modes=("vllm",),
+                hardware=("cuda",),
+                hf_repo=row["hf_repo"],
+                hf_revision=row.get("hf_revision"),
+                approx_size_gb=None,
+                license_note="Verificare la licenza sulla scheda Hugging Face del repo.",
+                train_toolchain="none",
+                serve_backend="vllm-openai",
+                served_model_name=row["served_model_name"],
+            )
+
+    def prompt_for(self, task: str, label: str | None = None) -> str | None:
+        if self._base is None:
+            return super().prompt_for(task, label)
+        return self._base.prompt_for(task, label)
+
+    def serialize_target(self, task: str, value: object) -> str:
+        if self._base is None:
+            return super().serialize_target(task, value)
+        return self._base.serialize_target(task, value)
+
+    def request_overrides(self, task: str) -> dict:
+        if self._base is None:
+            return super().request_overrides(task)
+        return self._base.request_overrides(task)
 
     def serve_command(self, model_path: str, port: int) -> list[str] | None:
+        if str(self._row.get('source_train_type') or '').lower() == 'lora':
+            if self._base is None:
+                raise ValueError("adapter LoRA senza modello base riconosciuto")
+            from .model_registry import model_path as registered_model_path
+            base_path = registered_model_path(self._base.adapter_id)
+            return [
+                "vllm", "serve", str(base_path),
+                "--port", str(port),
+                "--served-model-name", self.capabilities.served_model_name,
+                "--enable-lora",
+                "--lora-modules", f"{self.capabilities.served_model_name}={model_path}",
+                "--gpu-memory-utilization", str(self._row.get("gpu_memory_utilization") or 0.9),
+            ]
         argv = [
             "vllm", "serve", model_path,
             "--port", str(port),

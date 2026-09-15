@@ -11,6 +11,8 @@ interface ModelsModalProps {
   /** Provider del profilo attivo: decide quale azione è primaria in ogni
    *  riga (servire in locale o deployare sul provider remoto). */
   activeProvider: string | null
+  /** Modello già scelto quando si entra nel secondo passaggio per il locale. */
+  selectedAdapterId?: string | null
   /** «Deploya su <provider>»: gestita dall'hub, che apre il pannello del
    *  provider con il modello già scelto. */
   onDeploy: (adapterId: string, displayName: string) => void
@@ -37,6 +39,8 @@ interface ModelItem {
   cloud_serve_ready: boolean
   cloud_template: string | null
   download_only: boolean
+  downloadable?: boolean
+  checkpoint_detached?: boolean
   installed: boolean
   downloading: boolean
   /** Stima del totale da scaricare, per la barra. Approssimata: è la
@@ -50,6 +54,55 @@ interface ModelItem {
   runtime_ready?: boolean
   runtime_state?: string | null
   runtime_error?: string | null
+}
+
+// Il catalogo cambia solo dopo un'azione esplicita dell'utente (installazione,
+// deploy o rimozione); cinque minuti coprono una sessione di lavoro senza
+// rendere invisibili quei cambiamenti, perché le mutazioni forzano il reload.
+const MODEL_REGISTRY_CACHE_TTL_MS = 5 * 60_000
+const MODEL_REGISTRY_STORAGE_KEY = 'tabularium.models.registry.v1'
+let modelRegistryCache: { items: ModelItem[]; loadedAt: number } | null = null
+let modelRegistryRequest: Promise<ModelItem[]> | null = null
+
+function readStoredModelRegistry(): ModelItem[] {
+  try {
+    const raw = localStorage.getItem(MODEL_REGISTRY_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as { items?: ModelItem[]; loadedAt?: number }
+    if (!Array.isArray(parsed.items)) return []
+    if (modelRegistryCache === null) {
+      modelRegistryCache = { items: parsed.items, loadedAt: Number(parsed.loadedAt) || 0 }
+    }
+    return parsed.items
+  } catch {
+    return []
+  }
+}
+
+function storeModelRegistry(items: ModelItem[]) {
+  try {
+    localStorage.setItem(MODEL_REGISTRY_STORAGE_KEY, JSON.stringify({ items, loadedAt: Date.now() }))
+  } catch {
+    /* storage non disponibile: il registro in memoria resta sufficiente */
+  }
+}
+
+async function fetchModelRegistry(force = false): Promise<ModelItem[]> {
+  if (!force && modelRegistryCache && Date.now() - modelRegistryCache.loadedAt < MODEL_REGISTRY_CACHE_TTL_MS) {
+    return modelRegistryCache.items
+  }
+  if (!modelRegistryRequest) {
+    modelRegistryRequest = apiGet<{ items: ModelItem[] }>('/models')
+      .then((res) => {
+        modelRegistryCache = { items: res.items, loadedAt: Date.now() }
+        storeModelRegistry(res.items)
+        return res.items
+      })
+      .finally(() => {
+        modelRegistryRequest = null
+      })
+  }
+  return modelRegistryRequest
 }
 
 const CUSTOM_ID_PREFIX = 'custom-'
@@ -257,7 +310,7 @@ function ServeProgress({ status, name }: { status: ServeStatus; name: string }) 
  * `CloudControlModal.tsx` (istanze/tunnel) per non far dipendere download dei
  * pesi dalla gestione della connessione cloud.
  */
-export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeDestination }: ModelsModalProps) {
+export function ModelsModal({ open, onClose, activeProvider, selectedAdapterId, onDeploy, onChangeDestination }: ModelsModalProps) {
   const { t } = useI18n()
   const inf = useInference()
   const REMOTE_PROVIDERS = ['vast', 'runpod', 'modal'] as const
@@ -265,9 +318,14 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
   const destinationLabel = activeProvider
     ? t(`recognition.provider.${activeProvider}`)
     : t('recognition.locationLocal')
-  const [models, setModels] = useState<ModelItem[]>([])
+  // Il catalogo è quasi statico: mostra subito l'ultimo registro della
+  // sessione e aggiorna in background lo stato installato/download. Così la
+  // scelta del modello non aspetta una chiamata che sta solo rileggendo la
+  // stessa lista.
+  const [models, setModels] = useState<ModelItem[]>(readStoredModelRegistry)
   const [busy, setBusy] = useState<Record<string, boolean>>({})
   const [notice, setNotice] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const confirmDeleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [showAddCustom, setShowAddCustom] = useState(false)
@@ -287,11 +345,11 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
     error: null,
   })
 
-  const load = async () => {
+  const load = async (force = false) => {
     try {
-      const res = await apiGet<{ items: ModelItem[] }>('/models')
-      setModels(res.items)
-      trackRates(res.items)
+      const items = await fetchModelRegistry(force)
+      setModels(items)
+      trackRates(items)
     } catch (e) {
       setNotice(t('cloud.models.loadError', { error: String(e) }))
     }
@@ -357,15 +415,20 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
   useEffect(() => {
     if (!open) return
     void load()
-    void loadServeStatus()
-    void loadHfAuth()
-  }, [open])
+    // Nel primo passaggio serve solo il catalogo. Stato del server locale e
+    // autenticazione Hub servono esclusivamente quando l'utente ha scelto
+    // Locale e i relativi controlli sono effettivamente visibili.
+    if (activeProvider === 'local') {
+      void loadServeStatus()
+      void loadHfAuth()
+    }
+  }, [open, activeProvider])
 
   useEffect(() => {
-    if (!open) return
+    if (!open || activeProvider !== 'local') return
     const id = setInterval(() => void loadServeStatus(), 3000)
     return () => clearInterval(id)
-  }, [open])
+  }, [open, activeProvider])
 
   useEffect(() => {
     if (!open || hfAuth.state !== 'awaiting_authorization') return
@@ -375,7 +438,7 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
 
   useEffect(() => {
     if (!open || !models.some((m) => m.downloading || (m.adapter_id === 'paddleocr-vl' && m.runtime_state === 'installing'))) return
-    const id = setInterval(() => void load(), 2000)
+    const id = setInterval(() => void load(true), 2000)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, models.some((m) => m.downloading)])
@@ -395,12 +458,19 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
     }
   }
 
+  const visibleModels = models.filter((model) => {
+    if (activeProvider === 'local' && selectedAdapterId && model.adapter_id !== selectedAdapterId) return false
+    const needle = query.trim().toLocaleLowerCase()
+    if (!needle) return true
+    return `${model.display_name} ${model.adapter_id} ${model.hf_repo}`.toLocaleLowerCase().includes(needle)
+  })
+
   const handleDownload = async (adapterId: string) => {
     setBusy((b) => ({ ...b, [adapterId]: true }))
     setNotice(null)
     try {
       await apiPost(`/models/${adapterId}/download`, {})
-      await load()
+      await load(true)
     } catch (e) {
       setNotice(t('cloud.models.downloadError', { error: String(e) }))
     } finally {
@@ -412,7 +482,7 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
     setBusy((b) => ({ ...b, [adapterId]: true }))
     try {
       await apiPost(`/models/${adapterId}/download/cancel`, {})
-      await load()
+      await load(true)
     } catch (e) {
       setNotice(t('cloud.models.cancelError', { error: String(e) }))
     } finally {
@@ -432,7 +502,7 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
     try {
       await apiDelete(`/models/${adapterId}`)
       setNotice(t('cloud.models.deletedNotice'))
-      await load()
+      await load(true)
     } catch (e) {
       setNotice(t('cloud.models.deleteError', { error: String(e) }))
     } finally {
@@ -490,7 +560,7 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
       await apiPost('/models/custom', payload)
       setCustomForm(EMPTY_CUSTOM_FORM)
       setShowAddCustom(false)
-      await load()
+      await load(true)
     } catch (e) {
       setNotice(t('cloud.models.addCustomError', { error: String(e) }))
     } finally {
@@ -502,7 +572,7 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
     setBusy((b) => ({ ...b, [adapterId]: true }))
     try {
       await apiDelete(`/models/custom/${adapterId}`)
-      await load()
+      await load(true)
     } catch (e) {
       setNotice(t('cloud.models.deleteError', { error: String(e) }))
     } finally {
@@ -526,22 +596,7 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
       )}
     >
       <div className="space-y-4 p-4 text-[13px] leading-relaxed">
-          {/* La destinazione decide che cosa significa «prendere un modello»:
-              in locale è scaricare e avviare, su un provider remoto è
-              deployarlo là. Mostrarla qui evita di scoprirlo dalle azioni. */}
-          <div className="flex flex-wrap items-center justify-between gap-2 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-panel)] px-3 py-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="lbl !mb-0">{t('cloud.models.destinationLabel')}</span>
-              <Badge tone={remote ? 'ok' : 'neutral'}>{destinationLabel}</Badge>
-              {remote && <span className="text-[11px] text-[color:var(--color-ink-2)]">{t('cloud.models.destinationRemoteHint')}</span>}
-            </div>
-            <button type="button" className="btn btn-sm" onClick={onChangeDestination}>
-              {t('cloud.models.changeDestination')}
-            </button>
-          </div>
-
-          <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
-            <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('cloud.models.intro')}</p>
+          {activeProvider === 'local' && <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
             <label className="mt-2 flex max-w-[18rem] items-center gap-2 text-[11px]">
               <span className="lbl !mb-0">{t('cloud.models.servePort')}</span>
               <input className="fld fld-mono w-24" type="number" min={1024} max={65535}
@@ -569,9 +624,9 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
               )}
               {hfAuth.error && <span className="text-[11px] text-[color:var(--color-sig-text)]">{hfAuth.error}</span>}
             </div>
-          </div>
+          </div>}
 
-          <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
+          {activeProvider === 'local' && <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
             <div className="flex items-center justify-between">
               <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('cloud.models.addCustomHint')}</p>
               <button type="button" className="btn btn-sm" onClick={() => setShowAddCustom((v) => !v)}>
@@ -663,6 +718,15 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
                 </div>
               </div>
             )}
+          </div>}
+
+          <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
+            <div className="mb-2 flex items-baseline gap-2">
+              <span className="mono text-[11px] font-bold text-[color:var(--color-sig-text)]">01</span>
+              <p className="text-[12px] text-[color:var(--color-ink-2)]">
+                {remote ? t('cloud.models.remoteIntro', { provider: destinationLabel }) : activeProvider === 'local' ? t('cloud.models.intro') : t('modelsHub.modelOnlyIntro')}
+              </p>
+            </div>
           </div>
 
           {notice && (
@@ -671,13 +735,39 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
             </div>
           )}
 
+          <div className="flex flex-wrap items-center justify-between gap-2 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-panel)] px-3 py-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mono text-[11px] font-bold text-[color:var(--color-sig-text)]">02</span>
+              <span className="lbl !mb-0">{t('cloud.models.destinationLabel')}</span>
+              <Badge tone={remote ? 'ok' : activeProvider ? 'neutral' : 'warn'}>
+                {activeProvider ? destinationLabel : t('modelsHub.destinationPending')}
+              </Badge>
+              {remote && <span className="text-[11px] text-[color:var(--color-ink-2)]">{t('cloud.models.destinationRemoteHint')}</span>}
+            </div>
+            {activeProvider && (
+              <button type="button" className="btn btn-sm" onClick={onChangeDestination}>
+                {t('cloud.models.changeDestination')}
+              </button>
+            )}
+          </div>
+
+          <label className="block">
+            <span className="lbl">{t('modelsHub.searchLabel')}</span>
+            <input
+              className="fld"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t('modelsHub.searchPlaceholder')}
+            />
+          </label>
+
           <div className="divide-y divide-[color:var(--color-rule)] border border-[color:var(--color-rule)]">
-            {models.map((m) => {
+            {visibleModels.map((m) => {
               const rowBusy = !!busy[m.adapter_id]
               return (
                 <div
                   key={m.adapter_id}
-                  className="flex flex-wrap items-start justify-between gap-3 bg-[color:var(--color-sheet)] p-3"
+                  className={`flex flex-wrap items-start justify-between gap-3 bg-[color:var(--color-sheet)] p-3 ${selectedAdapterId === m.adapter_id ? 'bg-[color:var(--color-sig-wash)] ring-1 ring-inset ring-[color:var(--color-sig)]' : ''}`}
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -700,12 +790,16 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
                           {t(MATURITY_KEY[m.maturity])}
                         </Badge>
                       )}
-                      {m.supports_native && <Badge tone="ok">{t('cloud.models.prefillReady')}</Badge>}
+                      {activeProvider && m.supports_native && <Badge tone="ok">{t('cloud.models.prefillReady')}</Badge>}
                       {inf.enabled && inf.adapterId === m.adapter_id && (
                         <Badge tone="ok">{t('cloud.models.inUseNow')}</Badge>
                       )}
-                      {m.export_ready && <Badge tone="ok">{t('cloud.models.exportReady')}</Badge>}
-                      {m.cloud_serve_ready && <Badge tone="ok">{t('cloud.models.cloudReady')}</Badge>}
+                      {activeProvider && m.export_ready && <Badge tone="ok">{t('cloud.models.exportReady')}</Badge>}
+                      {remote && m.cloud_serve_ready && (
+                        <Badge tone="ok">
+                          {t('cloud.models.cloudReadyOn', { provider: destinationLabel })}
+                        </Badge>
+                      )}
                       {m.adapter_id === 'paddleocr-vl' && m.installed && m.runtime_state && m.runtime_state !== 'ready' && (
                         <Badge tone={m.runtime_state === 'failed' ? 'warn' : 'neutral'}>
                           {t('cloud.models.paddleRuntime', { state: m.runtime_state })}
@@ -722,23 +816,28 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
                           </Badge>
                         )}
                     </div>
-                    <div className="mono text-[11px] text-[color:var(--color-ink-3)] mt-0.5">
-                      {m.hf_repo}
-                      {m.approx_size_gb != null && ` · ~${m.approx_size_gb} GB`}
-                      {m.table_format && ` · ${m.table_format}`}
-                    </div>
-                    <div className="text-[11px] text-[color:var(--color-ink-2)] mt-0.5">
-                      {t('cloud.models.trainingLabel', { toolchain: toolchainLabel(m.train_toolchain) })}
-                      {!m.local_serve_ready && !m.cloud_serve_ready && ` · ${t('cloud.models.inferenceUnavailable')}`}
-                    </div>
-                    {m.license_note && (
-                      <div className="text-[11px] text-[color:var(--color-ink-3)] mt-0.5">{m.license_note}</div>
+                    {activeProvider && (
+                      <div className="text-[11px] text-[color:var(--color-ink-2)] mt-0.5">
+                        {m.supports_native ? t('cloud.models.prefillReady') : t('cloud.models.inferenceUnavailable')}
+                        {!m.local_serve_ready && !m.cloud_serve_ready && ` · ${t('cloud.models.inferenceUnavailable')}`}
+                        {remote && m.adapter_id.startsWith(CUSTOM_ID_PREFIX) && !m.cloud_serve_ready && (
+                          <span className="text-[color:var(--color-warn)]"> · {t('cloud.models.localOnly')}</span>
+                        )}
+                      </div>
                     )}
+                    <details className="mt-1 text-[11px] text-[color:var(--color-ink-3)]">
+                      <summary className="cursor-pointer">{t('modelsHub.showDetails')}</summary>
+                      <div className="mt-1 space-y-0.5">
+                        <div className="mono">{m.hf_repo}{m.approx_size_gb != null && ` · ~${m.approx_size_gb} GB`}{m.table_format && ` · ${m.table_format}`}</div>
+                        <div>{t('cloud.models.trainingLabel', { toolchain: toolchainLabel(m.train_toolchain) })}</div>
+                        {m.license_note && <div>{m.license_note}</div>}
+                      </div>
+                    </details>
                     {m.error && <div className="mt-0.5 text-[11px] text-[color:var(--color-sig-text)]">{m.error}</div>}
                     {m.runtime_error && (
                       <div className="mt-0.5 text-[11px] text-[color:var(--color-sig-text)]">{m.runtime_error}</div>
                     )}
-                    {m.vram_warning && (
+                    {activeProvider && m.vram_warning && (
                       <div className="mt-0.5 flex items-start gap-1 text-[11px] text-[color:var(--color-warn)]">
                         <IconWarn size={12} />
                         <span>{m.vram_warning}</span>
@@ -747,19 +846,6 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {/* Destinazione remota + modello deployabile: il primo gesto
-                        è portarlo là, non scaricarlo qui. Le azioni locali
-                        restano accessibili perché la destinazione può cambiare. */}
-                    {remote && m.cloud_serve_ready && !m.downloading && (
-                      <button
-                        type="button"
-                        onClick={() => onDeploy(m.adapter_id, m.display_name)}
-                        disabled={rowBusy}
-                        className="btn btn-sm btn-primary"
-                      >
-                        {t('cloud.models.deployOn', { provider: destinationLabel })}
-                      </button>
-                    )}
                     {m.downloading ? (
                       <button
                         type="button"
@@ -769,6 +855,42 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
                       >
                         {t('cloud.models.cancel')}
                       </button>
+                    ) : !activeProvider ? (
+                      <button
+                        type="button"
+                        onClick={() => onDeploy(m.adapter_id, m.display_name)}
+                        disabled={rowBusy}
+                        className="btn btn-sm btn-primary"
+                      >
+                        {t('modelsHub.selectThisModel')}
+                      </button>
+                    ) : remote ? (
+                      m.cloud_serve_ready ? (
+                        <button
+                          type="button"
+                          onClick={() => onDeploy(m.adapter_id, m.display_name)}
+                          disabled={rowBusy}
+                          className="btn btn-sm btn-primary"
+                        >
+                          {t('cloud.models.deployOn', { provider: destinationLabel })}
+                        </button>
+                      ) : (
+                        m.adapter_id.startsWith(CUSTOM_ID_PREFIX) && (activeProvider === 'vast' || activeProvider === 'modal') ? (
+                          <button
+                            type="button"
+                            onClick={() => onDeploy(m.adapter_id, m.display_name)}
+                            className="btn btn-sm btn-primary"
+                          >
+                            {t('cloud.models.publishCheckpoint')}
+                          </button>
+                        ) : (
+                          <span className="max-w-[22ch] text-right text-[11px] text-[color:var(--color-ink-3)]">
+                            {m.adapter_id.startsWith(CUSTOM_ID_PREFIX)
+                              ? t('cloud.models.localOnly')
+                              : t('cloud.models.inferenceUnavailable')}
+                          </span>
+                        )
+                      )
                     ) : m.installed ? (
                       <>
                         {m.local_serve_ready && (
@@ -816,14 +938,21 @@ export function ModelsModal({ open, onClose, activeProvider, onDeploy, onChangeD
                       </>
                     ) : (
                       <>
-                        <button
-                          type="button"
-                          onClick={() => void handleDownload(m.adapter_id)}
-                          disabled={rowBusy}
-                          className={`btn btn-sm ${remote && m.cloud_serve_ready ? '' : 'btn-primary'}`}
-                        >
-                          {rowBusy ? t('cloud.models.downloadStarting') : t('cloud.models.download')}
-                        </button>
+                        {m.downloadable !== false && (
+                          <button
+                            type="button"
+                            onClick={() => void handleDownload(m.adapter_id)}
+                            disabled={rowBusy}
+                            className={`btn btn-sm ${remote && m.cloud_serve_ready ? '' : 'btn-primary'}`}
+                          >
+                            {rowBusy ? t('cloud.models.downloadStarting') : t('cloud.models.download')}
+                          </button>
+                        )}
+                        {m.checkpoint_detached && (
+                          <span className="max-w-[24ch] text-right text-[11px] text-[color:var(--color-warn)]">
+                            {t('cloud.models.checkpointDetached')}
+                          </span>
+                        )}
                         {m.adapter_id.startsWith(CUSTOM_ID_PREFIX) && (
                           <button
                             type="button"

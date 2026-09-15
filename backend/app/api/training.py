@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from ..db import connect
 from ..schemas import TrainConfig
 from ..services import trainer
+from ..services import custom_models
 from ..services.i18n import parse_lang
 from ..services import auth as authsvc
 from ..services import audit as auditsvc
@@ -30,7 +31,8 @@ def _require_project(project_id: int) -> None:
 
 @router.get("/api/system/gpu")
 def system_gpu() -> dict:
-    return {"gpus": trainer.gpu_snapshot(), "available": trainer.gpu_snapshot() != []}
+    gpus = trainer.gpu_snapshot()
+    return {"gpus": gpus, "available": bool(gpus)}
 
 
 @router.post("/api/projects/{project_id}/training/start")
@@ -105,6 +107,32 @@ def training_cleanup(
             payload={"run_id": result["run_id"]},
         )
     return result
+
+
+@router.post("/api/projects/{project_id}/training/register-model")
+def training_register_model(
+    project_id: int,
+    payload: dict,
+    user: dict = Depends(require_resource(write=True)),
+) -> dict:
+    """Rende selezionabile nel Registro il checkpoint dell'ultima run finita."""
+    _require_project(project_id)
+    try:
+        model = custom_models.register_training_checkpoint(
+            project_id, str(payload.get("run_id") or "")
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with connect() as conn:
+        auditsvc.record(
+            conn,
+            user,
+            "training.model_registered",
+            resource_type="project",
+            resource_id=project_id,
+            payload={"run_id": model.get("source_run_id"), "adapter_id": model.get("id")},
+        )
+    return model
 
 
 @router.get("/api/projects/{project_id}/training/stream")

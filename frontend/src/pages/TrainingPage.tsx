@@ -178,6 +178,7 @@ export default function TrainingPage() {
           cfg={cfg}
           busy={busy}
           isActive={status?.active === true}
+          datasetReady={dataset?.built === true}
           stopArmed={stopArmed}
           onProjectChange={onProject}
           onConfigChange={set}
@@ -185,6 +186,7 @@ export default function TrainingPage() {
           onStop={() => void stop()}
         />
         <TrainingStatusPanel
+          projectId={projectId}
           status={status}
           gpuList={gpuList}
           metricsData={metricsData}

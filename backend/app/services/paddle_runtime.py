@@ -11,11 +11,19 @@ import json
 import os
 import subprocess
 import sys
+import time
 import venv
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import config
+
+
+# `status()` viene letto per ogni adapter mentre si costruisce il registro.
+# Importare PaddleOCR in un processo separato è costoso; il risultato vale per
+# tutta la risposta e per le aperture ravvicinate del registro.
+_READY_CACHE_TTL = 15.0
+_ready_cache: tuple[float, bool] | None = None
 
 
 def _dir() -> Path:
@@ -60,7 +68,11 @@ def log_tail(n: int = 4000) -> str:
         return ""
 
 
-def ready() -> bool:
+def ready(*, force: bool = False) -> bool:
+    global _ready_cache
+    now = time.monotonic()
+    if not force and _ready_cache is not None and now - _ready_cache[0] < _READY_CACHE_TTL:
+        return _ready_cache[1]
     try:
         check = subprocess.run(
             [str(python_bin()), "-c", "from paddleocr import PaddleOCRVL"],
@@ -68,19 +80,33 @@ def ready() -> bool:
             text=True,
             timeout=30,
         )
-        return check.returncode == 0
+        result = check.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
-        return False
+        result = False
+    _ready_cache = (time.monotonic(), result)
+    return result
 
 
-def status() -> dict:
+def status(*, probe: bool = True) -> dict:
+    """Restituisce lo stato del runtime.
+
+    Il catalogo modelli passa ``probe=False``: importare PaddleOCR in un
+    processo separato durante una semplice apertura della pagina è lavoro di
+    avvio, non lettura di catalogo. Il worker di installazione e il percorso
+    di inferenza usano invece il probe reale.
+    """
     stored = {}
     if _state_file().exists():
         try:
             stored = json.loads(_state_file().read_text(encoding="utf-8"))
         except (OSError, ValueError):
             pass
-    is_ready = ready()
+    if probe:
+        is_ready = ready()
+    else:
+        is_ready = stored.get("state") == "ready" or (
+            _ready_cache is not None and _ready_cache[1]
+        )
     return {
         "ready": is_ready,
         "state": "ready" if is_ready else stored.get("state", "absent"),
@@ -93,6 +119,8 @@ def ensure_ready() -> None:
     """Installa il pipeline ufficiale PaddleOCR document parser."""
     if ready():
         return
+    global _ready_cache
+    _ready_cache = None
     root = _dir()
     root.mkdir(parents=True, exist_ok=True)
     _write_state(state="installing", error=None)
@@ -132,4 +160,5 @@ def ensure_ready() -> None:
         except Exception as exc:  # noqa: BLE001
             _write_state(state="failed", error=str(exc))
             raise RuntimeError(f"installazione PaddleOCR fallita: {exc}") from exc
+    _ready_cache = (time.monotonic(), True)
     _write_state(state="ready", error=None)
