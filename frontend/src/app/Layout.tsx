@@ -133,7 +133,7 @@ export default function Layout() {
     return () => clearInterval(id)
   }, [])
   return (
-    <div className="flex h-screen flex-col bg-[color:var(--color-sheet)]">
+    <div className="flex h-screen min-w-0 flex-col overflow-hidden bg-[color:var(--color-sheet)]">
       <a
         href="#contenuto"
         className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:bg-[color:var(--color-ink)] focus:px-3 focus:py-1.5 focus:text-white"
@@ -143,14 +143,14 @@ export default function Layout() {
 
       <header className="shrink-0 border-b border-[color:var(--color-rule-strong)]">
         {/* riga 1 — identità e stato globale */}
-        <div className="flex items-center gap-3 border-b border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-3 py-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-3 border-b border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-3 py-1.5">
           <span className="text-[13px] font-bold tracking-[-0.02em]">
             Tabularium<span className="text-[color:var(--color-sig-text)]">Lab</span>
           </span>
-          <span className="text-[11px] text-[color:var(--color-ink-3)]">
+          <span className="hidden min-w-0 truncate text-[11px] text-[color:var(--color-ink-3)] sm:block">
             {t('app.tagline')}
           </span>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2">
             {location.pathname !== '/modelli' && (() => {
               const providerKey = inference.provider && ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom'].includes(inference.provider)
                 ? `recognition.provider.${inference.provider}`
@@ -188,7 +188,7 @@ export default function Layout() {
         </div>
 
         {/* riga 2 — le sezioni, linguette bordo a bordo */}
-        <nav aria-label={t('app.navSections')} className="flex overflow-x-auto">
+        <nav aria-label={t('app.navSections')} className="flex min-w-0 max-w-full overflow-x-auto">
           <span className="w-px shrink-0 bg-[color:var(--color-rule)]" />
           {NAV.map(({ to, labelKey, Icon, end }) => (
             <NavLink key={to} to={to} end={end} className="shrink-0">
