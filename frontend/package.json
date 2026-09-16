@@ -9,6 +9,7 @@
     "test": "vitest run",
     "test:e2e": "../scripts/e2e_smoke.sh",
     "test:e2e:workflow": "python3 ../scripts/e2e_workflow.py",
+    "test:e2e:model-provider": "python3 ../scripts/e2e_model_provider.py",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
