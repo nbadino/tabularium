@@ -231,6 +231,7 @@ export const fr: Dict = {
     selectedModel: 'Modèle choisi',
     chooseDestinationHint: 'La même révision, le même export et les mêmes résultats fonctionnent partout.',
     selectThisModel: 'Choisir ce modèle',
+    continueWithModel: 'Continuer avec ce modèle',
     destinationPending: 'À choisir',
     destination: {
       local: 'Utiliser les poids sur cet ordinateur.',

@@ -231,6 +231,7 @@ export const en: Dict = {
     selectedModel: 'Selected model',
     chooseDestinationHint: 'The same review, export, and results work in every location.',
     selectThisModel: 'Choose this model',
+    continueWithModel: 'Continue with this model',
     destinationPending: 'Choose next',
     destination: {
       local: 'Use weights on this computer.',

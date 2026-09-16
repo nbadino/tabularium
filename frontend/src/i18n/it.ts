@@ -230,6 +230,7 @@ export const it = {
     selectedModel: 'Modello scelto',
     chooseDestinationHint: 'La stessa revisione, lo stesso export e gli stessi risultati funzionano in tutti i luoghi.',
     selectThisModel: 'Scegli questo modello',
+    continueWithModel: 'Continua con questo modello',
     destinationPending: 'Da scegliere',
     destination: {
       local: 'Usa i pesi su questo computer.',

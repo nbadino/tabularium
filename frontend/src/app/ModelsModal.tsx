@@ -772,7 +772,7 @@ export function ModelsModal({ open, onClose, activeProvider, selectedAdapterId, 
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-bold">{m.display_name}</span>
-                      {m.installed ? (
+                      {activeProvider && (m.installed ? (
                         <Badge tone="ok">{t('cloud.models.installed', { size: fmtBytes(m.size_bytes) })}</Badge>
                       ) : m.downloading ? (
                         <Badge tone="neutral">{t('cloud.models.downloading', { size: fmtBytes(m.size_bytes) })}</Badge>
@@ -780,7 +780,7 @@ export function ModelsModal({ open, onClose, activeProvider, selectedAdapterId, 
                         <Badge tone="warn">{t('cloud.models.failed')}</Badge>
                       ) : (
                         <Badge tone="neutral">{t('cloud.models.notInstalled')}</Badge>
-                      )}
+                      ))}
                       {m.adapter_id === 'monkeyocrv2-parsing' && <Badge tone="ok">{t('cloud.models.defaultBadge')}</Badge>}
                       {m.adapter_id.startsWith(CUSTOM_ID_PREFIX) && (
                         <Badge tone="neutral">{t('cloud.models.customBadge')}</Badge>
@@ -862,7 +862,7 @@ export function ModelsModal({ open, onClose, activeProvider, selectedAdapterId, 
                         disabled={rowBusy}
                         className="btn btn-sm btn-primary"
                       >
-                        {t('modelsHub.selectThisModel')}
+                        {t('modelsHub.continueWithModel')}
                       </button>
                     ) : remote ? (
                       m.cloud_serve_ready ? (
