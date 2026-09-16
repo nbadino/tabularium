@@ -5,12 +5,22 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Configurazioni locali (TABULARIUM_TRAIN_REPO, TABULARIUM_TRAIN_ENV, ...) opzionali.
+# Le variabili passate al comando hanno precedenza sul file .env: serve anche
+# ai test browser (`TABULARIUM_AUTH=off`) e rende espliciti gli override locali.
+_auth_from_environment="${TABULARIUM_AUTH-}"
+_auth_was_set=0
+[ "${TABULARIUM_AUTH+x}" = x ] && _auth_was_set=1
+_port_from_environment="${TABULARIUM_PORT-}"
+_port_was_set=0
+[ "${TABULARIUM_PORT+x}" = x ] && _port_was_set=1
 if [ -f "$ROOT/.env" ]; then
   set -a
   # shellcheck disable=SC1091
   . "$ROOT/.env"
   set +a
 fi
+if [ "$_auth_was_set" -eq 1 ]; then export TABULARIUM_AUTH="$_auth_from_environment"; fi
+if [ "$_port_was_set" -eq 1 ]; then export TABULARIUM_PORT="$_port_from_environment"; fi
 
 DIST_INDEX="$ROOT/frontend/dist/index.html"
 needs_build=0
