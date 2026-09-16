@@ -10,6 +10,13 @@ import { IconCopy, IconPlayground } from '../app/icons'
 import { useI18n, tn } from '../i18n'
 import { pageLabel } from '../lib/pageLabel'
 
+function providerLabel(provider: string | null | undefined, t: (key: string) => string): string {
+  if (provider && ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom'].includes(provider)) {
+    return t(`recognition.provider.${provider}`)
+  }
+  return provider || t('recognition.locationLocal')
+}
+
 export default function PlaygroundPage() {
   const { t } = useI18n()
   const [projectId, setProjectId] = useState<number | ''>('')
@@ -169,7 +176,7 @@ export default function PlaygroundPage() {
             )}
             {result && (
               <span className="mono ml-auto text-[11px] text-[color:var(--color-ink-3)]">
-                {result.model} · {result.server}
+                {result.model} · {providerLabel(result.provider, t)}
               </span>
             )}
           </div>

@@ -505,6 +505,7 @@ export interface EvalReport {
   config: {
     server_url: string
     model: string
+    provider?: string | null
     with_text: boolean
     split: { ratio: number; seed: number }
   }
@@ -531,6 +532,7 @@ export interface PlaygroundResult {
   ok: boolean
   server: string
   model: string
+  provider?: string | null
   width: number
   height: number
   items: Array<{ bbox_norm: number[]; bbox_px: number[]; label: string; content: string }>

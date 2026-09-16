@@ -88,6 +88,7 @@ def playground_parse(
         "ok": bool(items),
         "server": client.url,
         "model": client.model,
+        "provider": client.provider,
         "width": w,
         "height": h,
         "items": items,

@@ -143,6 +143,16 @@ export default function EvaluationPage() {
               </label>
             </div>
           </div>
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[color:var(--color-rule)] pt-2 text-[12px]">
+            <span className="lbl !mb-0">{t('recognition.computeProfile')}</span>
+            <strong>{inference.model || '—'}</strong>
+            <span className="text-[color:var(--color-ink-2)]">
+              · {inference.provider ? t(`recognition.provider.${inference.provider}`) : t('recognition.locationLocal')}
+            </span>
+            <Link to="/modelli" className="font-semibold no-underline">
+              {inference.model ? t('recognition.changeModel') : t('recognition.chooseModel')}
+            </Link>
+          </div>
           {projectId !== '' && !trainingReady && (
             <Notice tone="warn">
               <span>{t('pipeline.steps.evaluateNeeds')}</span>{' '}
