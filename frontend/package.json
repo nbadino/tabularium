@@ -11,6 +11,7 @@
     "test:e2e:workflow": "python3 ../scripts/e2e_workflow.py",
     "test:e2e:model-provider": "python3 ../scripts/e2e_model_provider.py",
     "test:e2e:navigation": "python3 ../scripts/e2e_navigation.py",
+    "test:e2e:responsive": "python3 ../scripts/e2e_responsive.py",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
