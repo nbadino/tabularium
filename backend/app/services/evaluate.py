@@ -319,7 +319,7 @@ def evaluate_project(
     report = {
         "project_id": project_id,
         "evaluated_at": datetime.now(timezone.utc).isoformat(),
-        "config": {"server_url": client.url, "model": client.model, "provider": client.provider, "with_text": with_text, "split": {"ratio": ratio, "seed": seed, "strategy": split_strategy}, "approved_only": approved_only},
+        "config": {"server_url": client.url, "model": client.model, "provider": getattr(client, "provider", None), "with_text": with_text, "split": {"ratio": ratio, "seed": seed, "strategy": split_strategy}, "approved_only": approved_only},
         "pages_evaluated": len(ok_pages),
         "val_pages": len(val_ids),
         "aggregates": {
