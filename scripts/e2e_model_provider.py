@@ -99,40 +99,50 @@ def main() -> int:
         card = driver.find_element(By.XPATH, "//div[contains(@class, 'divide-y')]/div[1]")
         model_name = card.find_element(By.XPATH, ".//*[self::span or self::div][normalize-space()][1]").text.strip().splitlines()[0]
         assert model_name, card.text
-        continue_button.click()
-
-        wait.until(
-            EC.presence_of_element_located(
-                (
-                    By.XPATH,
-                    "//*[contains(., 'Dove vuoi eseguirlo?') or contains(., 'Where do you want to run it?') or contains(., 'Où voulez-vous')]",
+        # Repeat the complete model-first interaction for every destination.
+        # A fresh navigation prevents state from a previous provider from
+        # silently making the next case pass.
+        destinations = (
+            ("Locale", "//button[contains(., 'Locale') or contains(., 'Local') or contains(., 'Local')]") ,
+            ("Vast.ai", "//button[contains(., 'Vast.ai') or contains(., 'Vast')]") ,
+            ("RunPod", "//button[contains(., 'RunPod')]") ,
+            ("Modal", "//button[contains(., 'Modal')]") ,
+            ("MANUALE", "//button[contains(., 'endpoint') or contains(., 'Manual') or contains(., 'MANUALE') or contains(., 'MANUAL')]") ,
+        )
+        checked = []
+        for expected_label, destination_xpath in destinations:
+            driver.get(f"{BASE}/modelli")
+            wait.until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
+            wait.until(
+                lambda d: _first_visible(
+                    d,
+                    "//button[contains(., 'Scegli il modello') or contains(., 'Choose model') or contains(., 'Choisir')]",
+                )
+            ).click()
+            wait.until(
+                lambda d: _first_visible(
+                    d,
+                    "//button[contains(., 'Continua con questo modello') or contains(., 'Continue with this model') or contains(., 'Continuer avec ce modèle') or contains(., 'Scegli questo modello')]",
+                )
+            ).click()
+            wait.until(
+                EC.presence_of_element_located(
+                    (By.XPATH, "//*[contains(., 'Dove vuoi eseguirlo?') or contains(., 'Where do you want to run it?') or contains(., 'Où voulez-vous')]")
                 )
             )
-        )
-        destination_text = driver.find_element(By.TAG_NAME, "body").text
-        for label in ("Locale", "Vast.ai", "RunPod", "Modal"):
-            assert label in destination_text, destination_text
-
-        vast = wait.until(
-            lambda d: _first_visible(
-                d, "//button[contains(., 'Vast.ai') or contains(., 'Vast')]"
-            )
-        )
-        vast.click()
-        wait.until(
-            EC.presence_of_element_located(
-                (
-                    By.XPATH,
-                    "//*[contains(., 'Deploy guidato') or contains(., 'Guided deploy') or contains(., 'Déploiement guidé')]",
-                )
-            )
-        )
-        provider_text = driver.find_element(By.TAG_NAME, "body").text
-        assert model_name in provider_text, (model_name, provider_text[:2500])
-        provider_text_folded = provider_text.casefold()
-        assert any(label.casefold() in provider_text_folded for label in ("Modello GPU", "GPU model", "Modèle GPU")), provider_text[:2500]
-        assert any(label in provider_text for label in ("Modello già scelto", "Model already selected", "Modèle déjà choisi")), provider_text[:2500]
-        print(f"e2e model provider OK: {model_name} -> Vast.ai")
+            destination = wait.until(lambda d: _first_visible(d, destination_xpath))
+            assert destination is not None, (expected_label, d.find_element(By.TAG_NAME, "body").text[:1500])
+            destination.click()
+            wait.until(lambda d: model_name in d.find_element(By.TAG_NAME, "body").text)
+            body = driver.find_element(By.TAG_NAME, "body").text
+            if expected_label == "Locale":
+                assert any(label.casefold() in body.casefold() for label in ("Porta locale", "Local port", "Port locale")), body[:2500]
+            else:
+                assert expected_label.casefold() in body.casefold(), (expected_label, body[:2500])
+                body_folded = body.casefold()
+                assert any(label.casefold() in body_folded for label in ("Modello già scelto", "Modello da deployare", "Model already selected", "Model to deploy", "Modèle déjà choisi", "Modèle à déployer")), body[:2500]
+            checked.append(expected_label)
+        print(f"e2e model provider OK: {model_name} -> {', '.join(checked)}")
         return 0
     finally:
         try:
