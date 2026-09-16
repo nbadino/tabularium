@@ -93,9 +93,9 @@ export default function PlaygroundPage() {
       {!inference.enabled && (
         <div className="mb-3 flex items-center justify-between border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-3 py-2 text-[12px] text-[color:var(--color-ink-2)]">
           <span>{t('cloud.card.inferenceDisabledNotice')}</span>
-          {/* Un solo posto configura la GPU: la card Inferenza in Impostazioni. */}
-          <Link to="/impostazioni" className="btn btn-sm">
-            {t('cloud.card.inferenceConfigure')}
+          {/* Modello e destinazione si scelgono nello stesso flusso, dalla pagina Modelli. */}
+          <Link to="/modelli" className="btn btn-sm">
+            {inference.model ? t('recognition.changeModel') : t('recognition.chooseModel')}
           </Link>
         </div>
       )}
