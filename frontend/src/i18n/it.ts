@@ -875,8 +875,8 @@ export const it = {
     checksBalanced: 'Somme: tornano tutte ({n}).',
     checksSummary:
       'Somme: {passed} su {total} tornano · {failed} no — confronta con l’immagine le celle evidenziate.',
-    checkCellTitle: 'Somma {sum} ≠ totale {total}',
-    checkCellUnreadable: 'Non si legge come numero',
+    checkSumErrorColumn: 'Summation Error in column ({total}) noeq column {parts}',
+    checkSumErrorRow: 'Summation Error in row ({total}) noeq row {parts}',
     loadFailed: 'Griglia non caricata dal server.',
     saveFailed: 'Salvataggio non riuscito.',
     saveFailedWith:

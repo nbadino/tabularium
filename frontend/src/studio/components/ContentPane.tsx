@@ -41,7 +41,7 @@ import { apiGet, apiPost } from '../../lib/api'
 import { Modal, Module, WarnNotice } from '../../app/ui'
 import { IconDown, IconSave, IconTrash, IconUp } from '../../app/icons'
 import { useI18n } from '../../i18n'
-import type { LabelDef, TableChecksOut } from '../../lib/types'
+import type { LabelDef, TableCheck, TableChecksOut } from '../../lib/types'
 import type { DisplayBlock, LivePrefillOutput, PrefillDraft } from '../types'
 import JspreadsheetSheet from './JspreadsheetSheet'
 import TableGridOverlay from './TableGridOverlay'
@@ -54,6 +54,20 @@ import ConventionsChecklist from './ConventionsChecklist'
  *  importa in cima. Si carica quando si apre la tabella, che è l'unico momento
  *  in cui serve. */
 const UniverSheet = lazy(() => import('./UniverSheet'))
+
+/** «Summation Error in column (4) noeq column (2) + (3)»: posizioni contate
+ *  da 1 come nel foglio (la colonna A è la 1). Una somma lungo una riga si
+ *  dice per colonne, una lungo una colonna per righe; oltre cinque addendi si
+ *  mostrano i primi due e l'ultimo. */
+function sumErrorMessage(check: TableCheck, t: (key: string, vars?: Record<string, string | number>) => string) {
+  const along = check.kind === 'row' ? 1 : 0
+  const at = check.cells.map((cell) => `(${cell[along] + 1})`)
+  const parts = at.length > 5 ? [at[0], at[1], '…', at[at.length - 1]].join(' + ') : at.join(' + ')
+  return t(check.kind === 'row' ? 'table.checkSumErrorColumn' : 'table.checkSumErrorRow', {
+    total: check.total[along] + 1,
+    parts,
+  })
+}
 
 /** Le classi che portano testo da trascrivere. Le altre (Picture, Column)
  *  entrano solo nel layout: la riga lo dichiara invece di fingere un editor. */
@@ -389,9 +403,7 @@ function TableWorkspace({
             : t('table.checksBalanced', { n: checks.passed })}
           {activeProblems.map((k, i) => (
             <span key={i} className="mono ml-2 text-[color:var(--color-ink)]">
-              {k.sum === null
-                ? t('table.checkCellUnreadable')
-                : t('table.checkCellTitle', { sum: k.sum, total: k.total_value ?? '' })}
+              {sumErrorMessage(k, t)}
             </span>
           ))}
         </p>

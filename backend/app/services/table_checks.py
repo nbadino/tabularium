@@ -292,7 +292,7 @@ def check_grid(grid: dict) -> dict:
             suspects |= _culprits(m, c, vouched)
     return {
         "checks": [
-            {"cells": c["cells"], "total": c["total"], "ok": c["ok"],
+            {"kind": c["kind"], "cells": c["cells"], "total": c["total"], "ok": c["ok"],
              "sum": _fmt(c["sum"]), "total_value": _fmt(c["total_value"])}
             for c in checks
         ],

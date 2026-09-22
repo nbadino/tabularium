@@ -330,6 +330,9 @@ class TableGridOut(BaseModel):
 
 
 class TableCheck(BaseModel):
+    # `row`: addendi e totale sulla stessa riga (Merchandise + Treasure = Total);
+    # `col`: sulla stessa colonna (voci che sommano alla riga «Total»).
+    kind: str
     cells: list[list[int]]
     total: list[int]
     ok: bool

@@ -14,8 +14,18 @@ import '@testing-library/jest-dom/vitest'
 // cablaggio (scheda → vista di lavoro → confini → salvataggio); che il foglio
 // si veda davvero lo prova il browser, non questo test.
 vi.mock('./UniverSheet', () => ({
-  default: ({ suspects }: { suspects?: [number, number][] }) => (
-    <div data-testid="univer-sheet" data-suspects={JSON.stringify(suspects ?? [])} />
+  default: ({
+    suspects,
+    onSelectionChange,
+  }: {
+    suspects?: [number, number][]
+    onSelectionChange?: (s: { startRow: number; startColumn: number; endRow: number; endColumn: number }) => void
+  }) => (
+    <div data-testid="univer-sheet" data-suspects={JSON.stringify(suspects ?? [])}>
+      <button type="button" onClick={() => onSelectionChange?.({ startRow: 2, startColumn: 3, endRow: 2, endColumn: 3 })}>
+        seleziona D3
+      </button>
+    </div>
   ),
 }))
 
@@ -129,8 +139,8 @@ describe('ContentPane', () => {
   it('vista di lavoro: le somme che non tornano arrivano al foglio e lo dice', async () => {
     const checks = {
       checks: [
-        { cells: [[1, 1], [1, 2]], total: [1, 3], ok: true, sum: '35,392', total_value: '35,392' },
-        { cells: [[2, 1], [2, 2]], total: [2, 3], ok: false, sum: '258,403', total_value: '258,493' },
+        { kind: 'row', cells: [[1, 1], [1, 2]], total: [1, 3], ok: true, sum: '35,392', total_value: '35,392' },
+        { kind: 'row', cells: [[2, 1], [2, 2]], total: [2, 3], ok: false, sum: '258,403', total_value: '258,493' },
       ],
       passed: 1,
       failed: 1,
@@ -158,6 +168,9 @@ describe('ContentPane', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Apri la tabella' }))
     await waitFor(() => expect(screen.getByText(/Somme: 1 su 2 tornano · 1 no/)).toBeTruthy())
     expect(screen.getByTestId('univer-sheet')).toHaveAttribute('data-suspects', '[[2,3]]')
+    // Selezionata la cella, la riga dice quale somma non torna.
+    await userEvent.click(screen.getByRole('button', { name: 'seleziona D3' }))
+    expect(screen.getByText('Summation Error in column (4) noeq column (2) + (3)')).toBeTruthy()
   })
 
   it('blocco non ancora salvato: il ritaglio lo dice, non scompare', () => {

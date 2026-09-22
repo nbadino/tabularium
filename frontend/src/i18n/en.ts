@@ -874,8 +874,8 @@ export const en: Dict = {
     checksBalanced: 'Sums: all {n} add up.',
     checksSummary:
       'Sums: {passed} of {total} add up · {failed} don’t — check the highlighted cells against the image.',
-    checkCellTitle: 'Sum {sum} ≠ total {total}',
-    checkCellUnreadable: 'Not readable as a number',
+    checkSumErrorColumn: 'Summation Error in column ({total}) noeq column {parts}',
+    checkSumErrorRow: 'Summation Error in row ({total}) noeq row {parts}',
     loadFailed: 'Grid could not be loaded from the server.',
     saveFailed: 'Save failed.',
     saveFailedWith:

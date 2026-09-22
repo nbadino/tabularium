@@ -295,6 +295,8 @@ export interface TableGridOut {
 
 /** Una somma della tabella rifatta sui valori letti (backend `table_checks`). */
 export interface TableCheck {
+  /** `row`: la somma corre lungo una riga; `col`: lungo una colonna. */
+  kind: 'row' | 'col'
   cells: [number, number][]
   total: [number, number]
   ok: boolean
