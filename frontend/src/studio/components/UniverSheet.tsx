@@ -38,13 +38,28 @@ import type { TableGrid } from '../../lib/types'
 import { gridToUniver, univerGridSignature, univerToGrid } from '../../lib/univerGrid'
 import { useI18n } from '../../i18n'
 
-/** I comandi nostri: ognuno apre o esegue un'operazione di colonna.
+/** I comandi nostri: ognuno esegue un'operazione sulla selezione.
  *
  *  Le voci di menù di Univer invocano un comando, non una callback: è il loro
- *  modo di far passare ogni azione dalla stessa catena (e quindi dalla storia
- *  di undo). Un comando per operazione, invece di uno con un parametro: la voce
- *  dice cosa fa, e la catena dei comandi resta leggibile. */
-export type ColumnOp = 'split' | 'join' | 'normalize' | 'upper' | 'lower' | 'title' | 'fill'
+ *  modo di far passare ogni azione dalla stessa catena. Un comando per
+ *  operazione, invece di uno con un parametro: la voce dice cosa fa, e la
+ *  catena dei comandi resta leggibile.
+ *
+ *  Anche «unisci» e «separa la cella» sono nostri. I comandi di merge di Univer
+ *  esistono, ma pretendono i loro parametri e invocati da una voce di menù
+ *  sollevano `Cannot read properties of undefined (reading 'some')`: provato.
+ *  E la fusione la decidiamo noi comunque — rifiutiamo i casi ambigui invece di
+ *  sceglierli, e il testo riscritto torna non verificato. */
+export type ColumnOp =
+  | 'split'
+  | 'join'
+  | 'normalize'
+  | 'upper'
+  | 'lower'
+  | 'title'
+  | 'fill'
+  | 'merge'
+  | 'unmerge'
 
 const COLUMN_COMMANDS: { op: ColumnOp; id: string; title: string; order: number }[] = [
   { op: 'split', id: 'tabularium.command.split-column', title: 'tabularium.splitColumn', order: 200 },
@@ -54,6 +69,8 @@ const COLUMN_COMMANDS: { op: ColumnOp; id: string; title: string; order: number 
   { op: 'lower', id: 'tabularium.command.case-lower', title: 'tabularium.caseLower', order: 204 },
   { op: 'title', id: 'tabularium.command.case-title', title: 'tabularium.caseTitle', order: 205 },
   { op: 'fill', id: 'tabularium.command.fill-down', title: 'tabularium.fillDown', order: 206 },
+  { op: 'merge', id: 'tabularium.command.merge-cells', title: 'tabularium.merge', order: 207 },
+  { op: 'unmerge', id: 'tabularium.command.unmerge-cell', title: 'tabularium.unmerge', order: 208 },
 ]
 
 /** Le etichette che Univer disegna nel suo menù: si registrano nella sua
@@ -104,13 +121,22 @@ function univerLanguage(locale: string) {
   return { type: LocaleType.IT_IT, bundle: UniverItIT, labels: LABELS_IT }
 }
 
+/** L'intervallo scelto nel foglio: serve intero a unire, la sola prima colonna
+ *  alle operazioni di colonna. */
+export interface SheetSelection {
+  startRow: number
+  startColumn: number
+  endRow: number
+  endColumn: number
+}
+
 interface UniverSheetProps {
   /** Il modello di partenza: si carica una volta, poi comanda Univer. */
   grid: TableGrid
   /** Chiamata a ogni cambiamento reale (celle, merge, dimensioni). */
   onGridChange: (grid: TableGrid) => void
   /** Invocata da una voce di operazione di colonna, con la selezione corrente. */
-  onColumnOp: (op: ColumnOp, column: number, from: number, to: number) => void
+  onColumnOp: (op: ColumnOp, selection: SheetSelection) => void
 }
 
 export default function UniverSheet({ grid, onGridChange, onColumnOp }: UniverSheetProps) {
@@ -175,19 +201,24 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp }: UniverSh
         const injector = univer.__getInjector()
         const commands = injector.get(ICommandService)
 
-        // La colonna e le righe scelte si leggono al momento del comando: il
-        // menù si apre su una selezione che cambia.
+        // La selezione si legge al momento del comando: il menù si apre su una
+        // scelta che cambia, e un intervallo serve intero (per unire) o solo la
+        // sua prima colonna (per le operazioni di colonna).
         const selection = () => {
           const range = api.getActiveSheet()?.worksheet.getSelection()?.getActiveRange()?.getRange()
-          return { column: range?.startColumn ?? 0, from: range?.startRow ?? 0, to: range?.endRow ?? 0 }
+          return {
+            startRow: range?.startRow ?? 0,
+            startColumn: range?.startColumn ?? 0,
+            endRow: range?.endRow ?? 0,
+            endColumn: range?.endColumn ?? 0,
+          }
         }
         for (const entry of COLUMN_COMMANDS) {
           commands.registerCommand({
             id: entry.id,
             type: CommandType.COMMAND,
             handler: () => {
-              const { column, from, to } = selection()
-              opRef.current(entry.op, column, from, to)
+              opRef.current(entry.op, selection())
               return true
             },
           })
@@ -199,14 +230,10 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp }: UniverSh
             menuItemFactory: () => ({ id: key, type: MenuItemType.BUTTON, title, commandId }),
           },
         })
-        const group = {
-          ...COLUMN_COMMANDS.reduce(
-            (acc, item) => ({ ...acc, ...entry(item.id, item.title, item.id, item.order) }),
-            {},
-          ),
-          ...entry('tabularium-merge-cell', 'tabularium.merge', 'sheet.command.add-worksheet-merge', 300),
-          ...entry('tabularium-unmerge-cell', 'tabularium.unmerge', 'sheet.command.remove-worksheet-merge', 301),
-        }
+        const group = COLUMN_COMMANDS.reduce(
+          (acc, item) => ({ ...acc, ...entry(item.id, item.title, item.id, item.order) }),
+          {},
+        )
         injector.get(IMenuManagerService).mergeMenu({
           [MenuManagerPosition.CONTEXT_MENU]: {
             // Sia sul corpo del foglio sia sull'intestazione di colonna: il
@@ -227,7 +254,13 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp }: UniverSh
       cancelled = true
       cancelAnimationFrame(frame)
       unsubscribe?.dispose?.()
-      univer?.dispose()
+      // Univer monta una **sua** radice React dentro il contenitore: chiuderla
+      // mentre React sta già renderizzando fa lamentare React («Attempted to
+      // synchronously unmount a root while React was already rendering»), e
+      // succede a ogni rimontaggio — cioè a ogni colonna aggiunta. Un tick dopo
+      // siamo fuori dal render e la radice si chiude da sola.
+      const instance = univer
+      if (instance) setTimeout(() => instance.dispose(), 0)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

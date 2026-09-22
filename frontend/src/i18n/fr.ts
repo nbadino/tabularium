@@ -849,6 +849,8 @@ export const fr: Dict = {
     caseTitle: 'Initiale majuscule',
     fillDown: 'Propager la valeur vers le bas',
     columnOpDone: '{n} cellules mises à jour.',
+    mergeNothing: 'Il faut plus d’une cellule : sélectionnez l’intervalle à fusionner.',
+    mergeWouldLose: 'La fusion ne garde que le texte de la cellule en haut à gauche : les autres perdraient le leur. Videz-les, ou utilisez « Fusionner avec la colonne à droite », qui les garde tous.',
     columnOpRefused: 'Impossible sur cette colonne : une cellule fusionnée gêne.',
     workspaceTitle: 'Tableau — espace de travail',
     workspaceSummary: '{rows} lignes × {cols} colonnes',

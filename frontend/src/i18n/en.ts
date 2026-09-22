@@ -849,6 +849,8 @@ export const en: Dict = {
     caseTitle: 'Capitalize',
     fillDown: 'Fill the value down',
     columnOpDone: '{n} cells updated.',
+    mergeNothing: 'More than one cell is needed: select the range to merge.',
+    mergeWouldLose: 'Merging keeps only the text of the top-left cell: the others would lose theirs. Empty them, or use “Merge with the column to the right”, which keeps them all.',
     columnOpRefused: 'Not possible on this column: a merged cell is in the way.',
     workspaceTitle: 'Table — workspace',
     workspaceSummary: '{rows} rows × {cols} columns',

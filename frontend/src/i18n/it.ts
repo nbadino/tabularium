@@ -850,6 +850,8 @@ export const it = {
     caseTitle: 'Iniziale maiuscola',
     fillDown: 'Propaga il valore verso il basso',
     columnOpDone: '{n} celle aggiornate.',
+    mergeNothing: 'Serve più di una cella: seleziona l’intervallo da unire.',
+    mergeWouldLose: 'L’unione tiene solo il testo della cella in alto a sinistra: le altre lo perderebbero. Svuotale, oppure usa «Unisci con la colonna a destra», che i testi li tiene tutti.',
     columnOpRefused: 'Non si può fare su questa colonna: c’è una cella unita di mezzo.',
     workspaceTitle: 'Tabella — vista di lavoro',
     workspaceSummary: '{rows} righe × {cols} colonne',

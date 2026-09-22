@@ -7,6 +7,7 @@ import {
   fillDown,
   insertTrack,
   joinColumns,
+  mergeKeepsEveryText,
   mergeRange,
   normalizeColumn,
   splitColumn,
@@ -460,5 +461,37 @@ describe('le altre operazioni di colonna', () => {
     // La riga 1 è dentro una cella unita verticale: non la si riscrive.
     expect(at(out, 1, 0)?.text).toBe('Aagtekerk')
     expect(out.cells.find((c) => c.r === 1 && c.c === 0)?.rowspan).toBe(2)
+  })
+})
+
+describe('unire celle senza perdere testo', () => {
+  const g = (): TableGrid => {
+    const base = emptyGrid(3, 3)
+    const texts = [
+      ['Nave', '', ''],
+      ['Doris', '.. (Br)', '1'],
+      ['Aagtekerk', '', '2'],
+    ]
+    return { ...base, cells: base.cells.map((c) => ({ ...c, text: texts[c.r][c.c] })) }
+  }
+
+  it('passa quando l unico testo è quello che sopravvive', () => {
+    expect(mergeKeepsEveryText(g(), 0, 0, 0, 1)).toBe(true)
+    expect(mergeKeepsEveryText(g(), 2, 1, 2, 2)).toBe(false)
+  })
+
+  it('rifiuta quando il testo sta in un altra cella dell intervallo', () => {
+    // Riga 1: due celle con testo.
+    expect(mergeKeepsEveryText(g(), 1, 1, 1, 2)).toBe(false)
+    // Riga 2: il testo è nella cella accanto all'ancora, che è vuota.
+    expect(mergeKeepsEveryText(g(), 2, 1, 2, 2)).toBe(false)
+    // In verticale: l'ancora è piena, ma sotto c'è un altro valore.
+    expect(mergeKeepsEveryText(g(), 1, 0, 2, 0)).toBe(false)
+    // E in verticale quando sotto non c'è niente, unire è sicuro.
+    expect(mergeKeepsEveryText(g(), 1, 1, 2, 1)).toBe(true)
+  })
+
+  it('un intervallo di sole celle vuote passa', () => {
+    expect(mergeKeepsEveryText(g(), 0, 1, 0, 2)).toBe(true)
   })
 })

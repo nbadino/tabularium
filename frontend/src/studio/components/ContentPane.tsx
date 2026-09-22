@@ -27,11 +27,14 @@ import {
   fillDown,
   insertBoundary,
   joinColumns,
+  mergeKeepsEveryText,
+  mergeRange,
   normalizeColumn,
+  splitCell,
   transformColumnCase,
 } from '../../lib/grid'
 import type { Axis } from '../../lib/grid'
-import type { ColumnOp } from './UniverSheet'
+import type { ColumnOp, SheetSelection } from './UniverSheet'
 
 import { univerGridSignature } from '../../lib/univerGrid'
 import { apiGet } from '../../lib/api'
@@ -260,13 +263,60 @@ function TableWorkspace({
   /** Le operazioni di colonna. Quelle che non hanno niente da chiedere si
    *  applicano subito; la separazione passa dal dialogo, che serve a scegliere
    *  il separatore e a vedere l'effetto **prima** di applicarlo. */
-  const runColumnOp = (op: ColumnOp, column: number, from: number, to: number) => {
+  const runColumnOp = (op: ColumnOp, selection: SheetSelection) => {
     const current = gridRef.current
     if (!current) return
+    const { startRow: from, startColumn: column, endRow: to, endColumn } = selection
+
     if (op === 'split') {
       setSplitAt(column)
       return
     }
+
+    /** Riscrivere il modello dicendo quante celle sono cambiate davvero: su una
+     *  colonna di cinquanta righe è l'unico riscontro che si ha. */
+    const commit = (before: TableGrid, next: TableGrid) => {
+      const changed = next.cells.filter((cell) => {
+        const old = before.cells.find((c) => c.r === cell.r && c.c === cell.c)
+        return old ? old.text !== cell.text : false
+      }).length
+      setNotice(t('table.columnOpDone', { n: changed }))
+      applyModel(next)
+    }
+
+    if (op === 'merge') {
+      if (from === to && column === endColumn) {
+        setNotice(t('table.mergeNothing'))
+        return
+      }
+      // Una fusione tiene il testo della cella in alto a sinistra e **butta**
+      // quello di tutte le altre. Su un registro questo significa perdere un
+      // valore restando per giunta `verified`: si rifiuta e si dice cosa fare,
+      // invece di scegliere. Il caso normale — un'intestazione sopra celle
+      // vuote — passa.
+      if (!mergeKeepsEveryText(current, from, column, to, endColumn)) {
+        setNotice(t('table.mergeWouldLose'))
+        return
+      }
+      const merged = mergeRange(current, from, column, to, endColumn)
+      if (!merged) {
+        setNotice(t('table.columnOpRefused'))
+        return
+      }
+      commit(current, merged)
+      return
+    }
+
+    if (op === 'unmerge') {
+      const split = splitCell(current, from, column)
+      if (!split) {
+        setNotice(t('table.notMerged'))
+        return
+      }
+      commit(current, split)
+      return
+    }
+
     const before = current
     const next =
       op === 'join'
@@ -283,14 +333,7 @@ function TableWorkspace({
       setNotice(t('table.columnOpRefused'))
       return
     }
-    // Quante celle sono cambiate davvero: dirlo è più onesto che dire «fatto»,
-    // e su una colonna di cinquanta righe è l'unico riscontro che si ha.
-    const changed = next.cells.filter((cell) => {
-      const old = before.cells.find((c) => c.r === cell.r && c.c === cell.c)
-      return old ? old.text !== cell.text : false
-    }).length
-    setNotice(t('table.columnOpDone', { n: changed }))
-    applyModel(next)
+    commit(before, next)
   }
 
   if (!grid) {

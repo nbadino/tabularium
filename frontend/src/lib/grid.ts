@@ -630,6 +630,35 @@ function withText(cell: TableCell, text: string): TableCell {
   return { ...cell, text, source: 'manual' as const, verified: false }
 }
 
+/**
+ * Vero quando unire quell'intervallo non perde niente.
+ *
+ * `mergeRange` tiene il testo della cella in alto a sinistra e scarta quello
+ * delle altre. Su un registro questo è quasi sempre un valore perso — e per
+ * giunta la cella resterebbe `verified` — quindi la fusione si rifiuta invece
+ * di sceglierlo per l'utente. Il caso normale passa: un'intestazione sopra
+ * celle vuote, che è il motivo per cui si unisce.
+ */
+export function mergeKeepsEveryText(
+  grid: TableGrid,
+  r1: number,
+  c1: number,
+  r2: number,
+  c2: number,
+): boolean {
+  const minR = Math.min(r1, r2)
+  const maxR = Math.max(r1, r2)
+  const minC = Math.min(c1, c2)
+  const maxC = Math.max(c1, c2)
+  for (const cell of grid.cells) {
+    if (cell.r < minR || cell.r > maxR || cell.c < minC || cell.c > maxC) continue
+    // La cella in alto a sinistra è quella che sopravvive: il suo testo resta.
+    if (cell.r === minR && cell.c === minC) continue
+    if ((cell.text ?? '').trim() !== '') return false
+  }
+  return true
+}
+
 /** Le celle 1x1 di una colonna, con la loro riga. Salta le posizioni coperte
  *  da una cella unita: lì il testo è di un'altra cella e non si tocca. */
 function columnCells(grid: TableGrid, at: number): { row: number; cell: TableCell }[] {
