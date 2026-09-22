@@ -619,18 +619,9 @@
   .load-rail > i {
     display: block;
     height: 100%;
-    width: 40%;
+    width: 35%;
     background: var(--color-sig);
-    animation: load-rail 1300ms cubic-bezier(0.16, 1, 0.3, 1) infinite;
-  }
-
-  @keyframes load-rail {
-    from {
-      transform: translateX(-100%);
-    }
-    to {
-      transform: translateX(250%);
-    }
+    animation: prog-idle 1300ms cubic-bezier(0.16, 1, 0.3, 1) infinite;
   }
 
   /* Lo scheletro di una griglia in arrivo: un velo che passa sulle celle.

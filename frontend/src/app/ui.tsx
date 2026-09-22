@@ -278,9 +278,9 @@ export function Progress({
  * (e leggibile da uno screen reader) e sotto corre il filo della barra
  * indeterminata. Non promette una percentuale che non conosciamo.
  */
-export function Loading({ label, className = '' }: { label: string; className?: string }) {
+export function Loading({ label }: { label: string }) {
   return (
-    <span className={`inline-flex flex-col gap-1 ${className}`}>
+    <span className="inline-flex flex-col gap-1">
       <span className="text-[12px] text-[color:var(--color-ink-2)]">{label}</span>
       <span role="status" aria-label={label} className="load-rail">
         <i />
@@ -294,13 +294,13 @@ export function Loading({ label, className = '' }: { label: string; className?: 
  * invece di una frase sola e poi un salto di layout. `label` resta per chi
  * legge con uno screen reader, che dallo scheletro non ricava nulla.
  */
-export function LoadingGrid({ label, rows = 6, cols = 4 }: { label: string; rows?: number; cols?: number }) {
+export function LoadingGrid({ label, rows = 6 }: { label: string; rows?: number }) {
+  const cols = 4
   return (
     <div
       role="status"
       aria-label={label}
-      className="grid gap-px border border-[color:var(--color-rule)] bg-[color:var(--color-rule)]"
-      style={{ gridTemplateColumns: `2fr ${'1fr '.repeat(Math.max(1, cols - 1)).trim()}` }}
+      className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-px border border-[color:var(--color-rule)] bg-[color:var(--color-rule)]"
     >
       {Array.from({ length: rows * cols }, (_, i) => (
         <span

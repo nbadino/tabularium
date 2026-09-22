@@ -16,9 +16,9 @@ describe('Loading', () => {
   })
 
   it('lo scheletro ha la forma della griglia e resta annunciato', () => {
-    const { container } = render(<LoadingGrid label="Loading grid…" rows={3} cols={4} />)
+    const { container } = render(<LoadingGrid label="Loading grid…" rows={3} />)
     expect(screen.getByRole('status', { name: 'Loading grid…' })).toBeTruthy()
-    expect(container.querySelectorAll('.load-cell')).toHaveLength(12)
+    expect(container.querySelectorAll('.load-cell')).toHaveLength(12) // 3 righe × 4 colonne
     // Le colonne partono sfalsate: il velo attraversa la riga, non lampeggia.
     const delays = [...container.querySelectorAll('.load-cell')].map(
       (cell) => (cell as HTMLElement).style.getPropertyValue('--load-delay'),
