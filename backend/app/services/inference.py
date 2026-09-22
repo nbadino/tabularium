@@ -21,7 +21,7 @@ import requests
 from PIL import Image
 
 from .. import config
-from . import otsl
+from . import otsl, table_headers
 from .model_adapters import ModelAdapter, MonkeyOCRv2ParsingAdapter, get_adapter
 
 # Fallback usati solo se l'adapter attivo non implementa ancora il task
@@ -851,12 +851,14 @@ class VllmClient:
                     part for part in [last.get("text", "").strip(), *overflow] if part
                 )
 
-        return {
+        # Sulla griglia già ricucita, non sulle singole bande: l'intestazione
+        # sta solo nella prima e le colonne dei dati si contano su tutte.
+        return table_headers.repair_flat_header({
             "rows": len(rows),
             "cols": cols,
             "cells": sorted(cells, key=lambda c: (c["r"], c["c"])),
             "phantom_cols": [],
-        }
+        })
 
     @staticmethod
     def _band_boxes(

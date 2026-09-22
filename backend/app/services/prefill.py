@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from fastapi import HTTPException
 
 from ..db import connect
-from . import labeling, ocr as ocrmod, otsl, table_detect
+from . import labeling, ocr as ocrmod, otsl, table_detect, table_headers
 from . import paddle_official
 from . import pages as pagesvc
 from .i18n import msg
@@ -598,7 +598,7 @@ def model_prelabel_events(
                                 if "<table" in raw_content.lower()
                                 else raw_content
                             )
-                            candidate = otsl.otsl_to_grid(candidate_content)
+                            candidate = table_headers.repair_flat_header(otsl.otsl_to_grid(candidate_content))
                             if candidate.get("rows") and candidate.get("cols"):
                                 grid = candidate
                                 used_end2end_content = True
