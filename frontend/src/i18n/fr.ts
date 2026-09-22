@@ -871,6 +871,11 @@ export const fr: Dict = {
     otslNote: 'OTSL généré — le format que reçoit le training',
     sheetHint:
       'Cliquez sur une cellule et tapez. Entrée et Tab descendent d’une ligne, les flèches se déplacent entre les cellules ; l’enregistrement est automatique.',
+    checksBalanced: 'Sommes : les {n} sont toutes justes.',
+    checksSummary:
+      'Sommes : {passed} sur {total} justes · {failed} fausses — vérifiez sur l’image les cellules surlignées.',
+    checkCellTitle: 'Somme {sum} ≠ total {total}',
+    checkCellUnreadable: 'Illisible comme nombre',
     loadFailed: 'La grille n’a pas pu être chargée depuis le serveur.',
     saveFailed: 'Échec de l’enregistrement.',
     saveFailedWith:

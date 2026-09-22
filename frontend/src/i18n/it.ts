@@ -872,6 +872,11 @@ export const it = {
     otslNote: 'OTSL generato — il formato che il training riceve',
     sheetHint:
       'Clicca una cella e scrivi. Invio e Tab scendono di riga, le frecce si muovono fra le celle; il salvataggio è automatico.',
+    checksBalanced: 'Somme: tornano tutte ({n}).',
+    checksSummary:
+      'Somme: {passed} su {total} tornano · {failed} no — confronta con l’immagine le celle evidenziate.',
+    checkCellTitle: 'Somma {sum} ≠ totale {total}',
+    checkCellUnreadable: 'Non si legge come numero',
     loadFailed: 'Griglia non caricata dal server.',
     saveFailed: 'Salvataggio non riuscito.',
     saveFailedWith:

@@ -293,6 +293,24 @@ export interface TableGridOut {
   grid: TableGrid | null
 }
 
+/** Una somma della tabella rifatta sui valori letti (backend `table_checks`). */
+export interface TableCheck {
+  cells: [number, number][]
+  total: [number, number]
+  ok: boolean
+  /** Somma degli addendi e totale letto, formattati; null se illeggibili. */
+  sum: string | null
+  total_value: string | null
+}
+
+export interface TableChecksOut {
+  checks: TableCheck[]
+  passed: number
+  failed: number
+  /** Le celle da guardare per prime: stanno in una somma che non torna. */
+  suspects: [number, number][]
+}
+
 export interface TableSaveOut {
   grid: TableGrid
   otsl: string

@@ -329,6 +329,22 @@ class TableGridOut(BaseModel):
     grid: TableGrid | None = None
 
 
+class TableCheck(BaseModel):
+    cells: list[list[int]]
+    total: list[int]
+    ok: bool
+    sum: str | None = None
+    total_value: str | None = None
+
+
+class TableChecksOut(BaseModel):
+    """Le somme della tabella rifatte sui valori letti (`table_checks`)."""
+    checks: list[TableCheck]
+    passed: int
+    failed: int
+    suspects: list[list[int]]
+
+
 class TableSaveOut(BaseModel):
     grid: TableGrid
     otsl: str

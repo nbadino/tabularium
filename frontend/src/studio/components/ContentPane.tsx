@@ -37,11 +37,11 @@ import type { Axis } from '../../lib/grid'
 import type { ColumnOp, SheetSelection } from './UniverSheet'
 
 import { univerGridSignature } from '../../lib/univerGrid'
-import { apiGet } from '../../lib/api'
+import { apiGet, apiPost } from '../../lib/api'
 import { Modal, Module, WarnNotice } from '../../app/ui'
 import { IconDown, IconSave, IconTrash, IconUp } from '../../app/icons'
 import { useI18n } from '../../i18n'
-import type { LabelDef } from '../../lib/types'
+import type { LabelDef, TableChecksOut } from '../../lib/types'
 import type { DisplayBlock, LivePrefillOutput, PrefillDraft } from '../types'
 import JspreadsheetSheet from './JspreadsheetSheet'
 import TableGridOverlay from './TableGridOverlay'
@@ -162,6 +162,27 @@ function TableWorkspace({
   const [undoSplit, setUndoSplit] = useState<TableGrid | null>(null)
   const gridRef = useRef<TableGrid | null>(null)
   const savedRef = useRef('')
+
+  // Controlli aritmetici: il server rifà le somme sui valori correnti poco
+  // dopo ogni modifica e indica le celle sospette. Un errore di rete toglie
+  // solo l'aiuto, non blocca il foglio.
+  const [checks, setChecks] = useState<TableChecksOut | null>(null)
+  const [active, setActive] = useState<{ r: number; c: number } | null>(null)
+  useEffect(() => {
+    if (!grid) return
+    let stale = false
+    const timer = setTimeout(() => {
+      apiPost<TableChecksOut>('/tables/checks', grid)
+        .then((out) => { if (!stale) setChecks(Array.isArray(out?.checks) ? out : null) })
+        .catch(() => { if (!stale) setChecks(null) })
+    }, 400)
+    return () => { stale = true; clearTimeout(timer) }
+  }, [grid])
+  const activeProblems = active
+    ? (checks?.checks ?? []).filter(
+        (k) => !k.ok && [...k.cells, k.total].some(([r, c]) => r === active.r && c === active.c),
+      )
+    : []
 
   useEffect(() => {
     setError(null)
@@ -361,6 +382,21 @@ function TableWorkspace({
         </button>
       </div>
 
+      {checks && checks.checks.length > 0 && (
+        <p className={`text-[11px] ${checks.failed > 0 ? 'text-[color:var(--color-warn)]' : 'text-[color:var(--color-ink-2)]'}`}>
+          {checks.failed > 0
+            ? t('table.checksSummary', { passed: checks.passed, total: checks.checks.length, failed: checks.failed })
+            : t('table.checksBalanced', { n: checks.passed })}
+          {activeProblems.map((k, i) => (
+            <span key={i} className="mono ml-2 text-[color:var(--color-ink)]">
+              {k.sum === null
+                ? t('table.checkCellUnreadable')
+                : t('table.checkCellTitle', { sum: k.sum, total: k.total_value ?? '' })}
+            </span>
+          ))}
+        </p>
+      )}
+
       {notice && (
         <WarnNotice title={t('table.notice')}>
           <span className="flex flex-wrap items-center gap-2">
@@ -408,6 +444,8 @@ function TableWorkspace({
                 grid={grid}
                 onGridChange={applyModel}
                 onColumnOp={runColumnOp}
+                suspects={checks?.suspects}
+                onSelectionChange={(sel) => setActive({ r: sel.startRow, c: sel.startColumn })}
               />
             </Suspense>
           ) : (

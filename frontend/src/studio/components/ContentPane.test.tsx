@@ -14,7 +14,9 @@ import '@testing-library/jest-dom/vitest'
 // cablaggio (scheda → vista di lavoro → confini → salvataggio); che il foglio
 // si veda davvero lo prova il browser, non questo test.
 vi.mock('./UniverSheet', () => ({
-  default: () => <div data-testid="univer-sheet" />,
+  default: ({ suspects }: { suspects?: [number, number][] }) => (
+    <div data-testid="univer-sheet" data-suspects={JSON.stringify(suspects ?? [])} />
+  ),
 }))
 
 import ContentPane from './ContentPane'
@@ -122,6 +124,40 @@ describe('ContentPane', () => {
     expect(screen.getByAltText(/Ritaglio della tabella/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Aggiungi colonna' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Rifiuta confine' })).toBeTruthy()
+  })
+
+  it('vista di lavoro: le somme che non tornano arrivano al foglio e lo dice', async () => {
+    const checks = {
+      checks: [
+        { cells: [[1, 1], [1, 2]], total: [1, 3], ok: true, sum: '35,392', total_value: '35,392' },
+        { cells: [[2, 1], [2, 2]], total: [2, 3], ok: false, sum: '258,403', total_value: '258,493' },
+      ],
+      passed: 1,
+      failed: 1,
+      suspects: [[2, 3]],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(String(url).includes('/tables/checks') ? checks : { grid: emptyGrid(3, 4) }),
+        }),
+      ),
+    )
+    render(
+      <ContentPane
+        blocks={[makeBlock({ label: 'Table' })]}
+        drafts={[]}
+        labels={[]}
+        selectedId={null}
+        working={null}
+        {...noop}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Apri la tabella' }))
+    await waitFor(() => expect(screen.getByText(/Somme: 1 su 2 tornano · 1 no/)).toBeTruthy())
+    expect(screen.getByTestId('univer-sheet')).toHaveAttribute('data-suspects', '[[2,3]]')
   })
 
   it('blocco non ancora salvato: il ritaglio lo dice, non scompare', () => {

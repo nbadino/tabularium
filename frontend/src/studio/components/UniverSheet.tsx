@@ -24,14 +24,16 @@ import {
   IMenuManagerService,
   MenuItemType,
   MenuManagerPosition,
+  SheetExtension,
   UniverSheetsCorePreset,
 } from '@univerjs/preset-sheets-core'
+import type { SpreadsheetSkeleton, UniverRenderingContext } from '@univerjs/preset-sheets-core'
 import { CommandType, ICommandService } from '@univerjs/core'
 import UniverItIT from '@univerjs/preset-sheets-core/locales/it-IT'
 import UniverEnUS from '@univerjs/preset-sheets-core/locales/en-US'
 import UniverFrFR from '@univerjs/preset-sheets-core/locales/fr-FR'
 import type { FUniver } from '@univerjs/core/lib/facade'
-import type { Univer } from '@univerjs/core'
+import type { IScale, Univer } from '@univerjs/core'
 import '@univerjs/preset-sheets-core/lib/index.css'
 
 import type { TableGrid } from '../../lib/types'
@@ -130,6 +132,34 @@ export interface SheetSelection {
   endColumn: number
 }
 
+/** Le celle sospette dei controlli aritmetici, dipinte **sul canvas** e non
+ *  nel documento: uno stile scritto con i comandi di Univer entrerebbe nella
+ *  sua storia (Ctrl+Z toglierebbe l'evidenziazione) e nel modello salvato.
+ *  Il livello sta sopra lo sfondo delle celle (21) e sotto il testo (45): la
+ *  cifra da controllare resta leggibile. */
+class SuspectShading extends SheetExtension {
+  override uKey = 'tabularium-suspects'
+  protected override Z_INDEX = 30
+  constructor(private cells: [number, number][]) {
+    super()
+  }
+  override draw(ctx: UniverRenderingContext, _scale: IScale, skeleton: SpreadsheetSkeleton) {
+    ctx.save()
+    ctx.fillStyle = 'rgba(232, 161, 0, 0.16)'
+    ctx.strokeStyle = '#e8a100'
+    ctx.lineWidth = 2
+    for (const [r, c] of this.cells) {
+      const cell = skeleton.getCellWithCoordByIndex(r, c, false)
+      const box = cell.isMerged || cell.isMergedMainCell ? cell.mergeInfo : cell
+      const w = box.endX - box.startX
+      const h = box.endY - box.startY
+      ctx.fillRect(box.startX, box.startY, w, h)
+      ctx.strokeRect(box.startX + 1, box.startY + 1, w - 2, h - 2)
+    }
+    ctx.restore()
+  }
+}
+
 interface UniverSheetProps {
   /** Il modello di partenza: si carica una volta, poi comanda Univer. */
   grid: TableGrid
@@ -137,9 +167,13 @@ interface UniverSheetProps {
   onGridChange: (grid: TableGrid) => void
   /** Invocata da una voce di operazione di colonna, con la selezione corrente. */
   onColumnOp: (op: ColumnOp, selection: SheetSelection) => void
+  /** Celle da evidenziare (controlli aritmetici), [riga, colonna]. */
+  suspects?: [number, number][]
+  /** La cella attiva, per dire accanto al foglio perché è evidenziata. */
+  onSelectionChange?: (selection: SheetSelection) => void
 }
 
-export default function UniverSheet({ grid, onGridChange, onColumnOp }: UniverSheetProps) {
+export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, onSelectionChange }: UniverSheetProps) {
   const { t, locale } = useI18n()
   const host = useRef<HTMLDivElement | null>(null)
   const [failed, setFailed] = useState(false)
@@ -148,12 +182,19 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp }: UniverSh
   changeRef.current = onGridChange
   const opRef = useRef(onColumnOp)
   opRef.current = onColumnOp
+  const selectRef = useRef(onSelectionChange)
+  selectRef.current = onSelectionChange
+  /** Ridipinge le celle sospette; `null` finché il foglio non è montato. */
+  const paintRef = useRef<((cells: [number, number][]) => void) | null>(null)
+  const suspectsRef = useRef(suspects ?? [])
+  suspectsRef.current = suspects ?? []
 
   useEffect(() => {
     const container = host.current
     if (!container) return
     let univer: Univer | null = null
     let unsubscribe: { dispose?: () => void } | null = null
+    let selectionListener: { dispose: () => void } | null = null
     let cancelled = false
     const language = univerLanguage(locale)
 
@@ -213,6 +254,32 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp }: UniverSh
             endColumn: range?.endColumn ?? 0,
           }
         }
+
+        // Un'estensione per volta: cambiate le sospette, si toglie la vecchia
+        // (che rende il foglio «sporco») e si registra la nuova. Appena creato
+        // il documento l'unità di rendering non esiste ancora: si riprova ai
+        // frame successivi. L'evidenziazione è un aiuto e non deve mai
+        // impedire al foglio di montarsi.
+        let shading: { dispose: () => void } | null = null
+        const paint = (cells: [number, number][], attempt = 0) => {
+          const unitId = api.getActiveWorkbook()?.getId()
+          if (!unitId || cancelled) return
+          try {
+            shading?.dispose()
+            shading = api.registerSheetMainExtension(unitId, new SuspectShading(cells))
+          } catch {
+            shading = null
+            if (attempt < 30) requestAnimationFrame(() => paint(suspectsRef.current, attempt + 1))
+          }
+        }
+        paintRef.current = (cells) => paint(cells)
+        paint(suspectsRef.current)
+
+        selectionListener = api.addEvent(api.Event.SelectionChanged, ({ selections }) => {
+          const range = selections[0]
+          if (range) selectRef.current?.(range)
+        })
+
         for (const entry of COLUMN_COMMANDS) {
           commands.registerCommand({
             id: entry.id,
@@ -252,6 +319,8 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp }: UniverSh
 
     return () => {
       cancelled = true
+      paintRef.current = null
+      selectionListener?.dispose()
       cancelAnimationFrame(frame)
       unsubscribe?.dispose?.()
       // Univer monta una **sua** radice React dentro il contenitore: chiuderla
@@ -264,6 +333,10 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp }: UniverSh
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    paintRef.current?.(suspects ?? [])
+  }, [suspects])
 
   if (failed) {
     return (

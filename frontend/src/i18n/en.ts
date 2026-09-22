@@ -871,6 +871,11 @@ export const en: Dict = {
     otslNote: 'OTSL generated — the format training receives',
     sheetHint:
       'Click a cell and type. Enter and Tab move down a row, arrows move between cells; saving is automatic.',
+    checksBalanced: 'Sums: all {n} add up.',
+    checksSummary:
+      'Sums: {passed} of {total} add up · {failed} don’t — check the highlighted cells against the image.',
+    checkCellTitle: 'Sum {sum} ≠ total {total}',
+    checkCellUnreadable: 'Not readable as a number',
     loadFailed: 'Grid could not be loaded from the server.',
     saveFailed: 'Save failed.',
     saveFailedWith:

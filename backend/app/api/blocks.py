@@ -18,13 +18,14 @@ from ..schemas import (
     TableCell,
     TableCellRecognizeOut,
     TableCellRecognizeRequest,
+    TableChecksOut,
     TableDetectOut,
     TableDetectRequest,
     TableGrid,
     TableGridOut,
     TableSaveOut,
 )
-from ..services import inference, labeling, otsl, table_detect
+from ..services import inference, labeling, otsl, table_checks, table_detect
 from ..services import blocks as blockssvc
 from ..services import audit as auditsvc
 from ..services import ocr as ocrmod
@@ -179,6 +180,17 @@ def _get_table_grid(row) -> dict | None:
     except (TypeError, ValueError):
         return None
     return grid if grid else None
+
+
+@router.post("/api/tables/checks", response_model=TableChecksOut)
+def table_checks_post(payload: TableGrid) -> TableChecksOut:
+    """Controlli aritmetici di una griglia, senza salvarla: l'editor li chiede
+    a ogni modifica, anche per una bozza non ancora sul server."""
+    return TableChecksOut.model_validate(
+        table_checks.check_grid({"rows": payload.rows, "cols": payload.cols,
+                                 "header_rows": payload.header_rows,
+                                 "cells": [c.model_dump() for c in payload.cells]})
+    )
 
 
 @router.get("/api/blocks/{block_id}/table", response_model=TableGridOut)
