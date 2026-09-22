@@ -300,9 +300,6 @@ export interface TableCheck {
   cells: [number, number][]
   total: [number, number]
   ok: boolean
-  /** Somma degli addendi e totale letto, formattati; null se illeggibili. */
-  sum: string | null
-  total_value: string | null
 }
 
 export interface TableChecksOut {

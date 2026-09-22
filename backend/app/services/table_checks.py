@@ -91,8 +91,6 @@ def row_label(m, r: int, lab: int) -> str:
                     if t and not is_nil(t) and number(t) is None and (k == lab or re.search(r"[A-Za-z]{3,}", t)))
 
 
-# -------------------------------------------------------- controlli (freeze) --
-
 _TOTAL = re.compile(r"^\s*(grand\s+)?total\b", re.I)
 _GRAND = re.compile(r"\bgrand\s+total\b", re.I)
 _LETTER_HEAD = re.compile(r"^\s*[IVX]*\.?\s*[A-J]\.\s*[—-]|^\s*[IVX]+\.\s*[—-]")
@@ -189,9 +187,7 @@ def find_checks(grid: dict) -> list[dict]:
         }
         best = None
         for name, members in options.items():
-            if len(members) < 2 and name != "totals_above":
-                continue
-            if not members:
+            if len(members) < (1 if name == "totals_above" else 2):
                 continue
             held = 0
             for k in num_cols:
@@ -226,7 +222,6 @@ def find_checks(grid: dict) -> list[dict]:
             continue  # tutto vuoto: niente da verificare
         c["ok"] = _holds(m, c)
         c["sum"] = None if None in vs else sum(vs)
-        c["total_value"] = tv
         out.append(c)
     return out
 
@@ -235,12 +230,6 @@ def _holds(m, check: dict) -> bool:
     vs = [value(m[r][k]) for r, k in check["cells"] if m[r][k] is not None]
     tv = value(m[check["total"][0]][check["total"][1]])
     return tv is not None and None not in vs and sum(vs) == tv
-
-
-def _fmt(v: Fraction | None) -> str | None:
-    if v is None:
-        return None
-    return f"{v.numerator // v.denominator:,}" + (f" {v % 1}" if v.denominator != 1 else "")
 
 
 def _one_digit(a: Fraction, b: Fraction) -> bool:
@@ -292,9 +281,7 @@ def check_grid(grid: dict) -> dict:
             suspects |= _culprits(m, c, vouched)
     return {
         "checks": [
-            {"kind": c["kind"], "cells": c["cells"], "total": c["total"], "ok": c["ok"],
-             "sum": _fmt(c["sum"]), "total_value": _fmt(c["total_value"])}
-            for c in checks
+            {"kind": c["kind"], "cells": c["cells"], "total": c["total"], "ok": c["ok"]} for c in checks
         ],
         "passed": sum(c["ok"] for c in checks),
         "failed": sum(not c["ok"] for c in checks),

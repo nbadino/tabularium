@@ -139,8 +139,8 @@ describe('ContentPane', () => {
   it('vista di lavoro: le somme che non tornano arrivano al foglio e lo dice', async () => {
     const checks = {
       checks: [
-        { kind: 'row', cells: [[1, 1], [1, 2]], total: [1, 3], ok: true, sum: '35,392', total_value: '35,392' },
-        { kind: 'row', cells: [[2, 1], [2, 2]], total: [2, 3], ok: false, sum: '258,403', total_value: '258,493' },
+        { kind: 'row', cells: [[1, 1], [1, 2]], total: [1, 3], ok: true },
+        { kind: 'row', cells: [[2, 1], [2, 2]], total: [2, 3], ok: false },
       ],
       passed: 1,
       failed: 1,

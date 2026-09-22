@@ -186,11 +186,7 @@ def _get_table_grid(row) -> dict | None:
 def table_checks_post(payload: TableGrid) -> TableChecksOut:
     """Controlli aritmetici di una griglia, senza salvarla: l'editor li chiede
     a ogni modifica, anche per una bozza non ancora sul server."""
-    return TableChecksOut.model_validate(
-        table_checks.check_grid({"rows": payload.rows, "cols": payload.cols,
-                                 "header_rows": payload.header_rows,
-                                 "cells": [c.model_dump() for c in payload.cells]})
-    )
+    return TableChecksOut.model_validate(table_checks.check_grid(payload.model_dump()))
 
 
 @router.get("/api/blocks/{block_id}/table", response_model=TableGridOut)

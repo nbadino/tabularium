@@ -336,8 +336,6 @@ class TableCheck(BaseModel):
     cells: list[list[int]]
     total: list[int]
     ok: bool
-    sum: str | None = None
-    total_value: str | None = None
 
 
 class TableChecksOut(BaseModel):

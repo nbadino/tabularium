@@ -70,4 +70,4 @@ def test_endpoint_checks_a_grid_without_saving_it():
     body = r.json()
     assert body["suspects"] == [[2, 3]]
     wrong = next(c for c in body["checks"] if not c["ok"] and c["total"] == [2, 3])
-    assert (wrong["kind"], wrong["sum"], wrong["total_value"]) == ("row", "258,403", "258,493")
+    assert (wrong["kind"], wrong["cells"]) == ("row", [[2, 1], [2, 2]])
