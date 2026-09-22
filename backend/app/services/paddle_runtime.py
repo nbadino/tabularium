@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import subprocess
 import sys
 import time
@@ -123,6 +124,16 @@ def ensure_ready() -> None:
     _ready_cache = None
     root = _dir()
     root.mkdir(parents=True, exist_ok=True)
+    # L'ambiente si crea **prima** di scrivere stato e log: `clear=True`
+    # cancella il contenuto della cartella, quindi qualunque file scritto
+    # prima viene rimosso insieme al venv precedente. Effetto osservato:
+    # durante l'installazione la UI leggeva `absent` e il log era vuoto,
+    # proprio nei minuti in cui servono.
+    try:
+        venv.EnvBuilder(with_pip=True, clear=True).create(str(root))
+    except Exception as exc:  # noqa: BLE001
+        _write_state(state="failed", error=str(exc))
+        raise RuntimeError(f"installazione PaddleOCR fallita: {exc}") from exc
     _write_state(state="installing", error=None)
     with log_path().open("ab") as log:
         log.write(b"\n== Tabularium: installazione PaddleOCR document parser ==\n")
@@ -140,13 +151,27 @@ def ensure_ready() -> None:
                     check=True, stdout=log, stderr=subprocess.STDOUT,
                 )
             else:
-                # PaddleOCR-VL requires PaddlePaddle 3.x.  The default PyPI
-                # resolver can otherwise select the old 2.6 CPU/GPU build,
-                # which fails inside PaddleX's document parser.
+                # PaddleOCR-VL richiede PaddlePaddle 3.x. Due build diverse a
+                # seconda della macchina, e non è un dettaglio di gusto:
+                # - su Linux con CUDA la build GPU dall'indice Paddle, perché
+                #   il resolver PyPI sceglierebbe la vecchia 2.6, che fallisce
+                #   dentro il document parser di PaddleX;
+                # - su Apple Silicon la build GPU non esiste affatto (nessuna
+                #   wheel macOS nell'indice CUDA): lì si prende la CPU arm64 da
+                #   PyPI. Senza questo ramo il percorso ufficiale di
+                #   PaddleOCR-VL su un Mac falliva con un errore di
+                #   installazione, e l'utente restava in un vicolo cieco.
+                if sys.platform == "darwin" and platform.machine() == "arm64":
+                    paddle_pin = [
+                        "paddlepaddle==3.3.1",
+                    ]
+                else:
+                    paddle_pin = [
+                        "paddlepaddle-gpu==3.2.0",
+                        "-i", "https://www.paddlepaddle.org.cn/packages/stable/cu118/",
+                    ]
                 subprocess.run(
-                    [str(python_bin()), "-m", "pip", "install",
-                     "paddlepaddle-gpu==3.2.0",
-                     "-i", "https://www.paddlepaddle.org.cn/packages/stable/cu118/"],
+                    [str(python_bin()), "-m", "pip", "install", *paddle_pin],
                     check=True, stdout=log, stderr=subprocess.STDOUT,
                 )
                 subprocess.run(

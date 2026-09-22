@@ -113,21 +113,31 @@ Le destinazioni globali sono cinque. Quattro portano il percorso primario — **
 Risultati, Archivio, Modelli** — e la quinta, **Annotazione**, è il banco di lavoro: ci si
 arriva quasi sempre da una pagina o da una run, ma tiene la sua linguetta perché una sessione
 lunga ci rientra di continuo, e senza una pagina scelta dice quale sceglierne. Dataset,
-training, valutazione e configurazione dei provider restano invece strumenti contestuali dentro
-queste aree: non sono percorsi globali concorrenti. Il rail scorre orizzontalmente al proprio
-interno.
+training, valutazione e playground **non sono percorsi globali concorrenti**: vivono dentro
+l'hub Modelli, che è il loro contesto — sono strumenti che lavorano sul modello — e restano
+raggiungibili come rotte profonde. Il rail non cresce a ogni strumento nuovo.
 La colonna sinistra resta libera per il **contesto** (pagine, progetti), mai per i link globali.
 
 Modello e luogo di esecuzione sono sempre visibili nello stesso indicatore globale. Cambiare da
 locale a un provider remoto non cambia il flusso operativo: selezione pagine, avanzamento,
 risultati, revisione ed export conservano componenti, stati e vocabolario.
 
-Nell'hub Modelli la destinazione decide il gesto: la libreria dichiara in testa «dove gira»
-(profilo attivo) e ogni riga offre come azione primaria il deploy su quel provider — non il
-download — quando la destinazione è remota e il modello è deployabile. «Deploya su Vast.ai» apre
-la scheda del provider con il modello già scelto: la selezione non si rifà da capo. Le azioni
-locali restano in riga, secondarie, perché la destinazione può cambiare; il modello in uso porta
-il badge «In uso ora».
+Nell'hub Modelli **la libreria è la pagina, non una modale**, e la destinazione decide il gesto:
+la testata dichiara «modello in uso» e «dove gira», la libreria elenca i modelli e ogni riga
+offre l'azione primaria della destinazione attiva — servire in locale, deployare sul provider
+remoto. La scelta del modello precede quella della destinazione: finché non c'è una
+destinazione il catalogo è neutro e le righe non installano niente. La destinazione si sceglie
+nello stesso posto, in un modulo in pagina, che **dichiara prima cosa può fare questa
+macchina**: piattaforma, memoria, runtime ospitabili. «Locale» non è un'opzione sempre vera —
+dipende dall'hardware e dal modello — e quando non lo è il modulo scrive la causa invece di
+lasciare al click il compito di scoprirla.
+
+**Dove gira il locale non è una proprietà dell'OS, è una proprietà della coppia macchina +
+modello.** Ogni riga del catalogo porta il verdetto per *questa* macchina: «in locale · MLX»,
+oppure «solo remoto» con la ragione. Su Apple Silicon girano i modelli con un port MLX e non
+gli altri, e la riga di un modello senza percorso locale **non offre il download**: scaricare
+pesi che non si potranno servire è un vicolo cieco, quindi la riga indica la destinazione
+remota. Il modello in uso porta il badge «In uso ora».
 
 Nello studio il rail destro è **una zona sola**: il contenuto della pagina. L'output del modello
 arriva in diretta in cima, i blocchi si correggono riga per riga sotto, e l'ordine di lettura si
@@ -151,11 +161,18 @@ esporta**. Le sessioni bulk appartengono al backend, sono persistite pagina per 
 continuano anche se il browser cambia schermata. Terminata la generazione, l'inferenza può
 essere disattivata: risultati e correzioni non dipendono più dalla GPU.
 
-Il vecchio percorso obbligato in sei fasi — Progetto, Scansione, Annotazione, Dataset, Training,
-Valutazione — non compare più nell'Archivio: imponeva il fine-tuning anche a chi voleva soltanto
-riconoscere ed esportare. L'Archivio è ora una rassegna operativa con tre uscite esplicite:
-aprire una pagina, gestire le sorgenti o riconoscere una selezione. Dataset, training e
-valutazione restano strumenti del Modello e delle singole attività, non tappe globali.
+Il corpus però non si lavora in una fila di tappe obbligate. L'Archivio dichiara **tre percorsi
+indipendenti** e il loro stato reale: **Riconosci** (anche da solo: registri, riconosci, correggi,
+esporti), **Annota** (la preparazione manuale, che vale di per sé in ogni percorso) e **Raffina il
+modello** (il ramo opzionale: dataset → training → valutazione, e poi di nuovo inferenza col
+modello affinato). Nessuno è obbligatorio e nessuno è «la fase corrente»: chi vuole soltanto
+riconoscere ed esportare non attraversa mai dataset, training e valutazione. Solo il percorso
+primario porta la piastra piena; gli altri sono righe con la loro azione.
+
+Le pagine di fase non ripetono la mappa: quando il prerequisito manca lo dichiarano in una riga
+sola con il collegamento che lo sblocca, altrimenti fanno il loro lavoro. Il vecchio percorso
+obbligato in sei fasi — Progetto, Scansione, Annotazione, Dataset, Training, Valutazione — non
+compare più: imponeva il fine-tuning anche a chi voleva soltanto riconoscere ed esportare.
 
 Nota di composizione: la fase corrente non usa un bordo sinistro colorato — è il tell del
 template. Il rilievo viene dalla piastra e dal fondo, cioè dalla grammatica del mondo.

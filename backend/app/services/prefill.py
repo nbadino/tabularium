@@ -311,7 +311,7 @@ def _dedupe_model_items(items: list[dict], iou_threshold: float = 0.92) -> list[
     return kept
 
 
-def _native_mode(adapter) -> str:
+def native_mode(adapter) -> str:
     if adapter.adapter_id == "paddleocr-vl":
         return "official"
     """Il percorso nativo di un adapter, sondato come le modalità prefill:
@@ -359,7 +359,7 @@ def model_prelabel_events(
     # `native` si risolve nel percorso nativo dell'adapter una volta sola.
     mm = opts.model_mode
     if mm == "native":
-        mm = _native_mode(client.adapter)
+        mm = native_mode(client.adapter)
     known = {label.name for label in labeling.DEFAULT_LABELS}
     with connect() as conn:
         for pid in page_ids:

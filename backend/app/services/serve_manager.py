@@ -38,7 +38,7 @@ from typing import Any
 
 from .. import config
 from ..db import connect
-from . import local_runtime, process_probe, vendor_repos
+from . import hardware, local_runtime, mlx_runtime, process_probe, vendor_repos
 from .model_adapters import get_adapter
 from .model_registry import (
     ensure_draft,
@@ -274,11 +274,22 @@ def get_status() -> ServeStatus:
     return ServeStatus(running=False)
 
 
+def _needs_registry_weights(adapter_id: str) -> bool:
+    """Vero quando servire richiede i pesi scaricati dal registro modelli.
+
+    Il percorso MLX no: `mlx-vlm` prende i suoi checkpoint dalla cache Hugging
+    Face alla prima richiesta. Chiedere un download che non serve bloccherebbe
+    l'unico percorso locale che esiste su un Mac.
+    """
+    adapter = get_adapter(adapter_id)
+    return hardware.pick_serve_runtime(adapter.capabilities) != hardware.RUNTIME_MLX
+
+
 def start_async(adapter_id: str, port: int = 8888, owner_id: int | None = None) -> ServeStatus:
     """Prenota l'avvio e prepara vLLM fuori dalla richiesta HTTP."""
     global _STARTING_INFO
     get_adapter(adapter_id)
-    if not is_installed(adapter_id):
+    if _needs_registry_weights(adapter_id) and not is_installed(adapter_id):
         raise ValueError(f"'{adapter_id}' non è installato: scaricalo prima di servirlo")
     with _STARTING_LOCK:
         if _STARTING_INFO:
@@ -443,7 +454,7 @@ def _is_our_serving_process(pid: str | int) -> bool:
         return False
     if str(config.MODELS_DIR) in cmdline:
         return True
-    markers = ("vllm serve", "serve.py", "vllm/vllm-openai")
+    markers = ("vllm serve", "serve.py", "vllm/vllm-openai", "mlx_vlm.server")
     return any(marker in cmdline for marker in markers)
 
 
@@ -564,15 +575,25 @@ def start(
     draft = None
 
     adapter = get_adapter(adapter_id)  # ValueError se sconosciuto
-    if not is_installed(adapter_id):
-        raise ValueError(f"'{adapter_id}' non è installato: scaricalo prima di servirlo")
-
-    model_path = str(model_weights_path(adapter_id))
+    # Su Apple Silicon vLLM non gira: il percorso locale è MLX. I pesi li
+    # scarica `mlx-vlm` dalla cache Hugging Face alla prima richiesta, quindi
+    # non passano dal registro modelli e `is_installed()` non si applica.
+    local_runtime_id = hardware.pick_serve_runtime(adapter.capabilities)
+    if local_runtime_id == hardware.RUNTIME_MLX:
+        _set_phase(adapter_id, "preparing_runtime")
+        mlx_runtime.ensure_ready()
+        model_path = adapter.capabilities.local_mlx_repo
+    else:
+        if not is_installed(adapter_id):
+            raise ValueError(f"'{adapter_id}' non è installato: scaricalo prima di servirlo")
+        model_path = str(model_weights_path(adapter_id))
     env = os.environ.copy()
     _set_phase(adapter_id, "launching")
 
     try:
-        if adapter_id == "monkeyocrv2-parsing":
+        if local_runtime_id == hardware.RUNTIME_MLX:
+            argv = mlx_runtime.serve_argv(model_path, port=port)
+        elif adapter_id == "monkeyocrv2-parsing":
             # `scripts/serve_model.sh` legge queste due env var: se l'utente non
             # le ha già impostate (uso avanzato/ambiente esistente), le
             # prepariamo da sole. `env[...]` vale solo per questo sottoprocesso,
@@ -596,11 +617,12 @@ def start(
                 if draft is not None:
                     env["TABULARIUM_MONKEY_DFLASH_DRAFT"] = str(draft)
 
-        argv = adapter.serve_command(model_path, port)
-        if argv is None:
-            raise ValueError(
-                f"adapter '{adapter_id}' non ha ancora un comando di serving implementato"
-            )
+        if local_runtime_id != hardware.RUNTIME_MLX:
+            argv = adapter.serve_command(model_path, port)
+            if argv is None:
+                raise ValueError(
+                    f"adapter '{adapter_id}' non ha ancora un comando di serving implementato"
+                )
 
         if argv[0] == "vllm" and not config.SERVE_PYTHON and not shutil.which("vllm"):
             # Serve command generico (qualunque adapter con `vllm serve`,

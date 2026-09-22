@@ -20,6 +20,7 @@ from ..services.pipeline import list_plugins
 from ..services.url_security import validate_endpoint
 from ..services import backup as backupsvc
 from ..services import compute_profiles as profilesvc
+from ..services import hardware
 from ..schemas import ComputeProfileIn, ComputeProfileOut, SecretIn, SecretOut
 
 from .. import config
@@ -195,6 +196,12 @@ def system_info() -> dict:
             "local_cuda": platform.system() == "Linux",
             "remote_gpu": True,
             "cuda_note": "WSL2" if platform.system() == "Windows" else None,
+            # Cosa può fare questa macchina in locale: piattaforma, memoria
+            # unificata o VRAM, e quali runtime di serving sono ospitabili
+            # (vLLM su CUDA, MLX su Apple Silicon). Il registro modelli usa
+            # questa fotografia per dire, modello per modello, cosa gira qui e
+            # cosa no — invece di dedurlo dall'OS in ogni punto dell'app.
+            "local_compute": hardware.summary(),
         },
     }
 

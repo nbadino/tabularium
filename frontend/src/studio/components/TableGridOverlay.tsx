@@ -211,8 +211,11 @@ export default function TableGridOverlay({
         <button type="button" className="btn btn-sm" onClick={() => setZoom(1)}>{t('table.resetZoom')}</button>
       </div>
 
+      {/* Altezza limitata: l'overlay convive con il foglio sotto di lui nel rail
+          dei contenuti, e un ritaglio alto quanto basta a schiacciarlo non
+          servirebbe a niente. Lo zoom e lo scorrimento sono suoi. */}
       <div
-        className="lighttable max-h-[52vh] min-h-0 flex-1 overflow-auto border border-[color:var(--color-rule)]"
+        className="lighttable max-h-[34vh] min-h-0 flex-1 overflow-auto border border-[color:var(--color-rule)]"
         onWheel={(e) => {
           if (!e.ctrlKey) return
           e.preventDefault()
@@ -277,6 +280,11 @@ export default function TableGridOverlay({
                     { n: index + 1 },
                   )}
                   onPointerDown={onLinePointerDown(axis, index)}
+                  // Il click non deve risalire alla superficie: lì significa
+                  // «ho cliccato il vuoto», e deselezionerebbe subito il
+                  // confine appena preso — lasciando «Rifiuta» per sempre
+                  // disabilitato.
+                  onClick={(e) => e.stopPropagation()}
                   onKeyDown={(e) => {
                     const step = e.shiftKey ? 0.01 : 0.001
                     const back = axis === 'v' ? 'ArrowLeft' : 'ArrowUp'

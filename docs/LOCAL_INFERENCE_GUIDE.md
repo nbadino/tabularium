@@ -1,16 +1,15 @@
-# Guida al Serving Locale (GPU sul tuo PC)
+# Guida al Serving Locale (sulla macchina dell'utente)
 
-Questa guida documenta come servire un modello OCR/VLM **sulla GPU locale**, con i
-parametri vLLM verificati sulla documentazione ufficiale di ciascun modello
-(agosto 2026) — l'equivalente locale di `docs/CLOUD_INFERENCE_GUIDE.md`, che
-copre invece l'offloading su GPU remota.
+Questa guida documenta come servire un modello OCR/VLM **in locale**: la macchina
+decide il runtime (§0), e per ciascun modello valgono i parametri di serving
+verificati sulla documentazione ufficiale (agosto 2026) — l'equivalente locale di
+`docs/CLOUD_INFERENCE_GUIDE.md`, che copre invece l'offloading su GPU remota.
 
 `VllmClient` (`backend/app/services/inference.py`) non distingue locale da
-remoto: parla sempre a un endpoint OpenAI-compatibile via vLLM, capendo da
-solo se punta a `127.0.0.1`/`localhost` (`is_cloud`). L'unica parte
-specifica del locale è **come lanciare il server** — il `serve_command()` di
-ogni adapter in `backend/app/services/model_adapters.py` — e questo è
-l'oggetto della guida.
+remoto: parla sempre a un endpoint OpenAI-compatibile, capendo da solo se punta
+a `127.0.0.1`/`localhost` (`is_cloud`). L'unica parte specifica del locale è
+**quale server lanciare** — il `serve_command()` di ogni adapter, oppure il server
+MLX su Apple Silicon — e questo è l'oggetto della guida.
 
 **Nessun modello è bloccato per dimensione.** Come in LM Studio: puoi provare
 qualunque modello sulla tua GPU, il registro mostra solo un avviso ⚠ se il
@@ -33,6 +32,80 @@ mai un prerequisito.
 GPU di riferimento usata per tarare i parametri: **RTX 4060 Laptop, 8 GB
 VRAM** (Ada Lovelace, compute capability 8.9 — soddisfa il requisito bf16 di
 vLLM, che richiede compute capability ≥ 8.0).
+
+---
+
+## 0. Dove gira l'inferenza locale: dipende dall'hardware
+
+Tabularium legge la macchina e lo dichiara. Un solo posto prende la decisione,
+`backend/app/services/hardware.py`; il registro modelli la usa per dire — modello per
+modello — cosa gira *qui* e cosa no. Perché serve: lo stesso modello non è locale ovunque,
+e «modello locale» senza dire dove è un pulsante che fallisce.
+
+| Macchina | Runtime locale | Cosa copre |
+|---|---|---|
+| Linux + GPU NVIDIA | **vLLM** (`vllm serve`) | tutti i modelli del registro |
+| Windows | **vLLM via WSL2** | come Linux, dentro WSL2 |
+| Apple Silicon (M1+) | **MLX** (`mlx_vlm.server`) | solo i modelli con un port MLX |
+| Linux senza GPU NVIDIA | — | nessun serving locale: resta il provider remoto |
+
+Su Apple Silicon vLLM non gira: è un progetto CUDA-first e non esiste un percorso Metal
+nativo. Il percorso locale nativo è **MLX**, esposto come endpoint OpenAI-compatibile da
+`mlx-vlm`. Copre le architetture che ha davvero — verificate sui moduli installati, non
+dedotte:
+
+| Modello | vLLM (CUDA) | MLX (Apple Silicon) | Perché no, quando no |
+|---|---|---|---|
+| PaddleOCR-VL-1.6 | ✅ | ✅ `mlx-community/PaddleOCR-VL-1.6-4bit` | — |
+| Qwen3-VL-8B | ✅ | ✅ `mlx-community/Qwen3-VL-8B-Instruct-4bit` | — |
+| MonkeyOCRv2-Parsing | ✅ | ❌ | nessun port MLX dell'architettura |
+| MinerU2.5 | ✅ | ❌ | nessun port MLX; l'engine MLX di MinerU non è un server OpenAI |
+| DeepSeek-OCR-2 | ✅ | ❌ | la ricetta richiede il logits processor n-gram di vLLM |
+| Unlimited-OCR | ✅ (immagine Docker) | ❌ | idem: senza il processore n-gram va in loop |
+| dots.mocr | ✅ | ❌ | servito davvero: END2END si chiude a 682 caratteri, run fallita |
+| GLM-OCR | ✅ | ❌ | servito davvero: run «riuscita» con **zero** blocchi inseriti |
+
+**Come sono state decise le due colonne MLX.** Non dall'esistenza di un checkpoint: dal
+servire il modello e riconoscere una pagina vera. `paddleocr-vl` (35 blocchi) e
+`qwen3-vl-8b` (137) passano; gli altri no, e ognuno per una ragione misurata. Due in
+particolare vale la pena ricordare, perché sono modi diversi di fallire:
+
+- **dots.mocr** fallisce in modo rumoroso: la generazione END2END si chiude a 682 caratteri
+  (`finish=stop`) su una pagina intera e la run finisce in errore.
+- **GLM-OCR** fallisce in silenzio: la run «finisce bene» e inserisce **zero** blocchi. Un
+  successo vuoto è peggio di un errore, perché non dice niente a chi guarda.
+
+In entrambi i casi il checkpoint si carica: manca il percorso (prompt, template,
+decodifica). Per questo la dichiarazione locale è una misura, non una promessa.
+
+Due differenze pratiche del percorso MLX:
+
+- **I pesi non passano dal registro.** Li scarica `mlx-vlm` dalla cache Hugging Face alla
+  prima richiesta, dal checkpoint MLX (4 bit) invece che dal repo a precisione piena.
+  Per questo la riga di catalogo non chiede un download prima di poter servire.
+- **Il nome del modello è l'id del checkpoint MLX** (`/v1/models` del server MLX). Lo
+  start lo imposta da sé; chiedere il nome sbagliato sarebbe un 404 a ogni chiamata.
+
+**Non basta che l'architettura esista in MLX: serve che la ricetta sia riproducibile.** Due
+modelli con un checkpoint MLX pubblicato restano fuori perché la loro ricetta verificata
+dipende dal **logits processor n-gram di vLLM** (`--logits-processors`), che `mlx-vlm` non ha:
+ha `repetition_penalty`/`presence_penalty`, che sono penalità, non un divieto. Provato
+servendo Unlimited-OCR via MLX: la pagina produce 12288 caratteri di `alpha.alpha.alpha…`
+fino al tetto dei token. Meglio «solo remoto» che un output plausibile e sbagliato.
+
+**Il percorso ufficiale di PaddleOCR-VL ha un secondo runtime.** La pipeline Paddle
+(PP-DocLayout per il layout + riconoscimento) vive in `<root>/paddle-runtime` e si installa
+da sé alla prima messa in servizio. L'installer sceglie la build per piattaforma: su Linux
+`paddlepaddle-gpu` dall'indice CUDA, su Apple Silicon la wheel CPU arm64 da PyPI.
+
+Anche su Mac l'ambiente lo prepara Tabularium: `<root>/mlx-runtime` con `mlx-vlm` dentro
+(`services/mlx_runtime.py`), come avviene per vLLM. Il processo dashboard resta senza
+PyTorch: il server MLX è un sottoprocesso.
+
+Verificato su un M5 Pro / 24 GB, dall'app e non da shell: `mlx_vlm.server` carica
+`PaddleOCR-VL-1.6-4bit`, la configurazione salvata punta al checkpoint MLX, una run di
+riconoscimento su tre pagine finisce 3/3 e il playground restituisce 16 elementi con bbox e
+contenuto in ~21 s.
 
 ---
 

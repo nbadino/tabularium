@@ -6,6 +6,7 @@ import { PAGE_STATUSES, PAGE_TYPES } from '../lib/types'
 import type { PageItem, Project, ProjectMember, ScanReport } from '../lib/types'
 import { pageTypeLabel, pages as pagesN, statusLabel, STATUS_TONE } from '../lib/vocab'
 import { Badge, Collapsible, ErrorNotice, Field, Modal, Module, WarnNotice } from '../app/ui'
+import { useConfirm } from '../app/confirm'
 import { IconCheck, IconPrev, IconScan, IconTrash } from '../app/icons'
 import { useI18n, tn } from '../i18n'
 import { pageLabel } from '../lib/pageLabel'
@@ -45,6 +46,7 @@ function loadReport(id: number): ScanReport | null {
 
 export default function ProjectDetailPage() {
   const { t } = useI18n()
+  const confirm = useConfirm()
   const { id } = useParams<{ id: string }>()
   const projectId = Number(id)
   const navigate = useNavigate()
@@ -135,7 +137,11 @@ export default function ProjectDetailPage() {
   }
 
   const transferOwner = async (id: number) => {
-    if (!window.confirm('Trasferire la proprietà del progetto?')) return
+    const ok = await confirm({
+      title: t('project.transferOwnerTitle'),
+      message: t('project.transferOwnerConfirm'),
+    })
+    if (!ok) return
     try {
       const owner = await apiPost<ProjectMember>(`/projects/${projectId}/owner`, { user_id: id })
       setMembers((current) => [owner, ...current.filter((m) => m.user_id !== id).map((m) => m.user_id === project?.owner_id ? { ...m, role: 'editor' as const } : m)])
@@ -160,10 +166,10 @@ export default function ProjectDetailPage() {
       if (job.status === 'error') throw new Error(job.error || 'Scansione fallita')
       const rep = job.report ?? { found_files: 0, registered: 0, duplicates: 0, unsupported: 0, errors: [] }
       if ((rep.missing ?? 0) > 0) {
-        const confirmed = window.confirm(
-          `${rep.missing} pagine appartengono a file non più presenti nell'archivio.\n\n` +
-          'Vuoi eliminarle dall’elenco del progetto? Annotazioni e risultati verranno conservati.'
-        )
+        const confirmed = await confirm({
+          title: t('project.missingPagesTitle'),
+          message: t('project.missingPagesConfirm', { n: rep.missing ?? 0 }),
+        })
         if (confirmed) {
           await apiPost<ScanReport>(`/projects/${projectId}/scan?confirm_missing=true`)
         }
@@ -408,41 +414,41 @@ export default function ProjectDetailPage() {
       )}
 
       <div className="mb-3">
-        <Module tab="Accesso al progetto" quiet>
+        <Module tab={t('project.accessTab')} quiet>
           <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-            <select className="fld" value={memberId} onChange={(e) => setMemberId(e.target.value)} aria-label="Utente da aggiungere">
-              <option value="">Aggiungi un collaboratore…</option>
+            <select className="fld" value={memberId} onChange={(e) => setMemberId(e.target.value)} aria-label={t('project.addMemberLabel')}>
+              <option value="">{t('project.addMemberPlaceholder')}</option>
               {candidates.map((candidate) => <option key={candidate.user_id} value={candidate.user_id}>{candidate.username}</option>)}
             </select>
-            <select className="fld" value={memberRole} onChange={(e) => setMemberRole(e.target.value as 'editor' | 'viewer')} aria-label="Ruolo collaboratore">
+            <select className="fld" value={memberRole} onChange={(e) => setMemberRole(e.target.value as 'editor' | 'viewer')} aria-label={t('project.memberRoleLabel')}>
               <option value="editor">Editor</option><option value="viewer">Viewer</option>
             </select>
-            <button type="button" className="btn btn-primary" disabled={!memberId} onClick={() => void addMember()}>Aggiungi</button>
+            <button type="button" className="btn btn-primary" disabled={!memberId} onClick={() => void addMember()}>{t('project.addMember')}</button>
           </div>
           <div className="mt-3 divide-y divide-[color:var(--color-rule)] border-y border-[color:var(--color-rule)]">
             {members.map((member) => <div key={member.user_id} className="flex flex-wrap items-center gap-2 py-2 text-[12px]">
               <span className="min-w-0 max-w-full truncate font-semibold" title={member.username}>{member.username}</span>
-              {member.role === 'owner' ? <span className="badge">Proprietario</span> : <select
+              {member.role === 'owner' ? <span className="badge">{t('project.ownerBadge')}</span> : <select
                 className="fld w-auto min-w-[7rem]"
                 value={member.role}
                 onChange={(e) => void updateMemberRole(member.user_id, e.target.value as 'editor' | 'viewer')}
-                aria-label={`Ruolo di ${member.username}`}
+                aria-label={t('project.memberRoleFor', { name: member.username })}
               ><option value="editor">Editor</option><option value="viewer">Viewer</option></select>}
-              {member.role !== 'owner' && <><button type="button" className="btn btn-sm ml-auto" onClick={() => void removeMember(member.user_id)}>Rimuovi</button><button type="button" className="btn btn-sm" onClick={() => void transferOwner(member.user_id)}>Trasferisci proprietà</button></>}
+              {member.role !== 'owner' && <><button type="button" className="btn btn-sm ml-auto" onClick={() => void removeMember(member.user_id)}>{t('project.removeMember')}</button><button type="button" className="btn btn-sm" onClick={() => void transferOwner(member.user_id)}>{t('project.transferOwner')}</button></>}
             </div>)}
-            {!members.length && <p className="py-2 text-[12px] text-[color:var(--color-ink-2)]">Nessun collaboratore assegnato.</p>}
+            {!members.length && <p className="py-2 text-[12px] text-[color:var(--color-ink-2)]">{t('project.noMembers')}</p>}
           </div>
         </Module>
       </div>
 
       <div className="mb-3">
-        <Module tab="Attività recente" quiet>
+        <Module tab={t('project.activityTab')} quiet>
           <div className="divide-y divide-[color:var(--color-rule)] border-y border-[color:var(--color-rule)]">
             {activity.map((event) => <div key={event.id} className="grid gap-1 py-2 text-[12px] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-baseline sm:gap-3">
-              <span className="min-w-0 break-words"><span className="font-semibold">{event.username || 'Sistema'}</span>{' · '}{event.action}</span>
+              <span className="min-w-0 break-words"><span className="font-semibold">{event.username || t('project.systemActor')}</span>{' · '}{event.action}</span>
               <time className="mono text-[11px] text-[color:var(--color-ink-3)]" dateTime={event.created_at}>{new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(event.created_at))}</time>
             </div>)}
-            {!activity.length && <p className="py-2 text-[12px] text-[color:var(--color-ink-2)]">Nessuna attività registrata.</p>}
+            {!activity.length && <p className="py-2 text-[12px] text-[color:var(--color-ink-2)]">{t('project.noActivity')}</p>}
           </div>
         </Module>
       </div>

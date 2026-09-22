@@ -27,6 +27,15 @@ import '@testing-library/jest-dom/vitest'
   window.IntersectionObserver = IntersectionObserverStub as unknown as typeof IntersectionObserver
 }
 
+// jsdom non implementa il pointer capture, che `TableGridOverlay` usa per
+// continuare a ricevere i movimenti mentre si trascina un confine.
+{
+  const proto = window.Element.prototype as unknown as Record<string, unknown>
+  proto.setPointerCapture ??= () => {}
+  proto.releasePointerCapture ??= () => {}
+  proto.hasPointerCapture ??= () => false
+}
+
 // Node 24+ espone un `localStorage` proprio, inerte senza `--localstorage-file`.
 // Essendo un global del runtime, oscura quello di jsdom: l'accesso restituisce
 // undefined e ogni test che tocchi le preferenze fallisce, ma solo su quelle

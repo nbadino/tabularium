@@ -1,6 +1,11 @@
 """Utilità immagini: dimensione, anteprime, metadati EXIF.
 
-Nessuna dipendenza pesante: solo Pillow.
+Nessuna dipendenza pesante: solo Pillow. Le operazioni geometriche (deskew,
+prospettiva) usano OpenCV quando c'è, e la sua presenza si verifica
+**importandolo**, non solo cercando il modulo: il motore OCR installa
+`opencv-python`, che su un Linux senza `libGL` esiste come file ma fallisce
+all'import. Con `find_spec` l'app avrebbe detto «deskew disponibile» e poi
+sarebbe caduta al primo click.
 """
 from __future__ import annotations
 
@@ -9,6 +14,22 @@ from pathlib import Path
 from PIL import Image, ImageOps
 
 SUPPORTED_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+
+_cv2_ready: bool | None = None
+
+
+def cv2_available() -> bool:
+    """Vero solo se OpenCV si importa davvero (esito memorizzato)."""
+    global _cv2_ready
+    if _cv2_ready is None:
+        try:
+            import cv2  # noqa: F401
+
+            _cv2_ready = True
+        except Exception:  # noqa: BLE001 - anche ImportError di una lib di sistema
+            _cv2_ready = False
+    return _cv2_ready
+
 
 # Tag EXIF rilevanti (dati decimali)
 _EXIF_DATETIME_ORIGINAL = 0x9003

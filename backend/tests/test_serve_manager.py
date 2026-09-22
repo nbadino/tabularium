@@ -10,6 +10,7 @@ from __future__ import annotations
 import shutil
 import sys
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,6 +25,28 @@ def _stop_any_active_server():
     init_db()
     yield
     serve_manager.stop()
+
+
+@pytest.fixture(autouse=True)
+def _cuda_path():
+    """Fissa il percorso locale a vLLM.
+
+    La scelta del runtime dipende dalla macchina (vLLM dove c'è CUDA, MLX su
+    Apple Silicon): un test che descrive il percorso vLLM non deve cambiare
+    significato a seconda di dove gira la suite. Il percorso Apple ha i suoi
+    test dedicati, che la scelta la verificano invece di subirla.
+
+    La patch è applicata a mano invece che via `monkeypatch`: quella fixture
+    condivisa cambierebbe l'ordine di smontaggio rispetto a
+    `_stop_any_active_server`, che al teardown deve già avere `subprocess`
+    ripristinato.
+    """
+    real = serve_manager.hardware.pick_serve_runtime
+    serve_manager.hardware.pick_serve_runtime = (
+        lambda capabilities, machine=None: serve_manager.hardware.RUNTIME_VLLM
+    )
+    yield
+    serve_manager.hardware.pick_serve_runtime = real
 
 
 def _wait_for(poll, done, timeout: float = 10.0) -> dict:
@@ -770,3 +793,53 @@ def test_stop_never_signals_a_process_it_cannot_attribute(monkeypatch):
     finally:
         stranger.kill()
         stranger.wait(timeout=5)
+
+
+def test_apple_silicon_serves_through_mlx_and_does_not_need_the_registry_download(monkeypatch):
+    """Su Apple Silicon il percorso locale è MLX: i pesi li scarica `mlx-vlm`
+    dalla cache Hugging Face, quindi servire un modello non richiede il
+    download nel registro. Bloccare l'avvio con «scaricalo prima» renderebbe
+    inutilizzabile l'unico percorso locale che esiste su un Mac."""
+    from app.services import mlx_runtime
+
+    monkeypatch.setattr(
+        serve_manager.hardware,
+        "pick_serve_runtime",
+        lambda capabilities, machine=None: serve_manager.hardware.RUNTIME_MLX,
+    )
+    ensured: list[bool] = []
+    monkeypatch.setattr(mlx_runtime, "ensure_ready", lambda: ensured.append(True))
+    monkeypatch.setattr(mlx_runtime, "python_bin", lambda: Path("/tmp/mlx-python"))
+
+    captured: dict = {}
+
+    class FakeProc:
+        pid = 4321
+
+        def poll(self):
+            return None
+
+    def fake_popen(argv, **kwargs):
+        captured["argv"] = argv
+        return FakeProc()
+
+    monkeypatch.setattr(serve_manager.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(serve_manager, "_reclaim_port", lambda port, settle=10.0: None)
+    monkeypatch.setattr(serve_manager, "_set_phase", lambda *a, **k: None)
+    monkeypatch.setattr(serve_manager, "is_installed", lambda adapter_id: False)
+    monkeypatch.setattr(serve_manager, "_pid_alive", lambda pid: True)
+
+    serve_manager.start("paddleocr-vl", port=18907)
+
+    argv = captured["argv"]
+    assert ensured == [True], "l'ambiente MLX va preparato, non dato per pronto"
+    assert argv[1:] == [
+        "-m",
+        "mlx_vlm.server",
+        "--model",
+        "mlx-community/PaddleOCR-VL-1.6-4bit",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "18907",
+    ], argv

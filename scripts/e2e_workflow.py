@@ -12,7 +12,9 @@ from PIL import Image
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
@@ -151,12 +153,44 @@ def main() -> int:
             item["id"] == text_block["id"] and item["content"] == "Synthetic maritime record."
             for item in persisted
         ), persisted
-        # Nessun pulsante "apri editor tabella": per un blocco `Table` la riga
-        # di `ContentPane` monta l'editor della griglia direttamente. La chiave
-        # i18n `annotate.openTableEditor` è rimasta senza componente che la usi,
-        # e questa attesa cercava un controllo che non esiste più.
+        # La tabella si corregge nella sua **vista di lavoro**: nel rail resta
+        # la scheda con il comando che la apre. Un registro non sta in 520 px di
+        # rail — misurato: le colonne ne chiedono 459 solo loro.
+        stage = "table workspace open"
+        wait_for(driver, EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Apri la tabella') or contains(., 'Open the table') or contains(., 'Ouvrir le tableau')]"))).click()
+        # La superficie è Univer, che si carica su richiesta: il suo contenitore
+        # arriva dopo il chunk lazy.
+        host = wait_for(driver, EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='univer-host']")), timeout=40)
         wait_for(driver, EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Salva griglia') or contains(., 'Save grid') or contains(., 'Enregistrer')]"))).click()
         wait_for(driver, EC.presence_of_element_located((By.XPATH, "//*[contains(., 'OTSL generato') or contains(., 'OTSL generated') or contains(., 'OTSL généré')]")))
+
+        # Scrivere in una cella **deve** arrivare al server. Con Univer la
+        # griglia è su canvas: non ci sono `<td>` da cercare, quindi la cella si
+        # punta dalla geometria che dichiariamo al foglio (46 px di intestazione
+        # riga, 22 di intestazione colonna, 96x24 per cella). Gli offset di
+        # Selenium sono dal **centro** dell'elemento.
+        #
+        # Il passo esiste perché questo percorso era rotto in silenzio: con
+        # gli handler nel posto sbagliato il testo restava nel DOM e si perdeva
+        # al ricaricamento, e nessun test lo guardava.
+        stage = "table cell edit"
+        time.sleep(3)
+        before = requests.get(f"{BASE}/api/blocks/{block['id']}/table", timeout=10).json()["grid"]
+        assert all(c.get("text") != "Voyage" for c in before["cells"]), before
+        box = host.rect
+        target_x = box["x"] + 46 + 1.5 * 96
+        target_y = box["y"] + 22 + 1.5 * 24
+        ActionChains(driver).move_to_element(host).move_by_offset(
+            int(target_x - (box["x"] + box["width"] / 2)),
+            int(target_y - (box["y"] + box["height"] / 2)),
+        ).click().perform()
+        time.sleep(1)
+        ActionChains(driver).send_keys("Voyage").perform()
+        ActionChains(driver).send_keys(Keys.ENTER).perform()
+        time.sleep(3)
+        saved = requests.get(f"{BASE}/api/blocks/{block['id']}/table", timeout=10).json()["grid"]
+        edited = {(c["r"], c["c"]): c.get("text") for c in saved["cells"]}
+        assert edited.get((1, 1)) == "Voyage", saved
 
         # Training center e preflight.
         stage = "training UI"

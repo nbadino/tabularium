@@ -72,10 +72,18 @@ del pipeline.
 - Backend senza PyTorch: training/inferenza girano in processi/env separati (subprocess, vLLM,
   SSE per i log); il dashboard non dipende mai dal training in esecuzione.
 - Storage: SQLite + filesystem; percorsi mai hard-coded (env var `TABULARIUM_ROOT`).
-- Inferenza locale oggi solo su Linux con GPU NVIDIA: `backend/app/api/system.py` espone
-  `local_cuda` vero soltanto quando `platform.system() == "Linux"`. Su macOS nessun modello
-  locale parte e l'unica strada praticabile è un provider remoto; su Windows serve WSL2.
-  Limitazione corrente e non vincolo di prodotto: il supporto locale su Mac è previsto.
+- Inferenza locale: **dipende dall'hardware, e Tabularium lo dichiara**. Su Linux con GPU
+  NVIDIA il percorso è vLLM; su Apple Silicon è MLX (`mlx-vlm`), con un server
+  OpenAI-compatibile che copre i modelli il cui percorso è stato **verificato su una pagina
+  vera**: PaddleOCR-VL e Qwen3-VL. MonkeyOCRv2 e MinerU2.5 non hanno un port MLX;
+  DeepSeek-OCR-2 e Unlimited-OCR richiedono un vincolo di decodifica (il logits processor
+  n-gram di vLLM) che MLX non espone; dots.mocr e GLM-OCR si caricano ma non completano una
+  pagina (fallimento rumoroso e successo vuoto, rispettivamente). Tutti e sei restano remoti
+  su un Mac, e la UI lo dice per modello, con la causa, invece di offrire un comando che
+  fallisce. Su Windows il percorso è WSL2. Il runtime locale (venv vLLM, venv MLX, pipeline
+  Paddle per il percorso ufficiale di PaddleOCR-VL) lo prepara Tabularium al primo avvio:
+  nessun passaggio manuale. Motore unico della decisione: `services/hardware.py`; matrice e
+  misure in `docs/LOCAL_INFERENCE_GUIDE.md`.
 - In decisamente deciso: destinazione del rilascio pubblico (licenza, repo pubblico, momento).
 
 ## Brand Commitments

@@ -487,12 +487,63 @@
     color: var(--color-ink-3);
   }
 
-  /* ---- foglio tabella (Handsontable) -------------------------------------- */
-  /* Colonna proposta dal rilevatore ma non attestata da nessun confine reale:
-     tratteggio d'allarme, non un filetto come gli altri. */
-  .ht-phantom-cols .ht-phantom-col {
-    background-color: var(--color-sig-wash) !important;
-    box-shadow: inset 1.5px 0 0 0 var(--color-sig), inset -1.5px 0 0 0 var(--color-sig) !important;
+  /* ---- foglio tabella (Jspreadsheet CE) ----------------------------------- */
+  /* La libreria porta il suo tema Excel: qui si riporta alla grammatica del
+     mondo — foglio, filetti da 1px, fondo di riempimento per le testate, il
+     segnale rosso per la selezione. Niente ombre, niente angoli. */
+  .tabularium-sheet .jss_container {
+    display: block;
+    padding: 0;
+  }
+  .tabularium-sheet .jss_content {
+    border: 1px solid var(--color-rule-strong);
+    background: var(--color-sheet);
+  }
+  .tabularium-sheet .jss_worksheet {
+    background: var(--color-sheet);
+    font-family: var(--font-ui);
+    font-size: 12px;
+    border: 0;
+  }
+  .tabularium-sheet .jss_worksheet > thead > tr > td {
+    background: var(--color-fill);
+    border-color: var(--color-rule);
+    color: var(--color-ink-2);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 2px 4px;
+  }
+  .tabularium-sheet .jss_worksheet > tbody > tr > td {
+    border-color: var(--color-rule);
+    color: var(--color-ink);
+    padding: 2px 4px;
+  }
+  .tabularium-sheet .jss_worksheet .highlight,
+  .tabularium-sheet .jss_worksheet .selection {
+    background: var(--color-sig-wash);
+  }
+  .tabularium-sheet .jss_worksheet .highlight-top,
+  .tabularium-sheet .jss_worksheet .highlight-left,
+  .tabularium-sheet .jss_worksheet .highlight-right,
+  .tabularium-sheet .jss_worksheet .highlight-bottom {
+    border-color: var(--color-sig);
+  }
+  .tabularium-sheet .jss_corner {
+    background: var(--color-fill);
+    border-color: var(--color-rule);
+  }
+  /* Il collegamento promozionale della libreria in fondo al foglio: non serve
+     all'utente. La dipendenza resta dichiarata nei documenti. */
+  .tabularium-sheet .jss_about {
+    display: none;
+  }
+  .tabularium-sheet .jss_search {
+    border: 1px solid var(--color-rule);
+    background: var(--color-sheet);
+    color: var(--color-ink);
+    font: inherit;
   }
 }
 

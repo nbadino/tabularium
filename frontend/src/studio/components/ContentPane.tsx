@@ -14,66 +14,77 @@
  * leggibile da uno screen reader, che è la ragione per cui esisteva
  * l'elenco dei livelli. Le regole vivono dietro il loro pulsante.
  */
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type {
   TableDetectOut,
   TableDetectRequest,
   TableGrid,
   TableGridOut,
 } from '../../lib/types'
-import { emptyGrid } from '../../lib/grid'
+import {
+  dropBoundary,
+  emptyGrid,
+  fillDown,
+  insertBoundary,
+  joinColumns,
+  normalizeColumn,
+  transformColumnCase,
+} from '../../lib/grid'
+import type { Axis } from '../../lib/grid'
+import type { ColumnOp } from './UniverSheet'
+
+import { univerGridSignature } from '../../lib/univerGrid'
 import { apiGet } from '../../lib/api'
-import { Modal, Module } from '../../app/ui'
-import { IconDown, IconTrash, IconUp } from '../../app/icons'
+import { Modal, Module, WarnNotice } from '../../app/ui'
+import { IconDown, IconSave, IconTrash, IconUp } from '../../app/icons'
 import { useI18n } from '../../i18n'
 import type { LabelDef } from '../../lib/types'
 import type { DisplayBlock, LivePrefillOutput, PrefillDraft } from '../types'
-import SheetEditor from './SheetEditor'
+import JspreadsheetSheet from './JspreadsheetSheet'
+import TableGridOverlay from './TableGridOverlay'
+import SplitColumnDialog from './SplitColumnDialog'
 import LiveStream from './LiveStream'
 import ConventionsChecklist from './ConventionsChecklist'
+
+/** Univer pesa: il preset «sheets core» con il motore di rendering e quello
+ *  delle formule porta la pagina di annotazione da 892 kB a **7,4 MB** se lo si
+ *  importa in cima. Si carica quando si apre la tabella, che è l'unico momento
+ *  in cui serve. */
+const UniverSheet = lazy(() => import('./UniverSheet'))
 
 /** Le classi che portano testo da trascrivere. Le altre (Picture, Column)
  *  entrano solo nel layout: la riga lo dichiara invece di fingere un editor. */
 const NO_CONTENT_LABELS = new Set(['Picture', 'Column'])
 
-/** Foglio di calcolo per una riga Table (blocco confermato o bozza): la
- *  griglia arriva dal server alla prima renderizzazione della riga, per
- *  `serverId` — non fidarsi di una griglia passata dallo stream live, che
- *  non sopravvive a un ricaricamento (cambio pagina e ritorno, refresh):
- *  qui l'unica fonte di verità è il server. */
+/** Il ritaglio è servito dal bbox corrente del blocco: cambiata la regione,
+ *  l'URL è lo stesso e il browser mostrerebbe l'immagine vecchia. */
+const cropUrlFor = (serverId: number, version = 0) =>
+  version ? `/api/blocks/${serverId}/crop?v=${version}` : `/api/blocks/${serverId}/crop`
+
+/** La tabella non vive nel rail: nel rail ci sta la sua scheda, con il
+ *  ritaglio e il comando che la apre.
+ *
+ *  Misurato: il rail dei contenuti è 520 px, un registro ne chiede 459 solo per
+ *  le colonne. Affiancare ritaglio e foglio lì dentro lasciava al foglio metà
+ *  delle colonne che gli servono; impilati, il ritaglio alto 578 px schiacciava
+ *  il foglio a 101. Una tabella vuole una superficie sua: si apre a 1150 px e
+ *  lì ritaglio e foglio stanno **accanto**, con lo spazio per correggere i
+ *  confini sull'inchiostro. */
 function TableBlockEditor({
   id,
   serverId,
   onSaveTable,
   onDetectTable,
-  initialGrid,
-  version = 0,
+  cropUrl,
 }: {
   id: string
   serverId: number | null
   onSaveTable: (serverId: number, grid: TableGrid) => Promise<string>
   onDetectTable?: (serverId: number, opts: TableDetectRequest) => Promise<TableDetectOut>
-  initialGrid?: TableGrid | null
-  /** Cambia quando la regione del blocco è stata rifatta: la griglia in
-   *  memoria non vale più e si rilegge dal server. */
-  version?: number
+  cropUrl: string | null
 }) {
   const { t } = useI18n()
-  const [grid, setGrid] = useState<TableGrid | null>(initialGrid ?? null)
-  const [error, setError] = useState<string | null>(null)
-  const loadedFor = useRef<string | null>(null)
-
-  useEffect(() => {
-    if (!serverId) return
-    if (initialGrid && version === 0) return
-    const key = `${id}:${version}`
-    if (loadedFor.current === key) return
-    loadedFor.current = key
-    setError(null)
-    apiGet<TableGridOut>(`/blocks/${serverId}/table`)
-      .then((out) => setGrid(out.grid ?? emptyGrid(3, 4)))
-      .catch(() => setError(t('table.loadFailed')))
-  }, [id, serverId, initialGrid, version, t])
+  const [open, setOpen] = useState(false)
 
   if (!serverId) {
     return (
@@ -82,16 +93,318 @@ function TableBlockEditor({
       </p>
     )
   }
+  return (
+    <>
+      <div className="flex items-center gap-2">
+        <p className="min-w-0 flex-1 text-[12px] text-[color:var(--color-ink-2)]">
+          {t('content.tableInWorkspace')}
+        </p>
+        <button type="button" onClick={() => setOpen(true)} className="btn btn-sm btn-primary">
+          {t('table.openWorkspace')}
+        </button>
+      </div>
+      {open && (
+        <Modal title={t('table.workspaceTitle')} wide onClose={() => setOpen(false)}>
+          {/* La griglia si rilegge dal server all'apertura: la scheda non tiene
+              una seconda copia del modello da tenere allineata. */}
+          <div className="min-h-0 flex-1 p-3">
+            <TableWorkspace
+              id={id}
+              serverId={serverId}
+              cropUrl={cropUrl}
+              onSaveTable={onSaveTable}
+              onDetectTable={onDetectTable}
+            />
+          </div>
+        </Modal>
+      )}
+    </>
+  )
+}
+
+/** Superficie della griglia.
+ *
+ *  Univer è la scelta: il preset «sheets core» porta menù contestuale, merge,
+ *  copia/incolla multi-cella, fill handle e blocco delle righe senza che li
+ *  scriviamo noi. Jspreadsheet CE resta raggiungibile con una riga finché lo
+ *  scambio non è chiuso su tutta la parità (i comandi «verificata» e «colonna
+ *  fantasma», che sul foglio Univer non sono ancora ricablati). */
+const TABLE_SURFACE: 'univer' | 'ce' = 'univer'
+
+/** Il corpo della vista di lavoro: carica la griglia dal server, possiede i
+ *  confini sull'inchiostro e monta la superficie scelta. */
+function TableWorkspace({
+  id,
+  serverId,
+  cropUrl,
+  onSaveTable,
+  onDetectTable,
+}: {
+  id: string
+  serverId: number
+  cropUrl: string | null
+  onSaveTable: (serverId: number, grid: TableGrid) => Promise<string>
+  onDetectTable?: (serverId: number, opts: TableDetectRequest) => Promise<TableDetectOut>
+}) {
+  const { t } = useI18n()
+  const [grid, setGrid] = useState<TableGrid | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [otsl, setOtsl] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [splitAt, setSplitAt] = useState<number | null>(null)
+  /** Il modello di prima dell'ultima separazione: una separazione riscrive una
+   *  colonna intera e non entra nella storia di Univer, quindi il modo di
+   *  tornare indietro lo diamo noi, per un passo. */
+  const [undoSplit, setUndoSplit] = useState<TableGrid | null>(null)
+  const gridRef = useRef<TableGrid | null>(null)
+  const savedRef = useRef('')
+
+  useEffect(() => {
+    setError(null)
+    apiGet<TableGridOut>(`/blocks/${serverId}/table`)
+      .then((out) => {
+        const model = out.grid ?? emptyGrid(3, 4)
+        gridRef.current = model
+        savedRef.current = univerGridSignature(model)
+        setGrid(model)
+      })
+      .catch(() => setError(t('table.loadFailed')))
+  }, [serverId, t])
+
+  const doSave = useCallback(
+    async (model: TableGrid) => {
+      setSaving(true)
+      try {
+        setOtsl(await onSaveTable(serverId, model))
+        savedRef.current = univerGridSignature(model)
+        setNotice(null)
+      } catch (e) {
+        // Fallito: la firma resta indietro, così il prossimo cambiamento
+        // riprova. Non si riprova da soli, o un 400 diventa un ciclo.
+        setNotice(
+          e instanceof Error ? t('table.saveFailedWith', { msg: e.message }) : t('table.saveFailed'),
+        )
+      } finally {
+        setSaving(false)
+      }
+    },
+    [onSaveTable, serverId, t],
+  )
+
+  // Autosave col debounce dei blocchi. Vale per la superficie Univer, che
+  // notifica il modello; il foglio CE ha la sua gestione e non si duplica.
+  useEffect(() => {
+    if (!grid || TABLE_SURFACE !== 'univer') return
+    if (univerGridSignature(grid) === savedRef.current) return
+    const timer = setTimeout(() => void doSave(grid), 900)
+    return () => clearTimeout(timer)
+  }, [grid, doSave])
+
+  const applyModel = (next: TableGrid) => {
+    gridRef.current = next
+    setGrid(next)
+  }
+
+  const moveBoundary = (axis: Axis, index: number, value: number) => {
+    const current = gridRef.current
+    if (!current) return
+    const values = [...((axis === 'v' ? current.vlines : current.hlines) ?? [])]
+    values[index] = value
+    applyModel(axis === 'v' ? { ...current, vlines: values } : { ...current, hlines: values })
+  }
+
+  const addBoundary = (axis: Axis, at: number) => {
+    const current = gridRef.current
+    if (!current) return
+    const next = insertBoundary(current, axis, at)
+    if (!next) {
+      setNotice(t('table.boundaryInsertRefused'))
+      return
+    }
+    setNotice(null)
+    applyModel(next)
+  }
+
+  const rejectBoundary = (axis: Axis, index: number) => {
+    const current = gridRef.current
+    if (!current) return
+    const next = dropBoundary(current, axis, index)
+    if (!next) {
+      setNotice(t('table.boundaryDropRefused'))
+      return
+    }
+    setNotice(null)
+    applyModel(next)
+  }
+
+  /** Applica la separazione scelta nel dialogo, tenendo da parte il modello di
+   *  prima: è l'unico modo di tornare indietro, perché il documento di Univer
+   *  si ricostruisce e la sua storia non attraversa questa modifica. */
+  const applySplit = (next: TableGrid | null, parts: number) => {
+    const current = gridRef.current
+    setSplitAt(null)
+    if (!current || !next) return
+    setUndoSplit(current)
+    setNotice(t('table.splitDone', { n: parts }))
+    applyModel(next)
+  }
+
+  const revertSplit = () => {
+    if (!undoSplit) return
+    setUndoSplit(null)
+    setNotice(null)
+    applyModel(undoSplit)
+  }
+
+  /** Le operazioni di colonna. Quelle che non hanno niente da chiedere si
+   *  applicano subito; la separazione passa dal dialogo, che serve a scegliere
+   *  il separatore e a vedere l'effetto **prima** di applicarlo. */
+  const runColumnOp = (op: ColumnOp, column: number, from: number, to: number) => {
+    const current = gridRef.current
+    if (!current) return
+    if (op === 'split') {
+      setSplitAt(column)
+      return
+    }
+    const before = current
+    const next =
+      op === 'join'
+        ? joinColumns(current, column, { separator: ' ' })
+        : op === 'normalize'
+          ? normalizeColumn(current, column)
+          : op === 'fill'
+            ? // Con **una cella sola** selezionata l'intento è «questo valore
+              // vale per tutto ciò che sta sotto»: si propaga fino in fondo
+              // alla colonna. Con un intervallo scelto si rispetta l'intervallo.
+              fillDown(current, column, from, to === from ? current.rows - 1 : to)
+            : transformColumnCase(current, column, op)
+    if (!next) {
+      setNotice(t('table.columnOpRefused'))
+      return
+    }
+    // Quante celle sono cambiate davvero: dirlo è più onesto che dire «fatto»,
+    // e su una colonna di cinquanta righe è l'unico riscontro che si ha.
+    const changed = next.cells.filter((cell) => {
+      const old = before.cells.find((c) => c.r === cell.r && c.c === cell.c)
+      return old ? old.text !== cell.text : false
+    }).length
+    setNotice(t('table.columnOpDone', { n: changed }))
+    applyModel(next)
+  }
+
   if (!grid) {
     return <p className="text-[12px] text-[color:var(--color-ink-2)]">{error ?? t('content.tableLoading')}</p>
   }
   return (
-    <SheetEditor
-      key={`${id}:${version}`}
-      grid={grid}
-      onSave={(g) => onSaveTable(serverId, g)}
-      onDetect={onDetectTable ? (opts) => onDetectTable(serverId, opts) : undefined}
-    />
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="mono text-[11px] text-[color:var(--color-ink-2)]">
+          {t('table.workspaceSummary', { rows: grid.rows, cols: grid.cols })}
+        </span>
+        {grid.phantom_cols.length > 0 && (
+          <span className="text-[11px] text-[color:var(--color-ink-2)]">
+            {t('table.phantomColumns', { n: grid.phantom_cols.length })}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => void doSave(gridRef.current ?? grid)}
+          disabled={saving}
+          className="btn btn-sm btn-primary ml-auto"
+        >
+          <IconSave size={11} />
+          {saving ? t('table.saving') : t('table.saveGrid')}
+        </button>
+      </div>
+
+      {notice && (
+        <WarnNotice title={t('table.notice')}>
+          <span className="flex flex-wrap items-center gap-2">
+            {notice}
+            {undoSplit && (
+              <button type="button" onClick={revertSplit} className="btn btn-sm">
+                {t('table.splitUndo')}
+              </button>
+            )}
+          </span>
+        </WarnNotice>
+      )}
+
+      <div className="flex min-h-0 flex-1 gap-3">
+        {/* I confini si correggono sull'inchiostro: appartengono alla vista di
+            lavoro, non alla libreria che disegna le celle. */}
+        {cropUrl && (
+          <figure className="m-0 w-1/2 shrink-0">
+            <TableGridOverlay
+              cropUrl={cropUrl}
+              vlines={grid.vlines ?? []}
+              hlines={grid.hlines ?? []}
+              rowColumns={grid.row_columns}
+              rowColumnsProven={grid.row_columns_proven}
+              rows={grid.rows}
+              onMove={moveBoundary}
+              onInsert={addBoundary}
+              onDrop={rejectBoundary}
+            />
+          </figure>
+        )}
+
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {TABLE_SURFACE === 'univer' ? (
+            // La chiave segue le dimensioni: un confine aggiunto o rifiutato
+            // cambia il numero di tracce, e il documento va ricostruito su
+            // quello nuovo invece di restare indietro.
+            <Suspense
+              fallback={
+                <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('content.tableLoading')}</p>
+              }
+            >
+              <UniverSheet
+                key={`${serverId}:${grid.rows}x${grid.cols}`}
+                grid={grid}
+                onGridChange={applyModel}
+                onColumnOp={runColumnOp}
+              />
+            </Suspense>
+          ) : (
+            <JspreadsheetSheet
+              key={`${id}:${serverId}`}
+              grid={grid}
+              cropUrl={cropUrl}
+              withOverlay={false}
+              onSave={(g) => onSaveTable(serverId, g)}
+              onDetect={onDetectTable ? (opts) => onDetectTable(serverId, opts) : undefined}
+            />
+          )}
+        </div>
+      </div>
+
+      {otsl !== null && (
+        <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-2">
+          <div className="flex items-center justify-between">
+            <span className="lbl !mb-0">{t('table.otslNote')}</span>
+            <button
+              type="button"
+              onClick={() => void navigator.clipboard?.writeText(otsl)}
+              className="btn btn-sm"
+            >
+              {t('common.copy')}
+            </button>
+          </div>
+          <pre className="mono mt-1 max-h-32 overflow-auto text-[11px] whitespace-pre-wrap">{otsl}</pre>
+        </div>
+      )}
+
+      {splitAt !== null && (
+        <SplitColumnDialog
+          grid={gridRef.current ?? grid}
+          column={splitAt}
+          onApply={applySplit}
+          onClose={() => setSplitAt(null)}
+        />
+      )}
+    </div>
   )
 }
 
@@ -300,17 +613,21 @@ function RowShell({
         </span>
       </div>
 
-      <div className={`flex min-w-0 gap-3 ${wide ? '' : 'items-start'}`}>
+      {/* Una tabella ha bisogno di tutta la larghezza della riga: un registro
+          a otto colonne in un quarto di pannello mostra due colonne e mezza. Il
+          suo ritaglio qui è il riferimento della scheda; il lavoro vero si fa
+          nella vista di lavoro, che si apre a parte. */}
+      <div className={wide ? 'flex min-w-0 flex-col gap-2' : 'flex min-w-0 items-start gap-3'}>
         <figure
           onClick={onSelect}
-          className={`m-0 w-1/4 shrink-0 ${onSelect ? 'cursor-pointer' : ''}`}
+          className={`m-0 shrink-0 ${wide ? 'max-h-32 w-full overflow-hidden' : 'w-1/4'} ${onSelect ? 'cursor-pointer' : ''}`}
         >
           {cropUrl ? (
             <img
               src={cropUrl}
               alt={cropAlt}
               loading="lazy"
-              className="w-full border border-[color:var(--color-rule-strong)] bg-[color:var(--color-table)] object-contain"
+              className={`w-full border border-[color:var(--color-rule-strong)] bg-[color:var(--color-table)] object-contain ${wide ? 'max-h-32 object-top' : ''}`}
             />
           ) : (
             <p className="border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-2 text-[11px] text-[color:var(--color-ink-2)]">
@@ -394,13 +711,6 @@ export default function ContentPane({
 }: ContentPaneProps) {
   const { t, tn } = useI18n()
   const [rulesOpen, setRulesOpen] = useState(false)
-
-  // Il ritaglio è servito dal bbox corrente del blocco: cambiata la regione,
-  // l'URL è lo stesso e il browser mostrerebbe l'immagine vecchia.
-  const cropUrlFor = (serverId: number) => {
-    const version = tableVersions?.[serverId] ?? 0
-    return version ? `/api/blocks/${serverId}/crop?v=${version}` : `/api/blocks/${serverId}/crop`
-  }
 
   // Le bozze già confermate sono già ricomparse fra i blocchi dopo il ricarico
   // dal server: qui restano solo quelle ancora da revisionare, altrimenti la
@@ -494,7 +804,7 @@ export default function ContentPane({
                   canMoveUp={i > 0}
                   canMoveDown={i < sortedBlocks.length - 1}
                   rowAria={t('layers.blockAria', { n: i + 1, label: block.label })}
-                  cropUrl={block.serverId ? cropUrlFor(block.serverId) : null}
+                  cropUrl={block.serverId ? cropUrlFor(block.serverId, tableVersions?.[block.serverId] ?? 0) : null}
                   cropAlt={t('content.cropAlt', { label: block.label })}
                   cropUnsavedHint={t('content.cropUnsaved')}
                   wide={isTable}
@@ -512,9 +822,9 @@ export default function ContentPane({
                       <TableBlockEditor
                         id={block.id}
                         serverId={block.serverId}
+                        cropUrl={block.serverId ? cropUrlFor(block.serverId, tableVersions?.[block.serverId] ?? 0) : null}
                         onSaveTable={onSaveTable}
                         onDetectTable={onDetectTable}
-                        version={block.serverId ? (tableVersions?.[block.serverId] ?? 0) : 0}
                       />
                     </>
                   ) : noContent ? (
@@ -550,7 +860,7 @@ export default function ContentPane({
                   deleteTitle={t('content.rejectDraft')}
                   selected={false}
                   rowAria={t('content.draftAria', { label: draft.label })}
-                  cropUrl={`/api/blocks/${draft.serverId}/crop`}
+                  cropUrl={cropUrlFor(draft.serverId)}
                   cropAlt={t('content.cropAlt', { label: draft.label })}
                   cropUnsavedHint={t('content.cropUnsaved')}
                   wide={isTable}
@@ -559,7 +869,7 @@ export default function ContentPane({
                     <TableBlockEditor
                       id={`draft-${draft.serverId}`}
                       serverId={draft.serverId}
-                      initialGrid={draft.grid}
+                      cropUrl={cropUrlFor(draft.serverId)}
                       onSaveTable={(serverId, grid) => {
                         onDraftGrid(serverId, grid)
                         return onSaveDraftGrid(serverId, grid)

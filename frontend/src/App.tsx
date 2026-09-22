@@ -3,6 +3,7 @@ import type { ReactElement } from 'react'
 import { Link, Route, Routes } from 'react-router'
 import AuthGate from './app/AuthGate'
 import Layout from './app/Layout'
+import { ConfirmProvider } from './app/confirm'
 import { useAuth } from './app/auth'
 const HomePage = lazy(() => import('./pages/HomePage'))
 const RecognizePage = lazy(() => import('./pages/RecognizePage'))
@@ -120,31 +121,33 @@ export default function App() {
       >
         <LocaleEffects />
         <AuthGate>
-          <Routes>
-            <Route element={<Layout />}>
-              <Route index element={<RecognizePage />} />
-              <Route path="risultati" element={<ResultsPage />} />
-              <Route path="archivio" element={<HomePage />} />
-              <Route path="modelli" element={<ModelsHubPage />} />
-              <Route path="progetti" element={<ProjectsPage />} />
-              <Route path="progetti/:id" element={<ProjectDetailPage />} />
-              <Route path="annotazione" element={<AnnotationPage />} />
-              <Route path="dataset" element={<DatasetPage />} />
-              <Route path="training" element={<TrainingPage />} />
-              <Route path="valutazione" element={<EvaluationPage />} />
-              <Route path="playground" element={<PlaygroundPage />} />
-              <Route path="impostazioni" element={<SettingsPage />} />
-              <Route
-                path="utenti"
-                element={
-                  <AdminRoute>
-                    <UsersPage />
-                  </AdminRoute>
-                }
-              />
-              <Route path="*" element={<NotFoundPage />} />
-            </Route>
-          </Routes>
+          <ConfirmProvider>
+            <Routes>
+              <Route element={<Layout />}>
+                <Route index element={<RecognizePage />} />
+                <Route path="risultati" element={<ResultsPage />} />
+                <Route path="archivio" element={<HomePage />} />
+                <Route path="modelli" element={<ModelsHubPage />} />
+                <Route path="progetti" element={<ProjectsPage />} />
+                <Route path="progetti/:id" element={<ProjectDetailPage />} />
+                <Route path="annotazione" element={<AnnotationPage />} />
+                <Route path="dataset" element={<DatasetPage />} />
+                <Route path="training" element={<TrainingPage />} />
+                <Route path="valutazione" element={<EvaluationPage />} />
+                <Route path="playground" element={<PlaygroundPage />} />
+                <Route path="impostazioni" element={<SettingsPage />} />
+                <Route
+                  path="utenti"
+                  element={
+                    <AdminRoute>
+                      <UsersPage />
+                    </AdminRoute>
+                  }
+                />
+                <Route path="*" element={<NotFoundPage />} />
+              </Route>
+            </Routes>
+          </ConfirmProvider>
         </AuthGate>
       </Suspense>
     </ChunkLoadBoundary>

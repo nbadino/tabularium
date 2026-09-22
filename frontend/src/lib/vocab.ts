@@ -121,3 +121,17 @@ export function blocks(n: number): string {
 export function warnings(n: number): string {
   return tn('common.warningsCount', n)
 }
+/**
+ * Nome leggibile del runtime di serving locale. Il backend parla per codici
+ * (`vllm`, `mlx-vlm`): qui diventano la parola che l'utente vede.
+ */
+export function localRuntimeLabel(runtime: string | null | undefined): string {
+  switch (runtime) {
+    case 'vllm':
+      return t('localCompute.runtimeVllm')
+    case 'mlx-vlm':
+      return t('localCompute.runtimeMlx')
+    default:
+      return '—'
+  }
+}

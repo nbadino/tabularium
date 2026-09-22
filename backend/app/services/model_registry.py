@@ -19,6 +19,7 @@ from pathlib import Path
 
 from .. import config
 from .model_adapters import get_adapter, list_adapters, supported_prefill_modes, supports_export
+from . import hardware
 from . import paddle_runtime
 
 _ACTIVE: dict[str, dict] = {}  # adapter_id -> {"proc": Popen, "log_file": Path}
@@ -251,9 +252,41 @@ def install_state(adapter_id: str) -> dict:
     return state
 
 
+def _will_serve_locally(adapter_id: str) -> bool:
+    """Vero quando questo modello è (o può essere) servito su questa macchina.
+
+    Serve a decidere se preparare il runtime ufficiale di un adapter: su un
+    Mac PaddleOCR-VL gira via MLX senza passare dal registro dei pesi, ma il
+    suo percorso ufficiale ha comunque bisogno del runtime Paddle.
+    """
+    try:
+        adapter = get_adapter(adapter_id)
+    except ValueError:
+        return False
+    plan = hardware.plan_local(
+        getattr(adapter.capabilities, "local_runtimes", ()) or (),
+        approx_size_gb=getattr(adapter.capabilities, "approx_size_gb", None),
+    )
+    if not plan["runnable"]:
+        return False
+    runtime = hardware.pick_serve_runtime(adapter.capabilities)
+    if runtime == hardware.RUNTIME_MLX:
+        return True
+    return is_installed(adapter_id)
+
+
 def ensure_runtime_async(adapter_id: str) -> None:
-    """Configura in background il runtime ufficiale richiesto dall'adapter."""
-    if adapter_id != "paddleocr-vl" or not is_installed(adapter_id):
+    """Configura in background il runtime ufficiale richiesto dall'adapter.
+
+    Il gate non è «i pesi sono nel registro»: su Apple Silicon il percorso
+    locale è MLX e i pesi non passano di lì, quindi legare l'installazione al
+    download lasciava il percorso ufficiale di PaddleOCR-VL senza runtime —
+    e ogni pagina falliva con «completa prima l'installazione», cioè con
+    l'istruzione di fare una cosa che nessuno aveva iniziato.
+    """
+    if adapter_id != "paddleocr-vl":
+        return
+    if not is_installed(adapter_id) and not _will_serve_locally(adapter_id):
         return
     runtime = paddle_runtime.status(probe=False)
     if runtime["ready"] or adapter_id in _RUNTIME_ACTIVE:
@@ -359,6 +392,9 @@ def list_models() -> list[dict]:
         gpus = trainer_metrics.gpu_snapshot()
     except Exception:  # noqa: BLE001
         gpus = []
+    # Una sola fotografia della macchina per tutti i modelli: il piano locale
+    # di ogni riga la riusa invece di rileggere nvidia-smi e i runtime.
+    local_machine = hardware.summary()
     items = []
     for cap in list_adapters():
         adapter = get_adapter(cap["adapter_id"])
@@ -398,6 +434,18 @@ def list_models() -> list[dict]:
             "local_serve_blocker": (
                 _docker_gpu_blocker() if cap.get("serve_backend") == "docker-vllm-openai" else None
             ),
+            # Dove questo modello gira *davvero* su questa macchina, con la
+            # causa scritta quando non gira. È la risposta a «posso usarlo in
+            # locale?»: la UI non deve dedurla dall'OS né dal solo fatto che
+            # esista un comando di serving.
+            "local": {
+                **hardware.plan_local(
+                    cap.get("local_runtimes") or (),
+                    machine=local_machine,
+                    approx_size_gb=cap.get("approx_size_gb"),
+                ),
+                "mlx_repo": cap.get("local_mlx_repo") or None,
+            },
         })
     return items
 

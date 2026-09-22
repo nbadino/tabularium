@@ -1,12 +1,13 @@
 /**
  * Il guscio: un rail di navigazione multi-riga, persistente, in alto.
  *
- * La riga 1 porta l'identità e lo stato globale; la riga 2 le sezioni, come
- * linguette bordo a bordo. Il rail regge più delle sette sezioni attuali
- * senza ridisegnarsi: le milestone successive entrano come nuove linguette.
+ * La riga 1 porta l'identità e lo stato globale; la riga 2 le cinque
+ * destinazioni globali, come linguette bordo a bordo. Il rail scorre
+ * orizzontalmente al proprio interno e non cresce a ogni strumento nuovo:
+ * gli strumenti contestuali entrano nel contesto che li rende sensati.
  *
- * La colonna sinistra non è più sprecata su sette link fissi — nelle pagine
- * che ne hanno bisogno resta libera per il contesto (le pagine, i progetti).
+ * La colonna sinistra non è sprecata su link fissi — nelle pagine che ne
+ * hanno bisogno resta libera per il contesto (le pagine, i progetti).
  */
 import { Link, NavLink, Outlet, useLocation } from 'react-router'
 import { useEffect, useState } from 'react'
@@ -20,7 +21,6 @@ import {
   IconArchive,
   IconAnnotate,
   IconDataset,
-  IconEvaluate,
   IconPlayground,
   IconTraining,
 } from './icons'
@@ -32,16 +32,23 @@ interface NavItem {
   end?: boolean
 }
 
+/**
+ * Le destinazioni globali sono cinque. Le prime quattro portano il percorso
+ * primario — riconoscere, correggere, rivedere i risultati, gestire il corpus —
+ * e Modelli è la quinta: il luogo unico in cui si sceglie il modello, dove
+ * eseguirlo e come migliorarlo.
+ *
+ * Dataset, fine-tuning, valutazione e playground non stanno qui: sono
+ * strumenti del modello e delle singole attività, non percorsi globali
+ * concorrenti. Si aprono dal contesto che li rende sensati — il progetto, la
+ * pagina dei risultati, l'hub Modelli — e restano raggiungibili come rotte.
+ */
 const NAV: NavItem[] = [
   { to: '/', labelKey: 'nav.recognize', Icon: IconPlayground, end: true },
   { to: '/annotazione', labelKey: 'nav.annotate', Icon: IconAnnotate },
   { to: '/risultati', labelKey: 'nav.results', Icon: IconDataset },
   { to: '/archivio', labelKey: 'nav.archive', Icon: IconArchive },
   { to: '/modelli', labelKey: 'nav.models', Icon: IconTraining },
-  { to: '/dataset', labelKey: 'nav.dataset', Icon: IconDataset },
-  { to: '/training', labelKey: 'nav.training', Icon: IconTraining },
-  { to: '/valutazione', labelKey: 'nav.evaluation', Icon: IconEvaluate },
-  { to: '/playground', labelKey: 'nav.playground', Icon: IconPlayground },
 ]
 
 function LocaleSwitch() {

@@ -32,3 +32,46 @@ def test_parse_result_falls_back_to_full_page_markdown():
 
 def test_parse_result_does_not_invent_blocks_for_empty_output():
     assert parse_result({}, 640, 480) == []
+
+
+def test_paddle_labels_land_in_the_tabularium_taxonomy():
+    """Le label di PP-DocLayout entrano nel DB come label di Tabularium.
+
+    Un `doc_title` grezzo non è una label del progetto: il dataset builder lo
+    segnala come «classe senza prompt» e la UI mostra un valore che non esiste
+    nella palette. La mappa copre la tassonomia pubblica (§2.7 di AGENTS.md);
+    una label che resta fuori passa comunque, visibile, invece di essere
+    mascherata da un "Text" che direbbe una cosa falsa.
+    """
+    from app.services.paddle_official import parse_result
+
+    expected = {
+        "doc_title": "Title",
+        "paragraph_title": "Title",
+        "figure_title": "Caption",
+        "table_title": "Caption",
+        "number": "Issue-number",
+        "header": "Page-header",
+        "footer": "Page-footer",
+        "footnote": "Footnote",
+        "text": "Text",
+        "abstract": "Text",
+        "vertical_text": "Text",
+        "reference": "List-item",
+        "table": "Table",
+        "formula": "Formula",
+        "image": "Picture",
+        "chart": "Picture",
+        "seal": "Picture",
+    }
+    payload = [
+        {"block_label": label, "block_bbox": [0, 0, 10, 10], "block_content": label}
+        for label in expected
+    ]
+    payload.append({"block_label": "label_ignota", "block_bbox": [0, 0, 5, 5], "block_content": "label_ignota"})
+
+    out = {item["content"]: item["label"] for item in parse_result(payload, 100, 100)}
+
+    for raw, wanted in expected.items():
+        assert out[raw] == wanted, f"{raw} -> {out[raw]}, atteso {wanted}"
+    assert out["label_ignota"] == "label_ignota"

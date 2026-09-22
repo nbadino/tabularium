@@ -121,17 +121,24 @@ def ensure_ready() -> None:
         return
     target = _dir()
     target.mkdir(parents=True, exist_ok=True)
+    # `clear=True`: un tentativo precedente fallito può aver lasciato un venv
+    # incompleto senza `vllm` installato — ripartire da zero è più affidabile
+    # che provare a riparare in-place. Si crea **prima** di scrivere stato e
+    # log: `clear` cancella il contenuto della cartella, quindi i file scritti
+    # prima sparivano, e la UI leggeva «absent» con il log vuoto proprio
+    # durante l'installazione.
+    try:
+        venv.EnvBuilder(with_pip=True, clear=True).create(str(target))
+    except Exception as exc:  # noqa: BLE001
+        _write_state(state="error", error=str(exc))
+        raise RuntimeError(f"creazione dell'ambiente vLLM fallita: {exc}") from exc
     _write_state(state="installing", error=None)
     log_file = _log_file()
     with log_file.open("ab") as fh:
         stamp = datetime.now(timezone.utc).isoformat()
-        fh.write(f"[{stamp}] creazione venv in {target}\n".encode())
+        fh.write(f"[{stamp}] venv creato in {target}\n".encode())
         fh.flush()
         try:
-            # `clear=True`: un tentativo precedente fallito può aver lasciato
-            # un venv incompleto senza `vllm` installato — ripartire da zero
-            # è più affidabile che provare a riparare in-place.
-            venv.EnvBuilder(with_pip=True, clear=True).create(str(target))
             subprocess.run(
                 [str(python_bin()), "-m", "pip", "install", "--upgrade", "pip"],
                 check=True,

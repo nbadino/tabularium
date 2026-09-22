@@ -43,3 +43,6 @@ frontend/dist/
 *.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts
+
+# Stato locale dell'agente (preferenze, impostazioni): non è parte del prodotto
+.commandcode/

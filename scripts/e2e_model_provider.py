@@ -47,7 +47,19 @@ def _first_visible(driver: webdriver.Chrome, xpath: str):
 
 
 def main() -> int:
+    """Verifica che la destinazione si scelga in pagina e che l'app dica cosa
+    può fare *questa* macchina.
+
+    Il test è indipendente dallo stato: non presuppone che nessun modello sia
+    già configurato. Dipendere da «nessuna destinazione scelta» lo rendeva
+    verde solo su una macchina appena installata, e rosso su quella di chi ci
+    lavora.
+    """
     requests.get(f"{BASE}/api/health", timeout=10).raise_for_status()
+    info = requests.get(f"{BASE}/api/system/info", timeout=10).json()
+    compute = info["capabilities"]["local_compute"]
+    usable = compute["usable_runtimes"]
+
     root = Path(tempfile.mkdtemp(prefix="tabularium-model-provider-e2e-"))
     driver = webdriver.Chrome(
         service=Service(os.environ.get("TABULARIUM_CHROMEDRIVER") or None),
@@ -59,90 +71,91 @@ def main() -> int:
         driver.get(f"{BASE}/modelli")
         wait.until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
 
-        open_catalog = wait.until(
+        # La libreria è la pagina, non una modale: il catalogo è già presente.
+        assert wait.until(
             lambda d: _first_visible(
                 d,
-                "//button[contains(., 'Scegli il modello') or contains(., 'Choose model') or contains(., 'Choisir')]",
+                "//*[contains(., 'Catalogo modelli') or contains(., 'Model catalog') or contains(., 'Catalogue des modèles')]",
             )
-        )
-        open_catalog.click()
+        ) is not None
+
+        # La scelta della destinazione si apre dalla testata, in un modulo in
+        # pagina, e dichiara prima cosa può fare questa macchina.
+        wait.until(
+            lambda d: _first_visible(
+                d,
+                "//button[contains(., 'Cambia destinazione') or contains(., 'Change destination') or contains(., 'Changer la destination')]",
+            )
+        ).click()
         wait.until(
             EC.presence_of_element_located(
-                (
-                    By.XPATH,
-                    "//*[contains(., 'Catalogo modelli') or contains(., 'Model catalog') or contains(., 'Catalogue')]",
-                )
+                (By.XPATH, "//*[contains(., 'Dove vuoi eseguirlo?') or contains(., 'Where do you want to run it?') or contains(., 'Où voulez-vous')]")
             )
         )
+        body = driver.find_element(By.TAG_NAME, "body").text
+        assert compute["arch"] in body or compute["platform"] in body, body[:1200]
 
-        # In the neutral catalog the user is selecting an identity, not
-        # installing anything.  Download controls and local status are hidden.
-        visible_buttons = [
-            button.text.strip()
-            for button in driver.find_elements(By.TAG_NAME, "button")
-            if button.is_displayed()
-        ]
-        assert not any(
-            label in text
-            for text in visible_buttons
-            for label in ("Scarica", "Download", "Télécharger", "Installa", "Install")
-        ), visible_buttons
-
-        continue_button = wait.until(
+        local = wait.until(
             lambda d: _first_visible(
                 d,
-                "//button[contains(., 'Continua con questo modello') or contains(., 'Continue with this model') or contains(., 'Continuer avec ce modèle') or contains(., 'Scegli questo modello')]",
+                "//button[contains(., 'Locale') or contains(., 'Local')]",
             )
         )
-        # The model card is the first card in the catalog list.  Its title is
-        # read before opening the destination dialog and checked again later.
-        card = driver.find_element(By.XPATH, "//div[contains(@class, 'divide-y')]/div[1]")
-        model_name = card.find_element(By.XPATH, ".//*[self::span or self::div][normalize-space()][1]").text.strip().splitlines()[0]
-        assert model_name, card.text
-        # Repeat the complete model-first interaction for every destination.
-        # A fresh navigation prevents state from a previous provider from
-        # silently making the next case pass.
-        destinations = (
-            ("Locale", "//button[contains(., 'Locale') or contains(., 'Local') or contains(., 'Local')]") ,
-            ("Vast.ai", "//button[contains(., 'Vast.ai') or contains(., 'Vast')]") ,
-            ("RunPod", "//button[contains(., 'RunPod')]") ,
-            ("Modal", "//button[contains(., 'Modal')]") ,
-            ("MANUALE", "//button[contains(., 'endpoint') or contains(., 'Manual') or contains(., 'MANUALE') or contains(., 'MANUAL')]") ,
-        )
-        checked = []
-        for expected_label, destination_xpath in destinations:
+        assert local is not None
+        if not usable:
+            # Nessun runtime locale: la voce è disabilitata e la causa è
+            # scritta, invece di far fallire il click.
+            assert not local.is_enabled(), "«Locale» offerto su una macchina che non può servire"
+            assert any(
+                fragment.casefold() in body.casefold()
+                for fragment in ("non può servire modelli in locale", "cannot serve models locally", "ne peut pas servir")
+            ), body[:1200]
+        else:
+            assert local.is_enabled()
+
+        checked = [f"scegli_destinazione (locale={'sì' if usable else 'no'})"]
+
+        # Le destinazioni remote: la scheda del provider si apre con il
+        # modello già scelto, senza rifare la selezione.
+        for expected_label, destination_xpath in (
+            ("Vast.ai", "//button[contains(., 'Vast.ai') or contains(., 'Vast')]"),
+            ("RunPod", "//button[contains(., 'RunPod')]"),
+            ("Modal", "//button[contains(., 'Modal')]"),
+            ("MANUALE", "//button[contains(., 'endpoint') or contains(., 'Manual') or contains(., 'MANUALE') or contains(., 'MANUAL')]"),
+        ):
             driver.get(f"{BASE}/modelli")
             wait.until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
             wait.until(
                 lambda d: _first_visible(
                     d,
-                    "//button[contains(., 'Scegli il modello') or contains(., 'Choose model') or contains(., 'Choisir')]",
+                    "//button[contains(., 'Cambia destinazione') or contains(., 'Change destination') or contains(., 'Changer la destination')]",
                 )
             ).click()
-            wait.until(
-                lambda d: _first_visible(
-                    d,
-                    "//button[contains(., 'Continua con questo modello') or contains(., 'Continue with this model') or contains(., 'Continuer avec ce modèle') or contains(., 'Scegli questo modello')]",
-                )
-            ).click()
-            wait.until(
-                EC.presence_of_element_located(
-                    (By.XPATH, "//*[contains(., 'Dove vuoi eseguirlo?') or contains(., 'Where do you want to run it?') or contains(., 'Où voulez-vous')]")
-                )
-            )
             destination = wait.until(lambda d: _first_visible(d, destination_xpath))
-            assert destination is not None, (expected_label, d.find_element(By.TAG_NAME, "body").text[:1500])
+            assert destination is not None, (
+                expected_label,
+                driver.find_element(By.TAG_NAME, "body").text[:1500],
+            )
             destination.click()
-            wait.until(lambda d: model_name in d.find_element(By.TAG_NAME, "body").text)
+            wait.until(
+                lambda d: expected_label.casefold()
+                in d.find_element(By.TAG_NAME, "body").text.casefold()
+            )
             body = driver.find_element(By.TAG_NAME, "body").text
-            if expected_label == "Locale":
-                assert any(label.casefold() in body.casefold() for label in ("Porta locale", "Local port", "Port locale")), body[:2500]
-            else:
-                assert expected_label.casefold() in body.casefold(), (expected_label, body[:2500])
-                body_folded = body.casefold()
-                assert any(label.casefold() in body_folded for label in ("Modello già scelto", "Modello da deployare", "Model already selected", "Model to deploy", "Modèle déjà choisi", "Modèle à déployer")), body[:2500]
+            assert any(
+                label.casefold() in body.casefold()
+                for label in (
+                    "Modello già scelto",
+                    "Modello da deployare",
+                    "Model already selected",
+                    "Model to deploy",
+                    "Modèle déjà choisi",
+                    "Modèle à déployer",
+                )
+            ), body[:2500]
             checked.append(expected_label)
-        print(f"e2e model provider OK: {model_name} -> {', '.join(checked)}")
+
+        print(f"e2e model provider OK: {compute['platform']}/{compute['arch']} -> {', '.join(checked)}")
         return 0
     finally:
         try:

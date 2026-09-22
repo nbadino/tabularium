@@ -8,6 +8,7 @@ from .. import config
 from ..db import connect
 from ..schemas import PageList, PageOut, PageUpdate
 from ..services import pages as pagesvc
+from ..services import images
 from ..services import otsl as otslmod
 from ..services.i18n import msg, parse_lang
 from ..services import auth as authsvc
@@ -385,8 +386,8 @@ def _transform_state(page_id: int) -> dict:
             f"/api/pages/{page_id}/transform-preview/candidate" if candidate else None
         ),
         "engines": {
-            "deskew": {"available": importlib.util.find_spec("cv2") is not None},
-            "perspective": {"available": importlib.util.find_spec("cv2") is not None},
+            "deskew": {"available": images.cv2_available()},
+            "perspective": {"available": images.cv2_available()},
             "mesh": {"available": True},
             # Unica rettifica neurale: quella del modello stesso.
             "monkeyocr": {"available": monkey_preprocess.available()},

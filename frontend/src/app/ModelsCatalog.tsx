@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiDelete, apiGet, apiPost } from '../lib/api'
+import { localRuntimeLabel } from '../lib/vocab'
 import { useI18n } from '../i18n'
-import { Badge, Modal, Progress } from './ui'
+import { Badge, Module, Progress } from './ui'
 import { useInference } from './inference'
 import { IconWarn } from './icons'
 
-interface ModelsModalProps {
-  open: boolean
-  onClose: () => void
+interface ModelsCatalogProps {
   /** Provider del profilo attivo: decide quale azione è primaria in ogni
    *  riga (servire in locale o deployare sul provider remoto). */
   activeProvider: string | null
@@ -16,8 +15,6 @@ interface ModelsModalProps {
   /** «Deploya su <provider>»: gestita dall'hub, che apre il pannello del
    *  provider con il modello già scelto. */
   onDeploy: (adapterId: string, displayName: string) => void
-  /** Porta alla scelta della destinazione (profili di esecuzione). */
-  onChangeDestination: () => void
 }
 
 interface ModelItem {
@@ -36,6 +33,15 @@ interface ModelItem {
   supports_end2end: boolean
   export_ready: boolean
   local_serve_ready: boolean
+  /** Dove questo modello gira *su questa macchina*, con la causa quando non
+   *  gira. Non è deducibile dal sistema operativo: dipende dall'architettura
+   *  del modello (un port MLX esiste per alcuni, non per tutti). */
+  local: {
+    runnable: boolean
+    runtime: string | null
+    reason: string | null
+    mlx_repo: string | null
+  }
   cloud_serve_ready: boolean
   cloud_template: string | null
   download_only: boolean
@@ -306,11 +312,13 @@ function ServeProgress({ status, name }: { status: ServeStatus; name: string }) 
 }
 
 /**
- * Registro modelli OCR: sfoglia, scarica, cancella. Componente separato da
- * `CloudControlModal.tsx` (istanze/tunnel) per non far dipendere download dei
- * pesi dalla gestione della connessione cloud.
+ * Registro modelli OCR: sfoglia, scarica, cancella. È il corpo dell'hub
+ * Modelli — non una modale: il catalogo è la pagina, e questo componente
+ * rende la configurazione attiva, la destinazione e le righe dei modelli.
+ * Separato da `CloudControlModal.tsx` (istanze/tunnel) per non far dipendere
+ * il download dei pesi dalla gestione della connessione cloud.
  */
-export function ModelsModal({ open, onClose, activeProvider, selectedAdapterId, onDeploy, onChangeDestination }: ModelsModalProps) {
+export function ModelsCatalog({ activeProvider, selectedAdapterId, onDeploy }: ModelsCatalogProps) {
   const { t } = useI18n()
   const inf = useInference()
   const REMOTE_PROVIDERS = ['vast', 'runpod', 'modal'] as const
@@ -413,7 +421,6 @@ export function ModelsModal({ open, onClose, activeProvider, selectedAdapterId, 
   }
 
   useEffect(() => {
-    if (!open) return
     void load()
     // Nel primo passaggio serve solo il catalogo. Stato del server locale e
     // autenticazione Hub servono esclusivamente quando l'utente ha scelto
@@ -422,26 +429,26 @@ export function ModelsModal({ open, onClose, activeProvider, selectedAdapterId, 
       void loadServeStatus()
       void loadHfAuth()
     }
-  }, [open, activeProvider])
+  }, [activeProvider])
 
   useEffect(() => {
-    if (!open || activeProvider !== 'local') return
+    if (activeProvider !== 'local') return
     const id = setInterval(() => void loadServeStatus(), 3000)
     return () => clearInterval(id)
-  }, [open, activeProvider])
+  }, [activeProvider])
 
   useEffect(() => {
-    if (!open || hfAuth.state !== 'awaiting_authorization') return
+    if (hfAuth.state !== 'awaiting_authorization') return
     const id = setInterval(() => void loadHfAuth(), 3000)
     return () => clearInterval(id)
-  }, [open, hfAuth.state])
+  }, [hfAuth.state])
 
   useEffect(() => {
-    if (!open || !models.some((m) => m.downloading || (m.adapter_id === 'paddleocr-vl' && m.runtime_state === 'installing'))) return
+    if (!models.some((m) => m.downloading || (m.adapter_id === 'paddleocr-vl' && m.runtime_state === 'installing'))) return
     const id = setInterval(() => void load(true), 2000)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, models.some((m) => m.downloading)])
+  }, [models.some((m) => m.downloading)])
 
   const toolchainLabel = (id: string): string => {
     switch (id) {
@@ -459,7 +466,9 @@ export function ModelsModal({ open, onClose, activeProvider, selectedAdapterId, 
   }
 
   const visibleModels = models.filter((model) => {
-    if (activeProvider === 'local' && selectedAdapterId && model.adapter_id !== selectedAdapterId) return false
+    // Il catalogo non si restringe al modello in uso: servirebbe solo a
+    // impedire di cambiare modello. Chi è già configurato si riconosce dal
+    // badge «In uso ora» e dall'evidenziazione della riga.
     const needle = query.trim().toLocaleLowerCase()
     if (!needle) return true
     return `${model.display_name} ${model.adapter_id} ${model.hf_repo}`.toLocaleLowerCase().includes(needle)
@@ -580,22 +589,9 @@ export function ModelsModal({ open, onClose, activeProvider, selectedAdapterId, 
     }
   }
 
-  if (!open) return null
-
   return (
-    <Modal
-      title={t('cloud.models.title')}
-      onClose={onClose}
-      wide
-      footer={(
-        <div className="flex items-center justify-end border-t border-[color:var(--color-rule)] bg-[color:var(--color-panel)] px-4 py-2.5">
-          <button type="button" onClick={onClose} className="btn btn-sm">
-            {t('cloud.models.close')}
-          </button>
-        </div>
-      )}
-    >
-      <div className="space-y-4 p-4 text-[13px] leading-relaxed">
+    <Module tab={t('cloud.models.title')} flush>
+      <div className="space-y-4 p-3 text-[13px] leading-relaxed">
           {activeProvider === 'local' && <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
             <label className="mt-2 flex max-w-[18rem] items-center gap-2 text-[11px]">
               <span className="lbl !mb-0">{t('cloud.models.servePort')}</span>
@@ -720,36 +716,11 @@ export function ModelsModal({ open, onClose, activeProvider, selectedAdapterId, 
             )}
           </div>}
 
-          <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-panel)] p-3">
-            <div className="mb-2 flex items-baseline gap-2">
-              <span className="mono text-[11px] font-bold text-[color:var(--color-sig-text)]">01</span>
-              <p className="text-[12px] text-[color:var(--color-ink-2)]">
-                {remote ? t('cloud.models.remoteIntro', { provider: destinationLabel }) : activeProvider === 'local' ? t('cloud.models.intro') : t('modelsHub.modelOnlyIntro')}
-              </p>
-            </div>
-          </div>
-
           {notice && (
             <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-sheet-dim)] px-3 py-2 text-[12px]">
               {notice}
             </div>
           )}
-
-          <div className="flex flex-wrap items-center justify-between gap-2 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-panel)] px-3 py-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="mono text-[11px] font-bold text-[color:var(--color-sig-text)]">02</span>
-              <span className="lbl !mb-0">{t('cloud.models.destinationLabel')}</span>
-              <Badge tone={remote ? 'ok' : activeProvider ? 'neutral' : 'warn'}>
-                {activeProvider ? destinationLabel : t('modelsHub.destinationPending')}
-              </Badge>
-              {remote && <span className="text-[11px] text-[color:var(--color-ink-2)]">{t('cloud.models.destinationRemoteHint')}</span>}
-            </div>
-            {activeProvider && (
-              <button type="button" className="btn btn-sm" onClick={onChangeDestination}>
-                {t('cloud.models.changeDestination')}
-              </button>
-            )}
-          </div>
 
           <label className="block">
             <span className="lbl">{t('modelsHub.searchLabel')}</span>
@@ -764,6 +735,11 @@ export function ModelsModal({ open, onClose, activeProvider, selectedAdapterId, 
           <div className="divide-y divide-[color:var(--color-rule)] border border-[color:var(--color-rule)]">
             {visibleModels.map((m) => {
               const rowBusy = !!busy[m.adapter_id]
+              // Un modello che gira in locale via MLX non passa dal registro
+              // dei pesi: il download lo fa `mlx-vlm` al primo avvio. Chiedere
+              // «Scarica» prima di poter servire sarebbe un passaggio in più
+              // che non esiste su questa macchina.
+              const mlxLocally = m.local?.runnable === true && m.local.runtime === 'mlx-vlm'
               return (
                 <div
                   key={m.adapter_id}
@@ -772,7 +748,7 @@ export function ModelsModal({ open, onClose, activeProvider, selectedAdapterId, 
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-bold">{m.display_name}</span>
-                      {activeProvider && (m.installed ? (
+                      {activeProvider && !mlxLocally && (m.installed ? (
                         <Badge tone="ok">{t('cloud.models.installed', { size: fmtBytes(m.size_bytes) })}</Badge>
                       ) : m.downloading ? (
                         <Badge tone="neutral">{t('cloud.models.downloading', { size: fmtBytes(m.size_bytes) })}</Badge>
@@ -806,6 +782,19 @@ export function ModelsModal({ open, onClose, activeProvider, selectedAdapterId, 
                         </Badge>
                       )}
                       {m.download_only && <Badge tone="neutral">{t('cloud.models.downloadOnly')}</Badge>}
+                      {/* Dove questo modello gira su questa macchina. Il
+                          verdetto non si deduce dall'OS: dipende
+                          dall'architettura (un port MLX esiste per alcuni
+                          modelli, non per tutti). */}
+                      {m.local?.runnable ? (
+                        <Badge tone="ok">
+                          {t('localCompute.runnable', { runtime: localRuntimeLabel(m.local.runtime) })}
+                        </Badge>
+                      ) : (
+                        <span title={m.local?.reason ? t(`localCompute.reason.${m.local.reason}`) : undefined}>
+                          <Badge tone="neutral">{t('localCompute.notRunnable')}</Badge>
+                        </span>
+                      )}
                       {serveStatus.ready && serveStatus.adapter_id === m.adapter_id && (
                         <Badge tone="ok">{t('cloud.models.serving', { port: String(serveStatus.port) })}</Badge>
                       )}
@@ -891,7 +880,14 @@ export function ModelsModal({ open, onClose, activeProvider, selectedAdapterId, 
                           </span>
                         )
                       )
-                    ) : m.installed ? (
+                    ) : !m.local?.runnable ? (
+                      // Il modello non gira su questa macchina: scaricare i
+                      // pesi pieni per poi non poterlo servire è un vicolo
+                      // cieco. La via è la destinazione remota.
+                      <span className="max-w-[22ch] text-right text-[11px] text-[color:var(--color-ink-3)]">
+                        {t('localCompute.remoteOnlyAction')}
+                      </span>
+                    ) : m.installed || mlxLocally ? (
                       <>
                         {m.local_serve_ready && (
                           (serveStatus.starting || (serveStatus.running && !serveStatus.ready)) &&
@@ -981,6 +977,6 @@ export function ModelsModal({ open, onClose, activeProvider, selectedAdapterId, 
             )}
           </div>
       </div>
-    </Modal>
+    </Module>
   )
 }

@@ -4,6 +4,13 @@ pydantic>=2.13,<3
 pillow>=12,<13
 numpy>=2,<3
 requests>=2.32,<3
+# Motore OCR dello pseudo-labeling (prefill «OCR (CPU)» e riempimento celle).
+# Sta nelle dipendenze core perché è una funzione del prodotto, non un extra:
+# senza, il prefill OCR risponde «nessun motore disponibile» e l'utente deve
+# installare a mano qualcosa che l'app avrebbe dovuto consegnargli. RapidOCR è
+# il motore preferito: onnxruntime, multipiattaforma, e **i modelli sono nel
+# wheel** (nessun download alla prima esecuzione).
+rapidocr-onnxruntime>=1.4,<2
 # Client delle API cloud (Vast.ai/RunPod) in services/cloud_manager.py.
 httpx>=0.28,<1
 python-dotenv>=1.0,<2

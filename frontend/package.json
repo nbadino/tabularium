@@ -17,12 +17,17 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.0.0",
+    "@univerjs/core": "^0.25.1",
+    "@univerjs/preset-sheets-core": "^0.25.1",
+    "@univerjs/presets": "^0.25.1",
+    "jspreadsheet-ce": "^5.0.4",
     "konva": "^10.3.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-konva": "^19.2.5",
     "react-router": "^7.18.2",
     "recharts": "^2.15.1",
+    "rxjs": "^7.8.2",
     "use-image": "^1.1.1"
   },
   "devDependencies": {

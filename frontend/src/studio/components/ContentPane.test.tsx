@@ -9,6 +9,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@testing-library/jest-dom/vitest'
+
+// Univer disegna su canvas: in jsdom non può montare. Qui interessa il nostro
+// cablaggio (scheda → vista di lavoro → confini → salvataggio); che il foglio
+// si veda davvero lo prova il browser, non questo test.
+vi.mock('./UniverSheet', () => ({
+  default: () => <div data-testid="univer-sheet" />,
+}))
+
 import ContentPane from './ContentPane'
 import { emptyGrid } from '../../lib/grid'
 import type { DisplayBlock } from '../types'
@@ -85,7 +93,7 @@ describe('ContentPane', () => {
     expect(editor.value).toBe('Aagtekerk .. (Vereenigde)')
   })
 
-  it('blocco Table: carica la griglia dal server e monta il foglio', async () => {
+  it('blocco Table: la riga è una scheda, il foglio si apre nella vista di lavoro', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -103,8 +111,17 @@ describe('ContentPane', () => {
         {...noop}
       />,
     )
-    await waitFor(() => expect(screen.getByLabelText('Cella riga 1, colonna 1')).toBeTruthy())
-    expect(screen.getByAltText(/Ritaglio del blocco Table/)).toBeTruthy()
+    // Nel rail non c'è nessun foglio: una tabella non ci sta (520 px di rail).
+    expect(screen.queryByTestId('univer-sheet')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Apri la tabella' }))
+
+    // La vista di lavoro monta la superficie e, accanto, i confini.
+    await waitFor(() => expect(screen.getByTestId('univer-sheet')).toBeTruthy())
+    expect(screen.getByRole('button', { name: 'Salva griglia' })).toBeTruthy()
+    expect(screen.getByText(/righe ×/)).toBeTruthy()
+    expect(screen.getByAltText(/Ritaglio della tabella/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Aggiungi colonna' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Rifiuta confine' })).toBeTruthy()
   })
 
   it('blocco non ancora salvato: il ritaglio lo dice, non scompare', () => {

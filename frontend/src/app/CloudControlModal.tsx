@@ -3,6 +3,7 @@ import { apiDelete, apiGet, apiPost } from '../lib/api'
 import { useI18n } from '../i18n'
 import { IconCopy } from './icons'
 import { Badge, Collapsible, Field, Modal, Module, Notice } from './ui'
+import { useConfirm } from './confirm'
 import { saveInferenceToBackend, testInferenceConnection, useInference } from './inference'
 
 interface CloudControlModalProps {
@@ -222,6 +223,7 @@ function copyToClipboard(text: string, onDone: () => void) {
 
 export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId, focusModelLabel }: CloudControlModalProps) {
   const { t } = useI18n()
+  const confirm = useConfirm()
   const inf = useInference()
   // La destinazione esplicita vince sempre: il guess dall'URL vale solo come
   // ripiego quando l'apertura non nasce da una scelta di modello.
@@ -946,7 +948,12 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
       return
     }
     const price = offer.dph_total == null ? t('cloud.control.priceUnknown') : `$${offer.dph_total.toFixed(3)}/h`
-    if (!window.confirm(t('cloud.control.rentConfirm', { gpu: `${offer.num_gpus}× ${offer.gpu_name || 'GPU'}`, price }))) return
+    const rentOk = await confirm({
+      title: t('cloud.control.rentTitle'),
+      message: t('cloud.control.rentConfirm', { gpu: `${offer.num_gpus}× ${offer.gpu_name || 'GPU'}`, price }),
+      acceptLabel: t('cloud.control.rentTitle'),
+    })
+    if (!rentOk) return
     setVastBusy(true)
     setVastNotice(null)
     try {
@@ -975,7 +982,14 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   }
 
   const handleControlVast = async (instanceId: number | string, action: 'start' | 'stop' | 'delete') => {
-    if (action === 'delete' && !window.confirm(t('cloud.control.deleteResourceConfirm', { id: String(instanceId) }))) return
+    if (action === 'delete') {
+      const ok = await confirm({
+        title: t('cloud.control.deleteResourceTitle'),
+        message: t('cloud.control.deleteResourceConfirm', { id: String(instanceId) }),
+        acceptLabel: t('cloud.control.deleteResourceTitle'),
+      })
+      if (!ok) return
+    }
     const credential = vastCredential()
     if (!credential) {
       setVastNotice(t('cloud.control.missingKey'))
@@ -1045,7 +1059,14 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   }
 
   const handleControlRunpod = async (podId: number | string, action: 'start' | 'stop' | 'delete') => {
-    if (action === 'delete' && !window.confirm(t('cloud.control.deleteResourceConfirm', { id: String(podId) }))) return
+    if (action === 'delete') {
+      const ok = await confirm({
+        title: t('cloud.control.deleteResourceTitle'),
+        message: t('cloud.control.deleteResourceConfirm', { id: String(podId) }),
+        acceptLabel: t('cloud.control.deleteResourceTitle'),
+      })
+      if (!ok) return
+    }
     setRunpodBusy(true)
     try {
       await apiPost('/system/cloud/runpod/control', { api_key: runpodApiKey.trim(), pod_id: podId, action })
@@ -1128,7 +1149,11 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   }
 
   const handleModalStop = async () => {
-    if (!window.confirm(t('cloud.control.modalStopConfirm'))) return
+    const ok = await confirm({
+      title: t('cloud.control.modalStopTitle'),
+      message: t('cloud.control.modalStopConfirm'),
+    })
+    if (!ok) return
     setModalBusy(true)
     setModalNotice(null)
     try {

@@ -1,13 +1,14 @@
 /**
  * Dati e backup: lo stato del database e le copie da cui si torna indietro.
  *
- * Il ripristino chiede conferma in una `Modal` del prodotto, non in un
- * `window.confirm` del browser: è l'unica azione di questa pagina che può far
- * sparire del lavoro, e il testo deve poterlo dire per intero.
+ * Il ripristino chiede conferma con `useConfirm`: è l'unica azione di questa
+ * pagina che può far sparire del lavoro, e il testo deve poterlo dire per
+ * intero su una superficie del prodotto, non su un dialog del browser.
  */
 import { useEffect, useState } from 'react'
 import { apiGet, apiPost } from '../../lib/api'
-import { Badge, ErrorNotice, Modal, Module, Notice, WarnNotice } from '../../app/ui'
+import { Badge, ErrorNotice, Module, Notice, WarnNotice } from '../../app/ui'
+import { useConfirm } from '../../app/confirm'
 import { describeError } from '../../lib/errors'
 import { useI18n } from '../../i18n'
 import type { SectionProps } from './SettingsPage'
@@ -25,10 +26,10 @@ interface BackupState {
 
 export default function DataSection({ isAdmin }: SectionProps) {
   const { t } = useI18n()
+  const confirm = useConfirm()
   const [state, setState] = useState<BackupState | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ tone: 'ok' | 'sig'; text: string } | null>(null)
-  const [confirming, setConfirming] = useState<BackupItem | null>(null)
   const [loadError, setLoadError] = useState<unknown>(null)
 
   const load = () => {
@@ -64,7 +65,12 @@ export default function DataSection({ isAdmin }: SectionProps) {
   }
 
   const restore = async (item: BackupItem) => {
-    setConfirming(null)
+    const ok = await confirm({
+      title: t('settings.backupRestoreTitle'),
+      message: t('settings.backupRestoreBody', { name: item.name }),
+      acceptLabel: t('settings.backupRestore'),
+    })
+    if (!ok) return
     setBusy(item.name)
     setNotice(null)
     try {
@@ -151,7 +157,7 @@ export default function DataSection({ isAdmin }: SectionProps) {
                     type="button"
                     className="btn btn-sm btn-danger"
                     disabled={busy != null}
-                    onClick={() => setConfirming(item)}
+                    onClick={() => void restore(item)}
                   >
                     {busy === item.name ? t('settings.backupRestoring') : t('settings.backupRestore')}
                   </button>
@@ -172,30 +178,6 @@ export default function DataSection({ isAdmin }: SectionProps) {
         </Module>
       )}
 
-      {confirming && (
-        <Modal
-          title={t('settings.backupRestoreTitle')}
-          onClose={() => setConfirming(null)}
-          footer={
-            <>
-              <button type="button" className="btn" onClick={() => setConfirming(null)}>
-                {t('common.close')}
-              </button>
-              <button
-                type="button"
-                className="btn btn-danger"
-                onClick={() => void restore(confirming)}
-              >
-                {t('settings.backupRestore')}
-              </button>
-            </>
-          }
-        >
-          <p className="max-w-[62ch] p-3 text-[13px]">
-            {t('settings.backupRestoreBody', { name: confirming.name })}
-          </p>
-        </Modal>
-      )}
     </div>
   )
 }

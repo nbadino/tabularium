@@ -18,7 +18,34 @@ export default function AccountSection() {
   const { user } = useAuth()
   const [pwOpen, setPwOpen] = useState(false)
 
-  if (!user) return <></>
+  // In modalità locale non esistono utenti: la zona Account resta viva
+  // perché la lingua è comunque una scelta di questo browser, e dice
+  // esplicitamente perché non c'è nient'altro da configurare qui.
+  if (!user) {
+    return (
+      <Module tab={t('settings.account')}>
+        <p className="text-[13px] font-semibold">{t('settings.localModeTitle')}</p>
+        <p className="mt-1 max-w-[72ch] text-[12px] text-[color:var(--color-ink-2)]">
+          {t('settings.localModeBody')}
+        </p>
+        <div className="mt-3 grid items-end gap-3 sm:grid-cols-[minmax(220px,360px)_auto]">
+          <Field label={t('settings.language')} hint={t('settings.languageHint')}>
+            <select
+              className="fld"
+              value={locale}
+              onChange={(e) => setLocale(e.target.value as Locale)}
+            >
+              {LOCALES.map((item) => (
+                <option key={item} value={item}>
+                  {LOCALE_LABELS[item]}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+      </Module>
+    )
+  }
 
   const roleKey = `users.role${user.role.charAt(0).toUpperCase()}${user.role.slice(1)}`
 

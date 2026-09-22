@@ -69,7 +69,29 @@ export interface SystemInfo {
     local_cuda?: boolean
     remote_gpu?: boolean
     cuda_note?: string | null
+    /** Cosa può fare questa macchina in locale: piattaforma, memoria e quali
+     *  runtime di serving sono ospitabili. È la fonte della verità per il
+     *  verdetto locale di ogni modello. */
+    local_compute?: LocalCompute
   }
+}
+
+export interface LocalRuntimeSupport {
+  supported: boolean
+  reason: string | null
+  /** Solo per vLLM su Windows: il percorso supportato è WSL2. */
+  wsl?: boolean
+}
+
+export interface LocalCompute {
+  platform: string
+  os_version: string
+  arch: string
+  apple_silicon: boolean
+  memory_gb: number | null
+  cuda: { available: boolean; devices: GpuInfo[] }
+  runtimes: Record<string, LocalRuntimeSupport>
+  usable_runtimes: string[]
 }
 
 // --- Progetti & pagine (M1) --------------------------------------------------

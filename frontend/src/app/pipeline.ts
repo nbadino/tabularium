@@ -8,7 +8,7 @@
  */
 import { useEffect, useState } from 'react'
 import { apiGet } from '../lib/api'
-import type { DatasetStatus, Project, TrainingStatus } from '../lib/types'
+import type { DatasetStatus, Project, RecognitionRun, TrainingStatus } from '../lib/types'
 import { runStateLabel } from '../lib/vocab'
 import { t } from '../i18n'
 
@@ -142,9 +142,120 @@ export function buildPipeline(input: PipelineInput): Stage[] {
   }))
 }
 
-/** Quante fasi sono già chiuse — per il contatore «{n} di 6». */
-export function completedCount(stages: Stage[]): number {
-  return stages.filter((s) => s.state === 'done').length
+// --- i percorsi del corpus ---------------------------------------------------
+//
+// Il corpus non si lavora in una fila di sei tappe. Il prodotto ha tre
+// percorsi indipendenti, e nessuno è obbligatorio:
+//
+//   Riconosci  — anche da solo: registri, riconosci, correggi, esporti.
+//   Annota     — la preparazione manuale, che vale di per sé in ogni percorso.
+//   Raffina    — il ramo opzionale: dataset → training → valutazione, e poi
+//                di nuovo inferenza con il modello affinato.
+//
+// Mostrarli come tre righe parallele dice la verità; una catena unica
+// imporrebbe il fine-tuning a chi vuole soltanto riconoscere.
+
+export type BranchId = 'recognize' | 'annotate' | 'refine'
+
+/**
+ * Lo stato di un percorso. `todo` non è un difetto: è la condizione normale
+ * di un percorso disponibile e non ancora avviato — per questo non porta
+ * distintivo. Solo ciò che è in movimento (`active`) o impedito (`blocked`)
+ * merita una parola sullo schermo.
+ */
+export type BranchState = 'todo' | 'active' | 'done' | 'blocked'
+
+export interface Branch {
+  id: BranchId
+  name: string
+  state: BranchState
+  /** Cosa è vero adesso in questo percorso. */
+  detail: string
+  /** Perché è impedito — mostrato solo se lo è. */
+  needs: string
+  /** Il percorso primario del prodotto: è l'unico che porta la piastra piena. */
+  recommended: boolean
+  action: { label: string; to: string }
+}
+
+export interface BranchInput extends PipelineInput {
+  /** Run di riconoscimento del progetto, più recente per primo. */
+  runs: RecognitionRun[]
+}
+
+export function buildBranches({ project, workflow, dataset, training, runs }: BranchInput): Branch[] {
+  const total = workflow?.total_pages ?? 0
+  // «Lavorata» è la stessa cosa che dice la testata dell'archivio: una pagina
+  // uscita dallo stato `new`. Contare qui le sole pagine approvate faceva
+  // contraddire due numeri nella stessa schermata.
+  const lavorate = Math.max(0, total - (workflow?.counts.new ?? 0))
+  const latest = runs[0]
+  const stages = buildPipeline({ project, workflow, dataset, training })
+  const stageOf = (id: string) => stages.find((s) => s.id === id)
+  // Il ramo «raffina» è una catena *sua* (dataset → training → valutazione):
+  // la tappa aperta si decide sulla soddisfazione delle sue fasi, non sullo
+  // stato della catena lineare, dove una fase precedente aperta marcherebbe
+  // come bloccata anche una tappa già fatta.
+  const datasetReady = dataset?.built === true
+  const trainingDone = training?.run?.state === 'finished'
+  const refineOpen = !datasetReady
+    ? stageOf('dataset')
+    : !trainingDone
+      ? stageOf('train')
+      : stageOf('evaluate')
+  const trainingRunning = training?.run?.state === 'running' || training?.run?.state === 'starting'
+
+  return [
+    {
+      id: 'recognize',
+      name: t('pipeline.paths.recognize'),
+      state: total === 0 ? 'blocked' : latest?.state === 'running' ? 'active' : 'todo',
+      detail:
+        total === 0
+          ? ''
+          : latest?.state === 'running'
+            ? t('pipeline.paths.recognizeRunning', {
+                done: latest.completed_pages,
+                total: latest.total_pages,
+              })
+            : latest
+              ? t('pipeline.paths.recognizeResults', { n: latest.succeeded_pages })
+              : t('pipeline.paths.recognizeTodo', { n: total }),
+      needs: t('pipeline.paths.recognizeNeeds'),
+      recommended: total > 0,
+      action:
+        latest && latest.state !== 'running'
+          ? { label: t('nav.results'), to: '/risultati' }
+          : { label: t('pipeline.paths.recognizeAction'), to: '/' },
+    },
+    {
+      id: 'annotate',
+      name: t('pipeline.paths.annotate'),
+      state: total === 0 ? 'blocked' : lavorate >= total ? 'done' : 'todo',
+      detail:
+        total === 0
+          ? ''
+          : lavorate >= total
+            ? t('pipeline.paths.annotateDone')
+            : t('pipeline.paths.annotateDetail', { done: lavorate, total }),
+      needs: t('pipeline.paths.annotateNeeds'),
+      recommended: false,
+      action: { label: t('pipeline.steps.annotateAction'), to: '/annotazione' },
+    },
+    {
+      id: 'refine',
+      name: t('pipeline.paths.refine'),
+      state: trainingRunning ? 'active' : refineOpen ? 'todo' : 'done',
+      detail: trainingRunning
+        ? t('pipeline.paths.refineRunning', { state: runStateLabel(training?.run?.state ?? '') })
+        : refineOpen
+          ? refineOpen.detail || t('pipeline.paths.refineNext', { step: refineOpen.name })
+          : '',
+      needs: t('pipeline.paths.refineNeeds'),
+      recommended: false,
+      action: refineOpen?.action ?? { label: t('pipeline.paths.refineAction'), to: '/dataset' },
+    },
+  ]
 }
 
 /**
@@ -156,11 +267,13 @@ export function usePipelineState(projectId: number | null) {
   const [workflow, setWorkflow] = useState<Workflow | null>(null)
   const [dataset, setDataset] = useState<DatasetStatus | null>(null)
   const [training, setTraining] = useState<TrainingStatus | null>(null)
+  const [runs, setRuns] = useState<RecognitionRun[]>([])
 
   useEffect(() => {
     setWorkflow(null)
     setDataset(null)
     setTraining(null)
+    setRuns([])
     if (projectId == null) return
     let alive = true
     apiGet<Workflow>(`/projects/${projectId}/workflow`)
@@ -172,10 +285,13 @@ export function usePipelineState(projectId: number | null) {
     apiGet<TrainingStatus>(`/projects/${projectId}/training/status`)
       .then((s) => alive && setTraining(s))
       .catch(() => {})
+    apiGet<{ items: RecognitionRun[] }>(`/recognition-runs?project_id=${projectId}`)
+      .then((r) => alive && setRuns(r.items))
+      .catch(() => {})
     return () => {
       alive = false
     }
   }, [projectId])
 
-  return { workflow, dataset, training }
+  return { workflow, dataset, training, runs }
 }

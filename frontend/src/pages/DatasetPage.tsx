@@ -162,6 +162,11 @@ export default function DatasetPage() {
   const stages = buildPipeline({ project, workflow, dataset: status, training })
 
   const report = status.report
+  // Il percorso dichiara la tappa «Bloccata» quando manca una pagina
+  // approvata: il comando non può poi comportarsi come se fosse disponibile.
+  // Con «solo pagine approvate» attivo e zero pagine approvate, un export
+  // produrrebbe un dataset vuoto — e un dataset vuoto non è un successo.
+  const exportWouldBeEmpty = approvedOnly && (workflow?.approved_pages ?? 0) === 0
 
   return (
     <div className="p-3">
@@ -268,7 +273,8 @@ export default function DatasetPage() {
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               onClick={() => void build()}
-              disabled={building || projectId === ''}
+              disabled={building || projectId === '' || exportWouldBeEmpty}
+              title={exportWouldBeEmpty ? t('dataset.buildEmptyTitle') : undefined}
               className="btn btn-primary"
             >
               <IconPlus size={13} />
@@ -279,6 +285,9 @@ export default function DatasetPage() {
                   : t('dataset.buildBtn')}
             </button>
             {buildArmed && <span className="text-[11px] text-[color:var(--color-sig-text)]">{t('dataset.overwriteNote')}</span>}
+            {exportWouldBeEmpty && !building && (
+              <span className="text-[11px] text-[color:var(--color-ink-2)]">{t('dataset.buildEmptyHint')}</span>
+            )}
           </div>
           <div className="mt-3">
             <Collapsible tab={t('dataset.alternatives')} quiet aux={t('dataset.optional')}>

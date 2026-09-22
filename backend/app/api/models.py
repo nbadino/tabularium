@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 
 from ..services import auth as authsvc
 from ..services import custom_models as custom_models_svc
-from ..services import inference, model_registry, serve_manager, huggingface_auth
+from ..services import hardware, inference, model_registry, serve_manager, huggingface_auth
 from ..services.model_adapters import get_adapter
 
 router = APIRouter(tags=["models"], dependencies=[Depends(authsvc.get_current_user)])
@@ -171,10 +171,19 @@ def serve_start(adapter_id: str, payload: dict | None = None, _admin: dict = Dep
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     adapter = get_adapter(adapter_id)
+    # Il nome che il client deve chiedere dipende dal runtime: `vllm` espone
+    # `--served-model-name`, il server MLX espone l'id del checkpoint MLX
+    # (`/v1/models`). Chiedere il nome sbagliato è un 404 a ogni chiamata.
+    local_runtime_id = hardware.pick_serve_runtime(adapter.capabilities)
+    served_model = (
+        adapter.capabilities.local_mlx_repo
+        if local_runtime_id == hardware.RUNTIME_MLX
+        else (adapter.capabilities.served_model_name or adapter_id)
+    )
     inference.save_inference_config({
         "enabled": True,
         "url": f"http://127.0.0.1:{port}/v1",
-        "model": adapter.capabilities.served_model_name or adapter_id,
+        "model": served_model,
         "adapter_id": adapter_id,
     })
     return {

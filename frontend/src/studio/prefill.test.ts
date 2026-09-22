@@ -5,6 +5,7 @@ import {
   prefillSeverity,
   replacementPlan,
   summarizeForPrefill,
+  summarizePage,
   type PrefillBlockLike,
 } from './prefill'
 
@@ -93,5 +94,31 @@ describe('prefillSeverity', () => {
   it('le altre modalità non sono mai gravi', () => {
     expect(prefillSeverity('merge', { blocks: 5, drafts: 2, tables: 1 })).toBe('none')
     expect(prefillSeverity('replace_drafts', { blocks: 5, drafts: 2, tables: 1 })).toBe('none')
+  })
+})
+
+describe('summarizePage', () => {
+  it('conta anche le bozze che vivono nel pannello, non solo quelle sul canvas', () => {
+    // Il canvas porta il lavoro umano e le bozze di tabella; le altre bozze
+    // stanno nel pannello contenuti. Il dialog di conferma deve vederle tutte,
+    // altrimenti sottostima ciò che la modalità scelta rimuove.
+    const onCanvas = [
+      { label: 'Title', prefill: null, confirmed: true },
+      { label: 'Table', prefill: 'model:official', confirmed: false },
+    ]
+    const inPane = [
+      { label: 'Text', confirmed: false },
+      { label: 'Text', confirmed: false },
+      { label: 'Issue-date', confirmed: false },
+    ]
+    const summary = summarizePage(onCanvas, inPane)
+    expect(summary.blocks).toBe(5)
+    expect(summary.drafts).toBe(4)
+    expect(summary.tables).toBe(1)
+  })
+
+  it('senza bozze nel pannello coincide con il solo canvas', () => {
+    const blocks = [{ label: 'Title', prefill: null, confirmed: true }]
+    expect(summarizePage(blocks, [])).toEqual(summarizeForPrefill(blocks))
   })
 })

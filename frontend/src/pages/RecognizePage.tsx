@@ -214,6 +214,11 @@ export default function RecognizePage() {
   // non la causa: mostrarli entrambi manda a controllare un endpoint che non
   // potrà mai rispondere. Vince la causa, che dice anche come uscirne.
   const noLocalGpu = engine === 'model' && !inference.isCloud && caps?.local_cuda === false
+  // La macchina può servire *qualcosa* in locale? Su Apple Silicon sì, via
+  // MLX — ma non quel modello, se non ha un checkpoint MLX. Distinguere le due
+  // cose evita di dire «questa macchina non può» quando può, solo con un
+  // altro modello.
+  const localRuntimeAvailable = (caps?.local_compute?.usable_runtimes?.length ?? 0) > 0
   const toggle = (id: number) => setSelected((before) => {
     const next = new Set(before)
     if (next.has(id)) next.delete(id)
@@ -385,10 +390,19 @@ export default function RecognizePage() {
             )}
             {noLocalGpu && (
               <Notice tone="warn">
-                <b className="font-semibold">{t('recognition.noLocalGpu')}</b>{' '}
-                {caps?.cuda_note === 'WSL2'
-                  ? t('recognition.noLocalGpuWslBody')
-                  : t('recognition.noLocalGpuBody')}
+                {localRuntimeAvailable ? (
+                  <>
+                    <b className="font-semibold">{t('recognition.modelNotLocalHere')}</b>{' '}
+                    {t('recognition.modelNotLocalHereBody')}
+                  </>
+                ) : (
+                  <>
+                    <b className="font-semibold">{t('recognition.noLocalGpu')}</b>{' '}
+                    {caps?.cuda_note === 'WSL2'
+                      ? t('recognition.noLocalGpuWslBody')
+                      : t('recognition.noLocalGpuBody')}
+                  </>
+                )}
               </Notice>
             )}
             <div className="mt-3 border-y border-[color:var(--color-rule)] py-2">

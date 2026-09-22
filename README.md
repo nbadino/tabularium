@@ -154,6 +154,18 @@ checked continuously rather than inferred from the shared POSIX scripts.
 The backend installers accept Python 3.11, 3.12 or 3.13 and explicitly refuse
 versions outside the verified matrix.
 
+**Linux prerequisites.** The installer brings the OCR engine (`rapidocr-onnxruntime`), which
+depends on `opencv-python`. That build imports `libGL`/`glib`, so on a headless Linux box the
+setup prints the exact remedy if the import fails:
+
+```bash
+sudo apt-get install -y libgl1 libglib2.0-0   # Debian/Ubuntu; equivalent elsewhere
+```
+
+Everything else the app needs at runtime (vLLM for CUDA machines, MLX on Apple Silicon, the
+PaddleOCR-VL official pipeline) is provisioned by Tabularium itself at first use — no manual
+virtualenvs, no environment variables.
+
 On first launch the app shows the **setup screen** where you create the
 instance administrator; every later session starts at the login page.
 

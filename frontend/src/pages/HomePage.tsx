@@ -17,8 +17,8 @@ import { pickActive, writeActiveProject } from '../app/activeProject'
 import { IconArchive } from '../app/icons'
 import { useI18n } from '../i18n'
 import { pageLabel, pageShortLabel } from '../lib/pageLabel'
-import { Pipeline } from '../app/PipelineView'
-import { buildPipeline, usePipelineState } from '../app/pipeline'
+import { CorpusPaths } from '../app/PipelineView'
+import { buildBranches, usePipelineState } from '../app/pipeline'
 
 /** Una pagina del muro: anteprima ritagliata dall'alto, dove sta la testata. */
 function PageCell({ page }: { page: PageItem }) {
@@ -86,8 +86,8 @@ export default function HomePage() {
   }, [projectId])
 
   const project = projects.find((p) => p.id === projectId) ?? null
-  const { workflow, dataset, training } = usePipelineState(projectId)
-  const stages = buildPipeline({ project, workflow, dataset, training })
+  const { workflow, dataset, training, runs } = usePipelineState(projectId)
+  const branches = buildBranches({ project, workflow, dataset, training, runs })
   // Il muro si ordina per avanzamento: il lavoro da fare viene per primo.
   const sorted = useMemo(
     () =>
@@ -193,7 +193,7 @@ export default function HomePage() {
         <Link to={projectId == null ? '/progetti' : `/progetti/${projectId}`} className="btn no-underline">{t('home.manageArchive')}</Link>
       </div>
 
-      {projectId != null && <div className="mb-3"><Pipeline stages={stages} /></div>}
+      {projectId != null && <div className="mb-3"><CorpusPaths branches={branches} /></div>}
 
       {/* --- il muro ---------------------------------------------------------- */}
       <Module

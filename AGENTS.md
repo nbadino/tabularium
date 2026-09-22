@@ -423,8 +423,14 @@ PyTorch nel processo dashboard (il training gira in env separati).
   Stato globale via **piccoli store modulari** (`useSyncExternalStore`, senza
   Zustand): `app/i18n`, `app/auth` — il pattern `useSyncExternalStore` è quello
   canonico del progetto.
-- Canvas di annotazione: **Konva.js** (shape editing, transformer) per i blocchi;
-  overlay/grid tabellare in SVG o canvas custom (componente `TableCellsEditor`).
+- Canvas di annotazione: **Konva.js** (shape editing, transformer) per i blocchi.
+- Editor tabellare: **Jspreadsheet CE** (MIT) — `studio/components/JspreadsheetSheet.tsx`.
+  Porta le interazioni Excel-like che mancavano (menù contestuale con inserisci/togli riga e
+  colonna, selezione a intervallo, copia/incolla multi-cella, fill handle) senza che il modello
+  dati diventi suo: `lib/gridSheet.ts` traduce `TableGrid` ↔ foglio nei due sensi, l'OTSL lo
+  genera il server dal nostro modello, e i metadati per cella (`source`/`verified`) vivono nei
+  `meta` della libreria. Le modifiche **strutturali** non passano dall'API della libreria: la
+  struttura nuova la calcola `lib/grid.ts` e il foglio si rimonta — v. M3.
 - Nessun framework "tutto pronto": UI costruita su componenti nostri.
 - **Auth lato UI**: `AuthGate` decide cosa mostrare all'avvio (setup admin,
   login o app), `api.ts` reagisce ai 401 azzerando l'utente, `Layout` espone
@@ -486,7 +492,7 @@ tabularium/
                             # Playground, Login, Setup, Settings, Users
       studio/
         canvas/             # zoom-pan-canvas, tools (Block/Table/Order/Transcribe)
-        components/         # LayersPanel, Inspector, ClassPalette, TableCellsEditor, FlowPreview, ConventionsChecklist
+        components/         # ContentPane, JspreadsheetSheet (foglio tabella), LiveStream, ConventionsChecklist, Splitter, PrefillDialog
         state/              # store annotazioni + history (undo/redo)
       lib/                  # api.ts, coords.ts (coordinate 0-1000), otsl.ts (preview), types.ts
     package.json
@@ -687,13 +693,31 @@ tabella dei fallimenti peggiori per guidare la nuova iterazione di annotazione.
   GET/PUT `/api/pages/{id}/annotations`, PATCH/DELETE `/api/blocks/{id}`, GET `/api/projects/{id}/labels`.
   Il PUT bulk conserva gli ID ricevuti e quindi le tabelle collegate durante l'autosave.
   Nota: modulo rinominato `blocks.py` (collisione con `from __future__ import annotations`).
-- **M3 — Tabelle + reading order + trascrizione** ✅ — `TableCellsEditor` (griglia righe/colonne,
-  **celle unite** con modalità Unisci/Seleziona/Separa, colonne fantasma, trascrizione cella-cella
-  con Tab, resize griglia), **generazione OTSL** (`services/otsl.py`, round-trip testato contro
-  l'oracolo ufficiale `otsl_to_html`), crop per blocco (`GET /api/blocks/{id}/crop`), tabella per
-  blocco (`GET/PUT /api/blocks/{id}/table` con OTSL in risposta), **checklist convenzioni**
-  (`GET/PUT /api/projects/{id}/conventions`), **preview "a fiume"** dell'ordine di lettura sul canvas.
+- **M3 — Tabelle + reading order + trascrizione** ✅ — editor del blocco `Table` su **Jspreadsheet CE**
+  (`studio/components/JspreadsheetSheet.tsx`): griglia righe/colonne, **celle unite** (unisci a
+  destra/sotto, separa), colonne fantasma, trascrizione cella-cella, resize delle colonne, menù
+  contestuale interamente nostro e localizzato, autosave + salvataggio esplicito; **generazione OTSL**
+  (`services/otsl.py`, round-trip testato contro l'oracolo ufficiale `otsl_to_html`), crop per blocco
+  (`GET /api/blocks/{id}/crop`), tabella per blocco (`GET/PUT /api/blocks/{id}/table` con OTSL in
+  risposta), **checklist convenzioni** (`GET/PUT /api/projects/{id}/conventions`), **preview "a fiume"**
+  dell'ordine di lettura sul canvas.
   Nota tecnica: l'OTSL ufficiale **non usa tag di chiusura** (`<fcel>text<lcel><nl>…`).
+  - **Il foglio non è la fonte di verità.** `lib/gridSheet.ts` (funzioni pure, testate) traduce
+    `TableGrid` ↔ Jspreadsheet nei due sensi; `source`/`verified` vivono nei `meta` della libreria,
+    `vlines`/`hlines`/`row_columns`/`phantom_cols` passano attraverso intatti. L'OTSL resta generato
+    dal server sul nostro modello.
+  - **Le modifiche strutturali sono nostre.** `insertColumn`/`insertRow` della libreria chiamano
+    `destroyMerge()`, che distrugge *tutti* i merge del foglio, e poi `updateTableReferences` va in
+    eccezione su un merge già dissolto (`mergeCells[key][2]` di `undefined`). Inserire o togliere
+    righe e colonne passa quindi da `lib/grid.ts` (`insertTrack`/`deleteTrack`, che sanno cosa
+    succede a una cella unita che attraversa il punto) e il foglio si rimonta da lì.
+  - **Trappole verificate della libreria**: `jspreadsheet()` restituisce un array riempito *dopo* il
+    load (l'istanza arriva da `onload`); il menù contestuale si legge dal config dello *spreadsheet*,
+    non della worksheet; `getSelection()` restituisce un array `[x1,y1,x2,y2]` mentre i tipi
+    dichiarano un oggetto; i merge sono `[colspan, rowspan]`, l'ordine inverso del nostro;
+    `setMerge` su celle già unite è un no-op silenzioso; `removeMerge` vuole la chiave
+    dell'intervallo (`A2:B2`), non il nome della cella; `alert`/`confirm` nativi sono sostituiti
+    dalla nostra `Modal` e da una `Notice`.
 - **M4 — Dataset builder** ✅ — `services/dataset_builder.py`: genera le 3 famiglie JSONL
   (layout pagina intera con coordinate **0–1000** e ordine di lettura, text_rec con ritagli+trascrizione,
   table con OTSL, formula opzionale), **split per pagina** deterministico (ratio+seed), crop su disco
@@ -728,17 +752,56 @@ tabella dei fallimenti peggiori per guidare la nuova iterazione di annotazione.
   benchmark d'uso = flusso §README. Nota: accorpare la build di produzione (Vite) prima di
   disinstallare `frontend/node_modules` se si ricompila.
 - **M9 — Modello, provider e destinazione** — l'hub Modelli è il solo luogo di configurazione
-  modello/provider (Impostazioni non lo duplica: v. `DESIGN.md` § Navigazione). Il profilo attivo
+  modello/provider (Impostazioni non lo duplica: v. `DESIGN.md` § Navigazione), ed è anche
+  l'unico posto in cui il corpus si configura: **il catalogo è la pagina, non una modale**
+  (`app/ModelsCatalog.tsx`), con la testata che dichiara «modello in uso» e «dove gira» e la
+  scelta della destinazione in un modulo in pagina. Dataset, fine-tuning, valutazione e
+  playground non stanno nel rail (cinque destinazioni globali: Riconosci, Annotazione, Risultati,
+  Archivio, Modelli): sono strumenti del modello e si aprono dall'hub. Il profilo attivo
   è la fonte di verità atomica (`compute_profiles`, DB v10+); `get_inference_config()` espone
   anche `provider`, `resource_id` e `source_profile_id`, e il client VLLM li usa così che
   «`is_cloud`» non si deduca dall'URL (un tunnel SSH Vast ascolta su `localhost` ma è cloud).
-  La libreria modelli dichiara la destinazione in testa e adatta l'azione primaria a riga:
-  in locale = scarica/avvia, su provider remoto = **deploy** (Vast/RunPod/Modal) con la scheda
-  del provider aperta sul modello già scelto (`focusProvider`/`focusAdapterId`). L'avvio di una
+  La libreria adatta l'azione primaria a riga: in locale = scarica/avvia, su provider remoto =
+  **deploy** (Vast/RunPod/Modal) con la scheda del provider aperta sul modello già scelto
+  (`focusProvider`/`focusAdapterId`). L'avvio di una
   sessione di riconoscimento sonda l'endpoint (409 `model_endpoint_unreachable` localizzato)
   invece di accodare pagine destinate a fallire; la VRAM locale non viene evocata per run remote;
   lo stop con `disable_inference` arresta la risorsa **identificata** (`resource_id` +
   credenziale del provider), mai la prima che capita nell'account.
+- **M10 — Il calcolo locale dipende dall'hardware, e l'app lo dichiara** — un solo posto prende
+  la decisione, `services/hardware.py`: piattaforma, memoria (unificata su Apple Silicon, VRAM
+  su CUDA), e quali runtime di serving la macchina può ospitare. `vllm` su Linux+CUDA (su
+  Windows via WSL2), `mlx-vlm` su Apple Silicon — dove vLLM non gira affatto, essendo
+  CUDA-first. Ogni adapter dichiara `local_runtimes` e, quando esiste, `local_mlx_repo`; il
+  registro espone per ogni modello `local: {runnable, runtime, reason, mlx_repo}`, con **codici
+  stabili** che la UI traduce (`cuda_required`, `no_nvidia_gpu`, `apple_silicon_required`,
+  `no_local_runtime`, `model_unsupported_locally`, `insufficient_memory`). Conseguenza di
+  prodotto: su un Mac girano in locale **due** modelli — PaddleOCR-VL e Qwen3-VL — e gli altri
+  sei restano remoti, ognuno per una ragione **misurata** servendolo davvero su una pagina:
+  **MonkeyOCRv2** e **MinerU2.5** perché `mlx-vlm` non ha quelle architetture (verificato sui
+  moduli installati); **DeepSeek-OCR-2** e **Unlimited-OCR** perché la loro ricetta verificata
+  si regge sul logits processor n-gram di vLLM, che `mlx-vlm` non ha (Unlimited-OCR via MLX
+  produce 12288 caratteri di `alpha.alpha.alpha…` fino al tetto dei token); **dots.mocr**
+  perché la generazione END2END si chiude a 682 caratteri e la run fallisce; **GLM-OCR** perché
+  la run «riesce» con **zero** blocchi inseriti — un successo vuoto, peggio di un errore.
+  La colonna MLX è quindi una misura, non una promessa: un checkpoint che si carica non è un
+  percorso che funziona. Verifica ripetibile: `scripts/e2e_local_inference.py`.
+  Il runtime Apple lo prepara Tabularium in `<root>/mlx-runtime`
+  (`services/mlx_runtime.py`), come fa con `<root>/vllm-runtime`: il processo dashboard resta
+  senza PyTorch. Il percorso MLX non passa dal registro pesi (li scarica `mlx-vlm` dalla cache
+  HF) e il nome servito è l'id del checkpoint MLX. La scelta del runtime è **additiva**: dove
+  vLLM funziona, il comportamento resta quello di prima. Matrice e misure in
+  `docs/LOCAL_INFERENCE_GUIDE.md` §0.
+  - **Il percorso ufficiale di PaddleOCR-VL ha un secondo runtime.** La sua pipeline Paddle
+    (PP-DocLayout + riconoscimento) vive in `<root>/paddle-runtime`, che si installa da sé
+    alla prima messa in servizio del modello. L'installer è platform-aware: su Linux prende
+    `paddlepaddle-gpu` dall'indice CUDA, su Apple Silicon la wheel CPU arm64 da PyPI — senza
+    quel ramo il percorso ufficiale su un Mac finiva in un vicolo cieco («completa prima
+    l'installazione» di qualcosa che nessuno aveva iniziato).
+  - **Lo stato di un'installazione si scrive dopo aver creato il venv.** `EnvBuilder(clear=True)`
+    cancella il contenuto della cartella: scrivere `.install_state.json` e il log prima li
+    faceva sparire, e durante i minuti dell'installazione la UI leggeva `absent` con il log
+    vuoto. Vale per tutti e tre i runtime (`local_runtime`, `mlx_runtime`, `paddle_runtime`).
   - **SSH verso Vast.ai: due vie, mai mescolate.** L'istanza espone l'IP della macchina
     (`public_ipaddr` + `ports['22/tcp'][0].HostPort`, la riga «Direct SSH Connect» della
     console) e i forwarder `ssh*.vast.ai` (`ssh_host`/`ssh_port`). `_vast_ssh_endpoint()`

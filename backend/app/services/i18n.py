@@ -65,8 +65,13 @@ _IT: dict[str, str] = {
         "(o impostare TABULARIUM_OCR_ENGINE)."
     ),
     "model_unavailable": (
-        "Modello base non raggiungibile su {url}: avvia il server di inferenza "
-        "(./scripts/serve_model.sh) oppure usa il motore OCR."
+        "Modello base non raggiungibile su {url}: avvialo dalla pagina Modelli "
+        "(«Avvia come server locale») oppure usa il motore OCR."
+    ),
+    "playground_needs_layout": (
+        "il modello {model} non produce un layout di pagina: il playground disegna "
+        "riquadri, quindi serve un modello che li sappia restituire (MonkeyOCRv2, "
+        "MinerU2.5, Qwen3-VL). Per una pagina intera usa Riconosci."
     ),
     "model_endpoint_unreachable": (
         "l'endpoint di inferenza {url} non risponde: controlla modello e "
@@ -111,6 +116,8 @@ _IT: dict[str, str] = {
     "table_band_no_boundaries": "blocco {id} (Table): bande non generate perché mancano confini di riga verificati",
     "table_unverified_cells": "blocco {id} (Table): {n}/{total} celle di testo con prefill non ancora verificate",
     "formula_empty": "blocco {id} (Formula): contenuto vuoto",
+    "dataset_empty": "nessuna pagina con annotazioni esportabili: il dataset è vuoto",
+    "dataset_no_samples": "nessun campione scritto: le famiglie esportate sono tutte vuote",
     # --- valutazione ------------------------------------------------------------
     "inference_failed": "pagina {id}: inferenza fallita ({exc})",
     "table_error_w": "tabella blocco {id}: {exc}",
@@ -207,8 +214,13 @@ _EN: dict[str, str] = {
         "(or set TABULARIUM_OCR_ENGINE)."
     ),
     "model_unavailable": (
-        "Base model unreachable at {url}: start the inference server "
-        "(./scripts/serve_model.sh) or use the OCR engine."
+        "Base model unreachable at {url}: start it from the Models page "
+        "(“Start as local server”) or use the OCR engine."
+    ),
+    "playground_needs_layout": (
+        "model {model} does not produce a page layout: the playground draws boxes, "
+        "so it needs a model that returns them (MonkeyOCRv2, MinerU2.5, Qwen3-VL). "
+        "For a whole page use Recognize."
     ),
     "model_endpoint_unreachable": (
         "the inference endpoint {url} is not responding: check model and "
@@ -249,6 +261,8 @@ _EN: dict[str, str] = {
     "table_band_no_boundaries": "block {id} (Table): bands not generated because verified row boundaries are missing",
     "table_unverified_cells": "block {id} (Table): {n}/{total} text cells with unverified prefill",
     "formula_empty": "block {id} (Formula): empty content",
+    "dataset_empty": "no page with exportable annotations: the dataset is empty",
+    "dataset_no_samples": "no sample written: every exported family is empty",
     "inference_failed": "page {id}: inference failed ({exc})",
     "table_error_w": "table block {id}: {exc}",
     "text_error_w": "text block {id}: {exc}",
@@ -341,8 +355,13 @@ _FR: dict[str, str] = {
         "paddleocr (ou définissez TABULARIUM_OCR_ENGINE)."
     ),
     "model_unavailable": (
-        "Modèle de base injoignable sur {url} : démarrez le serveur d'inférence "
-        "(./scripts/serve_model.sh) ou utilisez le moteur OCR."
+        "Modèle de base injoignable sur {url} : démarrez-le depuis la page Modèles "
+        "(« Démarrer comme serveur local ») ou utilisez le moteur OCR."
+    ),
+    "playground_needs_layout": (
+        "le modèle {model} ne produit pas de layout de page : le playground dessine des "
+        "cadres, il faut donc un modèle qui les renvoie (MonkeyOCRv2, MinerU2.5, Qwen3-VL). "
+        "Pour une page entière, utilisez Reconnaître."
     ),
     "model_endpoint_unreachable": (
         "le point d'accès d'inférence {url} ne répond pas : vérifiez le modèle "
@@ -383,6 +402,8 @@ _FR: dict[str, str] = {
     "table_band_no_boundaries": "bloc {id} (Table) : bandes non générées car les limites de lignes vérifiées sont absentes",
     "table_unverified_cells": "bloc {id} (Table) : {n}/{total} cellules de texte avec pré-remplissage non vérifié",
     "formula_empty": "bloc {id} (Formule) : contenu vide",
+    "dataset_empty": "aucune page avec des annotations exportables : le dataset est vide",
+    "dataset_no_samples": "aucun échantillon écrit : toutes les familles exportées sont vides",
     "inference_failed": "page {id} : inférence impossible ({exc})",
     "table_error_w": "tableau bloc {id} : {exc}",
     "text_error_w": "texte bloc {id} : {exc}",

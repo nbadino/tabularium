@@ -42,6 +42,26 @@ export function summarizeForPrefill(blocks: PrefillBlockLike[]): PrefillPageSumm
 }
 
 /**
+ * Il conteggio di *tutta* la pagina, non solo di ciò che sta sul canvas.
+ *
+ * Le bozze non verificate vivono nel pannello contenuti e non sul canvas (le
+ * tabelle fanno eccezione), quindi `ann.blocks` da solo le ignora: il dialog
+ * di conferma diceva «7 blocchi, 1 bozza» mentre il pannello ne mostrava 14 e
+ * la modalità scelta ne stava per rimuovere otto. Una conferma che sottostima
+ * ciò che distrugge non è una conferma.
+ */
+export function summarizePage(
+  blocks: PrefillBlockLike[],
+  drafts: PrefillBlockLike[],
+): PrefillPageSummary {
+  const all: PrefillBlockLike[] = [
+    ...blocks,
+    ...drafts.map((d) => ({ ...d, prefill: d.prefill ?? 'draft' })),
+  ]
+  return summarizeForPrefill(all)
+}
+
+/**
  * La modalità proposta all'utente quando apre il dialogo:
  * - con bozze non confermate il senso del prefill è rifarle (`replace_drafts`);
  * - con solo lavoro umano la scelta sicura è aggiungere (`merge`): l'utente

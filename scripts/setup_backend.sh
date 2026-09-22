@@ -32,6 +32,22 @@ if ! python -c 'import cryptography; print("cryptography " + cryptography.__vers
   echo "Dipendenza cryptography non disponibile: il vault dei segreti non è sicuro." >&2
   exit 2
 fi
+
+# Il motore OCR è una funzione del prodotto (prefill «OCR (CPU)» e riempimento
+# delle celle), non un extra: se non si importa lo diciamo qui, con la cura,
+# invece di lasciarlo scoprire al primo prefill con «nessun motore disponibile».
+if ! python -c 'from rapidocr_onnxruntime import RapidOCR' 2>/dev/null; then
+  echo "!! Motore OCR non importabile: il prefill «OCR (CPU)» non sarà disponibile." >&2
+  echo "   Verifica l'installazione con: pip install -r requirements.txt" >&2
+fi
+# OpenCV arriva col motore OCR. La build installata non è headless, quindi su
+# Linux pretende le librerie di sistema: senza, `import cv2` fallisce e con lui
+# deskew, prospettiva e il motore OCR.
+if ! python -c 'import cv2' 2>/dev/null; then
+  echo "!! OpenCV non si importa: su Linux installa le librerie di sistema" >&2
+  echo "   sudo apt-get install -y libgl1 libglib2.0-0" >&2
+  echo "   (su altre distribuzioni il pacchetto equivalente: libGL e glib2)" >&2
+fi
 # Chiave del vault: cifra i credential dei provider salvati dall'interfaccia.
 # Vive nel .env (gitignored, 600), mai nel database accanto al ciphertext.
 ENV_FILE="$ROOT/.env"

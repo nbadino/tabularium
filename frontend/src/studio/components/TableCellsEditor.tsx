@@ -14,6 +14,7 @@ import type { TableDetectOut, TableDetectRequest, TableGrid } from '../../lib/ty
 import { Modal, WarnNotice } from '../../app/ui'
 import { IconCopy, IconMinus, IconPlus, IconSave } from '../../app/icons'
 import { useInference } from '../../app/inference'
+import { useConfirm } from '../../app/confirm'
 import { useI18n } from '../../i18n'
 import TableGridOverlay from './TableGridOverlay'
 
@@ -51,6 +52,7 @@ export default function TableCellsEditor({
   onClose,
 }: TableCellsEditorProps) {
   const { t } = useI18n()
+  const confirm = useConfirm()
   const inf = useInference()
   const [grid, setGrid] = useState<TableGrid>(() => normalizeTableGrid(initialGrid))
   const [detecting, setDetecting] = useState(false)
@@ -132,7 +134,13 @@ export default function TableCellsEditor({
     // Il rilevamento riscrive righe, colonne e celle: se c'è già trascrizione
     // dentro, la si perde. Meglio chiedere che far sparire il lavoro fatto.
     const hasText = grid.cells.some((c) => c.text.trim() !== '')
-    if (hasText && !window.confirm(t('table.detectOverwrite'))) return
+    if (hasText) {
+      const ok = await confirm({
+        title: t('table.detect'),
+        message: t('table.detectOverwrite'),
+      })
+      if (!ok) return
+    }
 
     setDetecting(true)
     try {
@@ -269,7 +277,7 @@ export default function TableCellsEditor({
             value={grid.header_rows ?? 0}
             onChange={(e) => setGrid((g) => ({ ...g, header_rows: Math.max(0, Math.min(20, Number(e.target.value) || 0)) }))}
             className="fld fld-mono w-16"
-            title="Numero di righe di intestazione dichiarate manualmente"
+            title={t('table.headerRowsTitle')}
           />
         </div>
         <div>

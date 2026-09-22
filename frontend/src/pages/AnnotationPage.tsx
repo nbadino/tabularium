@@ -13,10 +13,11 @@ import { runPrelabelStream } from '../studio/prefillStream'
 import PrefillDialog from '../studio/components/PrefillDialog'
 import {
   defaultPrefillMode,
-  summarizeForPrefill,
+  summarizePage,
   type PrefillMode,
 } from '../studio/prefill'
 import { useProjects, writeActiveProject } from '../app/activeProject'
+import { useConfirm } from '../app/confirm'
 import type { LivePrefillOutput, PrefillDraft, Tool } from '../studio/types'
 import type { PrefillEngines, TableDetectOut, TableDetectRequest, TableGrid, TableSaveOut } from '../lib/types'
 import { useI18n, tn } from '../i18n'
@@ -73,6 +74,7 @@ function loadSplit(): { sidebar: number; content: number } {
 
 export default function AnnotationPage() {
   const { t } = useI18n()
+  const confirm = useConfirm()
   const [searchParams] = useSearchParams()
   const requestedProject = Number(searchParams.get('project')) || null
   const requestedPage = Number(searchParams.get('page')) || null
@@ -390,7 +392,11 @@ export default function AnnotationPage() {
 
   const clearPageAnnotations = async () => {
     if (!page || prefillBusy) return
-    if (!window.confirm(t('annotate.clearAllConfirm'))) return
+    const ok = await confirm({
+      title: t('annotate.clearAll'),
+      message: t('annotate.clearAllConfirm'),
+    })
+    if (!ok) return
     setError(null)
     try {
       await apiDelete(`/pages/${page.id}/annotations`)
@@ -417,7 +423,7 @@ export default function AnnotationPage() {
       setPrefillOpen(true)
       return
     }
-    void runPrelabel(defaultPrefillMode(summarizeForPrefill(ann.blocks)))
+    void runPrelabel(defaultPrefillMode(summarizePage(ann.blocks, prefillDrafts)))
   }
 
   // --- seleziona progetto -----------------------------------------------------
@@ -1013,6 +1019,7 @@ export default function AnnotationPage() {
             <button
               type="button"
               onClick={() => void ann.saveNow()}
+              disabled={!page || prefillBusy}
               className="btn btn-primary"
             >
               <IconSave size={12} />
@@ -1199,7 +1206,7 @@ export default function AnnotationPage() {
 
       {prefillOpen && page && projectId !== '' && (
         <PrefillDialog
-          summary={summarizeForPrefill(ann.blocks)}
+          summary={summarizePage(ann.blocks, prefillDrafts)}
           busy={prefillBusy}
           onRun={(mode) => void runPrelabel(mode)}
           onClose={() => setPrefillOpen(false)}

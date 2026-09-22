@@ -576,6 +576,14 @@ def build_datasets(
                 sample_lines[family].append(json.dumps(line, ensure_ascii=False))
 
     snapshot_id = datetime.now(timezone.utc).strftime("v%Y%m%dT%H%M%S%fZ")
+    # Un export vuoto non è un successo silenzioso: senza questo avviso il
+    # report sembra pulito e la pagina dichiara «costruito» per un dataset che
+    # non contiene un solo campione, mentre il training lo scoprirebbe molto
+    # più tardi. Il warning lo dice dove il dataset nasce.
+    if len(page_ids) == 0:
+        warnings.append(msg("dataset_empty", lang))
+    elif sum(sum(family.values()) for family in counts.values()) == 0:
+        warnings.append(msg("dataset_no_samples", lang))
     report = _report(
         project_id,
         split_ratio,

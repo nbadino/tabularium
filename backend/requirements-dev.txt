@@ -4,7 +4,10 @@ pytest>=9,<10
 httpx2>=2,<3
 # Smoke E2E con browser reale (scripts/e2e_workflow.py).
 selenium>=4,<5
-# A runtime OpenCV resta opzionale: `pages.py` espone deskew/perspective solo
-# se `find_spec("cv2")` la trova. I test però percorrono quei rami senza
-# guardie, quindi qui è obbligatoria.
-opencv-python-headless>=4.10,<6
+# A runtime OpenCV non è più opzionale: il motore OCR (dipendenza core) porta
+# `opencv-python`, e `pages.py` espone deskew/perspective solo se `cv2` si
+# importa davvero. Non si installa anche `opencv-python-headless`: i due
+# pacchetti scrivono lo stesso modulo `cv2` e averli entrambi rende
+# indeterministico quale dei due vince. La build GUI non richiede un display
+# per le operazioni che usiamo (soglia, warp, componenti connesse); su Linux
+# richiede le librerie di sistema `libgl1` e `libglib2.0-0` — vedi README e CI.

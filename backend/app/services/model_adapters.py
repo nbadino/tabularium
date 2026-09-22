@@ -71,6 +71,16 @@ class ModelCapabilities:
     # Maturità del percorso prodotto: un modello può essere scaricabile senza
     # che inferenza/export/training siano ancora verificati insieme.
     maturity: str = "catalog"
+    # Dove il modello può essere servito *in locale*. `vllm` è il percorso
+    # CUDA (Linux, o Windows via WSL2); `mlx-vlm` è il percorso Apple Silicon,
+    # che copre solo le architetture realmente presenti in `mlx-vlm` — non
+    # tutte. Un modello senza `mlx-vlm` non gira in locale su un Mac, e la UI
+    # lo dice invece di offrire un pulsante che fallisce.
+    local_runtimes: tuple[str, ...] = ("vllm",)
+    # Checkpoint MLX da servire quando il runtime locale è `mlx-vlm`. Vuoto =
+    # nessun percorso MLX. I pesi sono quelli pubblicati per Metal, non i
+    # pesi pieni del repo ufficiale.
+    local_mlx_repo: str = ""
 
 
 class ModelAdapter(Protocol):
@@ -125,6 +135,10 @@ class MonkeyOCRv2ParsingAdapter:
         # solo per la variante B-Parsing.
         draft_hf_repo="zenosai/MonkeyOCRv2-B-Parsing-DFlash",
         maturity="supported",
+        local_runtimes=("vllm",),
+        # Nessun percorso locale MLX: l'architettura non è in `mlx-vlm`
+        # (verificato sui moduli installati), quindi su Apple Silicon questo
+        # modello non gira in locale — e la UI lo dichiara.
     )
 
     _PROMPTS = {
@@ -273,6 +287,10 @@ class MinerU2_5Adapter(_StubAdapter):
         # text_config; vLLM 0.28 rifiuta correttamente 16384 senza il flag
         # pericoloso VLLM_ALLOW_LONG_MAX_MODEL_LEN.
         max_model_len=8192,
+        local_runtimes=("vllm",),
+        # Nessun percorso locale MLX: l'architettura non è in `mlx-vlm`
+        # (verificato sui moduli installati), quindi su Apple Silicon questo
+        # modello non gira in locale — e la UI lo dichiara.
     )
 
     _PROMPTS = {
@@ -495,6 +513,15 @@ class UnlimitedOcrAdapter(_StubAdapter):
         # del produttore — su una GPU capiente si può alzare.
         max_model_len=12288,
         served_model_name="Unlimited-OCR",
+        local_runtimes=("vllm",),
+        # Nessun percorso locale MLX, e non per pigrizia: la ricetta verificata
+        # di questo modello si regge sul logits processor n-gram di vLLM
+        # (`unlimited_ocr:NGramPerReqLogitsProcessor`, «senza, i documenti
+        # lunghi vanno in loop sui token `<|det|>`»). `mlx-vlm` non ha logits
+        # processor, solo `repetition_penalty`/`presence_penalty`, che sono
+        # un'altra cosa. Provato servendolo davvero via MLX: la pagina produce
+        # 12288 caratteri di `alpha.alpha.alpha…` fino al tetto dei token.
+        # Meglio «solo remoto» che un output plausibile e sbagliato.
     )
 
     def prompt_for(self, task: str, label: str | None = None) -> str | None:
@@ -594,6 +621,12 @@ class DotsOcrAdapter(_StubAdapter):
         train_toolchain="community",
         serve_backend="vllm-openai",
         served_model_name="dots-mocr",
+        local_runtimes=("vllm",),
+        # MLX scartato dopo la misura, non per prudenza: servito davvero su
+        # Apple Silicon, `dots.mocr` chiude la generazione END2END a 682
+        # caratteri su una pagina intera («output END2END incompleto,
+        # finish=stop») e la run fallisce. Il checkpoint si carica, il
+        # percorso no: servono prompt/template adattati, non solo i pesi.
     )
 
     _PROMPTS = {
@@ -661,6 +694,12 @@ class GlmOcrAdapter(_StubAdapter):
         train_toolchain="llama-factory",
         serve_backend="vllm-openai",
         served_model_name="glm-ocr",
+        local_runtimes=("vllm",),
+        # MLX scartato dopo la misura: `GLM-OCR` via MLX completa la run e
+        # inserisce **zero** blocchi — un successo vuoto, che è peggio di un
+        # errore perché non dice niente. Il suo output è Markdown/testo
+        # strutturato: senza bbox il percorso a blocchi non ha dove agganciare
+        # nulla, e su MLX il prompt che gliele chiede non è quello verificato.
     )
 
     _PROMPTS = {
@@ -727,6 +766,12 @@ class DeepSeekOcrAdapter(_StubAdapter):
         serve_backend="vllm-openai",
         served_model_name="deepseek-ocr-2",
         max_model_len=8192,
+        local_runtimes=("vllm",),
+        # Come Unlimited-OCR: la ricetta verificata richiede il logits
+        # processor n-gram di vLLM (`deepseek_ocr:NGramPerReqLogitsProcessor`,
+        # «contro i loop»), che `mlx-vlm` non espone. Su Apple Silicon questo
+        # modello resta remoto: serve un percorso che possa vincolare la
+        # decodifica, non solo campionarla.
     )
 
     _PROMPTS = {
@@ -810,6 +855,8 @@ class PaddleOcrVlAdapter(_StubAdapter):
         serve_backend="vllm-openai",
         served_model_name="PaddleOCR-VL-1.6",
         max_model_len=12288,
+        local_runtimes=("vllm", "mlx-vlm"),
+        local_mlx_repo="mlx-community/PaddleOCR-VL-1.6-4bit",
     )
 
     _PROMPTS = {
@@ -889,6 +936,8 @@ class Qwen3VlAdapter(_StubAdapter):
         serve_backend="vllm-openai",
         served_model_name="qwen3-vl-8b",
         max_model_len=32768,
+        local_runtimes=("vllm", "mlx-vlm"),
+        local_mlx_repo="mlx-community/Qwen3-VL-8B-Instruct-4bit",
     )
 
     _PROMPTS = {
