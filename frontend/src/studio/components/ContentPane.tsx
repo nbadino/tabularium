@@ -55,7 +55,7 @@ import ConventionsChecklist from './ConventionsChecklist'
  *  in cui serve. */
 const UniverSheet = lazy(() => import('./UniverSheet'))
 
-/** «Summation Error in column (4) noeq column (2) + (3)»: posizioni contate
+/** «Summation Error in column (4) ≠ column (2) + (3)»: posizioni contate
  *  da 1 come nel foglio (la colonna A è la 1). Una somma lungo una riga si
  *  dice per colonne, una lungo una colonna per righe; oltre cinque addendi si
  *  mostrano i primi due e l'ultimo. */

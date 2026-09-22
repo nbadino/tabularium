@@ -170,7 +170,7 @@ describe('ContentPane', () => {
     expect(screen.getByTestId('univer-sheet')).toHaveAttribute('data-suspects', '[[2,3]]')
     // Selezionata la cella, la riga dice quale somma non torna.
     await userEvent.click(screen.getByRole('button', { name: 'seleziona D3' }))
-    expect(screen.getByText('Summation Error in column (4) noeq column (2) + (3)')).toBeTruthy()
+    expect(screen.getByText('Summation Error in column (4) ≠ column (2) + (3)')).toBeTruthy()
   })
 
   it('blocco non ancora salvato: il ritaglio lo dice, non scompare', () => {

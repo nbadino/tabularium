@@ -874,8 +874,8 @@ export const fr: Dict = {
     checksBalanced: 'Sommes : les {n} sont toutes justes.',
     checksSummary:
       'Sommes : {passed} sur {total} justes · {failed} fausses — vérifiez sur l’image les cellules surlignées.',
-    checkSumErrorColumn: 'Summation Error in column ({total}) noeq column {parts}',
-    checkSumErrorRow: 'Summation Error in row ({total}) noeq row {parts}',
+    checkSumErrorColumn: 'Summation Error in column ({total}) ≠ column {parts}',
+    checkSumErrorRow: 'Summation Error in row ({total}) ≠ row {parts}',
     loadFailed: 'La grille n’a pas pu être chargée depuis le serveur.',
     saveFailed: 'Échec de l’enregistrement.',
     saveFailedWith:
