@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
-import type { PageItem, Project } from '../../lib/types'
+import type { PageItem, PageSums, Project } from '../../lib/types'
 import { statusLabel, STATUS_TONE } from '../../lib/vocab'
 import { Badge, Field } from '../../app/ui'
 import { IconNext, IconPrev } from '../../app/icons'
@@ -17,6 +17,8 @@ interface PageSidebarProps {
   /** Larghezza in px governata dallo splitter: se assente vale il default. */
   width?: number
   reviewScope?: { label: string; backTo: string; backLabel: string } | null
+  /** Controlli aritmetici per pagina: dove le somme non tornano. */
+  sums?: PageSums
 }
 
 const INITIAL_PAGE_LIMIT = 100
@@ -30,6 +32,7 @@ export default function PageSidebar({
   onPageSelect,
   width,
   reviewScope,
+  sums,
 }: PageSidebarProps) {
   const { t } = useI18n()
   const [pageQuery, setPageQuery] = useState('')
@@ -182,6 +185,17 @@ export default function PageSidebar({
                     {pageShortLabel(p)}
                   </span>
                   <Badge tone={STATUS_TONE[p.status] ?? 'neutral'}>{statusLabel(p.status)}</Badge>
+                  {sums?.[p.id] && (
+                    <span
+                      title={sums[p.id].failed > 0
+                        ? t('sidebar.sumsFailedTitle', sums[p.id])
+                        : t('sidebar.sumsOkTitle', sums[p.id])}
+                    >
+                      <Badge tone={sums[p.id].failed > 0 ? 'warn' : 'ok'}>
+                        {sums[p.id].failed > 0 ? tn('sidebar.sumsFailed', sums[p.id].failed) : t('sidebar.sumsOk')}
+                      </Badge>
+                    </span>
+                  )}
                 </span>
               </button>
             </li>

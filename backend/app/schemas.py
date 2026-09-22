@@ -207,6 +207,17 @@ class PageList(BaseModel):
     items: list[PageOut]
 
 
+class PageSums(BaseModel):
+    checks: int
+    failed: int
+
+
+class ProjectSumsOut(BaseModel):
+    """Per pagina, le somme delle sue tabelle e quante non tornano. Solo le
+    pagine con almeno una somma riconosciuta."""
+    pages: dict[int, PageSums]
+
+
 # --- Scan --------------------------------------------------------------------
 class ScanReportOut(BaseModel):
     found_files: int = 0

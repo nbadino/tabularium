@@ -653,6 +653,13 @@ export const it = {
   },
 
   sidebar: {
+    sumsFailed: {
+      one: '{count} somma ≠',
+      other: '{count} somme ≠',
+    },
+    sumsOk: 'somme ok',
+    sumsFailedTitle: '{failed} somme su {checks} non tornano in questa pagina',
+    sumsOkTitle: 'Tutte le {checks} somme di questa pagina tornano',
     project: 'Progetto',
     manageProjects: 'Gestisci progetti',
     pageSearch: 'Cerca pagina',

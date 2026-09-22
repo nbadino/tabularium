@@ -6,9 +6,9 @@ from fastapi.responses import FileResponse
 
 from .. import config
 from ..db import connect
-from ..schemas import PageList, PageOut, PageUpdate
+from ..schemas import PageList, PageOut, PageSums, PageUpdate, ProjectSumsOut
 from ..services import pages as pagesvc
-from ..services import images
+from ..services import images, table_checks
 from ..services import otsl as otslmod
 from ..services.i18n import msg, parse_lang
 from ..services import auth as authsvc
@@ -85,6 +85,44 @@ def list_pages(
             for r in rows
         ]
         return PageList(items=items)
+
+
+# Esito per tabella, per impronta del contenuto: si ricalcola solo ciò che è
+# cambiato. ponytail: cresce di una voce per tabella salvata, mai svuotato;
+# un LRU se i volumi arrivano a centinaia di migliaia di tabelle.
+_SUMS_CACHE: dict[int, tuple[int, int, int]] = {}
+
+
+@router.get("/api/projects/{project_id}/sum-failures", response_model=ProjectSumsOut)
+def project_sum_failures(
+    project_id: int,
+    _auth: dict = Depends(require_resource(write=False)),
+) -> ProjectSumsOut:
+    """Quante somme non tornano, pagina per pagina: la lista delle pagine lo
+    mostra accanto allo stato, così si sa dove guardare senza aprire ogni
+    tabella. A parte dalla lista perché costa ~8 ms per tabella la prima volta."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT b.page_id, t.block_id, t.grid_json FROM tables t "
+            "JOIN blocks b ON b.id = t.block_id JOIN pages p ON p.id = b.page_id "
+            "WHERE p.project_id = ?",
+            (project_id,),
+        ).fetchall()
+    pages: dict[int, PageSums] = {}
+    for page_id, block_id, grid_json in rows:
+        key = hash(grid_json)
+        cached = _SUMS_CACHE.get(block_id)
+        if cached is None or cached[0] != key:
+            try:
+                out = table_checks.check_grid(json.loads(grid_json or "{}"))
+            except (TypeError, ValueError):
+                continue
+            cached = _SUMS_CACHE[block_id] = (key, len(out["checks"]), out["failed"])
+        _, checks, failed = cached
+        if checks:
+            prev = pages.get(page_id) or PageSums(checks=0, failed=0)
+            pages[page_id] = PageSums(checks=prev.checks + checks, failed=prev.failed + failed)
+    return ProjectSumsOut(pages=pages)
 
 
 @router.patch("/api/pages/{page_id}", response_model=PageOut)

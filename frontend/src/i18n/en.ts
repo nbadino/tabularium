@@ -653,6 +653,13 @@ export const en: Dict = {
   },
 
   sidebar: {
+    sumsFailed: {
+      one: '{count} sum ≠',
+      other: '{count} sums ≠',
+    },
+    sumsOk: 'sums ok',
+    sumsFailedTitle: '{failed} of {checks} sums on this page don’t add up',
+    sumsOkTitle: 'All {checks} sums on this page add up',
     project: 'Project',
     manageProjects: 'Manage projects',
     pageSearch: 'Search pages',

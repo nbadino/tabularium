@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
 import { loadImageSize, PixelSize, scaleRatio } from '../lib/coords'
-import type { BlockOut, LabelDef, PageItem, RecognitionRun } from '../lib/types'
+import type { BlockOut, LabelDef, PageItem, PageSums, RecognitionRun } from '../lib/types'
 import StudioCanvas from '../studio/StudioCanvas'
 import PageSidebar from '../studio/components/PageSidebar'
 import ContentPane from '../studio/components/ContentPane'
@@ -81,6 +81,18 @@ export default function AnnotationPage() {
   const requestedRun = Number(searchParams.get('run')) || null
   const inf = useInference()
   const [projectId, setProjectId] = useState<number | ''>('')
+  // Somme che non tornano, per pagina: la lista le mostra accanto allo stato.
+  // Si rileggono al cambio di progetto o di pagina e dopo ogni salvataggio
+  // di tabella; il server ricalcola solo le tabelle cambiate.
+  const [sums, setSums] = useState<PageSums>({})
+  const sumsFor = useRef<number | ''>('')
+  const loadSums = (pid: number | '') => {
+    sumsFor.current = pid
+    if (pid === '') return setSums({})
+    apiGet<{ pages: PageSums }>(`/projects/${pid}/sum-failures`)
+      .then((out) => { if (sumsFor.current === pid) setSums(out.pages ?? {}) })
+      .catch(() => { if (sumsFor.current === pid) setSums({}) })
+  }
   const [pages, setPages] = useState<PageItem[]>([])
   const [reviewRun, setReviewRun] = useState<RecognitionRun | null>(null)
   const [page, setPage] = useState<PageItem | null>(null)
@@ -132,6 +144,7 @@ export default function AnnotationPage() {
   const onSaveDraftGrid = async (serverId: number, grid: TableGrid): Promise<string> => {
     const out = await apiPut<TableSaveOut>(`/blocks/${serverId}/table`, grid)
     ann.syncRevision(out.annotation_revision)
+    loadSums(projectId)
     return out.otsl
   }
   /** Scarta una bozza non verificata: sparisce dal pannello e dal server —
@@ -438,6 +451,7 @@ export default function AnnotationPage() {
     }
     setProjectId(pid)
     writeActiveProject(pid === '' ? null : pid)
+    loadSums(pid)
     setPage(null)
     pageIdRef.current = null
     setPages([])
@@ -632,6 +646,7 @@ export default function AnnotationPage() {
   // --- seleziona pagina -------------------------------------------------------
   const onPageSelect = async (pid: number) => {
     if (!pages.some((x) => x.id === pid)) return
+    loadSums(projectId)
     if (navBusy) return
     setNavBusy(true)
     try {
@@ -683,6 +698,7 @@ export default function AnnotationPage() {
     // Il server ha fatto avanzare la revisione della pagina: senza allinearla
     // il prossimo autosave del canvas verrebbe respinto con un 409 inventato.
     ann.syncRevision(out.annotation_revision)
+    loadSums(projectId)
     return out.otsl
   }
 
@@ -851,6 +867,7 @@ export default function AnnotationPage() {
         currentPage={page}
         onProjectChange={onProjectChange}
         onPageSelect={onPageSelect}
+        sums={sums}
         width={split.sidebar}
         reviewScope={reviewRun ? {
           label: t('annotate.reviewRun', { id: reviewRun.id, count: pages.length }),

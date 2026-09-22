@@ -71,3 +71,31 @@ def test_endpoint_checks_a_grid_without_saving_it():
     assert body["suspects"] == [[2, 3]]
     wrong = next(c for c in body["checks"] if not c["ok"] and c["total"] == [2, 3])
     assert (wrong["kind"], wrong["cells"]) == ("row", [[2, 1], [2, 2]])
+
+
+def test_page_list_counts_failing_sums_and_follows_the_fix(tmp_path):
+    """La lista delle pagine sa quali pagine hanno somme sbagliate; corretta la
+    cifra, il conto scende a zero (l'esito in cache segue il contenuto)."""
+    from PIL import Image
+
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    Image.new("RGB", (800, 1000), (200, 200, 200)).save(archive / "p01.png")
+    rows = [r[:] for r in COUNTRIES]
+    rows[2][3] = "258,493"
+    with TestClient(app) as client:
+        pid = client.post("/api/projects", json={"name": "S", "archive_dir": str(archive)}).json()["id"]
+        client.post(f"/api/projects/{pid}/scan")
+        page = client.get(f"/api/projects/{pid}/pages").json()["items"][0]["id"]
+        client.put(f"/api/pages/{page}/annotations", json={"items": [
+            {"label": "Table", "kind": "rect", "points": [[10, 10], [700, 900]], "content": "", "order_idx": 1}]})
+        block = client.get(f"/api/pages/{page}/annotations").json()["items"][0]["id"]
+
+        assert client.put(f"/api/blocks/{block}/table", json={**_grid(rows), "phantom_cols": []}).status_code == 200
+        sums = client.get(f"/api/projects/{pid}/sum-failures").json()["pages"]
+        assert sums == {str(page): {"checks": 6, "failed": 2}}
+
+        rows[2][3] = "258,403"
+        client.put(f"/api/blocks/{block}/table", json={**_grid(rows), "phantom_cols": []})
+        sums = client.get(f"/api/projects/{pid}/sum-failures").json()["pages"]
+        assert sums == {str(page): {"checks": 6, "failed": 0}}

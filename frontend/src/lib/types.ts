@@ -302,6 +302,9 @@ export interface TableCheck {
   ok: boolean
 }
 
+/** Per pagina: somme riconosciute nelle sue tabelle e quante non tornano. */
+export type PageSums = Record<number, { checks: number; failed: number }>
+
 export interface TableChecksOut {
   checks: TableCheck[]
   passed: number
