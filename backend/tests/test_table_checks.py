@@ -93,9 +93,11 @@ def test_page_list_counts_failing_sums_and_follows_the_fix(tmp_path):
 
         assert client.put(f"/api/blocks/{block}/table", json={**_grid(rows), "phantom_cols": []}).status_code == 200
         sums = client.get(f"/api/projects/{pid}/sum-failures").json()["pages"]
-        assert sums == {str(page): {"checks": 6, "failed": 2}}
+        # tre somme lungo le righe (Merchandise + Treasure = Total) e tre
+        # lungo le colonne (le voci che sommano alla riga «Total»)
+        assert sums == {str(page): {"checks": 6, "failed": 2, "rows": 3, "cols": 3}}
 
         rows[2][3] = "258,403"
         client.put(f"/api/blocks/{block}/table", json={**_grid(rows), "phantom_cols": []})
         sums = client.get(f"/api/projects/{pid}/sum-failures").json()["pages"]
-        assert sums == {str(page): {"checks": 6, "failed": 0}}
+        assert sums == {str(page): {"checks": 6, "failed": 0, "rows": 3, "cols": 3}}

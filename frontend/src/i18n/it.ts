@@ -653,11 +653,21 @@ export const it = {
   },
 
   sidebar: {
-    sumsFailed: {
+    sumsFailedRow: {
+      one: '{count} somma di riga ≠',
+      other: '{count} somme di riga ≠',
+    },
+    sumsFailedCol: {
+      one: '{count} somma di colonna ≠',
+      other: '{count} somme di colonna ≠',
+    },
+    sumsFailedBoth: {
       one: '{count} somma ≠',
       other: '{count} somme ≠',
     },
-    sumsOk: 'Column sum ok',
+    sumsOkRow: 'Row sum ok',
+    sumsOkCol: 'Column sum ok',
+    sumsOkBoth: 'Row and column sums ok',
     sumsFailedTitle: '{failed} somme su {checks} non tornano in questa pagina',
     sumsOkTitle: 'Tutte le {checks} somme di questa pagina tornano',
     project: 'Progetto',

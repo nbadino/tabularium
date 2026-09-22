@@ -653,11 +653,21 @@ export const en: Dict = {
   },
 
   sidebar: {
-    sumsFailed: {
+    sumsFailedRow: {
+      one: '{count} row sum ≠',
+      other: '{count} row sums ≠',
+    },
+    sumsFailedCol: {
+      one: '{count} column sum ≠',
+      other: '{count} column sums ≠',
+    },
+    sumsFailedBoth: {
       one: '{count} sum ≠',
       other: '{count} sums ≠',
     },
-    sumsOk: 'Column sum ok',
+    sumsOkRow: 'Row sum ok',
+    sumsOkCol: 'Column sum ok',
+    sumsOkBoth: 'Row and column sums ok',
     sumsFailedTitle: '{failed} of {checks} sums on this page don’t add up',
     sumsOkTitle: 'All {checks} sums on this page add up',
     project: 'Project',

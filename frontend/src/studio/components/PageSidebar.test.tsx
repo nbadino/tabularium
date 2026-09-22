@@ -26,13 +26,14 @@ describe('PageSidebar', () => {
           currentPage={null}
           onProjectChange={vi.fn()}
           onPageSelect={vi.fn()}
-          sums={{ 4: { checks: 118, failed: 0 }, 5: { checks: 114, failed: 6 } }}
+          sums={{ 4: { checks: 118, failed: 0, rows: 50, cols: 68 }, 5: { checks: 114, failed: 6, rows: 0, cols: 114 } }}
         />
       </MemoryRouter>,
     )
-    expect(screen.getByText('6 somme ≠')).toHaveAttribute('class', expect.stringContaining('warn'))
+    // p. 5 ha solo somme di colonna, p. 4 dei due tipi: l'etichetta lo dice.
+    expect(screen.getByText('6 somme di colonna ≠')).toHaveAttribute('class', expect.stringContaining('warn'))
     expect(screen.getByTitle('6 somme su 114 non tornano in questa pagina')).toBeTruthy()
-    expect(screen.getByText('Column sum ok')).toBeTruthy()
-    expect(screen.getAllByText(/somme ≠|Column sum ok/)).toHaveLength(2) // la terza pagina non ha tabelle
+    expect(screen.getByText('Row and column sums ok')).toBeTruthy()
+    expect(screen.getAllByText(/≠|sums? ok/)).toHaveLength(2) // la terza pagina non ha tabelle
   })
 })

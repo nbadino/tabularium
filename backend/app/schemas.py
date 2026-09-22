@@ -210,6 +210,11 @@ class PageList(BaseModel):
 class PageSums(BaseModel):
     checks: int
     failed: int
+    # Di che tipo sono le somme trovate: lungo una riga (Merchandise +
+    # Treasure = Total), lungo una colonna (voci che sommano al «Total»), o
+    # entrambe. L'etichetta della pagina lo dice invece di indovinare.
+    rows: int = 0
+    cols: int = 0
 
 
 class ProjectSumsOut(BaseModel):

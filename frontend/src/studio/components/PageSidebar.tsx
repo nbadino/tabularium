@@ -4,7 +4,7 @@ import type { PageItem, PageSums, Project } from '../../lib/types'
 import { statusLabel, STATUS_TONE } from '../../lib/vocab'
 import { Badge, Field } from '../../app/ui'
 import { IconNext, IconPrev } from '../../app/icons'
-import { useI18n, tn } from '../../i18n'
+import { t as translate, useI18n, tn } from '../../i18n'
 import { pageLabel, pageShortLabel } from '../../lib/pageLabel'
 
 interface PageSidebarProps {
@@ -22,6 +22,14 @@ interface PageSidebarProps {
 }
 
 const INITIAL_PAGE_LIMIT = 100
+
+/** L'etichetta dice **di che somme** si parla: una tavola per paese ha somme
+ *  lungo le righe (Merchandise + Treasure = Total) e lungo le colonne (le voci
+ *  che sommano al «Total»); un'altra può averne di un tipo solo. */
+function sumsLabel({ failed, rows, cols }: { failed: number; rows: number; cols: number }) {
+  const which = rows && cols ? 'Both' : rows ? 'Row' : 'Col'
+  return failed > 0 ? tn(`sidebar.sumsFailed${which}`, failed) : translate(`sidebar.sumsOk${which}`)
+}
 
 export default function PageSidebar({
   projects,
@@ -191,9 +199,7 @@ export default function PageSidebar({
                         ? t('sidebar.sumsFailedTitle', sums[p.id])
                         : t('sidebar.sumsOkTitle', sums[p.id])}
                     >
-                      <Badge tone={sums[p.id].failed > 0 ? 'warn' : 'ok'}>
-                        {sums[p.id].failed > 0 ? tn('sidebar.sumsFailed', sums[p.id].failed) : t('sidebar.sumsOk')}
-                      </Badge>
+                      <Badge tone={sums[p.id].failed > 0 ? 'warn' : 'ok'}>{sumsLabel(sums[p.id])}</Badge>
                     </span>
                   )}
                 </span>
