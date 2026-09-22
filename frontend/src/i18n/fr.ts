@@ -657,7 +657,7 @@ export const fr: Dict = {
       one: '{count} somme ≠',
       other: '{count} sommes ≠',
     },
-    sumsOk: 'sommes ok',
+    sumsOk: 'Column sum ok',
     sumsFailedTitle: '{failed} sommes sur {checks} sont fausses sur cette page',
     sumsOkTitle: 'Les {checks} sommes de cette page sont justes',
     project: 'Projet',

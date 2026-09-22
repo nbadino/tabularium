@@ -657,7 +657,7 @@ export const it = {
       one: '{count} somma ≠',
       other: '{count} somme ≠',
     },
-    sumsOk: 'somme ok',
+    sumsOk: 'Column sum ok',
     sumsFailedTitle: '{failed} somme su {checks} non tornano in questa pagina',
     sumsOkTitle: 'Tutte le {checks} somme di questa pagina tornano',
     project: 'Progetto',

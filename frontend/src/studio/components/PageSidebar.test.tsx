@@ -32,7 +32,7 @@ describe('PageSidebar', () => {
     )
     expect(screen.getByText('6 somme ≠')).toHaveAttribute('class', expect.stringContaining('warn'))
     expect(screen.getByTitle('6 somme su 114 non tornano in questa pagina')).toBeTruthy()
-    expect(screen.getByText('somme ok')).toBeTruthy()
-    expect(screen.getAllByText(/somme/)).toHaveLength(2) // la terza pagina non ha tabelle
+    expect(screen.getByText('Column sum ok')).toBeTruthy()
+    expect(screen.getAllByText(/somme ≠|Column sum ok/)).toHaveLength(2) // la terza pagina non ha tabelle
   })
 })
