@@ -18,7 +18,7 @@ const EvaluationPage = lazy(() => import('./pages/EvaluationPage'))
 const PlaygroundPage = lazy(() => import('./pages/PlaygroundPage'))
 const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'))
 const UsersPage = lazy(() => import('./pages/UsersPage'))
-import { Module } from './app/ui'
+import { Loading, Module } from './app/ui'
 import { useI18n } from './i18n'
 
 type ChunkLoadBoundaryProps = { children: ReactElement }
@@ -114,8 +114,8 @@ export default function App() {
     <ChunkLoadBoundary>
       <Suspense
         fallback={
-          <div className="p-6 text-sm text-[color:var(--color-ink-2)]">
-            {t('app.loadingModule')}
+          <div className="p-6">
+            <Loading label={t('app.loadingModule')} />
           </div>
         }
       >

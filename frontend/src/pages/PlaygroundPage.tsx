@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import type { PageItem, PlaygroundResult } from '../lib/types'
 import { blocks } from '../lib/vocab'
-import { ErrorNotice, Field, Module, Notice } from '../app/ui'
+import { ErrorNotice, Field, Loading, Module, Notice } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { useInference } from '../app/inference'
 import { IconCopy, IconPlayground } from '../app/icons'
@@ -218,9 +218,9 @@ export default function PlaygroundPage() {
                 </figcaption>
               </figure>
             ) : (
-              <p className="py-4 text-[12px] text-[color:var(--color-ink-2)]">
-                {t('playground.previewLoading')}
-              </p>
+              <div className="py-4">
+                <Loading label={t('playground.previewLoading')} />
+              </div>
             )}
           </Module>
 

@@ -608,6 +608,56 @@
     }
   }
 
+  /* «Sto caricando»: un filo sotto la frase, con la stessa corsa della barra
+     indeterminata. È quella barra, ridotta: nessun segno nuovo da imparare. */
+  .load-rail {
+    height: 1px;
+    overflow: hidden;
+    background: var(--color-rule);
+  }
+
+  .load-rail > i {
+    display: block;
+    height: 100%;
+    width: 40%;
+    background: var(--color-sig);
+    animation: load-rail 1300ms cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  }
+
+  @keyframes load-rail {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(250%);
+    }
+  }
+
+  /* Lo scheletro di una griglia in arrivo: un velo che passa sulle celle.
+     Dice *cosa* sta arrivando, così la pagina non salta quando arriva. */
+  .load-cell {
+    position: relative;
+    overflow: hidden;
+    background: var(--color-fill-2);
+  }
+
+  .load-cell::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.85), transparent);
+    transform: translateX(-100%);
+    /* Il ritardo arriva per variabile: lo scarto fra colonne si imposta sulla
+       cella, ma l'animazione vive sullo pseudo-elemento. */
+    animation: load-sweep 1600ms ease-in-out var(--load-delay, 0ms) infinite;
+  }
+
+  @keyframes load-sweep {
+    to {
+      transform: translateX(100%);
+    }
+  }
+
   @keyframes swap-in {
     from {
       opacity: 0;
@@ -627,6 +677,15 @@
        che è comunque il segno «in corso» e non un vuoto. */
     .prog-idle {
       width: 100%;
+      animation: none;
+    }
+    /* Senza movimento il filo resta pieno e lo scheletro fermo: restano il
+       segno «in corso» e la forma di ciò che arriva. */
+    .load-rail > i {
+      width: 100%;
+      animation: none;
+    }
+    .load-cell::after {
       animation: none;
     }
     /* Il testo in streaming compare senza entrare; il cursore resta fermo e

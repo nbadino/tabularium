@@ -11,7 +11,7 @@
  */
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { IconAlert, IconChevron, IconClose, IconWarn } from './icons'
 import { describeError } from '../lib/errors'
 import type { StatusTone } from '../lib/vocab'
@@ -267,6 +267,48 @@ export function Progress({
         className={`h-full bg-[color:var(--color-sig)] ${indeterminate ? 'prog-idle' : ''}`}
         style={indeterminate ? undefined : { width: `${pct}%` }}
       />
+    </div>
+  )
+}
+
+/* ---------------------------------------------------------------- Loading -- */
+
+/**
+ * «Sto caricando», detto da fermo e da vivo insieme: la frase resta leggibile
+ * (e leggibile da uno screen reader) e sotto corre il filo della barra
+ * indeterminata. Non promette una percentuale che non conosciamo.
+ */
+export function Loading({ label, className = '' }: { label: string; className?: string }) {
+  return (
+    <span className={`inline-flex flex-col gap-1 ${className}`}>
+      <span className="text-[12px] text-[color:var(--color-ink-2)]">{label}</span>
+      <span role="status" aria-label={label} className="load-rail">
+        <i />
+      </span>
+    </span>
+  )
+}
+
+/**
+ * Lo scheletro di una griglia che sta arrivando: la forma di ciò che apparirà,
+ * invece di una frase sola e poi un salto di layout. `label` resta per chi
+ * legge con uno screen reader, che dallo scheletro non ricava nulla.
+ */
+export function LoadingGrid({ label, rows = 6, cols = 4 }: { label: string; rows?: number; cols?: number }) {
+  return (
+    <div
+      role="status"
+      aria-label={label}
+      className="grid gap-px border border-[color:var(--color-rule)] bg-[color:var(--color-rule)]"
+      style={{ gridTemplateColumns: `2fr ${'1fr '.repeat(Math.max(1, cols - 1)).trim()}` }}
+    >
+      {Array.from({ length: rows * cols }, (_, i) => (
+        <span
+          key={i}
+          className="load-cell h-[18px]"
+          style={{ '--load-delay': `${(i % cols) * 80}ms` } as CSSProperties}
+        />
+      ))}
     </div>
   )
 }

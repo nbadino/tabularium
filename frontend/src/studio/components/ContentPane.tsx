@@ -38,7 +38,7 @@ import type { ColumnOp, SheetSelection } from './UniverSheet'
 
 import { univerGridSignature } from '../../lib/univerGrid'
 import { apiGet, apiPost } from '../../lib/api'
-import { Modal, Module, WarnNotice } from '../../app/ui'
+import { LoadingGrid, Modal, Module, WarnNotice } from '../../app/ui'
 import { IconDown, IconSave, IconTrash, IconUp } from '../../app/icons'
 import { useI18n } from '../../i18n'
 import type { LabelDef, TableCheck, TableChecksOut } from '../../lib/types'
@@ -372,7 +372,9 @@ function TableWorkspace({
   }
 
   if (!grid) {
-    return <p className="text-[12px] text-[color:var(--color-ink-2)]">{error ?? t('content.tableLoading')}</p>
+    return error
+      ? <p className="text-[12px] text-[color:var(--color-ink-2)]">{error}</p>
+      : <LoadingGrid label={t('content.tableLoading')} />
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
@@ -447,9 +449,7 @@ function TableWorkspace({
             // cambia il numero di tracce, e il documento va ricostruito su
             // quello nuovo invece di restare indietro.
             <Suspense
-              fallback={
-                <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('content.tableLoading')}</p>
-              }
+              fallback={<LoadingGrid label={t('content.tableLoading')} rows={8} />}
             >
               <UniverSheet
                 key={`${serverId}:${grid.rows}x${grid.cols}`}

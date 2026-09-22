@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { apiPost } from '../lib/api'
 import type { EvalPage, EvalReport } from '../lib/types'
 import { pages } from '../lib/vocab'
-import { ErrorNotice, Field, Module, Notice, WarnNotice } from '../app/ui'
+import { ErrorNotice, Field, Loading, Module, Notice, WarnNotice } from '../app/ui'
 import { PipelineStrip } from '../app/PipelineView'
 import { buildPipeline, usePipelineState } from '../app/pipeline'
 import { useProjects, writeActiveProject } from '../app/activeProject'
@@ -363,9 +363,9 @@ function PageOverlay({
 
   if (!img) {
     return (
-      <p className="py-4 text-[12px] text-[color:var(--color-ink-2)]">
-        {t('evaluate.overlayLoading')}
-      </p>
+      <div className="py-4">
+        <Loading label={t('evaluate.overlayLoading')} />
+      </div>
     )
   }
   const k = (v: number) => (v / 1000) * img.w
