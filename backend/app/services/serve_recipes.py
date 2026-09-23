@@ -92,14 +92,9 @@ RECIPES: dict[str, ServeRecipe] = {
         hf_repo="zenosai/MonkeyOCRv2-B-Parsing",
         served_model_name="MonkeyOCRv2",
         runtime="monkeyocr",
-        # Allineata all'ambiente di serving locale verificato (data/vllm-runtime).
-        vllm_version="0.28.0",
-        serve_args=(
-            "--gpu-memory-utilization", "0.9",
-            "--max-model-len", "24576",
-            "--max-num-batched-tokens", "24576",
-        ),
-        source="parsing/serve.py del repo ufficiale; stessi flag di scripts/serve_model.sh",
+        # The upstream README pins 0.25.1 for DFlash-enabled serving.
+        vllm_version="0.25.1",
+        source="parsing/serve.py e versione consigliata nel README ufficiale",
     ),
     "mineru2.5": ServeRecipe(
         adapter_id="mineru2.5",
@@ -137,7 +132,6 @@ RECIPES: dict[str, ServeRecipe] = {
         pip_extra=("glmocr[selfhosted]", "fastapi", "uvicorn"),
         serve_args=(
             "--speculative-config", '{"method": "mtp", "num_speculative_tokens": 1}',
-            "--max-num-batched-tokens", "32768",
         ),
         source="README GLM-OCR: vLLM MTP ufficiale + SDK self-hosted PP-DocLayout/OCR",
     ),

@@ -104,7 +104,6 @@ def serve():
             + os.environ.get("TABULARIUM_GLM_SPECULATIVE_TOKENS", "1")
             + "}"
         ),
-        "--max-num-batched-tokens", "32768",
         "--served-model-name", "glm-ocr",
     ]
     api_key = os.environ.get("TABULARIUM_VLLM_API_KEY", "").strip()

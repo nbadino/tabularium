@@ -99,7 +99,7 @@ def test_serve_recipe_applies_only_explicit_supported_overrides():
     assert "--dtype" in argv and "bfloat16" in argv
 
 
-def test_glm_batched_token_budget_can_exceed_single_sequence_context(tmp_path, monkeypatch):
+def test_glm_uses_upstream_scheduler_default_and_allows_manual_batch_budget(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "glm-settings.db")
     init_db()
 
@@ -107,7 +107,7 @@ def test_glm_batched_token_budget_can_exceed_single_sequence_context(tmp_path, m
     # The cloud recipe delegates max_model_len to vLLM; the local command's
     # conservative 16k cap is not a Vast recommendation.
     assert defaults["max_model_len"] is None
-    assert defaults["max_num_batched_tokens"] == 32768
+    assert defaults["max_num_batched_tokens"] is None
     glm = model_settings.get_settings("glm-ocr")["recommended"]
     assert glm["generation"] == {
         "max_tokens": 8192,

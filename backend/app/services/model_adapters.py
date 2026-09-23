@@ -784,7 +784,6 @@ class GlmOcrAdapter(_StubAdapter):
             "vllm", "serve", model_path,
             "--port", str(port),
             "--speculative-config", '{"method": "mtp", "num_speculative_tokens": 1}',
-            "--max-num-batched-tokens", "32768",
             "--max-model-len", "16384",
             "--gpu-memory-utilization", "0.85",
             "--served-model-name", self.capabilities.served_model_name,

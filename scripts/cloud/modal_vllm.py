@@ -186,13 +186,6 @@ def serve():
         "0.0.0.0",
         "--port",
         str(PORT),
-        # Stessi flag del serve_model.sh locale: contesto ampio per END2END.
-        "--gpu-memory-utilization",
-        "0.9",
-        "--max-model-len",
-        "24576",
-        "--max-num-batched-tokens",
-        "24576",
         # serve.py inoltra il resto degli argomenti a `vllm serve`.
     ]
     if USE_DFLASH:
