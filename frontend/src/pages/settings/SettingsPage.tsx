@@ -11,8 +11,7 @@
  * avanzati per modello, così il preset attivo si può verificare e regolare.
  */
 import { useI18n } from '../../i18n'
-import { useAuth } from '../../app/auth'
-import type { User } from '../../lib/types'
+import { useCanAdminister } from '../../app/auth'
 import { Navigate, useSearchParams } from 'react-router'
 import AccountSection from './AccountSection'
 import DataSection from './DataSection'
@@ -39,7 +38,6 @@ const SECTIONS: Array<{
 
 export default function SettingsPage() {
   const { t } = useI18n()
-  const { user } = useAuth()
   const [params, setParams] = useSearchParams()
 
   // Compatibilità con i vecchi link: modello e provider ora hanno una sola
@@ -47,7 +45,7 @@ export default function SettingsPage() {
   if (params.get('s') === 'calcolo') return <Navigate to="/modelli" replace />
 
   const current = SECTIONS.find((s) => s.id === params.get('s')) ?? SECTIONS[0]
-  const isAdmin = (user as User | null)?.role === 'admin'
+  const isAdmin = useCanAdminister()
   const Section = current.Section
 
   return (

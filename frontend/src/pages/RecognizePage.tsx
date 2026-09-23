@@ -6,7 +6,7 @@ import type { PageItem, PrefillEngines, RecognitionRun, SystemInfo } from '../li
 import { Badge, ErrorNotice, Field, Module, Notice, Progress } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { useInference } from '../app/inference'
-import { useAuth } from '../app/auth'
+import { useCanAdminister } from '../app/auth'
 import { IconArchive, IconPlayground } from '../app/icons'
 import { useI18n } from '../i18n'
 import { pageLabel, pageShortLabel } from '../lib/pageLabel'
@@ -95,8 +95,7 @@ export default function RecognizePage() {
   const { t } = useI18n()
   const nameOf = useModelNames()
   const inference = useInference()
-  const auth = useAuth()
-  const canManageInference = !auth.enabled || auth.user?.role === 'admin'
+  const canManageInference = useCanAdminister()
   const [projectId, setProjectId] = useState<number | ''>('')
   const [pages, setPages] = useState<PageItem[]>([])
   const [pageQuery, setPageQuery] = useState('')

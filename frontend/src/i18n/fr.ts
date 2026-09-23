@@ -1907,6 +1907,7 @@ export const fr: Dict = {
   },
 
   settings: {
+    localNoAccounts: 'Mode local (TABULARIUM_AUTH=off) : il n\u2019y a pas de comptes, donc inscription, rôles et utilisateurs ne s\u2019appliquent pas.',
     title: 'Paramètres',
     intro:
       'Gérez votre compte, les accès, les sauvegardes et l’environnement de l’instance. Les modèles et fournisseurs se configurent dans Modèles.',

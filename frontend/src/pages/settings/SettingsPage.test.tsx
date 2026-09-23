@@ -21,6 +21,7 @@ function LocationProbe() {
 const role = { current: 'admin' as 'admin' | 'editor' }
 
 vi.mock('../../app/auth', () => ({
+  useCanAdminister: () => role.current === 'admin',
   useAuth: () => ({
     user: { id: 1, username: 'nicolo', role: role.current, email: 'x@y.z', active: true },
     ready: true,

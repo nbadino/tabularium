@@ -6,7 +6,7 @@ import { pages, projects } from '../lib/vocab'
 import { ErrorNotice, Field, Module } from '../app/ui'
 import { IconPlus, IconProjects } from '../app/icons'
 import { useI18n } from '../i18n'
-import { useAuth } from '../app/auth'
+import { useCanAdminister } from '../app/auth'
 import { FolderPicker } from '../app/FolderPicker'
 
 export default function ProjectsPage() {
@@ -19,9 +19,8 @@ export default function ProjectsPage() {
   const [error, setError] = useState<unknown>(null)
   const [dirTouched, setDirTouched] = useState(false)
   const [picking, setPicking] = useState(false)
-  const auth = useAuth()
   // La navigazione mostra il filesystem del server: solo gli amministratori.
-  const canBrowse = !auth.enabled || auth.user?.role === 'admin'
+  const canBrowse = useCanAdminister()
 
   // percorso assoluto POSIX o Windows; null = campo vuoto (validato da required)
   const dirError = (() => {

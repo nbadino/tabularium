@@ -131,3 +131,15 @@ export function useAuth(): Auth {
   const s = useSyncExternalStore(subscribe, getSnapshot)
   return { ...s, login, setup, register, logout }
 }
+
+/**
+ * Può governare l'istanza (impostazioni, backup, modelli, filesystem)?
+ * In modalità locale (`TABULARIUM_AUTH=off`) non ci sono ruoli e il backend
+ * consente tutto: prima quattro schermate lo ricontrollavano a mano, e le
+ * Impostazioni si mettevano in sola lettura dicendo «solo un amministratore»
+ * a chi era l'unico utente.
+ */
+export function useCanAdminister(): boolean {
+  const s = useSyncExternalStore(subscribe, getSnapshot)
+  return !s.enabled || s.user?.role === 'admin'
+}

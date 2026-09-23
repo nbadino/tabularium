@@ -1906,6 +1906,7 @@ export const en: Dict = {
   },
 
   settings: {
+    localNoAccounts: 'Local mode (TABULARIUM_AUTH=off): there are no accounts, so registration, roles and users do not apply.',
     title: 'Settings',
     intro:
       'Manage your account, access, backups, and instance environment. Models and providers are configured in Models.',

@@ -12,9 +12,13 @@ import { apiGet, apiPut } from '../../lib/api'
 import type { InstanceSettings } from '../../lib/types'
 import { ErrorNotice, Field, Module, Notice, WarnNotice } from '../../app/ui'
 import { useI18n } from '../../i18n'
+import { useAuth } from '../../app/auth'
 import type { SectionProps } from './SettingsPage'
 
 export default function InstanceSection({ isAdmin }: SectionProps) {
+  // Senza account (modalità locale) registrazione, ruolo predefinito e
+  // gestione utenti non riguardano nessuno: si mostra solo il nome.
+  const accounts = useAuth().enabled
   const { t } = useI18n()
   const [settings, setSettings] = useState<InstanceSettings | null>(null)
   const [baseline, setBaseline] = useState<InstanceSettings | null>(null)
@@ -85,7 +89,7 @@ export default function InstanceSection({ isAdmin }: SectionProps) {
                 />
                 {!valid && <p className="mt-1 text-[11px] text-[color:var(--color-sig-text)]">{t('settings.instanceNameRequired')}</p>}
               </Field>
-              <Field label={t('settings.defaultRole')} hint={t('settings.defaultRoleHint')}>
+              {accounts && <Field label={t('settings.defaultRole')} hint={t('settings.defaultRoleHint')}>
                 <select
                   className="fld"
                   value={settings.default_new_user_role}
@@ -101,9 +105,10 @@ export default function InstanceSection({ isAdmin }: SectionProps) {
                   <option value="editor">{t('users.roleEditor')}</option>
                   <option value="viewer">{t('users.roleViewer')}</option>
                 </select>
-              </Field>
+              </Field>}
             </div>
 
+            {accounts ? <>
             <label className="mt-3 flex items-center gap-2 text-[13px]">
               <input
                 type="checkbox"
@@ -120,6 +125,9 @@ export default function InstanceSection({ isAdmin }: SectionProps) {
             <p className="mt-1 max-w-[70ch] text-[11px] text-[color:var(--color-ink-3)]">
               {t('settings.allowRegistrationHint')}
             </p>
+            </> : (
+              <p className="mt-3 max-w-[70ch] text-[12px] text-[color:var(--color-ink-2)]">{t('settings.localNoAccounts')}</p>
+            )}
 
             {saved && <Notice tone="ok">{t('settings.saved')}</Notice>}
 
@@ -132,7 +140,7 @@ export default function InstanceSection({ isAdmin }: SectionProps) {
         )}
       </Module>
 
-      {isAdmin && (
+      {isAdmin && accounts && (
         <Module tab={t('settings.accounts')} quiet>
           <p className="max-w-[70ch] text-[12px] text-[color:var(--color-ink-2)]">
             {t('settings.accountsHint')}

@@ -1908,6 +1908,7 @@ export const it = {
   },
 
   settings: {
+    localNoAccounts: 'Modalità locale (TABULARIUM_AUTH=off): non ci sono account, quindi registrazione, ruoli e utenti non si applicano.',
     title: 'Impostazioni',
     intro:
       'Gestisci il tuo account, gli accessi, i backup e l’ambiente dell’istanza. Modelli e provider si configurano nell’area Modelli.',

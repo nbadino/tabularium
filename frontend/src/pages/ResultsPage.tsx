@@ -6,7 +6,7 @@ import { Badge, ErrorNotice, Field, Module, Notice, Progress } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { syncInferenceFromBackend, toggleInferenceEnabled, useInference } from '../app/inference'
 import { useI18n } from '../i18n'
-import { useAuth } from '../app/auth'
+import { useCanAdminister } from '../app/auth'
 import { pageLabel } from '../lib/pageLabel'
 import { runTitle, useModelNames } from '../app/models/names'
 import { formatShortDate } from '../lib/dates'
@@ -44,8 +44,7 @@ export default function ResultsPage() {
   const [pageFilter, setPageFilter] = useState<PageFilter>('all')
   const [params, setParams] = useSearchParams()
   const inference = useInference()
-  const auth = useAuth()
-  const canManageInference = !auth.enabled || auth.user?.role === 'admin'
+  const canManageInference = useCanAdminister()
   const [projectId, setProjectId] = useState<number | ''>(() => Number(params.get('project')) || '')
   const [runs, setRuns] = useState<RecognitionRun[]>([])
   const [run, setRun] = useState<RecognitionRun | null>(null)
