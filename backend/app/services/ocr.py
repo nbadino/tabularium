@@ -2,6 +2,12 @@
 
 Import lazy di RapidOCR (preferito: leggero, onnxruntime) o PaddleOCR.
 Ritorna riquadri di testo in pixel immagine (= pixel pagina) con score.
+
+Di RapidOCR esistono due pacchetti: `rapidocr` (3.x, l'attuale, unico che si
+installi su Python 3.13) e `rapidocr_onnxruntime` (1.x, fermo a Python 3.12).
+Le chiamate sono le stesse; cambia solo la forma del risultato — tuple nel
+vecchio, un oggetto con `boxes`/`txts`/`scores` nel nuovo. Si usa quello che
+l'ambiente ha, così un'installazione esistente continua a funzionare.
 """
 from __future__ import annotations
 
@@ -17,7 +23,7 @@ def available_engine() -> str | None:
     forced = config.OCR_ENGINE.strip().lower()
     if forced in ("rapidocr", "paddleocr"):
         return forced
-    for name, module in (("rapidocr", "rapidocr_onnxruntime"), ("paddleocr", "paddleocr")):
+    for name, module in (("rapidocr", "rapidocr"), ("rapidocr", "rapidocr_onnxruntime"), ("paddleocr", "paddleocr")):
         try:
             # Non importare il runtime qui: questo endpoint viene interrogato
             # all'apertura di Annotation e PaddleOCR può inizializzare plugin
@@ -30,6 +36,21 @@ def available_engine() -> str | None:
         except (ImportError, ModuleNotFoundError, ValueError):
             continue
     return None
+
+
+def _rapid_rows(got) -> list[tuple]:
+    """Righe `(box, testo, score)` dall'uscita di RapidOCR, 1.x o 3.x."""
+    if hasattr(got, "txts"):  # 3.x: un oggetto con le tre liste parallele.
+        # Su una pagina senza testo `boxes` è None, e l'uscita può essere
+        # perfino di un altro tipo che i riquadri non ce li ha proprio: si
+        # guarda l'attributo `txts`, non il valore di `boxes`, altrimenti una
+        # pagina bianca finisce nel ramo del pacchetto vecchio.
+        # `boxes` è un array numpy: niente `or` per il default, o si finisce
+        # su «truth value of an array is ambiguous» appena il testo c'è.
+        boxes = getattr(got, "boxes", None)
+        return list(zip(() if boxes is None else boxes, got.txts or (), got.scores or ()))
+    result = got[0] if isinstance(got, tuple) else got  # 1.x: (righe, tempi)
+    return list(result or [])
 
 
 class OcrEngine:
@@ -45,7 +66,10 @@ class OcrEngine:
         if self._impl is not None:
             return
         if self.name == "rapidocr":
-            from rapidocr_onnxruntime import RapidOCR
+            try:
+                from rapidocr import RapidOCR
+            except ImportError:
+                from rapidocr_onnxruntime import RapidOCR
 
             self._impl = RapidOCR()
             return
@@ -75,9 +99,8 @@ class OcrEngine:
 
         arr = np.asarray(image.convert("RGB"))
         if self.name == "rapidocr":
-            result, _elapse = self._impl(arr)
             out = []
-            for box, text, score in result or []:
+            for box, text, score in _rapid_rows(self._impl(arr)):
                 xs = [float(p[0]) for p in box]
                 ys = [float(p[1]) for p in box]
                 out.append(
@@ -121,11 +144,16 @@ class OcrEngine:
 
         arr = np.asarray(image.convert("RGB"))
         if self.name == "rapidocr":
-            result, _elapse = self._impl(arr, use_det=False, use_cls=False, use_rec=True)
+            got = self._impl(arr, use_det=False, use_cls=False, use_rec=True)
+            txts = getattr(got, "txts", None)
+            if txts is not None:  # rapidocr 3.x: niente riquadri in sola lettura
+                scores = getattr(got, "scores", None) or (0,)
+                return (str(txts[0]).strip(), float(scores[0] or 0)) if txts else ("", 0.0)
+            result = got[0] if isinstance(got, tuple) else got
             if not result:
                 return "", 0.0
             first = result[0]
-            # rapidocr resta su [box, testo, score] anche in sola recognition.
+            # rapidocr 1.x resta su [box, testo, score] anche in sola recognition.
             text = first[1] if len(first) > 2 else first[0]
             score = first[2] if len(first) > 2 else first[1]
             return str(text or "").strip(), float(score or 0)
