@@ -592,7 +592,9 @@ def start(
 
     try:
         if local_runtime_id == hardware.RUNTIME_MLX:
-            argv = mlx_runtime.serve_argv(model_path, port=port)
+            from . import model_settings
+            mlx_overrides = model_settings.get_settings(adapter_id)["overrides"].get("mlx", {})
+            argv = mlx_runtime.serve_argv(model_path, port=port, settings=mlx_overrides)
         elif adapter_id == "monkeyocrv2-parsing":
             # `scripts/serve_model.sh` legge queste due env var: se l'utente non
             # le ha già impostate (uso avanzato/ambiente esistente), le
@@ -623,6 +625,23 @@ def start(
                 raise ValueError(
                     f"adapter '{adapter_id}' non ha ancora un comando di serving implementato"
                 )
+            from . import model_settings, serve_recipes
+            saved_overrides = model_settings.get_settings(adapter_id)["overrides"]
+            serving_overrides = saved_overrides.get("serving", {})
+            if adapter_id == "monkeyocrv2-parsing":
+                # The official wrapper owns MonkeyOCRv2's serve.py arguments;
+                # pass user overrides as process-local env, never edit the
+                # wrapper command or the user's shell environment.
+                for key, env_name in (
+                    ("gpu_memory_utilization", "TABULARIUM_SERVE_GPU_MEMORY_UTILIZATION"),
+                    ("max_model_len", "TABULARIUM_SERVE_MAX_MODEL_LEN"),
+                    ("max_num_seqs", "TABULARIUM_SERVE_MAX_NUM_SEQS"),
+                    ("max_num_batched_tokens", "TABULARIUM_SERVE_MAX_NUM_BATCHED_TOKENS"),
+                ):
+                    if key in serving_overrides:
+                        env[env_name] = str(serving_overrides[key])
+            else:
+                argv = serve_recipes.apply_serving_overrides(argv, serving_overrides)
 
         if argv[0] == "vllm" and not config.SERVE_PYTHON and not shutil.which("vllm"):
             # Serve command generico (qualunque adapter con `vllm serve`,
@@ -798,7 +817,12 @@ def _pid_alive(pid: int) -> bool:
     return not process_probe.is_zombie(pid)
 
 
-def _terminate(pid: int, process_group: int | None = None, timeout: float = 20.0) -> bool:
+def _terminate(
+    pid: int,
+    process_group: int | None = None,
+    timeout: float = 20.0,
+    process: subprocess.Popen | None = None,
+) -> bool:
     """SIGTERM, attesa reale, poi SIGKILL. Ritorna True se il processo è morto.
 
     L'attesa non è cosmetica: `stop()` viene chiamato da `start()` come
@@ -831,7 +855,11 @@ def _terminate(pid: int, process_group: int | None = None, timeout: float = 20.0
     signal_all(signal.SIGTERM)
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if not _pid_alive(pid):
+        # We can reap a Popen child directly. Besides being more reliable than
+        # repeated `ps` probes on macOS, poll() prevents a terminated child
+        # from looking alive until the full timeout expires.
+        exited = process.poll() is not None if process is not None else not _pid_alive(pid)
+        if exited:
             return True
         time.sleep(0.3)
     # Non si è chiuso con le buone: un solo modello per volta è un vincolo di
@@ -839,7 +867,8 @@ def _terminate(pid: int, process_group: int | None = None, timeout: float = 20.0
     signal_all(getattr(signal, "SIGKILL", signal.SIGTERM))
     deadline = time.time() + 5.0
     while time.time() < deadline:
-        if not _pid_alive(pid):
+        exited = process.poll() is not None if process is not None else not _pid_alive(pid)
+        if exited:
             return True
         time.sleep(0.3)
     return False
@@ -852,7 +881,11 @@ def stop() -> ServeStatus:
     persisted = None if proc is not None else _persisted_running()
     pid = proc.pid if proc is not None else (persisted or {}).get("pid")
     process_group = (persisted or {}).get("process_group") if proc is None else None
-    if pid and not _is_our_serving_process(pid):
+    # A live Popen handle is provenance: this process was launched by this
+    # manager, even when macOS rewrites or truncates its command line so the
+    # persisted-command heuristic cannot recognize it. Apply the PID reuse
+    # guard only after a backend restart, when we have lost that handle.
+    if pid and proc is None and not _is_our_serving_process(pid):
         # Non si segnala un processo che non si riesce ad attribuire. Il PID può
         # arrivare da una riga in `jobs` scritta prima di un riavvio della
         # macchina, e i numeri di PID vengono riciclati: senza questo controllo
@@ -863,7 +896,7 @@ def stop() -> ServeStatus:
         _ACTIVE_INFO = {}
         return get_status()
     if pid:
-        _terminate(pid, process_group)
+        _terminate(pid, process_group, process=proc)
         if proc is not None:
             try:
                 proc.wait(timeout=1.0)

@@ -19,25 +19,19 @@ MODEL_DIR="${MODEL_DIR:-}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.90}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-24576}"
 API_KEY="${API_KEY:-${TABULARIUM_SERVER_API_KEY:-}}"
-# Versioni allineate all'ambiente di serving locale verificato
-# (`data/vllm-runtime`): vLLM 0.25.1 con transformers 4.51.3 non risolve più —
-# pip le dichiara in conflitto — e la coppia qui sotto è quella che serve
-# davvero MonkeyOCRv2 su questa installazione.
+REPLACE_RUNNING_SERVER=0
+# La versione di Transformers resta non fissata globalmente: ogni release
+# vLLM dichiara il proprio intervallo compatibile e i plugin (TeleOCR) possono
+# imporre un pin più stretto nella propria ricetta.
 VLLM_VERSION="${VLLM_VERSION:-0.28.0}"
-TRANSFORMERS_VERSION="${TRANSFORMERS_VERSION:-5.16.1}"
-# PyTorch va installato *prima* di vLLM e dall'indice CUDA 13.0: il wheel
-# PyPI di default non conosce le GPU sm_120 (Blackwell) e vLLM muore con
-# "SM 12.x requires CUDA >= 12.9" seguito da "FlashInfer requires GPUs with
-# sm75 or higher" — la capability non viene proprio letta. Le versioni sono
-# quelle pinnate da vLLM 0.28.0, quindi il suo install le lascia intatte.
-TORCH_VERSION="${TORCH_VERSION:-2.13.0}"
-TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.28.0}"
-TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-2.11.0}"
+TRANSFORMERS_VERSION="${TRANSFORMERS_VERSION:-}"
+# PyTorch viene risolto dal vLLM della ricetta. Su Blackwell viene poi
+# ricompilato per CUDA 13 mantenendo la versione effettivamente installata.
 TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cu130}"
 CUDA_TOOLKIT_VERSION="${CUDA_TOOLKIT_VERSION:-13.0}"
 CUDA_TOOLKIT_PKG="${CUDA_TOOLKIT_PKG:-13-0}"
 MONKEYOCR_REF="${MONKEYOCR_REF:-}"
-MIN_DISK_GB="${MIN_DISK_GB:-10}"
+MIN_DISK_GB="${MIN_DISK_GB:-20}"
 MIN_COMPUTE_CAP="${MIN_COMPUTE_CAP:-8.0}"
 # Il driver deve saper eseguire la CUDA con cui e' compilato il PyTorch che
 # installiamo (indice cu130): un driver piu' vecchio fa fallire vLLM molto
@@ -63,6 +57,8 @@ while [[ $# -gt 0 ]]; do
       API_KEY="$2"; shift 2 ;;
     --gpu-mem)
       GPU_MEM_UTIL="$2"; shift 2 ;;
+    --replace-running-server)
+      REPLACE_RUNNING_SERVER=1; shift ;;
     --max-len)
       MAX_MODEL_LEN="$2"; shift 2 ;;
     --ref|--monkeyocr-ref)
@@ -72,6 +68,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if ! [[ "$MIN_DISK_GB" =~ ^[0-9]+$ ]] || [ "$MIN_DISK_GB" -lt 1 ]; then
+  echo "!! MIN_DISK_GB deve essere un intero positivo (ricevuto: $MIN_DISK_GB)." >&2
+  exit 2
+fi
+
 # Ricetta di serving generata dal backend (`serve_recipes.py`): versione di
 # vLLM, dipendenze extra e flag ufficiali del modello. Senza, si resta sul
 # percorso storico MonkeyOCRv2.
@@ -80,6 +81,9 @@ RECIPE_RUNTIME="monkeyocr"
 RECIPE_ADAPTER="monkeyocrv2-parsing"
 RECIPE_PIP_EXTRA=""
 RECIPE_INSTALL_VLLM="1"
+RECIPE_MIN_DISK_GB=20
+RECIPE_MIN_VRAM_GB=10
+RECIPE_MIN_RAM_GB=12
 SERVE_ARGV=()
 if [ -n "$RECIPE_B64" ]; then
   RECIPE_JSON=$(printf '%s' "$RECIPE_B64" | base64 -d)
@@ -89,6 +93,14 @@ EOF
   RECIPE_PIP_EXTRA=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin)['pip_extra']))")
   RECIPE_INSTALL_VLLM=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print('1' if json.load(sys.stdin).get('install_vllm', True) else '0')")
   RECIPE_ADAPTER=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['adapter_id'])")
+  RECIPE_MIN_DISK_GB=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('min_free_disk_gb', 20)))")
+  RECIPE_MIN_VRAM_GB=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('min_free_vram_gb', 10)))")
+  RECIPE_MIN_RAM_GB=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('min_free_ram_gb', 12)))")
+  RECIPE_TRANSFORMERS_VERSION=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('transformers_version') or '')")
+  if [ -n "$RECIPE_TRANSFORMERS_VERSION" ]; then TRANSFORMERS_VERSION="$RECIPE_TRANSFORMERS_VERSION"; fi
+  # The recipe owns the minimum: an external environment override may make
+  # the check stricter, but can never reduce it below the model's budget.
+  if [ "$MIN_DISK_GB" -lt "$RECIPE_MIN_DISK_GB" ]; then MIN_DISK_GB="$RECIPE_MIN_DISK_GB"; fi
   # Un ambiente per modello: le versioni di vLLM delle ricette non convivono
   # nello stesso site-packages, ma convivono benissimo sullo stesso disco.
   VENV_DIR=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('venv_dir') or '$VENV_DIR')")
@@ -106,6 +118,145 @@ fi
 if [ -z "$MODEL_DIR" ]; then
   MODEL_DIR="$HOME/MonkeyOCRv2/model_weight/$(basename "$MODEL_NAME")"
 fi
+
+# Disk is the first resource check: the Vast host's physical SSD size is not
+# the container quota. Nothing is cleaned automatically to make this pass.
+DISK_PROBE="$MODEL_DIR"
+while [ ! -e "$DISK_PROBE" ] && [ "$DISK_PROBE" != "/" ]; do DISK_PROBE=$(dirname "$DISK_PROBE"); done
+DISK_AVAILABLE_GB=$(df -Pk "$DISK_PROBE" | awk 'NR==2 {printf "%d", $4 / 1024 / 1024}')
+if [ -z "$DISK_AVAILABLE_GB" ] || [ "$DISK_AVAILABLE_GB" -lt "$MIN_DISK_GB" ]; then
+  echo "!! Preflight disco fallito per ${RECIPE_ADAPTER}: ${DISK_AVAILABLE_GB:-sconosciuto} GB liberi, ne servono almeno ${MIN_DISK_GB} GB." >&2
+  echo "!! Nessun pacchetto o peso è stato scaricato. Il disco visibile al container può essere più piccolo dell'SSD fisico dell'host." >&2
+  echo "!! Modelli, runtime e cache già presenti non verranno cancellati automaticamente." >&2
+  df -h "${DISK_PROBE:-$MODEL_DIR}" 2>&1 | tail -2 >&2 || true
+  exit 2
+fi
+echo ">> Preflight disco: ${DISK_AVAILABLE_GB} GB liberi; budget ricetta ${MIN_DISK_GB} GB — OK."
+
+# Basic host/toolchain checks are read-only and happen before apt/pip. This
+# script intentionally targets the Debian/Ubuntu CUDA images used by Vast and
+# RunPod; guessing at other package managers would leave half-configured hosts.
+if [ ! -x "$(command -v python3 2>/dev/null || true)" ]; then
+  echo "!! Preflight fallito: python3 non trovato. Scegli un'immagine cloud Ubuntu/Debian con Python 3." >&2
+  exit 2
+fi
+PYTHON_VERSION=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
+PYTHON_MAJOR=${PYTHON_VERSION%%.*}
+PYTHON_MINOR=${PYTHON_VERSION#*.}
+if [ "$PYTHON_MAJOR" -lt 3 ] || { [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 10 ]; }; then
+  echo "!! Preflight fallito: Python $PYTHON_VERSION; vLLM richiede Python 3.10 o superiore." >&2
+  exit 2
+fi
+if [ "$RECIPE_ADAPTER" = "teleocr" ] && { [ "$PYTHON_MAJOR" -gt 3 ] || { [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -ge 13 ]; }; }; then
+  echo "!! Preflight fallito: TeleOCR upstream richiede Python >=3.10,<3.13 (qui $PYTHON_VERSION)." >&2
+  exit 2
+fi
+if [ ! -x "$(command -v apt-get 2>/dev/null || true)" ]; then
+  echo "!! Preflight fallito: apt-get non trovato. Usa un'immagine Ubuntu/Debian supportata." >&2
+  exit 2
+fi
+if ! command -v nvidia-smi >/dev/null 2>&1; then
+  echo "!! Preflight fallito: nvidia-smi non trovato, GPU NVIDIA non visibile al container." >&2
+  exit 2
+fi
+if [ "$RECIPE_INSTALL_VLLM" = "0" ] && ! command -v vllm >/dev/null 2>&1; then
+  echo "!! Preflight fallito: la ricetta richiede un'immagine con vLLM già installato, ma il comando vllm non esiste." >&2
+  exit 2
+fi
+
+# Test egress before large installs. Reaching HF's model API and PyPI is
+# required for every pip based recipe; GitHub is needed for plugin extras.
+NETWORK_HOSTS=(pypi.org huggingface.co)
+if [[ "$RECIPE_PIP_EXTRA" == *"github.com"* ]]; then NETWORK_HOSTS+=(github.com); fi
+for network_host in "${NETWORK_HOSTS[@]}"; do
+  if ! NETWORK_HOST="$network_host" python3 - <<'PY'
+import os, socket, ssl
+host = os.environ["NETWORK_HOST"]
+with socket.create_connection((host, 443), timeout=8) as sock:
+    with ssl.create_default_context().wrap_socket(sock, server_hostname=host):
+        pass
+PY
+  then
+    echo "!! Preflight rete fallito: impossibile raggiungere https://${network_host}:443; nessun pacchetto o peso è stato scaricato." >&2
+    exit 2
+  fi
+done
+
+# Quando il backend ha verificato via /v1/models che sulla porta configurata
+# gira già un altro modello, può autorizzare la sostituzione. Fermiamo solo il
+# processo vLLM/serve.py che ascolta *questa porta*, prima di misurare la VRAM;
+# non tocchiamo processi GPU estranei né usiamo pkill globale.
+if [ "$REPLACE_RUNNING_SERVER" = "1" ]; then
+  if ! command -v ss >/dev/null 2>&1; then
+    echo "!! Sostituzione server impossibile: ss non è disponibile per identificare in sicurezza il listener della porta $PORT." >&2
+    exit 2
+  fi
+  LISTENER_INFO=$(ss -H -ltnp "sport = :$PORT" 2>/dev/null || true)
+  if [ -n "$LISTENER_INFO" ]; then
+    SERVER_PIDS=$(printf '%s\n' "$LISTENER_INFO" | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true)
+    if [ -z "$SERVER_PIDS" ]; then
+      echo "!! Sostituzione server impossibile: il listener sulla porta $PORT non espone un PID verificabile; nessun processo è stato fermato." >&2
+      exit 2
+    fi
+    for server_pid in $SERVER_PIDS; do
+      if [ ! -r "/proc/$server_pid/cmdline" ]; then continue; fi
+      SERVER_CMD=$(tr '\0' ' ' < "/proc/$server_pid/cmdline")
+      if [[ "$SERVER_CMD" != *"serve.py"* && "$SERVER_CMD" != *"vllm.entrypoints"* ]]; then
+        echo "!! Sostituzione server impossibile: PID $server_pid sulla porta $PORT non è un server vLLM riconosciuto; nessun processo è stato fermato." >&2
+        exit 2
+      fi
+    done
+    echo ">> Arresto controllato del server Tabularium sulla porta $PORT prima del preflight VRAM..."
+    for server_pid in $SERVER_PIDS; do kill -TERM "$server_pid" 2>/dev/null || true; done
+    for _ in $(seq 1 15); do
+      alive=0
+      for server_pid in $SERVER_PIDS; do kill -0 "$server_pid" 2>/dev/null && alive=1 || true; done
+      [ "$alive" = "0" ] && break
+      sleep 1
+    done
+    for server_pid in $SERVER_PIDS; do kill -KILL "$server_pid" 2>/dev/null || true; done
+    sleep 2
+  fi
+fi
+
+# Check free VRAM, not just the GPU's advertised total: another process may
+# already occupy it. This prevents a costly pip/model install that cannot fit.
+GPU_FREE_VRAM_MB=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -n1 | tr -d ' ')
+if ! [[ "$GPU_FREE_VRAM_MB" =~ ^[0-9]+$ ]]; then
+  echo "!! Preflight VRAM fallito: nvidia-smi non ha restituito memoria libera leggibile." >&2
+  exit 2
+fi
+GPU_FREE_VRAM_GB=$((GPU_FREE_VRAM_MB / 1024))
+if [ "$GPU_FREE_VRAM_GB" -lt "$RECIPE_MIN_VRAM_GB" ] && [ "$REPLACE_RUNNING_SERVER" = "1" ]; then
+  echo ">> Attendo il rilascio della memoria GPU da parte del server sostituito..."
+  for _ in $(seq 1 10); do
+    sleep 2
+    GPU_FREE_VRAM_MB=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -n1 | tr -d ' ')
+    [[ "$GPU_FREE_VRAM_MB" =~ ^[0-9]+$ ]] || continue
+    GPU_FREE_VRAM_GB=$((GPU_FREE_VRAM_MB / 1024))
+    [ "$GPU_FREE_VRAM_GB" -ge "$RECIPE_MIN_VRAM_GB" ] && break
+  done
+fi
+if [ "$GPU_FREE_VRAM_GB" -lt "$RECIPE_MIN_VRAM_GB" ]; then
+  echo "!! Preflight VRAM fallito per ${RECIPE_ADAPTER}: ${GPU_FREE_VRAM_GB} GB liberi, ne servono almeno ${RECIPE_MIN_VRAM_GB} GB." >&2
+  echo "!! Nessun pacchetto o peso è stato scaricato. Libera la GPU o scegli una macchina con più VRAM." >&2
+  exit 2
+fi
+echo ">> Preflight VRAM: ${GPU_FREE_VRAM_GB} GB liberi; budget ricetta ${RECIPE_MIN_VRAM_GB} GB — OK."
+
+# Read MemAvailable (not total RAM) so concurrent processes are accounted for.
+RAM_AVAILABLE_KB=$(awk '/^MemAvailable:/ {print $2; exit}' /proc/meminfo 2>/dev/null || true)
+if ! [[ "$RAM_AVAILABLE_KB" =~ ^[0-9]+$ ]]; then
+  echo "!! Preflight RAM fallito: MemAvailable non leggibile da /proc/meminfo." >&2
+  exit 2
+fi
+RAM_AVAILABLE_GB=$((RAM_AVAILABLE_KB / 1024 / 1024))
+if [ "$RAM_AVAILABLE_GB" -lt "$RECIPE_MIN_RAM_GB" ]; then
+  echo "!! Preflight RAM fallito per ${RECIPE_ADAPTER}: ${RAM_AVAILABLE_GB} GB disponibili, ne servono almeno ${RECIPE_MIN_RAM_GB} GB." >&2
+  echo "!! Nessun pacchetto o peso è stato scaricato. Libera memoria o scegli una macchina con più RAM." >&2
+  exit 2
+fi
+echo ">> Preflight RAM: ${RAM_AVAILABLE_GB} GB disponibili; budget ricetta ${RECIPE_MIN_RAM_GB} GB — OK."
 
 echo "=========================================================="
 echo ">> [Tabularium Cloud Setup] Avvio configurazione vLLM GPU"
@@ -143,26 +294,6 @@ if command -v nvidia-smi &>/dev/null; then
   fi
 else
   echo "!! nvidia-smi non trovato: serve una GPU NVIDIA funzionante." >&2
-  exit 1
-fi
-
-disk_free_gb() { df -Pk "$HOME" | awk 'NR==2 {printf "%d", $4 / 1024 / 1024}'; }
-DISK_AVAILABLE_GB=$(disk_free_gb)
-if [ "$DISK_AVAILABLE_GB" -lt "$MIN_DISK_GB" ]; then
-  # Prima di arrendersi si buttano le cache: sono ricostruibili scaricando di
-  # nuovo, mentre ambienti e pesi no. Ogni modello costa ~8 GB di ambiente più
-  # i suoi pesi, quindi su un disco piccolo la cache è la prima a dover cedere.
-  echo ">> Spazio sotto la soglia (${DISK_AVAILABLE_GB} GB): svuoto le cache ricostruibili..."
-  python3 -m pip cache purge > /dev/null 2>&1 || true
-  rm -rf "$HOME/.cache/vllm" "$HOME/.cache/flashinfer" "$HOME/.cache/pip" 2>/dev/null || true
-  DISK_AVAILABLE_GB=$(disk_free_gb)
-  echo ">> Dopo la pulizia: ${DISK_AVAILABLE_GB} GB liberi."
-fi
-if [ "$DISK_AVAILABLE_GB" -lt "$MIN_DISK_GB" ]; then
-  echo "!! Spazio insufficiente: ${DISK_AVAILABLE_GB} GB liberi, servono almeno ${MIN_DISK_GB} GB." >&2
-  echo "!! Occupazione maggiore (ogni modello preparato costa ~8 GB di ambiente più i pesi):" >&2
-  du -sh "$HOME"/tabularium/envs/* "$HOME"/models/* 2>/dev/null | sort -hr | head -6 >&2
-  echo "!! Rimuovi un modello che non usi, oppure noleggia con più disco." >&2
   exit 1
 fi
 
@@ -226,14 +357,26 @@ fi
 PY_BIN="$VENV_DIR/bin/python"
 echo ">> Installazione dipendenze Python (vLLM, PyTorch, Transformers)..."
 "$PY_BIN" -m pip install --quiet --upgrade pip setuptools wheel
-"$PY_BIN" -m pip install --quiet \
+PYTHON_PACKAGES=(
   "vllm==${VLLM_VERSION}" \
-  "transformers==${TRANSFORMERS_VERSION}" \
-  "huggingface_hub==1.29.0" \
-  "pillow==12.3.0" \
-  "pydantic==2.13.5" \
-  "timm==1.0.29" \
-  "einops==0.8.2"
+  "huggingface_hub"
+)
+if [ "$RECIPE_ADAPTER" = "teleocr" ]; then
+  # The official root package (not just its vLLM model plugin) provides the
+  # OCR pipeline, PDF/image preparation and no-repeat-ngram processor. Its
+  # pyproject pins Pillow <12 and constrains Python <3.13, so do not apply the
+  # unrelated generic runtime pins to this environment.
+  PYTHON_PACKAGES+=("$RECIPE_PIP_EXTRA")
+  RECIPE_PIP_EXTRA=""
+else
+  PYTHON_PACKAGES+=("pillow==12.3.0" "pydantic==2.13.5" "timm==1.0.29" "einops==0.8.2")
+fi
+if [ -n "$TRANSFORMERS_VERSION" ]; then
+  PYTHON_PACKAGES+=("transformers==${TRANSFORMERS_VERSION}")
+else
+  echo ">> Transformers non pinnato dalla ricetta: vLLM risolverà la versione compatibile."
+fi
+"$PY_BIN" -m pip install --quiet "${PYTHON_PACKAGES[@]}"
 
 fi
 
@@ -293,22 +436,38 @@ PY
 fi
 
 MODEL_NAME="$MODEL_NAME" MODEL_DIR="$MODEL_DIR" VLLM_VERSION="$VLLM_VERSION" \
-TORCH_VERSION="$TORCH_VERSION" TORCH_INDEX="$TORCH_INDEX" \
+TORCH_INDEX="$TORCH_INDEX" \
 RECIPE_RUNTIME="$RECIPE_RUNTIME" RECIPE_ADAPTER="${RECIPE_ADAPTER:-monkeyocrv2-parsing}" \
-TRANSFORMERS_VERSION="$TRANSFORMERS_VERSION" MONKEYOCR_REF="$MONKEYOCR_REF" \
+RECIPE_TRANSFORMERS_VERSION="$TRANSFORMERS_VERSION" MONKEYOCR_REF="$MONKEYOCR_REF" \
 GPU_QUERY="$GPU_QUERY" COMPUTE_CAP="$COMPUTE_CAP" DISK_AVAILABLE_GB="$DISK_AVAILABLE_GB" \
+MIN_DISK_GB="$MIN_DISK_GB" \
 GPU_MEM_UTIL="$GPU_MEM_UTIL" MAX_MODEL_LEN="$MAX_MODEL_LEN" \
 "$PY_BIN" - <<'PY'
 import json, os, platform, subprocess, sys
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+
+def installed(package):
+    try:
+        return version(package)
+    except PackageNotFoundError:
+        return ""
+
+def torch_cuda_runtime():
+    try:
+        import torch
+        return str(torch.version.cuda or "")
+    except Exception:
+        return ""
 
 manifest = {
     "model": os.environ["MODEL_NAME"],
     "model_dir": os.environ["MODEL_DIR"],
     "vllm": os.environ["VLLM_VERSION"],
-    "torch": os.environ.get("TORCH_VERSION", ""),
-    "torch_index": os.environ.get("TORCH_INDEX", ""),
-    "transformers": os.environ["TRANSFORMERS_VERSION"],
+    "torch": installed("torch"),
+    "torch_cuda_runtime": torch_cuda_runtime(),
+    "transformers": installed("transformers"),
+    "requested_transformers": os.environ.get("RECIPE_TRANSFORMERS_VERSION", ""),
     # Il commit del runner esiste solo quando si serve col wrapper ufficiale:
     # gli altri modelli non hanno un checkout da interrogare, e `git rev-parse`
     # fuori da un repo esce 128 e con `set -e` porta giù tutto il setup.
@@ -330,6 +489,7 @@ manifest = {
     "python": platform.python_version(),
     "recipe": "tabularium-vast-2",
     "disk_available_gb": int(os.environ["DISK_AVAILABLE_GB"]),
+    "min_free_disk_gb": int(os.environ["MIN_DISK_GB"]),
 }
 target = Path(os.environ.get("MODEL_DIR", ".")).parent / "cloud-manifest.json"
 target.parent.mkdir(parents=True, exist_ok=True)
@@ -356,14 +516,8 @@ if [ ${#SERVE_ARGV[@]} -eq 0 ]; then
   fi
 fi
 
-# Un solo server per volta sulla porta: cambiare modello significa sostituire
-# quello attivo, non affiancarlo. I pesi e l'ambiente del precedente restano
-# sul disco, quindi tornare indietro è questione di secondi.
-if pgrep -f "[s]erve[.]py|[v]llm.entrypoints" > /dev/null 2>&1; then
-  echo ">> Fermo il server attualmente in ascolto..."
-  pkill -f "[s]erve[.]py|[v]llm.entrypoints" || true
-  sleep 5
-fi
+# Il vecchio server, se verificato e sostituibile, è già stato arrestato prima
+# del controllo VRAM. Non uccidere processi GPU o listener estranei qui.
 
 # La cache di compilazione appartiene alla coppia torch/CUDA che l'ha prodotta:
 # riusarla dopo un cambio di ambiente produce errori di cubin mancanti.

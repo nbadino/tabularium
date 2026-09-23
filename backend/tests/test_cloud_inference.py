@@ -39,6 +39,47 @@ def test_vllm_client_headers_and_cloud_detection():
     assert not local_client.is_modal
 
 
+def test_teleocr_sampling_reaches_vllm_openai_request(monkeypatch):
+    from PIL import Image
+
+    adapter = infmod.get_adapter("teleocr")
+    captured = {}
+
+    class StreamResponse:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def raise_for_status(self): pass
+        def iter_lines(self, decode_unicode=True):
+            yield 'data: {"choices":[{"delta":{"content":"<fcel>x</fcel>"}}]}'
+            yield "data: [DONE]"
+
+    def post(_url, **kwargs):
+        captured.update(kwargs["json"])
+        return StreamResponse()
+
+    monkeypatch.setattr(infmod.requests, "post", post)
+    client = infmod.VllmClient(
+        url="http://127.0.0.1:8888/v1",
+        model="StarDoc-AI/TeleOCR",
+        adapter=adapter,
+        max_retries=0,
+    )
+    output = client._chat(
+        Image.new("RGB", (8, 8), "white"),
+        adapter.prompt_for("table"),
+        max_tokens=4096,
+        sampling=client._sampling_for("table"),
+        task="table",
+    )
+    assert output == "<fcel>x</fcel>"
+    assert captured["temperature"] == 0.0
+    assert captured["top_p"] == 0.01
+    assert captured["top_k"] == 1
+    assert captured["presence_penalty"] == 1.0
+    assert captured["frequency_penalty"] == 0.005
+    assert captured["extra_args"]["no_repeat_ngram_size"] == 100
+
+
 def _stub_public_dns(monkeypatch):
     """Gli host fittizi del contratto non devono dipendere dal DNS esterno."""
     import socket
@@ -1318,6 +1359,7 @@ def test_serve_recipes_match_the_verified_modal_templates():
         "deepseek-ocr": "modal_deepseek_ocr.py",
         "paddleocr-vl": "modal_paddleocr_vl.py",
         "qwen3-vl-8b": "modal_qwen3_vl.py",
+        "teleocr": "modal_teleocr.py",
     }
     root = Path(__file__).resolve().parents[2] / "scripts" / "cloud"
     for adapter_id, filename in templates.items():
@@ -1341,6 +1383,22 @@ def test_provision_recipe_carries_the_official_flags():
     assert "--no-enable-prefix-caching" in recipe["argv"]
     assert recipe["argv"][:3] == ["-m", "vllm.entrypoints.cli.main", "serve"]
     assert recipe["served_model_name"] == "deepseek-ocr-2"
+    assert recipe["min_free_disk_gb"] == 27
+    assert recipe["min_free_vram_gb"] == 12
+
+
+def test_teleocr_cloud_provision_installs_official_architecture_plugin():
+    from app.services import cloud_manager as cm
+
+    recipe = cm.build_provision_recipe("teleocr")
+    assert recipe["hf_repo"] == "StarDoc-AI/TeleOCR"
+    assert recipe["vllm_version"] == "0.11.0"
+    assert recipe["transformers_version"] == "4.57.1"
+    assert recipe["pip_extra"] == [
+        "git+https://github.com/caipeng328/TeleOCR.git@main",
+    ]
+    assert "--trust-remote-code" in recipe["argv"]
+    assert recipe["served_model_name"] == "StarDoc-AI/TeleOCR"
 
     monkey = cm.build_provision_recipe("monkeyocrv2-parsing")
     assert monkey["runtime"] == "monkeyocr" and monkey["needs_monkeyocr_repo"] is True
@@ -1428,10 +1486,14 @@ def test_each_model_gets_its_own_environment():
 
 
 def test_setup_script_replaces_the_running_server():
-    """Una sola porta: preparare un modello nuovo deve fermare quello attivo,
-    altrimenti il secondo avvio muore su 'address already in use'."""
+    """Sostituire un modello libera la VRAM prima del preflight, ma tocca
+    soltanto il server verificato che ascolta sulla porta configurata."""
     script = (Path(__file__).resolve().parents[2] / "scripts" / "cloud" / "setup_cloud_vllm.sh").read_text()
-    assert 'pkill -f "[s]erve[.]py|[v]llm.entrypoints"' in script
+    assert "--replace-running-server" in script
+    assert 'ss -H -ltnp "sport = :$PORT"' in script
+    assert "kill -TERM" in script
+    assert "pkill -f" not in script
+    assert script.index("Arresto controllato del server Tabularium") < script.index("Preflight VRAM: ${GPU_FREE_VRAM_GB}")
     assert "Ambiente già presente" in script
 
 
@@ -1461,6 +1523,28 @@ def test_setup_checks_the_driver_cuda_before_downloading():
     # Deve precedere l'installazione, altrimenti non risparmia nulla: il
     # messaggio d'errore compare prima del primo pip install pesante.
     assert script.index("Max CUDA") < script.index("Installazione dipendenze Python")
+
+
+def test_setup_preflights_recipe_disk_budget_before_mutating_the_instance():
+    """Il disco Vast del container è una quota, non la capacità fisica
+    dell'SSD. Fermarsi prima di apt/pip/pesi evita installazioni parziali e
+    non rimuove cache dell'utente per far spazio di nascosto."""
+    script = (Path(__file__).resolve().parents[2] / "scripts" / "cloud" / "setup_cloud_vllm.sh").read_text()
+
+    assert "min_free_disk_gb" in script
+    assert "min_free_vram_gb" in script
+    assert "Preflight disco fallito" in script
+    assert "Preflight VRAM fallito" in script
+    assert "Preflight RAM fallito" in script
+    assert "Preflight rete fallito" in script
+    assert "Python 3.10 o superiore" in script
+    assert "nvidia-smi non trovato" in script
+    assert "Nessun pacchetto o peso è stato scaricato" in script
+    assert script.index("Preflight disco fallito") < script.index("Installazione dipendenze di sistema")
+    assert script.index("Preflight disco fallito") < script.index("Installazione dipendenze Python")
+    assert script.index("Preflight disco fallito") < script.index("Test egress before large installs")
+    assert "pip cache purge" not in script
+    assert 'rm -rf "$HOME/.cache/pip"' not in script
 
 
 def test_driver_cuda_is_read_from_the_nvidia_smi_header():

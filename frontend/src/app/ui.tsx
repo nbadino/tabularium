@@ -324,12 +324,15 @@ export function Modal({
   title,
   onClose,
   wide,
+  extraWide,
   footer,
   children,
 }: {
   title: string
   onClose: () => void
   wide?: boolean
+  /** Finestra quasi a tutto schermo per strumenti di lavoro densi. */
+  extraWide?: boolean
   footer?: ReactNode
   children: ReactNode
 }) {
@@ -395,8 +398,10 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`flex max-h-[92vh] w-full flex-col border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)] ${
-          wide ? 'max-w-[1150px]' : 'max-w-md'
+        className={`flex w-full flex-col border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)] ${
+          extraWide
+            ? 'h-[96vh] max-h-[96vh] max-w-[96vw]'
+            : `max-h-[92vh] ${wide ? 'max-w-[1150px]' : 'max-w-md'}`
         }`}
       >
         <div className="mod-head">
@@ -415,7 +420,7 @@ export function Modal({
             </button>
           </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-auto">{children}</div>
+        <div className={extraWide ? 'flex min-h-0 flex-1 overflow-hidden' : 'min-h-0 flex-1 overflow-auto'}>{children}</div>
         {footer && (
           <div className="flex items-center justify-end gap-2 border-t border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-3 py-2">
             {footer}

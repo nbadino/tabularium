@@ -252,6 +252,14 @@ class VllmClient:
         # Equivalente di `MOCR2_MAX_PIXELS`: vale per ogni chiamata al modello.
         # 0 o negativo = nessun tetto, come non impostare la env ufficiale.
         cap = config.VLLM_MAX_PIXELS if max_pixels is _MAX_PIXELS_DEFAULT else max_pixels
+        if max_pixels is _MAX_PIXELS_DEFAULT:
+            try:
+                from . import model_settings
+                per_model_cap = model_settings.get_settings(self.adapter.adapter_id)["effective"]["image"].get("max_pixels")
+                if per_model_cap is not None:
+                    cap = per_model_cap
+            except (ImportError, ValueError, KeyError):
+                pass
         self.max_pixels: int | None = cap if (cap or 0) > 0 else None
         self.last_trace: dict = {}
         self.last_text = ""
@@ -341,6 +349,11 @@ class VllmClient:
             "max_tokens": max_tokens,
             "stream": stream_response,
             "messages": [
+                *(
+                    [{"role": "system", "content": self.adapter.system_prompt}]
+                    if getattr(self.adapter, "system_prompt", None)
+                    else []
+                ),
                 {
                     "role": "user",
                     "content": content,
@@ -354,6 +367,12 @@ class VllmClient:
         # v. `MinerU2_5Adapter.sampling_for`). Non tocca `temperature`/
         # `max_tokens`/`stream`: quelle chiavi non compaiono in `sampling`.
         if sampling:
+            no_repeat_ngram_size = sampling.pop("no_repeat_ngram_size", None)
+            if no_repeat_ngram_size is not None:
+                payload["extra_args"] = {
+                    **(payload.get("extra_args") or {}),
+                    "no_repeat_ngram_size": no_repeat_ngram_size,
+                }
             payload.update(sampling)
         request_overrides = getattr(self.adapter, "request_overrides", None)
         if callable(request_overrides):
@@ -493,7 +512,13 @@ class VllmClient:
         """Override di sampling per task, se l'adapter ne dichiara (es.
         le penalità anti-ripetizione richieste da MinerU2.5)."""
         sampling_for = getattr(self.adapter, "sampling_for", None)
-        return sampling_for(task) if callable(sampling_for) else None
+        sampling = dict(sampling_for(task) or {}) if callable(sampling_for) else {}
+        try:
+            from . import model_settings
+            sampling.update(model_settings.get_settings(self.adapter.adapter_id)["effective"]["generation"])
+        except (ImportError, ValueError, KeyError):
+            pass
+        return sampling or None
 
     def layout(
         self, image: Image.Image, on_delta: Callable[[str], None] | None = None,

@@ -75,6 +75,7 @@ def test_supports_export_probes_prompt_for_per_family():
     assert model_adapters.supports_export(model_adapters.get_adapter("glm-ocr"))
     assert model_adapters.supports_export(model_adapters.get_adapter("deepseek-ocr"))
     assert model_adapters.supports_export(model_adapters.get_adapter("qwen3-vl-8b"))
+    assert not model_adapters.supports_export(model_adapters.get_adapter("teleocr"))
 
 
 def test_model_adapters_endpoint_exposes_export_ready():
@@ -106,6 +107,7 @@ def test_new_adapters_are_registered_alongside_monkeyocrv2():
         "deepseek-ocr",
         "paddleocr-vl",
         "qwen3-vl-8b",
+        "teleocr",
     ):
         assert expected in ids
 
@@ -163,6 +165,60 @@ def test_mineru_serves_and_layout_table_prompts_are_implemented():
         raise AssertionError("doveva sollevare NotImplementedError")
     except NotImplementedError:
         pass
+
+
+def test_teleocr_crop_prompts_and_vllm_recipe_are_explicitly_scoped():
+    from app.services.serve_recipes import RECIPES
+
+    adapter = model_adapters.get_adapter("teleocr")
+    assert adapter.prompt_for("layout") == "Analyze the image layout."
+    assert adapter.prompt_for("text") == "Please output the text content from the image."
+    assert adapter.prompt_for("table") == "This is the image of a table. Please output the table in OTSL format."
+    assert adapter.prompt_for("formula").endswith("LaTeX format.")
+    with pytest.raises(NotImplementedError):
+        adapter.prompt_for("end2end")
+    parsed = adapter.parse_layout(
+        "<box:10 20 300 20 300 90 10 90><label:table><table>\n"
+        "<box:invalid><label:text><text>"
+    )
+    assert parsed == [{"bbox": [10, 20, 300, 90], "label": "Table", "content": ""}]
+
+    cmd = adapter.serve_command("/tmp/teleocr", 8888)
+    assert cmd == [
+        "vllm", "serve", "/tmp/teleocr", "--port", "8888",
+        "--trust-remote-code", "--dtype", "bfloat16",
+        "--gpu-memory-utilization", "0.95", "--max-model-len", "16384",
+        "--max-num-seqs", "4", "--served-model-name", "StarDoc-AI/TeleOCR",
+    ]
+    assert RECIPES["teleocr"].hf_repo == "StarDoc-AI/TeleOCR"
+    assert RECIPES["teleocr"].vllm_version == "0.11.0"
+    assert RECIPES["teleocr"].pip_extra == (
+        "git+https://github.com/caipeng328/TeleOCR.git@main",
+    )
+    assert RECIPES["teleocr"].serve_args == (
+        "--trust-remote-code", "--logits-processors",
+        "TeleOCR.vlm_utils.vlm_client.vllm_v1_no_repeat_ngram:VllmV1NoRepeatNGramLogitsProcessor",
+        "--dtype", "bfloat16",
+        "--gpu-memory-utilization", "0.95", "--max-model-len", "16384",
+        "--max-num-seqs", "4",
+    )
+    assert "mlx-vlm" not in adapter.capabilities.local_runtimes
+    assert not adapter.capabilities.local_mlx_repo
+
+    from app.services.hardware import plan_local
+
+    mac = {
+        "apple_silicon": True,
+        "cuda": False,
+        "ram_gb": 32.0,
+        "runtimes": {"vllm": {"supported": False}, "mlx-vlm": {"supported": True}},
+        "usable_runtimes": ["mlx-vlm"],
+    }
+    assert plan_local(
+        adapter.capabilities.local_runtimes,
+        machine=mac,
+        approx_size_gb=adapter.capabilities.approx_size_gb,
+    )["runnable"] is False
 
 
 def test_mineru_parse_layout_reads_special_token_format():
@@ -249,6 +305,9 @@ def test_list_models_api_merges_capabilities_and_install_state():
         assert by_id["glm-ocr"]["download_only"] is False
         assert by_id["glm-ocr"]["local_serve_ready"] is True
         assert by_id["qwen3-vl-8b"]["cloud_template"] == "qwen3-vl"
+        assert by_id["teleocr"]["cloud_serve_ready"] is True
+        assert by_id["teleocr"]["cloud_template"] == "teleocr"
+        assert by_id["teleocr"]["supports_native"] is True
 
 
 def test_download_unknown_adapter_returns_400():

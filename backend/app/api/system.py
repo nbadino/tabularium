@@ -136,6 +136,32 @@ def activate_compute_profile(profile_id: int, user: dict = Depends(_admin)) -> C
     return ComputeProfileOut(**profilesvc.activate(profile_id, actor=user))
 
 
+@router.get("/api/system/model-settings", dependencies=[Depends(authsvc.get_current_user)])
+def list_model_settings(user: dict = Depends(authsvc.get_current_user)) -> dict:
+    authsvc.require_role(user, "editor")
+    from ..services import model_settings
+    return {"items": model_settings.all_settings()}
+
+
+@router.get("/api/system/model-settings/{adapter_id}", dependencies=[Depends(authsvc.get_current_user)])
+def model_settings_for(adapter_id: str, user: dict = Depends(authsvc.get_current_user)) -> dict:
+    authsvc.require_role(user, "editor")
+    from ..services import model_settings
+    try:
+        return model_settings.get_settings(adapter_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.put("/api/system/model-settings/{adapter_id}")
+def save_model_settings(adapter_id: str, payload: dict, user: dict = Depends(_admin)) -> dict:
+    from ..services import model_settings
+    try:
+        return model_settings.save_settings(adapter_id, payload, actor=user)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/api/system/model-adapters", dependencies=[Depends(authsvc.get_current_user)])
 def model_adapters() -> dict:
     """Elenco delle capacità modello disponibili per il wizard.
@@ -409,3 +435,56 @@ def test_inference_endpoint(payload: dict, user: dict = Depends(authsvc.get_curr
         timeout=int(timeout),
     )
     return client.test_connection(timeout=timeout)
+
+
+# --- Scelta della cartella archivio ------------------------------------------
+# Creare un progetto chiedeva di digitare a mano un percorso assoluto della
+# macchina del backend: il primo gesto di un utente nuovo era anche il più
+# facile da sbagliare. Questa rotta lascia navigare le cartelle. Mostra il
+# filesystem del server, quindi è riservata agli amministratori.
+
+_BROWSE_LIMIT = 5000
+
+
+@router.get("/api/system/fs/browse")
+def browse_folders(path: str | None = None, _user: dict = Depends(_admin)) -> dict:
+    from pathlib import Path
+
+    from ..services.scan import SUPPORTED_IMAGE_EXTS
+
+    base = Path(path).expanduser() if path else Path.home()
+    try:
+        base = base.resolve()
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not base.is_dir():
+        raise HTTPException(status_code=404, detail="cartella non trovata")
+    dirs: list[dict] = []
+    files = 0
+    seen = 0
+    try:
+        entries = sorted(base.iterdir(), key=lambda p: p.name.lower())
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="cartella non leggibile") from exc
+    for entry in entries:
+        seen += 1
+        if seen > _BROWSE_LIMIT:
+            break
+        if entry.name.startswith("."):
+            continue
+        try:
+            if entry.is_dir():
+                dirs.append({"name": entry.name, "path": str(entry)})
+            elif entry.suffix.lower() in SUPPORTED_IMAGE_EXTS or entry.suffix.lower() == ".pdf":
+                files += 1
+        except OSError:
+            continue
+    return {
+        "path": str(base),
+        "parent": str(base.parent) if base.parent != base else None,
+        "dirs": dirs,
+        # File supportati direttamente qui; la scansione scende anche nelle
+        # sottocartelle, e la UI lo dice.
+        "files": files,
+        "truncated": seen > _BROWSE_LIMIT,
+    }

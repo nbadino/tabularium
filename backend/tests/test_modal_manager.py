@@ -3,7 +3,38 @@ from __future__ import annotations
 import json
 
 from app import db
-from app.services import custom_models, modal_manager
+from app.services import custom_models, modal_manager, model_settings
+
+
+def test_teleocr_has_a_modal_template():
+    template = modal_manager.TEMPLATES["teleocr"]
+    assert template.label == "TeleOCR"
+    assert template.app_name == "tabularium-teleocr"
+    assert template.script.name == "modal_teleocr.py"
+
+
+def test_modal_deploy_receives_saved_model_serving_overrides(monkeypatch):
+    template = modal_manager.TEMPLATES["teleocr"]
+    captured = {}
+    monkeypatch.setattr(modal_manager, "_template", lambda _template_id: template)
+    monkeypatch.setattr(modal_manager, "_start", lambda *args, **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(modal_manager.os, "environ", {})
+    monkeypatch.setattr(model_settings, "get_settings", lambda _adapter_id: {
+        "overrides": {"serving": {
+            "gpu_memory_utilization": 0.8,
+            "max_model_len": 8192,
+            "max_num_seqs": 2,
+            "max_num_batched_tokens": 4096,
+        }},
+    })
+
+    modal_manager.start_deploy("teleocr", keep_warm=False)
+
+    assert captured["env"]["TABULARIUM_SERVE_GPU_MEMORY_UTILIZATION"] == "0.8"
+    assert captured["env"]["TABULARIUM_SERVE_MAX_MODEL_LEN"] == "8192"
+    assert captured["env"]["TABULARIUM_SERVE_MAX_NUM_SEQS"] == "2"
+    assert captured["env"]["TABULARIUM_SERVE_MAX_NUM_BATCHED_TOKENS"] == "4096"
+    assert captured["env"]["TABULARIUM_MODAL_MAX_INPUTS"] == "2"
 
 
 def test_modal_status_recovers_persisted_task_after_backend_restart(tmp_path, monkeypatch):

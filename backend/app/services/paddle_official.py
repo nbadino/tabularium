@@ -23,14 +23,15 @@ import json, sys, warnings
 warnings.filterwarnings("ignore")
 from paddleocr import PaddleOCRVL
 
-image, url, model, out_dir = sys.argv[1:]
+image, url, model, out_dir, options_json = sys.argv[1:]
 pipeline = PaddleOCRVL(
     vl_rec_backend="vllm-server",
     vl_rec_server_url=url,
     vl_rec_api_model_name=model,
     use_layout_detection=True,
 )
-result = next(iter(pipeline.predict(image)))
+predict_options = json.loads(options_json)
+result = next(iter(pipeline.predict(image, **predict_options)))
 path = result.save_to_json(save_path=out_dir)
 print(json.dumps({"path": str(path) if path else ""}))
 '''
@@ -155,6 +156,35 @@ def parse_result(payload: dict, width: int, height: int) -> list[dict]:
     return []
 
 
+def _predict_options() -> dict:
+    """Forward only settings documented by the official PaddleOCR-VL API."""
+    from . import model_settings
+
+    effective = model_settings.get_settings("paddleocr-vl")["effective"]
+    options = {
+        key: value
+        for key, value in effective.get("workflow", {}).items()
+        if value is not None
+    }
+    image = effective.get("image", {})
+    if image.get("max_pixels") is not None:
+        options["max_pixels"] = image["max_pixels"]
+    generation = effective.get("generation", {})
+    for key in ("temperature", "top_p", "repetition_penalty"):
+        if generation.get(key) is not None:
+            options[key] = generation[key]
+    if generation.get("max_tokens") is not None:
+        options["max_new_tokens"] = generation["max_tokens"]
+    extra_args = {
+        key: generation[key]
+        for key in ("top_k", "presence_penalty", "frequency_penalty")
+        if generation.get(key) is not None
+    }
+    if extra_args:
+        options["vlm_extra_args"] = extra_args
+    return options
+
+
 def parse_page(image_source, endpoint: str, model: str, width: int, height: int) -> list[dict]:
     if not paddle_runtime.ready():
         # Due situazioni diverse, due istruzioni diverse: un'installazione in
@@ -190,7 +220,11 @@ def parse_page(image_source, endpoint: str, model: str, width: int, height: int)
         else:
             input_path = Path(image_source)
         result = subprocess.run(
-            [str(paddle_runtime.python_bin()), "-c", _RUNNER, str(input_path), endpoint, model, tmp],
+            [
+                str(paddle_runtime.python_bin()), "-c", _RUNNER,
+                str(input_path), endpoint, model, tmp,
+                json.dumps(_predict_options(), separators=(",", ":")),
+            ],
             capture_output=True,
             text=True,
             timeout=int(config.VLLM_TIMEOUT) + 300,

@@ -12,6 +12,7 @@ const ModelsHubPage = lazy(() => import('./pages/ModelsHubPage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
 const AnnotationPage = lazy(() => import('./pages/AnnotationPage'))
+const TableWorkspacePage = lazy(() => import('./pages/TableWorkspacePage'))
 const DatasetPage = lazy(() => import('./pages/DatasetPage'))
 const TrainingPage = lazy(() => import('./pages/TrainingPage'))
 const EvaluationPage = lazy(() => import('./pages/EvaluationPage'))
@@ -123,6 +124,7 @@ export default function App() {
         <AuthGate>
           <ConfirmProvider>
             <Routes>
+              <Route path="tabella/:blockId" element={<TableWorkspacePage />} />
               <Route element={<Layout />}>
                 <Route index element={<RecognizePage />} />
                 <Route path="risultati" element={<ResultsPage />} />

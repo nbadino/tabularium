@@ -160,11 +160,9 @@ export default function AnnotationPage() {
   const [prefillEngine, setPrefillEngine] = useState<
     'off' | 'ocr' | 'model-native'
   >('ocr')
-  // Policy operativa: MonkeyOCRv2 parte in due stadi perché è il percorso più
-  // stabile sul corpus attuale; Unlimited/dots partono in native, il loro
-  // percorso end-to-end verificato. L'utente può comunque cambiare modalità.
-  const [modelMode, setModelMode] = useState<'native' | 'two_stage' | 'end2end'>('two_stage')
-  const modelIdentityRef = useRef<string | null>(null)
+  // Un solo comando: il backend risolve il workflow nativo del modello attivo
+  // (che può avere uno o più passaggi secondo il produttore).
+  const modelMode = 'native' as const
   const [engines, setEngines] = useState<PrefillEngines | null>(null)
   const prefillConfidence = 0.5
   const [prefillNotice, setPrefillNotice] = useState<string | null>(null)
@@ -173,13 +171,6 @@ export default function AnnotationPage() {
   const [prefillOpen, setPrefillOpen] = useState(false)
   const [navBusy, setNavBusy] = useState(false)
   const [nextTask, setNextTask] = useState<{ id: number; reason: string; rel_path?: string } | null>(null)
-
-  const syncModelDefault = (out: PrefillEngines) => {
-    const identity = `${out.model.adapter_id ?? inf.adapterId}|${out.model.model}|${out.model.url}`
-    if (modelIdentityRef.current === identity) return
-    modelIdentityRef.current = identity
-    setModelMode(out.model.supports_two_stage === false ? 'native' : 'two_stage')
-  }
 
   // --- larghezze pannelli ------------------------------------------------------
   const [split, setSplit] = useState(loadSplit)
@@ -212,6 +203,20 @@ export default function AnnotationPage() {
       : 1
 
   const ann = useAnnotationState(page, ratio, labels)
+
+  // Il foglio può essere aperto in un'altra scheda/finestra. Le sue scritture
+  // avanzano la revisione della pagina: riallinea l'autosave qui per evitare
+  // un 409 alla prossima modifica del canvas.
+  useEffect(() => {
+    if (!('BroadcastChannel' in window)) return
+    const channel = new BroadcastChannel('tabularium.annotation-revision')
+    channel.onmessage = ({ data }) => {
+      if (data?.pageId === pageIdRef.current && Number.isInteger(data?.revision)) {
+        ann.syncRevision(data.revision)
+      }
+    }
+    return () => channel.close()
+  }, [ann.syncRevision])
 
   // --- carica blocchi dal server e li applica allo stato -----------------------
   const applyBlocks = async (p: PageItem, r: number) => {
@@ -558,14 +563,6 @@ export default function AnnotationPage() {
       .then((out) => {
         if (cancelled) return
         setEngines(out)
-        syncModelDefault(out)
-        setModelMode((cur) => {
-          if (cur === 'two_stage' && out.model.supports_two_stage === false) return 'native'
-          if (cur === 'end2end' && out.model.supports_end2end === false) {
-            return out.model.supports_two_stage !== false ? 'two_stage' : 'native'
-          }
-          return cur
-        })
         if (out.recommended === 'model' || out.recommended === 'ocr') {
           setPrefillEngine(out.recommended === 'model' ? 'model-native' : 'ocr')
         }
@@ -580,12 +577,9 @@ export default function AnnotationPage() {
   }, [])
 
   // Ri-sonda quando la configurazione di inferenza cambia (deploy da Cloud,
-  // cambio endpoint/adapter nelle Impostazioni): la sondaggione sopra gira solo
-  // al montaggio e lascerebbe il menu Prefill allineato al modello di prima —
-  // es. "end2end" ancora abilitato con MinerU2.5 attivo, che poi fallirebbe
-  // lato backend con NotImplementedError. Debounce per assorbire i save multipli
-  // di una stessa configurazione; la sonda fallita lascia lo stato precedente
-  // (il chip GPU in header è la fonte della verità visibile all'utente).
+  // cambio endpoint/adapter nelle Impostazioni): debounce per assorbire i save
+  // multipli di una stessa configurazione. La sonda fallita lascia lo stato
+  // precedente (il chip GPU in header è la fonte della verità visibile).
   useEffect(() => {
     let cancelled = false
     const timer = setTimeout(() => {
@@ -593,16 +587,8 @@ export default function AnnotationPage() {
         .then((out) => {
           if (cancelled) return
           setEngines(out)
-          syncModelDefault(out)
-          setModelMode((cur) => {
-            if (cur === 'two_stage' && out.model.supports_two_stage === false) return 'native'
-            if (cur === 'end2end' && out.model.supports_end2end === false) {
-              return out.model.supports_two_stage !== false ? 'two_stage' : 'native'
-            }
-            return cur
-          })
-          // Se la modalità selezionata non è più supportata dall'adapter
-          // attivo si scende al due-stadi, o a off se nemmeno quello.
+          // Disabilita il prefill modello se l'adapter non ha ancora un
+          // workflow del produttore integrato.
           setPrefillEngine((cur) => {
             if (cur === 'model-native' && out.model.supports_native === false) {
               return 'off'
@@ -1037,25 +1023,6 @@ export default function AnnotationPage() {
                         : `${t('annotate.prefillEngineModelNative')} (${inf.isCloud ? 'Cloud' : 'GPU'})`}
                 </option>
               </select>
-              {prefillEngine === 'model-native' && (
-                <select
-                  value={modelMode}
-                  onChange={(e) => setModelMode(e.target.value as 'native' | 'two_stage' | 'end2end')}
-                  disabled={prefillBusy}
-                  aria-label={t('annotate.prefillModelMode')}
-                  className="fld !w-auto text-xs"
-                >
-                  <option value="two_stage" disabled={engines?.model.supports_two_stage === false}>
-                    {t('annotate.prefillEngineModelTwoStage')}
-                  </option>
-                  <option value="end2end" disabled={engines?.model.supports_end2end === false}>
-                    {t('annotate.prefillEngineModelEnd2end')}
-                  </option>
-                  <option value="native" disabled={engines?.model.supports_native === false}>
-                    {t('annotate.prefillEngineModelNative')}
-                  </option>
-                </select>
-              )}
             </div>
           </div>
           {/* Cluster azioni: salvataggio e navigazione della coda, separati
@@ -1234,6 +1201,9 @@ export default function AnnotationPage() {
         <ContentPane
           blocks={ann.blocks}
           drafts={prefillDrafts}
+          pageId={page?.id ?? null}
+          pageImageUrl={previewUrl}
+          pageImageSize={page ? { w: page.width, h: page.height } : null}
           labels={labels}
           selectedId={ann.selectedId}
           onSelect={ann.setSelectedId}

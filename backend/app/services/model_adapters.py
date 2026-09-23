@@ -100,6 +100,9 @@ class MonkeyOCRv2ParsingAdapter:
     """Adapter per il formato ufficiale MonkeyOCRv2-Parsing/ms-swift."""
 
     adapter_id = "monkeyocrv2-parsing"
+    # The official parsing CLI uses get_layout() followed by recognition per
+    # block. END2END is an optional official prompt, not its default pipeline.
+    native_prefill_mode = "two_stage"
     # Tetto ufficiale: `parsing/parse.py --max-pixels` (default 1003520) viene
     # propagato come `MOCR2_MAX_PIXELS` a ogni chiamata, end2end inclusa. Sul
     # documento archivistico è anche ciò che impedisce al decoder di andare in
@@ -248,6 +251,7 @@ class MinerU2_5Adapter(_StubAdapter):
     """
 
     adapter_id = "mineru2.5"
+    native_prefill_mode = "two_stage"
     # Il client ufficiale MinerUClient prepara il layout a 1036x1036
     # esattamente (non a un tetto di pixel con aspect ratio conservato). Il
     # checkpoint si aspetta questa rappresentazione; lasciarla cambiare in
@@ -473,6 +477,7 @@ class UnlimitedOcrAdapter(_StubAdapter):
     """
 
     adapter_id = "unlimited-ocr"
+    native_prefill_mode = "end2end"
     # Unlimited-OCR termina con markdown e marker di grounding, non con una
     # lista JSON: il client deve attendere il finish del server.
     end2end_output_format = "grounded-markdown"
@@ -605,6 +610,7 @@ class DotsOcrAdapter(_StubAdapter):
     non valori vendor-verificati."""
 
     adapter_id = "dots-ocr"
+    native_prefill_mode = "end2end"
     capabilities = ModelCapabilities(
         adapter_id=adapter_id,
         display_name="dots.mocr",
@@ -829,6 +835,7 @@ class PaddleOcrVlAdapter(_StubAdapter):
     una 8GB, da validare empiricamente."""
 
     adapter_id = "paddleocr-vl"
+    native_prefill_mode = "official"
     # Il pipeline ufficiale contiene già il layout detector PaddleX; il
     # fallback OCR locale appartiene solo alla modalità ocr separata.
     page_layout_fallback = "official-pipeline"
@@ -968,6 +975,159 @@ class Qwen3VlAdapter(_StubAdapter):
         ]
 
 
+class TeleOcrAdapter(_StubAdapter):
+    """Adapter cloud StarDoc-AI/TeleOCR con prompt e protocollo layout upstream.
+
+    Il prefill usa i prompt ufficiali TeleOCR per layout, testo, OTSL e formule.
+    Per efficienza batch e post-processing avanzato resta da collegare
+    direttamente il runner infer.py; non si inventano prompt/layout proprietari.
+    Non esiste un checkpoint MLX verificato.
+    """
+
+    adapter_id = "teleocr"
+    # TeleOCR's official infer.py calls aio_batch_two_step_extract; "native"
+    # therefore resolves to its vendor-defined two-pass workflow.
+    native_prefill_mode = "two_stage"
+    supports_dataset_export = False
+    capabilities = ModelCapabilities(
+        adapter_id=adapter_id,
+        display_name="TeleOCR",
+        tasks=("layout", "text", "table", "formula"),
+        coordinate_system="normalized-0-1000",
+        table_format="otsl",
+        training_types=(),
+        inference_modes=("vllm",),
+        hardware=("cuda",),
+        languages=("en", "zh", "multilingual-partial"),
+        hf_repo="StarDoc-AI/TeleOCR",
+        approx_size_gb=2.85,
+        license_note="Apache-2.0.",
+        train_toolchain="none",
+        serve_backend="vllm-openai",
+        served_model_name="StarDoc-AI/TeleOCR",
+        max_model_len=16384,
+        local_runtimes=("vllm",),
+    )
+
+    _PROMPTS = {
+        "layout": "Analyze the image layout.",
+        "text": "Please output the text content from the image.",
+        "table": "This is the image of a table. Please output the table in OTSL format.",
+        "formula": "Please write out the expression of the formula in the image using LaTeX format.",
+    }
+    official_layout_size = (1036, 1036)
+    system_prompt = "You are a helpful assistant."
+
+    def prompt_for(self, task: str, label: str | None = None) -> str | None:
+        if task == "layout":
+            # TeleOCR officially exposes Detection and Segmentation. The
+            # latter is recommended upstream for genuinely degraded scans;
+            # load the persisted selection for each new prefill request.
+            try:
+                from . import model_settings
+
+                mode = model_settings.get_settings(self.adapter_id)["effective"]["workflow"]["layout_mode"]
+            except (ImportError, KeyError, ValueError):
+                mode = "Detection"
+            return (
+                "Multi-point Layout Segmentation Analysis."
+                if mode == "Segmentation"
+                else "Analyze the image layout."
+            )
+        prompt = self._PROMPTS.get(task)
+        if prompt is None:
+            raise NotImplementedError(
+                f"adapter '{self.adapter_id}': task '{task}' non supportato; "
+                "usa uno dei prompt documentati da TeleOCR"
+            )
+        return prompt
+
+    def parse_layout(self, raw: str) -> list[dict]:
+        """Parse TeleOCR's documented <box:...><label:...><tag> line format."""
+        import re
+
+        items: list[dict] = []
+        labels = {
+            "text": "Text",
+            "title": "Title",
+            "table": "Table",
+            "image": "Picture",
+            "header": "Page-header",
+            "footer": "Page-footer",
+            "page_number": "Issue-number",
+            "page_footnote": "Footnote",
+            "aside_text": "Text",
+            "equation": "Formula",
+            "equation_block": "Formula",
+            "ref_text": "List-item",
+            "list": "List-item",
+            "table_caption": "Caption",
+            "image_caption": "Caption",
+            "table_footnote": "Footnote",
+            "image_footnote": "Footnote",
+        }
+        pattern = re.compile(r"^<box:([\d\s]+)><label:(\w+)><([^>]+)>$")
+        for line in (raw or "").splitlines():
+            match = pattern.match(line.strip())
+            if not match:
+                continue
+            coords, raw_label, _tag = match.groups()
+            try:
+                values = [int(v) for v in coords.split()]
+            except ValueError:
+                continue
+            if len(values) < 4 or len(values) % 2 or any(v < 0 or v > 1000 for v in values):
+                continue
+            xs, ys = values[0::2], values[1::2]
+            items.append({
+                "bbox": [min(xs), min(ys), max(xs), max(ys)],
+                "label": labels.get(raw_label.lower(), "Text"),
+                "content": "",
+            })
+        return items
+
+    def serialize_target(self, task: str, value: object) -> str:
+        return str(value)
+
+    def sampling_for(self, task: str) -> dict:
+        # TeleOCR/vlm_utils/TeleOCR_client.py DEFAULT_SAMPLING_PARAMS. The
+        # native pipeline sets per-task frequency penalties and the V1 n-gram
+        # processor; preserve those in Tabularium's cloud inference too.
+        normalized = {"formula": "equation"}.get(task, task)
+        if normalized not in {"text", "table", "equation", "layout"}:
+            return {}
+        sampling = {
+            "temperature": 0.0,
+            "top_p": 0.01,
+            "top_k": 1,
+            "repetition_penalty": 1.0,
+            "no_repeat_ngram_size": 100,
+        }
+        if normalized == "layout":
+            sampling.update({"presence_penalty": 0.0, "frequency_penalty": 0.0})
+        else:
+            sampling.update({
+                "presence_penalty": 1.0,
+                "frequency_penalty": 0.005 if normalized == "table" else 0.05,
+            })
+        # Keep the crop request budget conservative relative to the upstream
+        # 16k context; full-page parsing is provided by TeleOCR's native runner.
+        sampling["max_tokens"] = 4096 if normalized == "table" else 2048
+        return sampling
+
+    def serve_command(self, model_path: str, port: int) -> list[str] | None:
+        return [
+            "vllm", "serve", model_path,
+            "--port", str(port),
+            "--trust-remote-code",
+            "--dtype", "bfloat16",
+            "--gpu-memory-utilization", "0.95",
+            "--max-model-len", "16384",
+            "--max-num-seqs", "4",
+            "--served-model-name", self.capabilities.served_model_name,
+        ]
+
+
 class CustomVllmAdapter(_StubAdapter):
     """Un modello aggiunto liberamente dall'utente (repo Hugging Face
     qualsiasi), riga della tabella `custom_models` — stesso principio di LM
@@ -989,6 +1149,8 @@ class CustomVllmAdapter(_StubAdapter):
             except ValueError:
                 self._base = None
         if self._base is not None:
+            self.native_prefill_mode = getattr(self._base, "native_prefill_mode", None)
+            self.page_layout_fallback = getattr(self._base, "page_layout_fallback", None)
             self.capabilities = replace(
                 self._base.capabilities,
                 adapter_id=row["id"],
@@ -1071,6 +1233,7 @@ _ADAPTERS: dict[str, ModelAdapter] = {
         DeepSeekOcrAdapter(),
         PaddleOcrVlAdapter(),
         Qwen3VlAdapter(),
+        TeleOcrAdapter(),
     )
 }
 
@@ -1117,10 +1280,12 @@ def supported_prefill_modes(adapter: ModelAdapter) -> dict[str, bool]:
     # Il percorso nativo è ciò che il prefill offre oggi: basta che l'adapter
     # abbia un prompt verificato per una sola via (il resolver `_native_mode`
     # sceglie end2end quando c'è, altrimenti il protocollo a due passi).
+    native_mode = getattr(adapter, "native_prefill_mode", None)
     modes["supports_native"] = (
-        modes["supports_two_stage"]
-        or modes["supports_end2end"]
-        or getattr(adapter, "page_layout_fallback", None) in {"ocr", "official-pipeline"}
+        native_mode == "two_stage" and modes["supports_two_stage"]
+        or native_mode == "end2end" and modes["supports_end2end"]
+        or native_mode == "official"
+        and getattr(adapter, "page_layout_fallback", None) == "official-pipeline"
     )
     return modes
 
@@ -1133,6 +1298,8 @@ def supports_export(adapter: ModelAdapter) -> bool:
     prompt per anche una sola famiglia, es. dots.ocr e PaddleOCR-VL —
     produrrebbe un export che finisce sempre in `NotImplementedError`. La UI
     deve filtrare il selettore dell'export, non offrire opzioni morte."""
+    if getattr(adapter, "supports_dataset_export", None) is False:
+        return False
     for task in ("layout", "text", "table"):
         try:
             adapter.prompt_for(task)

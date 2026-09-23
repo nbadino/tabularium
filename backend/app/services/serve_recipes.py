@@ -14,6 +14,7 @@ provisioning su GPU remota sia chi vorrà unificare le template.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 # Richieste simultanee sul singolo container: stesso default delle template.
@@ -32,6 +33,9 @@ class ServeRecipe:
     # non installabile via pip.
     runtime: str
     vllm_version: str = ""
+    # Empty means let the pinned vLLM release resolve its supported range.
+    # Model plugins may constrain Transformers themselves (TeleOCR does).
+    transformers_version: str = ""
     docker_image: str = ""
     pip_extra: tuple[str, ...] = ()
     # Flag dopo il modello. `--host`, `--port` e `--served-model-name` li
@@ -56,6 +60,34 @@ class ServeRecipe:
 
 
 RECIPES: dict[str, ServeRecipe] = {
+    "teleocr": ServeRecipe(
+        adapter_id="teleocr",
+        hf_repo="StarDoc-AI/TeleOCR",
+        served_model_name="StarDoc-AI/TeleOCR",
+        runtime="vllm",
+        # Plugin ufficiale out-of-tree: pyproject.toml pinna vLLM e Transformers
+        # e registra Qwen2_5_VLForConditionalGeneration in vLLM. Senza di esso
+        # l'architettura personalizzata del checkpoint non viene caricata.
+        vllm_version="0.11.0",
+        transformers_version="4.57.1",
+        pip_extra=(
+            # Upstream documents pip install -e . at the repository root.
+            # This registers both the architecture plugin and the official
+            # TeleOCR package, including its no-repeat-ngram logits processor.
+            "git+https://github.com/caipeng328/TeleOCR.git@main",
+        ),
+        serve_args=(
+            "--trust-remote-code",
+            "--logits-processors",
+            "TeleOCR.vlm_utils.vlm_client.vllm_v1_no_repeat_ngram:VllmV1NoRepeatNGramLogitsProcessor",
+            "--dtype", "bfloat16",
+            # TeleOCR/config.py upstream recommends 0.95.
+            "--gpu-memory-utilization", "0.95",
+            "--max-model-len", "16384",
+            "--max-num-seqs", str(DEFAULT_MAX_INPUTS),
+        ),
+        source="Repository ufficiale TeleOCR + model card StarDoc-AI/TeleOCR",
+    ),
     "monkeyocrv2-parsing": ServeRecipe(
         adapter_id="monkeyocrv2-parsing",
         hf_repo="zenosai/MonkeyOCRv2-B-Parsing",
@@ -185,6 +217,33 @@ def recipe_for(adapter_id: str) -> ServeRecipe:
     return recipe
 
 
+def resource_budget(recipe: ServeRecipe) -> dict[str, int]:
+    """Conservative preflight estimates derived from the selected checkpoint.
+
+    These are guardrails, not upstream model requirements: the app's model
+    registry supplies the approximate weight size, while the runtime category
+    supplies a conservative application-side allowance. Temporary wheel
+    extraction and headroom are included so setup can refuse before it fills
+    the disk.
+    """
+    from .model_adapters import get_adapter
+
+    size_gb = get_adapter(recipe.adapter_id).capabilities.approx_size_gb
+    if size_gb is None or size_gb <= 0:
+        raise ValueError(f"dimensione modello non dichiarata per {recipe.adapter_id}")
+    runtime_disk_gb = 8 if recipe.runtime == "docker" else 16
+    return {
+        "min_free_disk_gb": math.ceil(runtime_disk_gb + size_gb * 1.5 + 2),
+        # Leave six GB over approximate weight size for CUDA context, kernels,
+        # and a modest KV cache. GPU total and live free memory are both
+        # checked separately by the remote setup script.
+        "min_free_vram_gb": max(8, math.ceil(size_gb + 6)),
+        # Host RAM backs tokenizer workers, weight staging and multimodal
+        # preprocessing in addition to the GPU-resident model.
+        "min_free_ram_gb": max(8, math.ceil(size_gb * 1.25 + 6)),
+    }
+
+
 def serve_argv(
     recipe: ServeRecipe,
     *,
@@ -195,6 +254,7 @@ def serve_argv(
     lora_path: str = "",
     lora_name: str = "",
     served_model_name: str | None = None,
+    settings: dict | None = None,
 ) -> list[str]:
     """Comando di serving completo, ricetta più infrastruttura."""
     if recipe.runtime == "monkeyocr":
@@ -205,11 +265,32 @@ def serve_argv(
         argv = ["-m", "vllm.entrypoints.cli.main", "serve", model_path]
     argv += ["--host", host, "--port", str(int(port))]
     argv += list(recipe.serve_args)
+    argv = apply_serving_overrides(argv, (settings or {}).get("serving") or {})
     if lora_path.strip():
         argv += ["--enable-lora", "--lora-modules", f"{lora_name.strip() or recipe.served_model_name}={lora_path.strip()}"]
     argv += ["--served-model-name", served_model_name or recipe.served_model_name]
     if api_key.strip():
         argv += ["--api-key", api_key.strip()]
+    return argv
+
+
+def apply_serving_overrides(argv: list[str], serving: dict) -> list[str]:
+    """Apply user overrides to the recipe argv without changing other flags."""
+    argv = list(argv)
+    flag_for = {
+        "gpu_memory_utilization": "--gpu-memory-utilization",
+        "max_model_len": "--max-model-len",
+        "max_num_seqs": "--max-num-seqs",
+        "max_num_batched_tokens": "--max-num-batched-tokens",
+    }
+    for key, flag in flag_for.items():
+        value = serving.get(key)
+        if value is None:
+            continue
+        if flag in argv:
+            argv[argv.index(flag) + 1] = str(value)
+        else:
+            argv += [flag, str(value)]
     return argv
 
 
@@ -224,6 +305,7 @@ def remote_models() -> list[dict[str, object]]:
             "supported": True,
             "needs_own_image": recipe.needs_own_image,
             "docker_image": recipe.docker_image,
+            **resource_budget(recipe),
         }
         for recipe in RECIPES.values()
     ]

@@ -22,10 +22,8 @@ import type {
   TableGridOut,
 } from '../../lib/types'
 import {
-  dropBoundary,
   emptyGrid,
   fillDown,
-  insertBoundary,
   joinColumns,
   mergeKeepsEveryText,
   mergeRange,
@@ -33,7 +31,6 @@ import {
   splitCell,
   transformColumnCase,
 } from '../../lib/grid'
-import type { Axis } from '../../lib/grid'
 import type { ColumnOp, SheetSelection } from './UniverSheet'
 
 import { univerGridSignature } from '../../lib/univerGrid'
@@ -44,8 +41,8 @@ import { useI18n } from '../../i18n'
 import type { LabelDef, TableCheck, TableChecksOut } from '../../lib/types'
 import type { DisplayBlock, LivePrefillOutput, PrefillDraft } from '../types'
 import JspreadsheetSheet from './JspreadsheetSheet'
-import TableGridOverlay from './TableGridOverlay'
 import SplitColumnDialog from './SplitColumnDialog'
+import TablePageImage from './TablePageImage'
 import LiveStream from './LiveStream'
 import ConventionsChecklist from './ConventionsChecklist'
 
@@ -81,24 +78,24 @@ const cropUrlFor = (serverId: number, version = 0) =>
 /** La tabella non vive nel rail: nel rail ci sta la sua scheda, con il
  *  ritaglio e il comando che la apre.
  *
- *  Misurato: il rail dei contenuti è 520 px, un registro ne chiede 459 solo per
- *  le colonne. Affiancare ritaglio e foglio lì dentro lasciava al foglio metà
- *  delle colonne che gli servono; impilati, il ritaglio alto 578 px schiacciava
- *  il foglio a 101. Una tabella vuole una superficie sua: si apre a 1150 px e
- *  lì ritaglio e foglio stanno **accanto**, con lo spazio per correggere i
- *  confini sull'inchiostro. */
+ *  Il foglio si apre quasi a tutto schermo: il ricercatore lavora sui dati in
+ *  una sola superficie ampia, mentre il ritaglio resta visibile nella scheda. */
 function TableBlockEditor({
   id,
   serverId,
+  pageId,
+  pageImageUrl,
+  pageImageSize,
   onSaveTable,
   onDetectTable,
-  cropUrl,
 }: {
   id: string
   serverId: number | null
+  pageId?: number | null
+  pageImageUrl?: string | null
+  pageImageSize?: { w: number; h: number } | null
   onSaveTable: (serverId: number, grid: TableGrid) => Promise<string>
   onDetectTable?: (serverId: number, opts: TableDetectRequest) => Promise<TableDetectOut>
-  cropUrl: string | null
 }) {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
@@ -116,19 +113,32 @@ function TableBlockEditor({
         <p className="min-w-0 flex-1 text-[12px] text-[color:var(--color-ink-2)]">
           {t('content.tableInWorkspace')}
         </p>
+        {pageId && (
+          <a
+            href={`/tabella/${serverId}?page=${pageId}&width=${pageImageSize?.w ?? ''}&height=${pageImageSize?.h ?? ''}`}
+            target="_blank"
+            rel="noreferrer"
+            className="btn btn-sm no-underline"
+            title={t('table.openSecondScreen')}
+          >
+            {t('table.openSecondScreen')}
+          </a>
+        )}
         <button type="button" onClick={() => setOpen(true)} className="btn btn-sm btn-primary">
           {t('table.openWorkspace')}
         </button>
       </div>
       {open && (
-        <Modal title={t('table.workspaceTitle')} wide onClose={() => setOpen(false)}>
+        <Modal title={t('table.workspaceTitle')} extraWide onClose={() => setOpen(false)}>
           {/* La griglia si rilegge dal server all'apertura: la scheda non tiene
               una seconda copia del modello da tenere allineata. */}
-          <div className="min-h-0 flex-1 p-3">
-            <TableWorkspace
+          <div className="flex min-h-0 flex-1 flex-col p-3">
+            <TableWorkspacePanel
               id={id}
               serverId={serverId}
-              cropUrl={cropUrl}
+              pageImageUrl={pageImageUrl ?? null}
+              pageId={pageId ?? null}
+              pageImageSize={pageImageSize ?? null}
               onSaveTable={onSaveTable}
               onDetectTable={onDetectTable}
             />
@@ -139,27 +149,25 @@ function TableBlockEditor({
   )
 }
 
-/** Superficie della griglia.
- *
- *  Univer è la scelta: il preset «sheets core» porta menù contestuale, merge,
- *  copia/incolla multi-cella, fill handle e blocco delle righe senza che li
- *  scriviamo noi. Jspreadsheet CE resta raggiungibile con una riga finché lo
- *  scambio non è chiuso su tutta la parità (i comandi «verificata» e «colonna
- *  fantasma», che sul foglio Univer non sono ancora ricablati). */
+/** Univer è la superficie principale dell'editor tabellare. */
 const TABLE_SURFACE: 'univer' | 'ce' = 'univer'
 
 /** Il corpo della vista di lavoro: carica la griglia dal server, possiede i
  *  confini sull'inchiostro e monta la superficie scelta. */
-function TableWorkspace({
+export function TableWorkspacePanel({
   id,
   serverId,
-  cropUrl,
+  pageImageUrl,
+  pageId,
+  pageImageSize,
   onSaveTable,
   onDetectTable,
 }: {
   id: string
   serverId: number
-  cropUrl: string | null
+  pageImageUrl: string | null
+  pageId: number | null
+  pageImageSize: { w: number; h: number } | null
   onSaveTable: (serverId: number, grid: TableGrid) => Promise<string>
   onDetectTable?: (serverId: number, opts: TableDetectRequest) => Promise<TableDetectOut>
 }) {
@@ -169,6 +177,7 @@ function TableWorkspace({
   const [notice, setNotice] = useState<string | null>(null)
   const [otsl, setOtsl] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [sheetRevision, setSheetRevision] = useState(0)
   const [splitAt, setSplitAt] = useState<number | null>(null)
   /** Il modello di prima dell'ultima separazione: una separazione riscrive una
    *  colonna intera e non entra nella storia di Univer, quindi il modo di
@@ -182,6 +191,7 @@ function TableWorkspace({
   // solo l'aiuto, non blocca il foglio.
   const [checks, setChecks] = useState<TableChecksOut | null>(null)
   const [active, setActive] = useState<{ r: number; c: number } | null>(null)
+  const [selection, setSelection] = useState<SheetSelection>({ startRow: 0, startColumn: 0, endRow: 0, endColumn: 0 })
   useEffect(() => {
     if (!grid) return
     let stale = false
@@ -244,38 +254,6 @@ function TableWorkspace({
     setGrid(next)
   }
 
-  const moveBoundary = (axis: Axis, index: number, value: number) => {
-    const current = gridRef.current
-    if (!current) return
-    const values = [...((axis === 'v' ? current.vlines : current.hlines) ?? [])]
-    values[index] = value
-    applyModel(axis === 'v' ? { ...current, vlines: values } : { ...current, hlines: values })
-  }
-
-  const addBoundary = (axis: Axis, at: number) => {
-    const current = gridRef.current
-    if (!current) return
-    const next = insertBoundary(current, axis, at)
-    if (!next) {
-      setNotice(t('table.boundaryInsertRefused'))
-      return
-    }
-    setNotice(null)
-    applyModel(next)
-  }
-
-  const rejectBoundary = (axis: Axis, index: number) => {
-    const current = gridRef.current
-    if (!current) return
-    const next = dropBoundary(current, axis, index)
-    if (!next) {
-      setNotice(t('table.boundaryDropRefused'))
-      return
-    }
-    setNotice(null)
-    applyModel(next)
-  }
-
   /** Applica la separazione scelta nel dialogo, tenendo da parte il modello di
    *  prima: è l'unico modo di tornare indietro, perché il documento di Univer
    *  si ricostruisce e la sua storia non attraversa questa modifica. */
@@ -286,6 +264,7 @@ function TableWorkspace({
     setUndoSplit(current)
     setNotice(t('table.splitDone', { n: parts }))
     applyModel(next)
+    setSheetRevision((revision) => revision + 1)
   }
 
   const revertSplit = () => {
@@ -293,6 +272,7 @@ function TableWorkspace({
     setUndoSplit(null)
     setNotice(null)
     applyModel(undoSplit)
+    setSheetRevision((revision) => revision + 1)
   }
 
   /** Le operazioni di colonna. Quelle che non hanno niente da chiedere si
@@ -317,6 +297,7 @@ function TableWorkspace({
       }).length
       setNotice(t('table.columnOpDone', { n: changed }))
       applyModel(next)
+      setSheetRevision((revision) => revision + 1)
     }
 
     if (op === 'merge') {
@@ -378,27 +359,29 @@ function TableWorkspace({
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="mono text-[11px] text-[color:var(--color-ink-2)]">
-          {t('table.workspaceSummary', { rows: grid.rows, cols: grid.cols })}
-        </span>
-        {grid.phantom_cols.length > 0 && (
-          <span className="text-[11px] text-[color:var(--color-ink-2)]">
-            {t('table.phantomColumns', { n: grid.phantom_cols.length })}
+      {TABLE_SURFACE === 'univer' && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mono text-[11px] text-[color:var(--color-ink-2)]">
+            {t('table.workspaceSummary', { rows: grid.rows, cols: grid.cols })}
           </span>
-        )}
-        <button
-          type="button"
-          onClick={() => void doSave(gridRef.current ?? grid)}
-          disabled={saving}
-          className="btn btn-sm btn-primary ml-auto"
-        >
-          <IconSave size={11} />
-          {saving ? t('table.saving') : t('table.saveGrid')}
-        </button>
-      </div>
+          {grid.phantom_cols.length > 0 && (
+            <span className="text-[11px] text-[color:var(--color-ink-2)]">
+              {t('table.phantomColumns', { n: grid.phantom_cols.length })}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => void doSave(gridRef.current ?? grid)}
+            disabled={saving}
+            className="btn btn-sm btn-primary ml-auto"
+          >
+            <IconSave size={11} />
+            {saving ? t('table.saving') : t('table.saveGrid')}
+          </button>
+        </div>
+      )}
 
-      {checks && checks.checks.length > 0 && (
+      {TABLE_SURFACE === 'univer' && checks && checks.checks.length > 0 && (
         <p className={`text-[11px] ${checks.failed > 0 ? 'text-[color:var(--color-warn)]' : 'text-[color:var(--color-ink-2)]'}`}>
           {checks.failed > 0
             ? t('table.checksSummary', { passed: checks.passed, total: checks.checks.length, failed: checks.failed })
@@ -424,25 +407,20 @@ function TableWorkspace({
         </WarnNotice>
       )}
 
-      <div className="flex min-h-0 flex-1 gap-3">
-        {/* I confini si correggono sull'inchiostro: appartengono alla vista di
-            lavoro, non alla libreria che disegna le celle. */}
-        {cropUrl && (
-          <figure className="m-0 w-1/2 shrink-0">
-            <TableGridOverlay
-              cropUrl={cropUrl}
-              vlines={grid.vlines ?? []}
-              hlines={grid.hlines ?? []}
-              rowColumns={grid.row_columns}
-              rowColumnsProven={grid.row_columns_proven}
-              rows={grid.rows}
-              onMove={moveBoundary}
-              onInsert={addBoundary}
-              onDrop={rejectBoundary}
-            />
-          </figure>
-        )}
+      {TABLE_SURFACE === 'univer' && (
+        <div className="flex flex-wrap items-center gap-1 border-b border-[color:var(--color-rule)] pb-2">
+          <span className="lbl mb-0 mr-2">{t('table.quickActions')}</span>
+          <button type="button" className="btn btn-sm" onClick={() => runColumnOp('normalize', selection)}>{t('table.normalizeShort')}</button>
+          <button type="button" className="btn btn-sm" onClick={() => runColumnOp('fill', selection)}>{t('table.fillShort')}</button>
+          <button type="button" className="btn btn-sm" onClick={() => runColumnOp('join', selection)}>{t('table.joinShort')}</button>
+          <button type="button" className="btn btn-sm" onClick={() => runColumnOp('upper', selection)}>{t('table.upperShort')}</button>
+          <button type="button" className="btn btn-sm" onClick={() => runColumnOp('lower', selection)}>{t('table.lowerShort')}</button>
+          <button type="button" className="btn btn-sm" onClick={() => runColumnOp('split', selection)}>{t('table.splitShort')}</button>
+        </div>
+      )}
 
+      <div className="flex min-h-0 flex-1 gap-3">
+        {pageImageUrl && <TablePageImage src={pageImageUrl} pageId={pageId} imageSize={pageImageSize} />}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {TABLE_SURFACE === 'univer' ? (
             // La chiave segue le dimensioni: un confine aggiunto o rifiutato
@@ -452,23 +430,25 @@ function TableWorkspace({
               fallback={<LoadingGrid label={t('content.tableLoading')} rows={8} />}
             >
               <UniverSheet
-                key={`${serverId}:${grid.rows}x${grid.cols}`}
+                key={`${serverId}:${grid.rows}x${grid.cols}:${sheetRevision}`}
                 grid={grid}
                 onGridChange={applyModel}
                 onColumnOp={runColumnOp}
                 suspects={checks?.suspects}
-                onSelectionChange={(sel) => setActive({ r: sel.startRow, c: sel.startColumn })}
+                onSelectionChange={(sel) => {
+                  setActive({ r: sel.startRow, c: sel.startColumn })
+                  setSelection(sel)
+                }}
               />
             </Suspense>
           ) : (
             <JspreadsheetSheet
               key={`${id}:${serverId}`}
               grid={grid}
-              cropUrl={cropUrl}
-              withOverlay={false}
-              onSave={(g) => onSaveTable(serverId, g)}
-              onDetect={onDetectTable ? (opts) => onDetectTable(serverId, opts) : undefined}
-            />
+                onSave={(g) => onSaveTable(serverId, g)}
+                onDetect={onDetectTable ? (opts) => onDetectTable(serverId, opts) : undefined}
+                onColumnOp={runColumnOp}
+              />
           )}
         </div>
       </div>
@@ -750,6 +730,9 @@ interface ContentPaneProps {
   onDelete: (id: string) => void
   onSaveTable: (serverId: number, grid: TableGrid) => Promise<string>
   onDetectTable?: (serverId: number, opts: TableDetectRequest) => Promise<TableDetectOut>
+  pageId?: number | null
+  pageImageUrl?: string | null
+  pageImageSize?: { w: number; h: number } | null
   /** Versione del ritaglio per blocco: cresce quando la regione cambia, e
    *  costringe griglia e immagine a rileggersi dal server. */
   tableVersions?: Record<number, number>
@@ -786,6 +769,9 @@ export default function ContentPane({
   onDelete,
   onSaveTable,
   onDetectTable,
+  pageId,
+  pageImageUrl,
+  pageImageSize,
   tableVersions,
   tableRedetect,
   onDismissRedetect,
@@ -915,7 +901,9 @@ export default function ContentPane({
                       <TableBlockEditor
                         id={block.id}
                         serverId={block.serverId}
-                        cropUrl={block.serverId ? cropUrlFor(block.serverId, tableVersions?.[block.serverId] ?? 0) : null}
+                        pageId={pageId ?? null}
+                        pageImageUrl={pageImageUrl ?? null}
+                        pageImageSize={pageImageSize ?? null}
                         onSaveTable={onSaveTable}
                         onDetectTable={onDetectTable}
                       />
@@ -962,7 +950,9 @@ export default function ContentPane({
                     <TableBlockEditor
                       id={`draft-${draft.serverId}`}
                       serverId={draft.serverId}
-                      cropUrl={cropUrlFor(draft.serverId)}
+                      pageId={pageId ?? null}
+                      pageImageUrl={pageImageUrl ?? null}
+                      pageImageSize={pageImageSize ?? null}
                       onSaveTable={(serverId, grid) => {
                         onDraftGrid(serverId, grid)
                         return onSaveDraftGrid(serverId, grid)

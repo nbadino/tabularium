@@ -37,6 +37,7 @@ _CLOUD_TEMPLATES = {
     "glm-ocr": "glm-ocr",
     "deepseek-ocr": "deepseek-ocr",
     "qwen3-vl-8b": "qwen3-vl",
+    "teleocr": "teleocr",
 }
 
 _DOWNLOAD_SCRIPT = (

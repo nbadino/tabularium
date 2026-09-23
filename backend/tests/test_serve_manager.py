@@ -140,16 +140,15 @@ def test_start_stops_previous_server_first(monkeypatch):
     )
 
     first = serve_manager.start("mineru2.5", port=18888)
-    first_pid = first.pid
+    first_proc = serve_manager._ACTIVE_PROC
+    assert first_proc is not None
     second = serve_manager.start("dots-ocr", port=18889)
 
     assert second.adapter_id == "dots-ocr"
-    # Il primo processo deve essere stato terminato (stop-before-start), non
-    # solo dimenticato: os.kill con segnale 0 solleva se il pid non esiste più.
-    import os
-
-    with pytest.raises(ProcessLookupError):
-        os.kill(first_pid, 0)
+    # Controlla direttamente lo stato di uscita del processo raccolto da
+    # Popen: il controllo sul PID con kill(0) è soggetto a riuso del PID e
+    # varia fra Linux e macOS.
+    assert first_proc.poll() is not None
 
 
 def test_status_and_stop_recover_persisted_server(monkeypatch):

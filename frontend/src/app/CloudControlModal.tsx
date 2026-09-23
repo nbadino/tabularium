@@ -127,6 +127,10 @@ interface VastModel {
    *  quella, il che rende la scelta del modello un passo *prima* del noleggio. */
   needs_own_image: boolean
   docker_image: string
+  /** Spazio libero da avere nel container prima del provisioning. */
+  min_free_disk_gb: number
+  /** VRAM libera minima consigliata dal preset del modello. */
+  min_free_vram_gb: number
 }
 
 /**
@@ -236,6 +240,7 @@ export function guessModalTemplate(url: string): string {
   if (url.includes('glm-ocr')) return 'glm-ocr'
   if (url.includes('deepseek-ocr')) return 'deepseek-ocr'
   if (url.includes('qwen3-vl')) return 'qwen3-vl'
+  if (url.includes('teleocr')) return 'teleocr'
   return 'monkeyocrv2'
 }
 
@@ -249,6 +254,7 @@ export const MODAL_TEMPLATE_TARGET: Record<string, { model: string; adapterId: s
   'glm-ocr': { model: 'glm-ocr', adapterId: 'glm-ocr' },
   'deepseek-ocr': { model: 'deepseek-ocr-2', adapterId: 'deepseek-ocr' },
   'qwen3-vl': { model: 'qwen3-vl-8b', adapterId: 'qwen3-vl-8b' },
+  teleocr: { model: 'StarDoc-AI/TeleOCR', adapterId: 'teleocr' },
 }
 
 /** Inverso di `MODAL_TEMPLATE_TARGET`: dalla scelta fatta nella libreria
@@ -275,6 +281,7 @@ export const MODAL_TEMPLATES = [
   { id: 'glm-ocr', label: 'GLM-OCR' },
   { id: 'deepseek-ocr', label: 'DeepSeek-OCR-2' },
   { id: 'qwen3-vl', label: 'Qwen3-VL-8B' },
+  { id: 'teleocr', label: 'TeleOCR' },
 ]
 
 function copyToClipboard(text: string, onDone: () => void) {
@@ -345,6 +352,24 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   /** Il modello che il percorso sta configurando: quello scelto nell'hub vince
    *  sullo stato locale, che al primo render non l'ha ancora recepito. */
   const wantedAdapter = guided && focusAdapterId && !focusAdapterId.startsWith('custom-') ? focusAdapterId : vastAdapter
+  const selectedVastRecipe = vastModels.find((item) => item.adapter_id === wantedAdapter)
+  const recipeFreeDiskGb = selectedVastRecipe?.min_free_disk_gb ?? 22
+  // Vast's `disk` is the container quota, not the free space seen by the
+  // installer. Reserve 28 GB for the base image and common system tools, then
+  // add the model recipe's free-space budget, rounded to a 10 GB tier.
+  const recommendedVastDiskGb = selectedVastRecipe
+    ? Math.ceil((recipeFreeDiskGb + 28) / 10) * 10
+    : 80
+  const recommendedVastVramGb = selectedVastRecipe
+    ? Math.ceil((selectedVastRecipe.min_free_vram_gb + 2) / 4) * 4
+    : 24
+
+  useEffect(() => {
+    setVastDiskGb(String(recommendedVastDiskGb))
+  }, [recommendedVastDiskGb])
+  useEffect(() => {
+    setVastVram(String(recommendedVastVramGb))
+  }, [recommendedVastVramGb])
   const [vastMonkeyRef, setVastMonkeyRef] = useState('')
   const [sshHost, setSshHost] = useState('')
   const [sshPort, setSshPort] = useState('')
@@ -638,13 +663,11 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
       setTunnelState(res)
       if (res.host) setSshHost(res.host)
       if (res.port) setSshPort(String(res.port))
-      if (res.running) {
-        const url = `http://127.0.0.1:${res.local_port || 8888}/v1`
-        const probe = await testInferenceConnection({ url, model: vastServedName })
-        setInferenceOk(Boolean(probe.ok))
-      } else {
-        setInferenceOk(false)
-      }
+      // The readiness effect below is the only writer allowed to mark a
+      // tunnel active: it probes the endpoint and persists the profile as one
+      // operation. A separate probe here could set inferenceOk before saving,
+      // causing that effect to bail out and leave the UI checking forever.
+      if (!res.running) setInferenceOk(false)
     } catch {
       /* ignore */
     }
@@ -682,7 +705,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
       stopped = true
       clearInterval(id)
     }
-  }, [open, tunnelState.running, tunnelState.local_port, inferenceOk, vastServedName])
+  }, [open, tunnelState.running, tunnelState.local_port, inferenceOk, vastServedName, vastAdapter])
 
   // --- Tunnel SSH ---
   // Gli override servono a "Connetti": lo stato React non è ancora aggiornato
@@ -1054,8 +1077,8 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
     try {
       const res = await apiPost<{ items: VastOffer[] }>('/system/cloud/vast/offers', {
         ...credential, gpu_name: vastGpu.trim(), max_dph: vastMaxDph ? Number(vastMaxDph) : null,
-        disk_gb: Number(vastDiskGb) || 40,
-        min_gpu_ram_gb: vastVram ? Number(vastVram) : null,
+        disk_gb: Math.max(Number(vastDiskGb) || 40, recommendedVastDiskGb),
+        min_gpu_ram_gb: vastVram ? Math.max(Number(vastVram), recommendedVastVramGb) : recommendedVastVramGb,
         min_inet_down: vastNet ? Number(vastNet) : null,
         min_cuda: vastCuda ? Number(vastCuda) : null,
         verified_only: vastVerified,
@@ -1087,7 +1110,8 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
     setVastNotice(null)
     try {
       const res = await apiPost<{ contract_id: number | null }>('/system/cloud/vast/rent', {
-        ...credential, offer_id: offer.id, disk_gb: Number(vastDiskGb) || 40,
+        ...credential, offer_id: offer.id,
+        disk_gb: Math.max(Number(vastDiskGb) || 40, recommendedVastDiskGb),
         // L'immagine del container si fissa al noleggio: il modello scelto la
         // determina quando ne pretende una propria.
         adapter_id: vastAdapter,
@@ -1691,7 +1715,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
                     {t('cloud.control.vastGuide.moreFilters')}
                   </summary>
                   <div className="mt-2 grid gap-3 sm:grid-cols-3">
-                    <Field label={t('cloud.control.diskLabel')} hint={t('cloud.control.diskHint')}>
+                    <Field label={t('cloud.control.diskLabel')} hint={t('cloud.control.diskHint', { recommended: recommendedVastDiskGb, free: recipeFreeDiskGb })}>
                       <input type="number" min="10" value={vastDiskGb} onChange={(e) => setVastDiskGb(e.target.value)} className="fld fld-mono" />
                     </Field>
                     <Field label={t('cloud.control.netLabel')} hint={t('cloud.control.netHint')}>

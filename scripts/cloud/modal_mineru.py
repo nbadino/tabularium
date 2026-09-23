@@ -58,7 +58,29 @@ PORT = 8888
 VLLM_VERSION = os.environ.get("TABULARIUM_VLLM_VERSION", "0.21.0")
 MIN_CONTAINERS = int(os.environ.get("TABULARIUM_MODAL_MIN_CONTAINERS", "0"))
 MAX_CONTAINERS = int(os.environ.get("TABULARIUM_MODAL_MAX_CONTAINERS", "2"))
-MAX_INPUTS = int(os.environ.get("TABULARIUM_MODAL_MAX_INPUTS", "4"))
+MAX_INPUTS = int(os.environ.get("TABULARIUM_MODAL_MAX_INPUTS", os.environ.get("TABULARIUM_SERVE_MAX_NUM_SEQS", "4")))
+SERVING_OVERRIDES = {
+    "--gpu-memory-utilization": os.environ.get("TABULARIUM_SERVE_GPU_MEMORY_UTILIZATION"),
+    "--max-model-len": os.environ.get("TABULARIUM_SERVE_MAX_MODEL_LEN"),
+    "--max-num-seqs": os.environ.get("TABULARIUM_SERVE_MAX_NUM_SEQS"),
+    "--max-num-batched-tokens": os.environ.get("TABULARIUM_SERVE_MAX_NUM_BATCHED_TOKENS"),
+}
+
+def apply_serving_overrides(argv):
+    """Apply per-model settings captured by the local deploy command."""
+    argv = list(argv)
+    for flag, value in SERVING_OVERRIDES.items():
+        if value is None:
+            continue
+        if flag in argv:
+            argv[argv.index(flag) + 1] = value
+        else:
+            # Wrapper commands may use `--` to separate their own flags from
+            # vLLM flags; insert before that boundary when one is present.
+            boundary = argv.index("--") if "--" in argv else len(argv)
+            argv[boundary:boundary] = [flag, value]
+    return argv
+
 
 weights = modal.Volume.from_name("mineru-weights", create_if_missing=True)
 
@@ -114,6 +136,7 @@ def serve():
         argv.extend(["--api-key", api_key])
 
     print(">> Avvio:", " ".join(argv))
+    argv = apply_serving_overrides(argv)
     proc = subprocess.Popen(argv)
 
     deadline = time.monotonic() + 10 * 60

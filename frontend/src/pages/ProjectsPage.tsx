@@ -6,6 +6,8 @@ import { pages, projects } from '../lib/vocab'
 import { ErrorNotice, Field, Module } from '../app/ui'
 import { IconPlus, IconProjects } from '../app/icons'
 import { useI18n } from '../i18n'
+import { useAuth } from '../app/auth'
+import { FolderPicker } from '../app/FolderPicker'
 
 export default function ProjectsPage() {
   const { t } = useI18n()
@@ -16,6 +18,10 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
   const [dirTouched, setDirTouched] = useState(false)
+  const [picking, setPicking] = useState(false)
+  const auth = useAuth()
+  // La navigazione mostra il filesystem del server: solo gli amministratori.
+  const canBrowse = !auth.enabled || auth.user?.role === 'admin'
 
   // percorso assoluto POSIX o Windows; null = campo vuoto (validato da required)
   const dirError = (() => {
@@ -89,15 +95,22 @@ export default function ProjectsPage() {
                 hint={t('projects.archiveDirHint')}
                 error={dirTouched && dirError ? dirError : null}
               >
-                <input
-                  value={archiveDir}
-                  onChange={(e) => setArchiveDir(e.target.value)}
-                  onBlur={() => setDirTouched(true)}
-                  required
-                  placeholder={t('projects.archiveDirPlaceholder')}
-                  aria-invalid={dirTouched && dirError ? true : undefined}
-                  className="fld fld-mono"
-                />
+                <div className="flex gap-2">
+                  <input
+                    value={archiveDir}
+                    onChange={(e) => setArchiveDir(e.target.value)}
+                    onBlur={() => setDirTouched(true)}
+                    required
+                    placeholder={t('projects.archiveDirPlaceholder')}
+                    aria-invalid={dirTouched && dirError ? true : undefined}
+                    className="fld fld-mono"
+                  />
+                  {canBrowse && (
+                    <button type="button" className="btn shrink-0" onClick={() => setPicking(true)}>
+                      {t('projects.picker.open')}
+                    </button>
+                  )}
+                </div>
               </Field>
             </div>
             <button type="submit" disabled={busy} className="btn btn-primary mt-3">
@@ -105,6 +118,19 @@ export default function ProjectsPage() {
               {busy ? t('projects.creating') : t('projects.create')}
             </button>
           </form>
+          {picking && (
+            <FolderPicker
+              start={archiveDir}
+              onClose={() => setPicking(false)}
+              onPick={(path) => {
+                setArchiveDir(path)
+                setDirTouched(true)
+                setPicking(false)
+                // Il nome del progetto, se vuoto, parte da quello della cartella.
+                if (!name.trim()) setName(path.split(/[\\/]/).filter(Boolean).pop() ?? '')
+              }}
+            />
+          )}
         </Module>
       </div>
 

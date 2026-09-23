@@ -129,3 +129,17 @@ def test_page_list_is_not_silently_truncated(tmp_path):
         assert len(listed["items"]) == 205
         capped = client.get(f"/api/projects/{pid}/pages", params={"limit": 10}).json()
         assert len(capped["items"]) == 10 and capped["total"] == 205
+
+
+def test_folder_browser_lists_subfolders_and_supported_files(tmp_path):
+    """La scelta della cartella archivio: sottocartelle e file supportati, niente nascosti."""
+    from PIL import Image
+    (tmp_path / "scans").mkdir()
+    (tmp_path / ".hidden").mkdir()
+    Image.new("L", (8, 8), 255).save(tmp_path / "a.png")
+    (tmp_path / "notes.txt").write_text("x", encoding="utf-8")
+    with TestClient(app) as client:
+        out = client.get("/api/system/fs/browse", params={"path": str(tmp_path)}).json()
+    assert [d["name"] for d in out["dirs"]] == ["scans"]
+    assert out["files"] == 1
+    assert out["parent"] == str(tmp_path.resolve().parent)

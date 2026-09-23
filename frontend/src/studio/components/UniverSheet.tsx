@@ -21,6 +21,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets'
 import {
   ContextMenuPosition,
+  ContextMenuGroup,
   IMenuManagerService,
   MenuItemType,
   MenuManagerPosition,
@@ -301,13 +302,13 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
           (acc, item) => ({ ...acc, ...entry(item.id, item.title, item.id, item.order) }),
           {},
         )
-        injector.get(IMenuManagerService).mergeMenu({
+        injector.get(IMenuManagerService).appendRootMenu({
           [MenuManagerPosition.CONTEXT_MENU]: {
             // Sia sul corpo del foglio sia sull'intestazione di colonna: il
             // gesto è «tasto destro su una colonna», e le due strade devono
             // portare allo stesso posto.
-            [ContextMenuPosition.MAIN_AREA]: group,
-            [ContextMenuPosition.COL_HEADER]: group,
+            [ContextMenuPosition.MAIN_AREA]: { [ContextMenuGroup.OTHERS]: group },
+            [ContextMenuPosition.COL_HEADER]: { [ContextMenuGroup.OTHERS]: group },
           },
         })
       } catch (error) {

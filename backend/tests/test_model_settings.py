@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+import pytest
+from fastapi import HTTPException
+
+from app import config
+from app.db import init_db
+from app.services import model_settings, serve_recipes
+
+
+def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "settings.db")
+    init_db()
+
+    defaults = model_settings.get_settings("teleocr")
+    assert defaults["recommended"]["serving"]["max_model_len"] == 16384
+    assert defaults["recommended"]["serving"]["gpu_memory_utilization"] == 0.95
+    assert defaults["recommended"]["image"]["max_pixels"] == 64_000_000
+    assert defaults["recommended"]["workflow"]["layout_mode"] == "Detection"
+    assert defaults["overrides"] == {}
+
+    saved = model_settings.save_settings("teleocr", {
+        "serving": {"max_num_seqs": 2},
+        "generation": {"temperature": 0.1},
+        "image": {"max_pixels": 2_000_000},
+        "workflow": {"layout_mode": "Segmentation"},
+    })
+    assert saved["effective"]["serving"]["max_num_seqs"] == 2
+    assert saved["effective"]["generation"]["temperature"] == 0.1
+    assert saved["effective"]["image"]["max_pixels"] == 2_000_000
+    assert saved["effective"]["workflow"]["layout_mode"] == "Segmentation"
+    assert saved["restart_required"] is True
+
+    with pytest.raises(HTTPException, match="max_model_len supera"):
+        model_settings.save_settings("teleocr", {"serving": {"max_model_len": 32768}})
+    with pytest.raises(HTTPException, match="tra 0.2 e 0.98"):
+        model_settings.save_settings("teleocr", {"serving": {"gpu_memory_utilization": 1.0}})
+    with pytest.raises(HTTPException, match="lasciare spazio per l'immagine"):
+        model_settings.save_settings("teleocr", {
+            "serving": {"max_model_len": 4096},
+            "generation": {"max_tokens": 4096},
+        })
+    with pytest.raises(HTTPException, match="Detection o Segmentation"):
+        model_settings.save_settings("teleocr", {"workflow": {"layout_mode": "automatic"}})
+    with pytest.raises(HTTPException, match="workflow PaddleOCR-VL non riconosciuto"):
+        model_settings.save_settings("paddleocr-vl", {"workflow": {"layout_mode": "Segmentation"}})
+    with pytest.raises(HTTPException, match="richiede un logits processor"):
+        model_settings.save_settings("paddleocr-vl", {"generation": {"no_repeat_ngram_size": 100}})
+
+    reset = model_settings.save_settings("teleocr", {})
+    assert reset["overrides"] == {}
+    assert reset["effective"] == reset["recommended"]
+
+
+def test_serve_recipe_applies_only_explicit_supported_overrides():
+    argv = serve_recipes.serve_argv(
+        serve_recipes.recipe_for("teleocr"),
+        model_path="StarDoc-AI/TeleOCR", port=8000,
+        settings={"serving": {"max_num_seqs": 2, "max_model_len": 8192}},
+    )
+    assert argv[argv.index("--max-num-seqs") + 1] == "2"
+    assert argv[argv.index("--max-model-len") + 1] == "8192"
+    assert "--trust-remote-code" in argv
+    assert "--dtype" in argv and "bfloat16" in argv
+
+
+def test_mlx_settings_are_validated_and_applied_to_local_server():
+    from app.services import mlx_runtime
+
+    settings = {"kv_bits": 4, "kv_group_size": 32, "max_kv_size": 4096,
+                "vision_cache_size": 8, "kv_quant_scheme": "uniform", "log_level": "INFO"}
+    argv = mlx_runtime.serve_argv("mlx-community/model", port=8080, settings=settings)
+    for flag, value in (("--kv-bits", "4"), ("--kv-group-size", "32"),
+                        ("--max-kv-size", "4096"), ("--vision-cache-size", "8"),
+                        ("--kv-quant-scheme", "uniform"), ("--log-level", "INFO")):
+        assert argv[argv.index(flag) + 1] == value
+    assert "--kv-bits" not in mlx_runtime.serve_argv("mlx-community/model", port=8080)
+
+
+def test_mlx_model_settings_reject_unsupported_models_and_values(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "mlx-settings.db")
+    init_db()
+    settings = model_settings.get_settings("paddleocr-vl")
+    assert set(settings["recommended"]["mlx"]) == {
+        "kv_bits", "kv_group_size", "max_kv_size", "vision_cache_size", "kv_quant_scheme", "log_level"
+    }
+    saved = model_settings.save_settings("paddleocr-vl", {"mlx": {"kv_bits": 4, "kv_quant_scheme": "uniform"}})
+    assert saved["restart_required"] is True
+    assert saved["effective"]["mlx"]["kv_bits"] == 4
+    with pytest.raises(HTTPException, match="non disponibili"):
+        model_settings.save_settings("teleocr", {"mlx": {"kv_bits": 4}})
+    with pytest.raises(HTTPException, match="mlx.kv_bits"):
+        model_settings.save_settings("paddleocr-vl", {"mlx": {"kv_bits": 9}})
+
+
+def test_teleocr_sampling_preserves_upstream_task_defaults():
+    from app.services.model_adapters import get_adapter
+
+    adapter = get_adapter("teleocr")
+    text = adapter.sampling_for("text")
+    table = adapter.sampling_for("table")
+    formula = adapter.sampling_for("formula")
+    assert text["temperature"] == table["temperature"] == 0.0
+    assert text["top_p"] == table["top_p"] == 0.01
+    assert text["top_k"] == table["top_k"] == 1
+    assert text["presence_penalty"] == table["presence_penalty"] == 1.0
+    assert text["frequency_penalty"] == 0.05
+    assert table["frequency_penalty"] == 0.005
+    assert formula["frequency_penalty"] == 0.05
+    assert table["no_repeat_ngram_size"] == 100
+
+
+def test_teleocr_layout_prompt_obeys_saved_official_mode(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "teleocr-workflow.db")
+    init_db()
+    from app.services.model_adapters import get_adapter
+
+    adapter = get_adapter("teleocr")
+    assert adapter.prompt_for("layout") == "Analyze the image layout."
+    model_settings.save_settings("teleocr", {"workflow": {"layout_mode": "Segmentation"}})
+    assert adapter.prompt_for("layout") == "Multi-point Layout Segmentation Analysis."
+
+
+def test_paddle_predict_options_reach_the_official_pipeline(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "paddle-workflow.db")
+    init_db()
+    model_settings.save_settings("paddleocr-vl", {
+        "workflow": {"use_layout_detection": True, "use_queues": False},
+        "generation": {"temperature": 0.1, "top_p": 0.8, "max_tokens": 5000, "top_k": 3},
+        "image": {"max_pixels": 2_000_000},
+    })
+
+    from app.services.paddle_official import _predict_options
+    from app.services.paddle_official import _RUNNER
+
+    assert _predict_options() == {
+        "use_layout_detection": True,
+        "use_queues": False,
+        "max_pixels": 2_000_000,
+        "temperature": 0.1,
+        "top_p": 0.8,
+        "max_new_tokens": 5000,
+        "vlm_extra_args": {"top_k": 3},
+    }
+    compile(_RUNNER, "paddle_official_runner", "exec")
+    assert "pipeline.predict(image, **predict_options)" in _RUNNER
+
+
+def test_recommended_serving_values_come_from_model_commands():
+    for adapter_id in serve_recipes.RECIPES:
+        settings = model_settings.get_settings(adapter_id)
+        recipe_args = list(serve_recipes.RECIPES[adapter_id].serve_args)
+        command = model_settings.get_adapter(adapter_id).serve_command("MODEL_PATH", 8888)
+        args = recipe_args + (command or [])
+        for flag, key, cast in (
+            ("--gpu-memory-utilization", "gpu_memory_utilization", float),
+            ("--max-model-len", "max_model_len", int),
+            ("--max-num-seqs", "max_num_seqs", int),
+            ("--max-num-batched-tokens", "max_num_batched_tokens", int),
+        ):
+            if flag in args:
+                assert settings["recommended"]["serving"][key] == cast(args[args.index(flag) + 1])

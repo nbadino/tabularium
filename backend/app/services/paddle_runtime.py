@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -67,6 +68,55 @@ def log_tail(n: int = 4000) -> str:
             return fh.read().decode("utf-8", errors="replace")
     except OSError:
         return ""
+
+
+def default_paddle_packages(
+    *, system: str | None = None, machine: str | None = None,
+    driver_cuda: str | None = None,
+) -> list[str]:
+    """Pacchetti Paddle ufficiali compatibili con l'host corrente.
+
+    Il percorso non-GPU era finora sbagliato su Linux/Windows: installava la
+    wheel CUDA 11.8 anche quando CUDA non esisteva. Inoltre la guida PaddleOCR
+    ha un percorso dedicato per Blackwell (SM 12.0) con CUDA 12.9/cu129; usare
+    cu118, come faceva il default precedente, non è una configurazione valida
+    per la RTX PRO 4000 usata nei benchmark.
+    """
+    system = system or sys.platform
+    machine = machine or platform.machine()
+    if system == "darwin" and machine == "arm64":
+        # La guida Apple Silicon non offre una wheel Paddle CUDA; il pipeline
+        # ufficiale gira su CPU e il VLM può restare su MLX/server separato.
+        return ["paddlepaddle==3.3.1"]
+
+    if driver_cuda is None and system != "darwin":
+        try:
+            result = subprocess.run(
+                ["nvidia-smi"], capture_output=True, text=True, timeout=5,
+                check=False,
+            )
+            match = re.search(r"CUDA Version:\s*([0-9]+(?:\.[0-9]+)?)", result.stdout)
+            driver_cuda = match.group(1) if result.returncode == 0 and match else None
+        except (OSError, subprocess.TimeoutExpired):
+            driver_cuda = None
+
+    version = 0.0
+    try:
+        version = float(driver_cuda or 0)
+    except (TypeError, ValueError):
+        pass
+    if version >= 12.9:
+        cuda_index = "cu129"
+    elif version >= 12.6:
+        cuda_index = "cu126"
+    elif version >= 11.8:
+        cuda_index = "cu118"
+    else:
+        return ["paddlepaddle==3.2.1"]
+    return [
+        "paddlepaddle-gpu==3.2.1", "-i",
+        f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_index}/",
+    ]
 
 
 def ready(*, force: bool = False) -> bool:
@@ -139,7 +189,6 @@ def ensure_ready() -> None:
         log.write(b"\n== Tabularium: installazione PaddleOCR document parser ==\n")
         log.flush()
         try:
-            venv.EnvBuilder(with_pip=True, clear=True).create(str(root))
             subprocess.run(
                 [str(python_bin()), "-m", "pip", "install", "--upgrade", "pip"],
                 check=True, stdout=log, stderr=subprocess.STDOUT,
@@ -161,15 +210,7 @@ def ensure_ready() -> None:
                 #   PyPI. Senza questo ramo il percorso ufficiale di
                 #   PaddleOCR-VL su un Mac falliva con un errore di
                 #   installazione, e l'utente restava in un vicolo cieco.
-                if sys.platform == "darwin" and platform.machine() == "arm64":
-                    paddle_pin = [
-                        "paddlepaddle==3.3.1",
-                    ]
-                else:
-                    paddle_pin = [
-                        "paddlepaddle-gpu==3.2.0",
-                        "-i", "https://www.paddlepaddle.org.cn/packages/stable/cu118/",
-                    ]
+                paddle_pin = default_paddle_packages()
                 subprocess.run(
                     [str(python_bin()), "-m", "pip", "install", *paddle_pin],
                     check=True, stdout=log, stderr=subprocess.STDOUT,

@@ -32,6 +32,7 @@ import { WarnNotice } from '../../app/ui'
 import { IconMinus, IconPlus, IconSave } from '../../app/icons'
 import { useConfirm } from '../../app/confirm'
 import { useI18n } from '../../i18n'
+import type { ColumnOp, SheetSelection } from './UniverSheet'
 
 // `jspreadsheet-ce` è CommonJS: a seconda dell'interop il callable è il default
 // o il namespace. Risolverlo a mano evita un `undefined` che si manifesta solo
@@ -39,6 +40,7 @@ import { useI18n } from '../../i18n'
 interface JspreadsheetSheetProps {
   grid: TableGrid
   onSave: (grid: TableGrid) => Promise<string>
+  onColumnOp?: (op: ColumnOp, selection: SheetSelection) => void
   onDetect?: (opts: TableDetectRequest) => Promise<TableDetectOut>
   /** Ritaglio del blocco. Con questo, l'overlay mostra i confini sull'inchiostro
    *  e diventano trascinabili: senza, la griglia è solo testo. */
@@ -141,7 +143,7 @@ function readSelection(worksheet: SheetInstance): { x1: number; y1: number; x2: 
   return box
 }
 
-export default function JspreadsheetSheet({ grid: initialGrid, onSave, onDetect, cropUrl, withOverlay = true }: JspreadsheetSheetProps) {
+export default function JspreadsheetSheet({ grid: initialGrid, onSave, onDetect, onColumnOp, cropUrl, withOverlay = true }: JspreadsheetSheetProps) {
   const { t } = useI18n()
   const confirm = useConfirm()
   const container = useRef<HTMLDivElement | null>(null)
@@ -295,6 +297,17 @@ export default function JspreadsheetSheet({ grid: initialGrid, onSave, onDetect,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Le azioni rapide arrivano dal contenitore: quando cambiano il modello,
+  // ricostruisci il foglio solo se il suo contenuto locale non è già quello
+  // ricevuto (le normali modifiche di cella passano qui a ogni battitura).
+  useEffect(() => {
+    const incoming = gridSignature(initialGrid)
+    if (incoming === gridSignature(gridRef.current)) return
+    gridRef.current = initialGrid
+    setGrid(initialGrid)
+    mountSheet(initialGrid)
+  }, [initialGrid, mountSheet])
+
   // --- salvataggio ------------------------------------------------------------
   const doSave = useCallback(async (): Promise<boolean> => {
     setSaving(true)
@@ -396,6 +409,16 @@ export default function JspreadsheetSheet({ grid: initialGrid, onSave, onDetect,
     }
     setNotice(null)
     applyStructural(next)
+  }
+
+  const runColumnOp = (op: ColumnOp, range = instance.current ? readSelection(instance.current) : null) => {
+    if (!range) return
+    onColumnOp?.(op, {
+      startRow: range.y1,
+      startColumn: range.x1,
+      endRow: range.y2,
+      endColumn: range.x2,
+    })
   }
 
   const insertRow = async (at: number, before: boolean) => {
@@ -588,6 +611,15 @@ export default function JspreadsheetSheet({ grid: initialGrid, onSave, onDetect,
       { title: t('table.mergeRight'), onclick: () => merge(range.x1, range.y1, range.x2 + 1, range.y1) },
       { title: t('table.mergeDown'), onclick: () => merge(range.x1, range.y1, range.x1, range.y2 + 1) },
       { title: t('table.splitCell'), onclick: () => splitAt(range.y1, range.x1) },
+      ...(onColumnOp ? [
+        { type: 'line', title: '', onclick: () => {} },
+        { title: t('table.normalizeSpaces'), onclick: () => runColumnOp('normalize', range) },
+        { title: t('table.fillDown'), onclick: () => runColumnOp('fill', range) },
+        { title: t('table.joinColumn'), onclick: () => runColumnOp('join', range) },
+        { title: t('table.caseUpper'), onclick: () => runColumnOp('upper', range) },
+        { title: t('table.caseLower'), onclick: () => runColumnOp('lower', range) },
+        { title: t('table.splitColumn'), onclick: () => runColumnOp('split', range) },
+      ] : []),
       { type: 'line', title: '', onclick: () => {} },
       { title: t('table.markVerified'), onclick: toggleVerified },
       { title: t('table.phantomColumn'), onclick: () => togglePhantom(range.x1) },
@@ -666,6 +698,19 @@ export default function JspreadsheetSheet({ grid: initialGrid, onSave, onDetect,
             title={t('table.headerRowsTitle')}
           />
         </div>
+        {onColumnOp && (
+          <div>
+            <span className="lbl">{t('table.quickActions')}</span>
+            <div className="flex flex-wrap items-center gap-1">
+              <button type="button" onClick={() => runColumnOp('normalize')} className="btn btn-sm" title={t('table.normalizeSpaces')}>{t('table.normalizeShort')}</button>
+              <button type="button" onClick={() => runColumnOp('fill')} className="btn btn-sm" title={t('table.fillDown')}>{t('table.fillShort')}</button>
+              <button type="button" onClick={() => runColumnOp('join')} className="btn btn-sm" title={t('table.joinColumn')}>{t('table.joinShort')}</button>
+              <button type="button" onClick={() => runColumnOp('upper')} className="btn btn-sm" title={t('table.caseUpper')}>{t('table.upperShort')}</button>
+              <button type="button" onClick={() => runColumnOp('lower')} className="btn btn-sm" title={t('table.caseLower')}>{t('table.lowerShort')}</button>
+              <button type="button" onClick={() => runColumnOp('split')} className="btn btn-sm" title={t('table.splitColumn')}>{t('table.splitShort')}</button>
+            </div>
+          </div>
+        )}
         {onDetect && (
           <div>
             <span className="lbl">{t('table.detect')}</span>

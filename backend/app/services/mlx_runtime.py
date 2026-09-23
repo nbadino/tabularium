@@ -154,14 +154,20 @@ def ensure_ready() -> None:
     _write_state(state="ready", error=None)
 
 
-def serve_argv(repo: str, *, port: int, host: str = "127.0.0.1") -> list[str]:
+def serve_argv(
+    repo: str,
+    *,
+    port: int,
+    host: str = "127.0.0.1",
+    settings: dict | None = None,
+) -> list[str]:
     """Comando del server MLX, OpenAI-compatibile.
 
     `mlx-vlm` non ha `--served-model-name`: il nome che il client deve chiedere
     è l'id del checkpoint (lo stesso che compare in `/v1/models`). Il server
     scarica i pesi da Hugging Face alla prima richiesta.
     """
-    return [
+    argv = [
         str(python_bin()),
         "-m",
         "mlx_vlm.server",
@@ -172,3 +178,17 @@ def serve_argv(repo: str, *, port: int, host: str = "127.0.0.1") -> list[str]:
         "--port",
         str(int(port)),
     ]
+    options = settings or {}
+    flags = {
+        "kv_bits": "--kv-bits",
+        "kv_group_size": "--kv-group-size",
+        "max_kv_size": "--max-kv-size",
+        "vision_cache_size": "--vision-cache-size",
+        "kv_quant_scheme": "--kv-quant-scheme",
+        "log_level": "--log-level",
+    }
+    for key, flag in flags.items():
+        value = options.get(key)
+        if value is not None:
+            argv.extend([flag, str(value)])
+    return argv

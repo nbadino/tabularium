@@ -63,7 +63,10 @@ export default function ModelsHubPage() {
 
   useEffect(() => {
     void syncInferenceFromBackend().catch(setError)
-    void reload(false)
+    // The adapter registry changes with an app/backend update (for example a
+    // newly supported model). A recent browser cache must not hide it; force
+    // one authoritative refresh whenever the Models hub is opened.
+    void reload(true)
     apiGet<SystemInfo>('/system/info')
       .then((info) => setCaps(info.capabilities ?? null))
       .catch(() => {})

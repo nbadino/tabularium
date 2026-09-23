@@ -101,6 +101,12 @@ TEMPLATES: dict[str, ModalTemplate] = {
             app_name="tabularium-qwen3-vl",
             script=REPO_ROOT / "scripts" / "cloud" / "modal_qwen3_vl.py",
         ),
+        ModalTemplate(
+            id="teleocr",
+            label="TeleOCR",
+            app_name="tabularium-teleocr",
+            script=REPO_ROOT / "scripts" / "cloud" / "modal_teleocr.py",
+        ),
     )
 }
 DEFAULT_TEMPLATE = "monkeyocrv2"
@@ -341,6 +347,28 @@ def start_deploy(
     if api_key:
         env["TABULARIUM_VLLM_API_KEY"] = api_key
     env["TABULARIUM_MODAL_MIN_CONTAINERS"] = "1" if keep_warm else "0"
+    # Keep Modal deployments in sync with the same per-model settings used by
+    # Vast and local vLLM. Modal scripts consume these at deploy/import time so
+    # both vLLM and the container's concurrency decorator receive the values.
+    from . import model_settings
+
+    adapter_id = {
+        "monkeyocrv2": "monkeyocrv2-parsing",
+        "mineru": "mineru2.5",
+        "qwen3-vl": "qwen3-vl-8b",
+    }.get(template.id, template.id)
+    overrides = model_settings.get_settings(adapter_id)["overrides"]
+    serving = overrides.get("serving", {})
+    for key in (
+        "gpu_memory_utilization",
+        "max_model_len",
+        "max_num_seqs",
+        "max_num_batched_tokens",
+    ):
+        if key in serving:
+            env[f"TABULARIUM_SERVE_{key.upper()}"] = str(serving[key])
+    if "max_num_seqs" in serving:
+        env["TABULARIUM_MODAL_MAX_INPUTS"] = str(serving["max_num_seqs"])
     _start("deploy", ["deploy", str(template.script)], env=env, template_id=template.id, owner_id=owner_id)
 
 

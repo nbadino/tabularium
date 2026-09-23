@@ -32,6 +32,10 @@ export PATH="$ENV_DIR/bin:$PATH"
 export CC="${CC:-gcc-13}" CXX="${CXX:-g++-13}"
 export NVCC_PREPEND_FLAGS="-allow-unsupported-compiler"
 export MAX_JOBS=2
+GPU_MEMORY_UTILIZATION="${TABULARIUM_SERVE_GPU_MEMORY_UTILIZATION:-0.9}"
+MAX_MODEL_LEN="${TABULARIUM_SERVE_MAX_MODEL_LEN:-24576}"
+MAX_NUM_SEQS="${TABULARIUM_SERVE_MAX_NUM_SEQS:-8}"
+MAX_NUM_BATCHED_TOKENS="${TABULARIUM_SERVE_MAX_NUM_BATCHED_TOKENS:-24576}"
 
 # DFlash (speculative decoding, fino a ~2x secondo il README ufficiale): attivo
 # solo se il draft è già scaricato. `serve.py` aggiunge --speculative-config
@@ -67,5 +71,5 @@ fi
 echo ">> Servo $MODEL su :$PORT"
 exec "$ENV_DIR/bin/python" serve.py -m "$MODEL" -p "$PORT" \
   "${DFLASH_ARGS[@]}" \
-  --host 127.0.0.1 --gpu-memory-utilization 0.9 \
-  --max-model-len 24576 --max-num-batched-tokens 24576 --max-num-seqs 8
+  --host 127.0.0.1 --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" \
+  --max-model-len "$MAX_MODEL_LEN" --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS" --max-num-seqs "$MAX_NUM_SEQS"

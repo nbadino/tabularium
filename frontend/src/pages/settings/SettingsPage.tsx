@@ -7,9 +7,8 @@
  * diceva quale fosse quella in vigore. La densità del mosaico regge un form
  * fitto, non sette argomenti diversi in fila.
  *
- * Modello, provider ed endpoint vivono invece nell'hub Modelli: duplicarli
- * qui creava due fonti apparenti della stessa configurazione. Le zone restano
- * in linguette e la scelta resta nell'URL (`?s=`).
+ * Modello, provider ed endpoint vivono nell'hub Modelli; qui restano i parametri
+ * avanzati per modello, così il preset attivo si può verificare e regolare.
  */
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../app/auth'
@@ -19,6 +18,7 @@ import AccountSection from './AccountSection'
 import DataSection from './DataSection'
 import EnvironmentSection from './EnvironmentSection'
 import InstanceSection from './InstanceSection'
+import ModelSettingsSection from './ModelSettingsSection'
 
 /** Ogni zona riceve solo ciò che cambia il suo comportamento: chi governa. */
 export interface SectionProps {
@@ -32,6 +32,7 @@ const SECTIONS: Array<{
 }> = [
   { id: 'account', labelKey: 'settings.tabAccount', Section: AccountSection },
   { id: 'istanza', labelKey: 'settings.tabInstance', Section: InstanceSection },
+  { id: 'modelli', labelKey: 'settings.tabModels', Section: ModelSettingsSection },
   { id: 'dati', labelKey: 'settings.tabData', Section: DataSection },
   { id: 'ambiente', labelKey: 'settings.tabEnv', Section: EnvironmentSection },
 ]

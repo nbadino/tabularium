@@ -120,6 +120,8 @@ describe('ContentPane', () => {
         labels={[]}
         selectedId={null}
         working={null}
+        pageId={1}
+        pageImageUrl="/api/pages/1/preview"
         {...noop}
       />,
     )
@@ -129,11 +131,9 @@ describe('ContentPane', () => {
 
     // La vista di lavoro monta la superficie e, accanto, i confini.
     await waitFor(() => expect(screen.getByTestId('univer-sheet')).toBeTruthy())
-    expect(screen.getByRole('button', { name: 'Salva griglia' })).toBeTruthy()
     expect(screen.getByText(/righe ×/)).toBeTruthy()
-    expect(screen.getByAltText(/Ritaglio della tabella/)).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Aggiungi colonna' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Rifiuta confine' })).toBeTruthy()
+    expect(screen.getByAltText(/Scansione della pagina/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Salva griglia' })).toBeTruthy()
   })
 
   it('vista di lavoro: le somme che non tornano arrivano al foglio e lo dice', async () => {

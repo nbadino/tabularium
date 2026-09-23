@@ -182,6 +182,8 @@ variables, nothing to install by hand:
 1. Open **Registro Modelli** (Model Registry).
 2. Pick a model (`MonkeyOCRv2-Parsing`, `MinerU2.5`, `dots.mocr`,
    `PaddleOCR-VL`, `Unlimited-OCR`, `GLM-OCR`, `DeepSeek-OCR-2`, `Qwen3-VL`,
+   `TeleOCR` (layout Detection upstream, riconoscimento crop di testo, tabelle
+   OTSL e formule),
    or **add your own** Hugging Face repo) → **Download**.
 3. Once downloaded → **Start as local server**.
 
@@ -189,6 +191,31 @@ The adapter catalog includes experimental/download-only entries as well as
 models verified on the current machine. See [benchmarks.md](benchmarks.md) for
 the tested GPU profiles and the exact local serving status; a catalog entry is
 not by itself a promise that every checkpoint fits an 8 GB GPU.
+
+On Apple Silicon, local model serving uses MLX: the verified local checkpoints
+are `PaddleOCR-VL-1.6` and `Qwen3-VL-8B`. The other catalog models, including
+TeleOCR, require a remote CUDA endpoint. TeleOCR uses the upstream 1036×1036
+layout input, bbox parser, system prompt, task-specific sampling, and
+no-repeat-ngram logits processor; text/table/formula crops use upstream
+prompts. In **Settings → Models**, its official `Detection` default can be
+changed to `Segmentation`, which upstream recommends for degraded scans. The
+Tabularium adapter still orchestrates layout and crop requests itself; it does
+not yet run upstream `infer.py`'s asynchronous page batching and middle-JSON
+post-processing, so results are not claimed as equivalent to the complete
+official pipeline.
+
+PaddleOCR-VL prefill invokes the official `PaddleOCRVL.predict` workflow, with
+layout detection followed by visual-language recognition of the detected
+regions; it does not send the whole page through the generic crop adapter.
+**Settings → Models** leaves PaddleX defaults intact in Automatic mode and can
+override the documented layout, orientation, unwarping, chart, seal, image-OCR,
+Markdown, merge and queue options. Generation and image limits are forwarded
+to the same official `predict` call.
+The cloud recipe installs the official repository root, which registers the
+custom vLLM architecture and supplies its processor, with the upstream-pinned
+vLLM/Transformers versions. On Modal, deploy
+`scripts/cloud/modal_teleocr.py`; on Vast, choose TeleOCR in the cloud model
+selector.
 
 The first time you start *any* model, Tabularium creates a dedicated Python
 environment and installs vLLM into it by itself (a couple of minutes,

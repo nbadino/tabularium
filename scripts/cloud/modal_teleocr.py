@@ -1,28 +1,12 @@
-"""Modal: deployment serverless del VLM dots.mocr (dots-studio) via vLLM.
+"""Modal: TeleOCR via il plugin vLLM ufficiale out-of-tree.
 
-Stessa architettura di ``modal_vllm.py`` (MonkeyOCRv2): vedi quel file per il
-razionale di `subprocess.Popen` dentro `@modal.web_server`.
+Il plugin del repository TeleOCR registra l'architettura personalizzata del
+checkpoint e pinna vLLM 0.11.0 + Transformers 4.57.1. La recipe remota Vast e
+questa immagine installano lo stesso plugin; non basta installare vLLM e
+abilitare `trust_remote_code`.
 
-Requisiti verificati su Hugging Face dots-studio/dots.mocr e sul README
-ufficiale del repo (originariamente rednote-hilab/dots.ocr, agosto 2026):
-  - repo HF: ``dots-studio/dots.mocr`` (rebrand dell'org rednote-hilab, stesso
-    checkpoint). Pesi reali ~6.1 GB (due shard safetensors), non i 3.4 GB
-    dichiarati in una stima precedente (quella era il solo componente LLM).
-  - architettura nativa in **vLLM >= 0.11.0** (merge ufficiale, PR #24645):
-    non serve più il pin storico `vllm==0.9.1` delle versioni pre-integrazione.
-  - comando: `vllm serve <repo> --trust-remote-code
-    --chat-template-content-format string` — quest'ultimo flag è
-    **obbligatorio** secondo il README (formato di serializzazione del
-    contenuto per il chat template, non interferisce con l'invio di immagini
-    in stile OpenAI).
-  - GPU: nessuna raccomandazione ufficiale di VRAM. Default qui: L4 (24 GB),
-    comodo per un checkpoint da 6+ GB.
-
-Uso:
-  modal deploy scripts/cloud/modal_dots_ocr.py
-
-L'URL dell'endpoint è stampato da `modal deploy` e ha forma:
-  https://<WORKSPACE>--tabularium-dots-ocr-serve.modal.run
+Deploy:
+  modal deploy scripts/cloud/modal_teleocr.py
 """
 
 import os
@@ -32,11 +16,11 @@ import urllib.request
 
 import modal
 
-APP_NAME = "tabularium-dots-ocr"
-MODEL_ID = os.environ.get("TABULARIUM_MODAL_MODEL", "dots-studio/dots.mocr")
+APP_NAME = "tabularium-teleocr"
+MODEL_ID = os.environ.get("TABULARIUM_MODAL_MODEL", "StarDoc-AI/TeleOCR")
 GPU = os.environ.get("TABULARIUM_MODAL_GPU", "L4")
 PORT = 8888
-VLLM_VERSION = os.environ.get("TABULARIUM_VLLM_VERSION", "0.28.0")
+VLLM_VERSION = os.environ.get("TABULARIUM_VLLM_VERSION", "0.11.0")
 MIN_CONTAINERS = int(os.environ.get("TABULARIUM_MODAL_MIN_CONTAINERS", "0"))
 MAX_CONTAINERS = int(os.environ.get("TABULARIUM_MODAL_MAX_CONTAINERS", "2"))
 MAX_INPUTS = int(os.environ.get("TABULARIUM_MODAL_MAX_INPUTS", os.environ.get("TABULARIUM_SERVE_MAX_NUM_SEQS", "4")))
@@ -62,13 +46,20 @@ def apply_serving_overrides(argv):
             argv[boundary:boundary] = [flag, value]
     return argv
 
+TELEOCR_PACKAGE = (
+    "git+https://github.com/caipeng328/TeleOCR.git@main"
+)
 
-weights = modal.Volume.from_name("dots-ocr-weights", create_if_missing=True)
+weights = modal.Volume.from_name("teleocr-weights", create_if_missing=True)
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("git", "gcc", "g++")
-    .pip_install(f"vllm=={VLLM_VERSION}", "huggingface_hub[hf_transfer]")
+    .pip_install(
+        f"vllm=={VLLM_VERSION}",
+        "huggingface_hub[hf_transfer]",
+        TELEOCR_PACKAGE,
+    )
     .env({
         "HF_HOME": "/weights/hf-cache",
         "HF_XET_HIGH_PERFORMANCE": "1",
@@ -91,15 +82,19 @@ app = modal.App(APP_NAME)
 @modal.concurrent(max_inputs=MAX_INPUTS)
 @modal.web_server(PORT, startup_timeout=1800)
 def serve():
-    """Avvia `vllm serve` con i flag verificati sul README di dots.mocr."""
+    """Avvia vLLM dopo il caricamento del plugin architetturale TeleOCR."""
     argv = [
         "vllm", "serve", MODEL_ID,
         "--host", "0.0.0.0",
         "--port", str(PORT),
         "--trust-remote-code",
-        "--chat-template-content-format", "string",
+        "--logits-processors",
+        "TeleOCR.vlm_utils.vlm_client.vllm_v1_no_repeat_ngram:VllmV1NoRepeatNGramLogitsProcessor",
+        "--dtype", "bfloat16",
+        "--gpu-memory-utilization", "0.95",
+        "--max-model-len", "16384",
         "--max-num-seqs", str(MAX_INPUTS),
-        "--served-model-name", "dots-mocr",
+        "--served-model-name", "StarDoc-AI/TeleOCR",
     ]
     api_key = os.environ.get("TABULARIUM_VLLM_API_KEY", "").strip()
     if api_key:
@@ -119,3 +114,6 @@ def serve():
             break
         except Exception:  # noqa: BLE001
             time.sleep(2)
+
+    if proc.poll() is not None:
+        raise RuntimeError(f"vllm serve uscito con codice {proc.returncode} durante l'avvio")

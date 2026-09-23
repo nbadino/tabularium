@@ -1456,6 +1456,8 @@ def build_provision_recipe(
     from . import serve_recipes
 
     recipe = serve_recipes.recipe_for(adapter_id)
+    from . import model_settings
+    user_settings = model_settings.get_settings(adapter_id)["overrides"]
     hf_repo = str(model or "").strip() or recipe.hf_repo
     if not _MODEL.fullmatch(hf_repo):
         raise ValueError("Nome modello non valido.")
@@ -1466,12 +1468,14 @@ def build_provision_recipe(
         "hf_repo": hf_repo,
         "model_dir": effective_model_dir,
         "vllm_version": recipe.vllm_version,
+        "transformers_version": recipe.transformers_version,
         # Con l'immagine dedicata vLLM è già installato: rimpiazzarlo con una
         # wheel pip cancellerebbe proprio l'architettura per cui è stata scelta.
         "install_vllm": recipe.installs_vllm,
         "venv_dir": f"{REMOTE_ENV_ROOT}/{recipe.adapter_id}",
         "docker_image": recipe.docker_image,
         "pip_extra": list(recipe.pip_extra),
+        **serve_recipes.resource_budget(recipe),
         "needs_monkeyocr_repo": recipe.runtime == "monkeyocr",
         "argv": serve_recipes.serve_argv(
             recipe,
@@ -1481,6 +1485,7 @@ def build_provision_recipe(
             lora_path=lora_path,
             lora_name=lora_name,
             served_model_name=served_model_name,
+            settings=user_settings,
         ),
         "served_model_name": served_model_name or recipe.served_model_name,
     }
@@ -1558,6 +1563,7 @@ def provision_vast_server(
     # un campo minato di quoting.
     recipe_b64 = base64.b64encode(json.dumps(recipe).encode("utf-8")).decode("ascii")
     env_prefix += f"RECIPE_B64={shlex.quote(recipe_b64)} "
+    replace_flag = " --replace-running-server" if existing.get("ready") else ""
     # `cat` deve completare *prima* di lanciare lo script: mettere in background
     # l'intera catena chiude la sessione SSH mentre il file è ancora in arrivo e
     # lascia uno script troncato. Solo l'avvio va in background, dentro le graffe;
@@ -1569,6 +1575,7 @@ def provision_vast_server(
         f"{{ {env_prefix}nohup setsid bash {REMOTE_SETUP_PATH}"
         f" --port {remote_port} --model {shlex.quote(recipe['hf_repo'])} --ref {shlex.quote(ref)}"
         f" --gpu-mem {shlex.quote(str(gpu_mem))}"
+        f"{replace_flag}"
         f" >> {REMOTE_LOG_PATH} 2>&1 < /dev/null & }}; "
         "echo tabularium-provision-started"
     )
@@ -1756,6 +1763,8 @@ def provision_log(host: str, port: int, *, user: str = "root", lines: int = 80) 
         "|".join(marker for marker, _ in _PROVISION_PHASES)
         + "|" + "|".join(_PROVISION_READY)
         + "|" + _RECIPE_MARKER
+        + "|Arresto controllato del server Tabularium|Preflight VRAM:|!!|"
+        + "|".join(_PROVISION_ERRORS)
     )
     # La sonda di liveness è la parte decisiva: senza, un processo morto a metà
     # resta indistinguibile da uno lento, e la UI mente per sempre.
@@ -1805,11 +1814,30 @@ def provision_log(host: str, port: int, *, user: str = "root", lines: int = 80) 
         (name for marker, name in _PROVISION_PHASES if any(marker in line for line in markers_seen)),
         "",
     )
+    # Durante una sostituzione il server precedente può registrare
+    # EngineDeadError mentre viene spento. Se lo script ha poi superato il
+    # preflight VRAM, quegli errori appartengono allo shutdown intenzionale e
+    # non devono far apparire fallito il setup nuovo.
+    failure_log = markers_seen
+    replacement_stop = max(
+        (index for index, line in enumerate(markers_seen) if "Arresto controllato del server Tabularium" in line),
+        default=-1,
+    )
+    if replacement_stop >= 0:
+        successful_vram = next(
+            (
+                index for index, line in enumerate(markers_seen)
+                if index > replacement_stop and "Preflight VRAM:" in line and "— OK." in line
+            ),
+            -1,
+        )
+        if successful_vram >= 0:
+            failure_log = log[successful_vram + 1:]
     # Prima le diagnostiche dello script ("!!"), poi l'ultimo errore del server.
-    failure = next((line for line in reversed(log) if line.startswith("!!")), "")
+    failure = next((line for line in reversed(failure_log) if line.startswith("!!")), "")
     if not failure:
         failure = next(
-            (line for line in reversed(log) if any(marker in line for marker in _PROVISION_ERRORS)),
+            (line for line in reversed(failure_log) if any(marker in line for marker in _PROVISION_ERRORS)),
             "",
         )
     # Nessun processo vivo e nessun server in ascolto: la preparazione è finita

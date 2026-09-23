@@ -312,28 +312,34 @@ def _dedupe_model_items(items: list[dict], iou_threshold: float = 0.92) -> list[
 
 
 def native_mode(adapter) -> str:
-    if adapter.adapter_id == "paddleocr-vl":
-        return "official"
-    """Il percorso nativo di un adapter, sondato come le modalità prefill:
-    una generazione di parsing per chi la ha verificata (MonkeyOCRv2
-    END2END), il protocollo client ufficiale a due passi per chi è nato così
-    (MinerU2.5). ``NotImplementedError`` → il modello non è integrato nel
-    percorso nativo e va detto con un errore esplicito, non con un prompt
-    sbagliato in silenzio."""
-    try:
-        adapter.prompt_for("end2end")
-        return "end2end"
-    except NotImplementedError:
-        pass
-    try:
-        adapter.prompt_for("layout")
-        return "two_stage"
-    except NotImplementedError as exc:
-        if getattr(adapter, "page_layout_fallback", None) == "ocr":
-            return "two_stage"
-        raise ValueError(
-            f"adapter '{adapter.adapter_id}': nessun percorso nativo integrato nel prefill"
-        ) from exc
+    """Restituisce il percorso predefinito dal produttore per questo adapter.
+
+    Il numero di passaggi è una proprietà del modello, non una preferenza
+    globale: MonkeyOCRv2 e TeleOCR usano il layout seguito dai crop; Unlimited
+    e dots.mocr usano la generazione completa; Paddle esegue il suo pipeline.
+    Un prompt disponibile non basta a dichiarare supporto nativo: se il
+    workflow del produttore non è integrato, il prefill deve fermarsi.
+    """
+    mode = getattr(adapter, "native_prefill_mode", None)
+    if mode == "official":
+        if getattr(adapter, "page_layout_fallback", None) == "official-pipeline":
+            return mode
+    elif mode == "end2end":
+        try:
+            adapter.prompt_for("end2end")
+            return mode
+        except NotImplementedError:
+            pass
+    elif mode == "two_stage":
+        try:
+            adapter.prompt_for("layout")
+            return mode
+        except NotImplementedError:
+            pass
+    raise ValueError(
+        f"adapter '{adapter.adapter_id}': workflow nativo del produttore "
+        "non ancora integrato nel prefill"
+    )
 
 
 def model_prelabel_events(
