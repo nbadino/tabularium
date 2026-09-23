@@ -275,12 +275,11 @@ def test_generic_vllm_adapter_auto_provisions_runtime_when_missing(monkeypatch):
         "app.services.serve_manager.local_runtime.bin_dir",
         lambda: __import__("pathlib").Path("/fake/vllm-runtime/bin"),
     )
-    captured: dict = {}
+    captured: list[tuple[list[str], dict | None]] = []
 
     class FakeProc:
         def __init__(self, *args, **kwargs):
-            captured["argv"] = args[0]
-            captured["env"] = kwargs.get("env")
+            captured.append((list(args[0]), kwargs.get("env")))
             self.pid = 4242
 
         def poll(self):
@@ -291,8 +290,9 @@ def test_generic_vllm_adapter_auto_provisions_runtime_when_missing(monkeypatch):
     serve_manager.start("mineru2.5", port=18891)
 
     assert calls == ["ensure_ready"]
-    assert captured["env"]["PATH"].startswith("/fake/vllm-runtime/bin")
-    assert captured["env"]["NVCC_PREPEND_FLAGS"] == "-allow-unsupported-compiler"
+    launch_env = next(env for argv, env in captured if argv[:2] == ["vllm", "serve"])
+    assert launch_env["PATH"].startswith("/fake/vllm-runtime/bin")
+    assert launch_env["NVCC_PREPEND_FLAGS"] == "-allow-unsupported-compiler"
 
 
 def test_generic_vllm_adapter_skips_provisioning_when_already_on_path(monkeypatch):
@@ -410,11 +410,11 @@ def test_monkeyocrv2_serves_without_dflash_when_draft_unavailable(monkeypatch):
     monkeypatch.setattr("app.services.serve_manager.config.TRAIN_REPO", "/my/own/MonkeyOCRv2")
     monkeypatch.setattr("app.services.serve_manager.config.TRAIN_PYTHON", "/my/own/env/bin/python")
     monkeypatch.setattr("app.services.serve_manager.ensure_draft", lambda adapter_id: None)
-    captured: dict = {}
+    captured: list[tuple[list[str], dict | None]] = []
 
     class FakeProc:
         def __init__(self, *args, **kwargs):
-            captured["env"] = kwargs.get("env")
+            captured.append((list(args[0]), kwargs.get("env")))
             self.pid = 4246
 
         def poll(self):
@@ -424,7 +424,10 @@ def test_monkeyocrv2_serves_without_dflash_when_draft_unavailable(monkeypatch):
 
     serve_manager.start("monkeyocrv2-parsing", port=18895)
 
-    assert "TABULARIUM_MONKEY_DFLASH_DRAFT" not in captured["env"]
+    launch_env = next(
+        env for argv, env in captured if argv and argv[0].endswith("scripts/serve_model.sh")
+    )
+    assert "TABULARIUM_MONKEY_DFLASH_DRAFT" not in launch_env
 
 
 def test_monkeyocrv2_skips_draft_when_dflash_disabled(monkeypatch):
