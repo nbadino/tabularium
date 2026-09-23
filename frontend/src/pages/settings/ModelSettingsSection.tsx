@@ -225,6 +225,16 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
                 </div>
               </section>
             )}
+            {selected.adapter_id === 'deepseek-ocr' && (
+              <section className="mt-4 max-w-xl border-t border-[color:var(--color-rule)] pt-3">
+                <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelWorkflow')}</h3>
+                <p className="mb-3 max-w-[75ch] text-[11px] text-[color:var(--color-ink-2)]">{t('settings.deepseekWorkflowIntro')}</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {numberField('workflow', 'ngram_size', t('settings.deepseekNgramSize'), 1, 256, 1)}
+                  {numberField('workflow', 'window_size', t('settings.deepseekWindowSize'), 1, 1024, 1)}
+                </div>
+              </section>
+            )}
             {selected.adapter_id === 'paddleocr-vl' && (
               <section className="mt-4 border-t border-[color:var(--color-rule)] pt-3">
                 <h3 className="mb-1 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelWorkflow')}</h3>

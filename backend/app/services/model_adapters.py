@@ -736,11 +736,11 @@ class GlmOcrAdapter(_StubAdapter):
 
 
 class DeepSeekOcrAdapter(_StubAdapter):
-    """deepseek-ai/DeepSeek-OCR-2 — variante corrente della famiglia DeepSeek
-    OCR, con compressione ottica del contesto utile per pagine molto dense
-    (\"Gundam mode\"). Parser e prompt restano da verificare nel protocollo
-    Tabularium: l'adapter resta uno stub per l'integrazione OCR, ma è ora
-    servibile (locale/cloud).
+    """deepseek-ai/DeepSeek-OCR-2 — OCR grounded con prompt nativo end-to-end.
+
+    Le richieste di inferenza usano il protocollo Markdown grounded ufficiale;
+    layout/testo/tabella restano prompt di serializzazione dataset e non sono
+    esposti come workflow d'inferenza a due stadi.
 
     `serve_command` verificato su recipes.vllm.ai/deepseek-ai/DeepSeek-OCR-2
     (agosto 2026): richiede **vLLM >= 0.12.0** (l'architettura ha una storia
@@ -755,6 +755,9 @@ class DeepSeekOcrAdapter(_StubAdapter):
     sufficiente per l'inferenza BF16", quindi margine stretto su una 8GB."""
 
     adapter_id = "deepseek-ocr"
+    native_prefill_mode = "end2end"
+    end2end_output_format = "grounded-markdown"
+    end2end_max_tokens = 4096
     capabilities = ModelCapabilities(
         adapter_id=adapter_id,
         display_name="DeepSeek-OCR-2",
@@ -781,16 +784,85 @@ class DeepSeekOcrAdapter(_StubAdapter):
     )
 
     _PROMPTS = {
-        "layout": "Return the document layout as a JSON array in reading order. Each item must contain bbox [x1,y1,x2,y2] normalized from 0 to 1000 and label.",
-        "text": "<image>\nFree OCR. Transcribe the image exactly and return only the recognized text.",
-        "table": "<image>\nExtract this table in OTSL format. Preserve every row, column, empty cell, and merged cell.",
+        # VLLM's OpenAI-compatible multimodal message carries the image as an
+        # image_url part; the model-specific prompt is the vendor's grounding
+        # task, without a second literal <image> token.
+        "end2end": "<|grounding|>Convert the document to markdown.",
+        # Prompt di target per gli export training per-task; il prefill
+        # operativo usa solo il protocollo nativo end2end sopra.
+        "layout": "Return a JSON array of layout regions with normalized 0-1000 bounding boxes and labels.",
+        "text": "Free OCR.",
+        "table": "<|grounding|>Convert the document to markdown.",
+    }
+    supports_two_stage = False
+    _LABEL_MAP = {
+        "title": "Title", "doc_title": "Title", "paragraph_title": "Section-header",
+        "section_header": "Section-header", "text": "Text", "paragraph": "Text",
+        "table": "Table", "figure": "Picture", "image": "Picture", "chart": "Picture",
+        "caption": "Caption", "footnote": "Footnote", "header": "Page-header",
+        "footer": "Page-footer", "list": "List-item", "list_item": "List-item",
+        "formula": "Formula", "equation": "Formula",
     }
 
     def prompt_for(self, task: str, label: str | None = None) -> str | None:
         prompt = self._PROMPTS.get(task)
         if prompt is None:
-            raise NotImplementedError(f"adapter '{self.adapter_id}': task '{task}' non supportato")
+            raise NotImplementedError(
+                f"adapter '{self.adapter_id}': usare il protocollo ufficiale grounded end-to-end"
+            )
         return prompt
+
+    def parse_layout(self, raw: str) -> list[dict]:
+        """Parse the model's native ref/det grounded-markdown protocol."""
+        marker = re.compile(
+            r"<\|ref\|>(.*?)<\|/ref\|>\s*<\|det\|>\s*"
+            r"\[\[\s*(-?\d+(?:\.\d+)?)[, ]+(-?\d+(?:\.\d+)?)[, ]+"
+            r"(-?\d+(?:\.\d+)?)[, ]+(-?\d+(?:\.\d+)?)\s*\]\]"
+            r"\s*<\|/det\|>(.*?)(?=<\|ref\|>|\Z)",
+            re.DOTALL,
+        )
+        items = []
+        for match in marker.finditer(raw or ""):
+            label_key = re.sub(r"[^a-z0-9]+", "_", match.group(1).strip().lower()).strip("_")
+            bbox = [float(match.group(i)) for i in range(2, 6)]
+            if not (0 <= bbox[0] < bbox[2] <= 1000 and 0 <= bbox[1] < bbox[3] <= 1000):
+                continue
+            items.append({
+                "bbox": bbox,
+                "label": self._LABEL_MAP.get(label_key, "Text"),
+                "content": match.group(6).strip(),
+            })
+        return items
+
+    def sampling_for(self, task: str) -> dict:
+        # Official vLLM recipe: deterministic OCR and preserve model markers;
+        # the logits processor reads these exact request-scoped parameters.
+        if task == "end2end":
+            return {
+                "temperature": 0.0,
+                "skip_special_tokens": False,
+                "vllm_xargs": {
+                    "ngram_size": 30,
+                    "window_size": 90,
+                    "whitelist_token_ids": [128821, 128822],
+                },
+            }
+        return {}
+
+    def request_overrides(self, task: str) -> dict:
+        if task != "end2end":
+            return {}
+        from . import model_settings
+
+        workflow = model_settings.get_settings(self.adapter_id)["effective"]["workflow"]
+        return {
+            "skip_special_tokens": False,
+            "vllm_xargs": {
+                "ngram_size": workflow.get("ngram_size", 30),
+                "window_size": workflow.get("window_size", 90),
+                "whitelist_token_ids": [128821, 128822],
+            },
+        }
 
     def serialize_target(self, task: str, value: object) -> str:
         return json.dumps(value, ensure_ascii=False, separators=(",", ":")) if task == "layout" else str(value)
@@ -926,6 +998,16 @@ class Qwen3VlAdapter(_StubAdapter):
     il tetto nativo (256K, estendibile a 1M con YaRN)."""
 
     adapter_id = "qwen3-vl-8b"
+    # The official Qwen3-VL card's VL sampling preset, surfaced in Settings
+    # and used by default so this adapter does not inherit Tabularium's generic
+    # greedy OCR sampling.
+    recommended_generation = {
+        "temperature": 0.7,
+        "top_p": 0.8,
+        "top_k": 20,
+        "repetition_penalty": 1.0,
+        "presence_penalty": 1.5,
+    }
     capabilities = ModelCapabilities(
         adapter_id=adapter_id,
         display_name="Qwen3-VL-8B",
@@ -959,6 +1041,9 @@ class Qwen3VlAdapter(_StubAdapter):
         if prompt is None:
             raise NotImplementedError(f"adapter '{self.adapter_id}': task '{task}' non supportato")
         return prompt
+
+    def sampling_for(self, task: str) -> dict:
+        return dict(self.recommended_generation)
 
     def serialize_target(self, task: str, value: object) -> str:
         return json.dumps(value, ensure_ascii=False, separators=(",", ":")) if task == "layout" else str(value)
@@ -1312,6 +1397,9 @@ def supported_prefill_modes(adapter: ModelAdapter) -> dict[str, bool]:
         ("supports_two_stage", "layout"),
         ("supports_end2end", "end2end"),
     ):
+        if getattr(adapter, mode, None) is False:
+            modes[mode] = False
+            continue
         try:
             adapter.prompt_for(task)
             modes[mode] = True

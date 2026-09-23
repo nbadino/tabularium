@@ -650,10 +650,12 @@ class VllmClient:
         )
         prompt = _prompt_for(self.adapter, "end2end", None, END2END_PROMPT)
         end2end_tokens = max_tokens
-        # Unlimited's grounded protocol has a deliberately smaller server
-        # budget; generic/end-to-end document parsing remains generous.
-        if getattr(self.adapter, "adapter_id", None) == "unlimited-ocr":
-            end2end_tokens = min(max_tokens, getattr(self.adapter, "end2end_max_tokens", max_tokens))
+        # Vendor-native grounded parsers may publish a task-specific output
+        # ceiling in addition to the generic endpoint budget.
+        if getattr(self.adapter, "adapter_id", None) in {"unlimited-ocr", "deepseek-ocr"}:
+            native_budget = getattr(self.adapter, "end2end_max_tokens", None)
+            if native_budget is not None:
+                end2end_tokens = min(end2end_tokens, int(native_budget))
         sampling = self._sampling_for("end2end")
         raw = self._chat(
             prepared,

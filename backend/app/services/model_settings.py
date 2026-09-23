@@ -65,7 +65,7 @@ _PADDLE_WORKFLOW_FIELDS = (
     | set(_PADDLE_WORKFLOW_LIMITS)
     | set(_PADDLE_WORKFLOW_ENUMS)
 )
-_NO_REPEAT_ADAPTERS = {"teleocr", "mineru2.5", "deepseek-ocr", "unlimited-ocr"}
+_NO_REPEAT_ADAPTERS = {"teleocr", "mineru2.5", "unlimited-ocr"}
 
 
 def _defaults(adapter_id: str) -> dict[str, Any]:
@@ -106,7 +106,7 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
     return {
         "serving": serving,
         # Empty means keep the adapter's per-task, source-verified sampling.
-        "generation": {},
+        "generation": dict(getattr(adapter, "recommended_generation", {}) or {}),
         # TeleOCR/config.py upstream uses MAX_PIXELS=8000*8000. Other models
         # keep the application-wide image cap unless their workflow says more.
         "image": {
@@ -121,6 +121,8 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
             if adapter_id == "teleocr"
             else {"speculative_tokens": 3}
             if adapter_id == "glm-ocr"
+            else {"ngram_size": 30, "window_size": 90}
+            if adapter_id == "deepseek-ocr"
             else {key: None for key in sorted(_PADDLE_WORKFLOW_FIELDS)}
             if adapter_id == "paddleocr-vl"
             else {}
@@ -252,6 +254,19 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
             ):
                 raise HTTPException(status_code=422, detail="workflow.speculative_tokens deve essere un intero tra 1 e 16")
             overrides[section] = {"speculative_tokens": tokens} if tokens is not None else {}
+        elif adapter_id == "deepseek-ocr":
+            if set(values) - {"ngram_size", "window_size"}:
+                raise HTTPException(status_code=422, detail="parametro workflow DeepSeek-OCR-2 non riconosciuto")
+            result = {}
+            for key, bounds in {"ngram_size": (1, 256), "window_size": (1, 1024)}.items():
+                value = values.get(key)
+                if value is None:
+                    continue
+                lo, hi = bounds
+                if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+                    raise HTTPException(status_code=422, detail=f"workflow.{key} deve essere un intero tra {lo} e {hi}")
+                result[key] = value
+            overrides[section] = result
         elif adapter_id == "paddleocr-vl":
             if set(values) - _PADDLE_WORKFLOW_FIELDS:
                 raise HTTPException(status_code=422, detail="parametro workflow PaddleOCR-VL non riconosciuto")
@@ -278,10 +293,7 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
         else:
             overrides[section] = {}
     serving = overrides.get("serving", {})
-    if (
-        overrides.get("generation", {}).get("no_repeat_ngram_size") is not None
-        and adapter_id not in _NO_REPEAT_ADAPTERS
-    ):
+    if overrides.get("generation", {}).get("no_repeat_ngram_size") is not None and adapter_id not in _NO_REPEAT_ADAPTERS:
         raise HTTPException(
             status_code=422,
             detail="generation.no_repeat_ngram_size richiede un logits processor previsto dalla ricetta del modello",

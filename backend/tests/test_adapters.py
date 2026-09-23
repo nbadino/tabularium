@@ -26,6 +26,7 @@ def test_monkeyocr_adapter_contract():
         ("mineru2.5", "two_stage"),
         ("teleocr", "official"),
         ("unlimited-ocr", "end2end"),
+        ("deepseek-ocr", "end2end"),
         ("dots-ocr", "end2end"),
         ("paddleocr-vl", "official"),
     ],
@@ -36,12 +37,26 @@ def test_native_prefill_selects_model_workflow(adapter_id, expected):
     assert supported_prefill_modes(adapter)["supports_native"]
 
 
-@pytest.mark.parametrize("adapter_id", ["glm-ocr", "deepseek-ocr", "qwen3-vl-8b"])
+@pytest.mark.parametrize("adapter_id", ["glm-ocr", "qwen3-vl-8b"])
 def test_custom_layout_prompts_are_not_misrepresented_as_native(adapter_id):
     adapter = get_adapter(adapter_id)
     assert supported_prefill_modes(adapter)["supports_native"] is False
     with pytest.raises(ValueError, match="workflow nativo"):
         native_mode(adapter)
+
+
+def test_deepseek_native_workflow_parses_vendor_grounded_markdown():
+    adapter = get_adapter("deepseek-ocr")
+    assert native_mode(adapter) == "end2end"
+    assert adapter.prompt_for("end2end") == "<|grounding|>Convert the document to markdown."
+    items = adapter.parse_layout(
+        "<|ref|>title<|/ref|><|det|>[[330, 198, 558, 230]]<|/det|>\n# Register\n"
+        "<|ref|>table<|/ref|><|det|>[[25, 240, 980, 950]]<|/det|>\n| Ship | Port |"
+    )
+    assert items == [
+        {"bbox": [330.0, 198.0, 558.0, 230.0], "label": "Title", "content": "# Register"},
+        {"bbox": [25.0, 240.0, 980.0, 950.0], "label": "Table", "content": "| Ship | Port |"},
+    ]
 
 
 def test_teleocr_native_result_maps_vendor_content_blocks():

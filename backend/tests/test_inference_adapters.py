@@ -238,6 +238,46 @@ def test_unlimited_end2end_accepts_grounded_markdown_until_server_finish(monkeyp
     assert requests_seen[0]["messages"][0]["content"][1]["type"] == "image_url"
 
 
+def test_deepseek_end2end_uses_official_grounded_prompt_and_vllm_sampling(monkeypatch, tmp_path):
+    from app import config
+    from app.db import init_db
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "deepseek-inference.db")
+    init_db()
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def raise_for_status(self): return None
+        def iter_lines(self, decode_unicode=True):
+            del decode_unicode
+            text = (
+                "<|ref|>title<|/ref|><|det|>[[330, 198, 558, 230]]<|/det|>\n# Register"
+            )
+            yield "data: " + json.dumps({"choices": [{"delta": {"content": text}}]})
+            yield "data: [DONE]"
+
+    requests_seen = []
+    def post(*_args, **kwargs):
+        requests_seen.append(kwargs["json"])
+        return Response()
+    monkeypatch.setattr(infmod.requests, "post", post)
+
+    client = infmod.VllmClient(
+        url="http://127.0.0.1:8888/v1", adapter=model_adapters.get_adapter("deepseek-ocr")
+    )
+    items = client.end2end(Image.new("RGB", (16, 16), "white"), total_timeout=5)
+    payload = requests_seen[0]
+    assert items == [{"bbox": [330.0, 198.0, 558.0, 230.0], "label": "Title", "content": "# Register"}]
+    assert payload["temperature"] == 0.0
+    assert payload["skip_special_tokens"] is False
+    assert payload["vllm_xargs"] == {
+        "ngram_size": 30, "window_size": 90, "whitelist_token_ids": [128821, 128822]
+    }
+    assert payload["max_tokens"] == 4096
+    assert payload["messages"][0]["content"][1]["text"] == "<|grounding|>Convert the document to markdown."
+
+
 def test_streaming_complete_list_drains_until_done_for_non_modal(monkeypatch):
     consumed: list[str] = []
 

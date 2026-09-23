@@ -97,6 +97,29 @@ def test_glm_batched_token_budget_can_exceed_single_sequence_context(tmp_path, m
     assert saved["effective"]["serving"]["max_num_batched_tokens"] == 32768
 
 
+def test_model_settings_use_official_qwen_generation_and_deepseek_n_gram_defaults(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "official-generation.db")
+    init_db()
+
+    qwen = model_settings.get_settings("qwen3-vl-8b")
+    assert qwen["recommended"]["generation"] == {
+        "temperature": 0.7,
+        "top_p": 0.8,
+        "top_k": 20,
+        "repetition_penalty": 1.0,
+        "presence_penalty": 1.5,
+    }
+
+    deepseek = model_settings.get_settings("deepseek-ocr")
+    assert deepseek["recommended"]["workflow"] == {"ngram_size": 30, "window_size": 90}
+    saved = model_settings.save_settings("deepseek-ocr", {"workflow": {"ngram_size": 40, "window_size": 120}})
+    assert saved["effective"]["workflow"] == {"ngram_size": 40, "window_size": 120}
+    with pytest.raises(HTTPException, match="intero tra 1 e 256"):
+        model_settings.save_settings("deepseek-ocr", {"workflow": {"ngram_size": 0}})
+    with pytest.raises(HTTPException, match="logits processor previsto"):
+        model_settings.save_settings("deepseek-ocr", {"generation": {"no_repeat_ngram_size": 30}})
+
+
 def test_glm_mtp_tokens_are_model_specific_and_applied_to_cloud_recipe(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "glm-mtp.db")
     init_db()
