@@ -71,25 +71,18 @@ _NO_REPEAT_ADAPTERS = {"teleocr", "mineru2.5", "unlimited-ocr"}
 def _defaults(adapter_id: str) -> dict[str, Any]:
     adapter = get_adapter(adapter_id)
     recipe = serve_recipes.RECIPES.get(adapter_id)
-    # Reflect the exact serving command instead of presenting generic vLLM
-    # guesses as each model's recommended values. Recipes cover cloud; adapter
-    # commands cover local vLLM. Recipe values take precedence where both exist.
+    # This panel tunes the remote serving recipe. Do not fill missing cloud
+    # values from the adapter's local command: those may be machine-specific
+    # caps (for example an 8 GB GPU) and would misrepresent what Vast actually
+    # launches. Missing recipe flags mean the runtime/model defaults apply.
     serving: dict[str, Any] = {
         "gpu_memory_utilization": None,
         "max_model_len": None,
         "max_num_seqs": None,
         "max_num_batched_tokens": None,
     }
-    command_sources = []
     if recipe:
-        command_sources.append(list(recipe.serve_args))
-    try:
-        command = adapter.serve_command("MODEL_PATH", 8888)
-    except (AttributeError, NotImplementedError, TypeError, ValueError):
-        command = None
-    if command:
-        command_sources.append(command)
-    for args in command_sources:
+        args = list(recipe.serve_args)
         for flag, key, cast in (
             ("--gpu-memory-utilization", "gpu_memory_utilization", float),
             ("--max-model-len", "max_model_len", int),
@@ -101,8 +94,6 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
                     serving[key] = cast(args[args.index(flag) + 1])
                 except (ValueError, IndexError, TypeError):
                     pass
-    if serving["max_model_len"] is None:
-        serving["max_model_len"] = adapter.capabilities.max_model_len
     return {
         "serving": serving,
         # Empty means keep the adapter's per-task, source-verified sampling.
@@ -299,7 +290,23 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
             detail="generation.no_repeat_ngram_size richiede un logits processor previsto dalla ricetta del modello",
         )
     model_context = _defaults(adapter_id)["serving"]["max_model_len"]
-    effective_context = serving.get("max_model_len", model_context)
+    if model_context is None:
+        # Validation still needs a ceiling when the cloud recipe delegates
+        # context sizing to vLLM. Prefer the model contract, then the local
+        # command's conservative cap; neither is presented as the cloud value.
+        model_context = adapter.capabilities.max_model_len
+    if model_context is None:
+        try:
+            command = adapter.serve_command("MODEL_PATH", 8888)
+        except (AttributeError, NotImplementedError, TypeError, ValueError):
+            command = None
+        if command and "--max-model-len" in command:
+            try:
+                model_context = int(command[command.index("--max-model-len") + 1])
+            except (ValueError, IndexError, TypeError):
+                model_context = None
+    model_context = model_context or _SERVING_LIMITS["max_model_len"][1]
+    effective_context = serving.get("max_model_len") or model_context
     if effective_context > model_context:
         raise HTTPException(status_code=422, detail=f"max_model_len supera il contesto del modello ({model_context})")
     # `max_num_batched_tokens` è il budget del batch di prefill sull'intero

@@ -88,7 +88,9 @@ def test_glm_batched_token_budget_can_exceed_single_sequence_context(tmp_path, m
     init_db()
 
     defaults = model_settings.get_settings("glm-ocr")["recommended"]["serving"]
-    assert defaults["max_model_len"] == 16384
+    # The cloud recipe delegates max_model_len to vLLM; the local command's
+    # conservative 16k cap is not a Vast recommendation.
+    assert defaults["max_model_len"] is None
     assert defaults["max_num_batched_tokens"] == 32768
 
     saved = model_settings.save_settings("glm-ocr", {
@@ -237,17 +239,26 @@ def test_paddle_predict_options_reach_the_official_pipeline(tmp_path, monkeypatc
     assert "pipeline.predict(image, **predict_options)" in _RUNNER
 
 
-def test_recommended_serving_values_come_from_model_commands():
+def test_recommended_serving_values_only_come_from_remote_recipes():
     for adapter_id in serve_recipes.RECIPES:
         settings = model_settings.get_settings(adapter_id)
         recipe_args = list(serve_recipes.RECIPES[adapter_id].serve_args)
-        command = model_settings.get_adapter(adapter_id).serve_command("MODEL_PATH", 8888)
-        args = recipe_args + (command or [])
         for flag, key, cast in (
             ("--gpu-memory-utilization", "gpu_memory_utilization", float),
             ("--max-model-len", "max_model_len", int),
             ("--max-num-seqs", "max_num_seqs", int),
             ("--max-num-batched-tokens", "max_num_batched_tokens", int),
         ):
-            if flag in args:
-                assert settings["recommended"]["serving"][key] == cast(args[args.index(flag) + 1])
+            if flag in recipe_args:
+                assert settings["recommended"]["serving"][key] == cast(recipe_args[recipe_args.index(flag) + 1])
+            else:
+                assert settings["recommended"]["serving"][key] is None
+
+    # These adapters have local hardware caps that the cloud recipe omits.
+    # The Settings panel must leave those fields automatic for Vast.
+    for adapter_id in ("mineru2.5", "dots-ocr", "glm-ocr", "deepseek-ocr", "paddleocr-vl"):
+        recommended = model_settings.get_settings(adapter_id)["recommended"]["serving"]
+        if "--gpu-memory-utilization" not in serve_recipes.recipe_for(adapter_id).serve_args:
+            assert recommended["gpu_memory_utilization"] is None
+        if "--max-model-len" not in serve_recipes.recipe_for(adapter_id).serve_args:
+            assert recommended["max_model_len"] is None

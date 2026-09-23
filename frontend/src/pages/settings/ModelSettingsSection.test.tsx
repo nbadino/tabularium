@@ -72,9 +72,9 @@ describe('ModelSettingsSection', () => {
     workflow.layout_merge_bboxes_mode = null
     vi.mocked(apiGet).mockResolvedValueOnce({ items: [{
       adapter_id: 'paddleocr-vl', display_name: 'PaddleOCR-VL-1.6',
-      recommended: { serving: { max_model_len: 12288 }, generation: {}, image: { max_pixels: null }, workflow },
+      recommended: { serving: { max_model_len: null }, generation: {}, image: { max_pixels: null }, workflow },
       overrides: {},
-      effective: { serving: { max_model_len: 12288 }, generation: {}, image: { max_pixels: null }, workflow },
+      effective: { serving: { max_model_len: null }, generation: {}, image: { max_pixels: null }, workflow },
       restart_required: false,
     }] } as never)
     render(<ModelSettingsSection isAdmin />)
