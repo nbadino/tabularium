@@ -67,6 +67,20 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
         model_settings.save_settings("teleocr", {"image": {"min_pixels": 1000}})
     with pytest.raises(HTTPException, match="richiede un logits processor"):
         model_settings.save_settings("paddleocr-vl", {"generation": {"no_repeat_ngram_size": 100}})
+    unlimited = model_settings.get_settings("unlimited-ocr")
+    assert unlimited["recommended"]["workflow"] == {
+        "ngram_size": 35, "window_size": 128, "image_mode": "gundam",
+    }
+    tuned = model_settings.save_settings("unlimited-ocr", {
+        "workflow": {"ngram_size": 40, "window_size": 1024, "image_mode": "base"},
+    })
+    assert tuned["effective"]["workflow"] == {
+        "ngram_size": 40, "window_size": 1024, "image_mode": "base",
+    }
+    with pytest.raises(HTTPException, match="image_mode non valido"):
+        model_settings.save_settings("unlimited-ocr", {"workflow": {"image_mode": "crop"}})
+    with pytest.raises(HTTPException, match="richiede un logits processor"):
+        model_settings.save_settings("unlimited-ocr", {"generation": {"no_repeat_ngram_size": 35}})
 
     reset = model_settings.save_settings("teleocr", {})
     assert reset["overrides"] == {}

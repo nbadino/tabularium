@@ -60,12 +60,14 @@ _PADDLE_WORKFLOW_LIMITS = {
 _PADDLE_WORKFLOW_ENUMS = {
     "layout_merge_bboxes_mode": {"large", "small", "union"},
 }
+_UNLIMITED_WORKFLOW_LIMITS = {"ngram_size": (1, 512), "window_size": (1, 2048)}
+_UNLIMITED_WORKFLOW_ENUMS = {"image_mode": {"gundam", "base"}}
 _PADDLE_WORKFLOW_FIELDS = (
     _PADDLE_BOOLEAN_WORKFLOW
     | set(_PADDLE_WORKFLOW_LIMITS)
     | set(_PADDLE_WORKFLOW_ENUMS)
 )
-_NO_REPEAT_ADAPTERS = {"teleocr", "mineru2.5", "unlimited-ocr"}
+_NO_REPEAT_ADAPTERS = {"teleocr", "mineru2.5"}
 
 
 def _defaults(adapter_id: str) -> dict[str, Any]:
@@ -121,6 +123,8 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
             if adapter_id == "deepseek-ocr"
             else {key: None for key in sorted(_PADDLE_WORKFLOW_FIELDS)}
             if adapter_id == "paddleocr-vl"
+            else {"ngram_size": 35, "window_size": 128, "image_mode": "gundam"}
+            if adapter_id == "unlimited-ocr"
             else {}
         ),
         # None preserves the mlx-vlm version's own default. These only apply
@@ -288,6 +292,26 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
                     if value not in _PADDLE_WORKFLOW_ENUMS[key]:
                         raise HTTPException(status_code=422, detail=f"workflow.{key} non valido")
                     result[key] = value
+            overrides[section] = result
+        elif adapter_id == "unlimited-ocr":
+            allowed = set(_UNLIMITED_WORKFLOW_LIMITS) | set(_UNLIMITED_WORKFLOW_ENUMS)
+            if set(values) - allowed:
+                raise HTTPException(status_code=422, detail="parametro workflow Unlimited-OCR non riconosciuto")
+            result = {}
+            for key, choices in _UNLIMITED_WORKFLOW_ENUMS.items():
+                value = values.get(key)
+                if value is not None:
+                    if value not in choices:
+                        raise HTTPException(status_code=422, detail=f"workflow.{key} non valido")
+                    result[key] = value
+            for key, bounds in _UNLIMITED_WORKFLOW_LIMITS.items():
+                value = values.get(key)
+                if value is None:
+                    continue
+                lo, hi = bounds
+                if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+                    raise HTTPException(status_code=422, detail=f"workflow.{key} deve essere un intero tra {lo} e {hi}")
+                result[key] = value
             overrides[section] = result
         elif values:
             raise HTTPException(status_code=422, detail="workflow personalizzato non disponibile per questo modello")

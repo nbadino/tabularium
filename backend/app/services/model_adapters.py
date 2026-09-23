@@ -539,9 +539,16 @@ class UnlimitedOcrAdapter(_StubAdapter):
     def request_overrides(self, task: str) -> dict:
         if task != "end2end":
             return {}
+        from . import model_settings
+
+        workflow = model_settings.get_settings(self.adapter_id)["effective"]["workflow"]
         return {
             "skip_special_tokens": False,
-            "vllm_xargs": {"ngram_size": 35, "window_size": 128},
+            "images_config": {"image_mode": workflow.get("image_mode", "gundam")},
+            "vllm_xargs": {
+                "ngram_size": workflow.get("ngram_size", 35),
+                "window_size": workflow.get("window_size", 128),
+            },
         }
 
     def serve_command(self, model_path: str, port: int) -> list[str] | None:

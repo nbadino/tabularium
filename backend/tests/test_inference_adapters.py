@@ -51,6 +51,7 @@ def test_unlimited_ocr_uses_official_vllm_recipe_and_parses_grounding():
     assert adapter.prompt_for("end2end").startswith("<image>")
     assert adapter.request_overrides("end2end") == {
         "skip_special_tokens": False,
+        "images_config": {"image_mode": "gundam"},
         "vllm_xargs": {"ngram_size": 35, "window_size": 128},
     }
     parsed = adapter.parse_layout(
@@ -58,6 +59,60 @@ def test_unlimited_ocr_uses_official_vllm_recipe_and_parses_grounding():
         "<|det|>image [1,2,3]<|/det|>ignored"
     )
     assert parsed == [{"bbox": [10.0, 20.0, 300.0, 400.0], "label": "text", "content": "Hello"}]
+
+
+def test_unlimited_ocr_settings_reach_the_official_request_overrides(tmp_path, monkeypatch):
+    from app import config
+    from app.db import init_db
+    from app.services import model_settings
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "unlimited-settings.db")
+    init_db()
+    model_settings.save_settings("unlimited-ocr", {
+        "workflow": {"ngram_size": 42, "window_size": 1024, "image_mode": "base"},
+    })
+    adapter = model_adapters.get_adapter("unlimited-ocr")
+    assert adapter.request_overrides("end2end") == {
+        "skip_special_tokens": False,
+        "images_config": {"image_mode": "base"},
+        "vllm_xargs": {"ngram_size": 42, "window_size": 1024},
+    }
+
+
+def test_mineru_ngram_override_reaches_vllm_xargs(tmp_path, monkeypatch):
+    from app import config
+    from app.db import init_db
+    from app.services import model_settings
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "mineru-settings.db")
+    init_db()
+    model_settings.save_settings("mineru2.5", {"generation": {"no_repeat_ngram_size": 72}})
+    captured = {}
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def raise_for_status(self): return None
+        def iter_lines(self, decode_unicode=True):
+            del decode_unicode
+            yield 'data: ' + json.dumps({"choices": [{"delta": {"content": "ok"}}]})
+            yield "data: [DONE]"
+
+    def post(_url, **kwargs):
+        captured.update(kwargs["json"])
+        return Response()
+
+    monkeypatch.setattr(infmod.requests, "post", post)
+    client = infmod.VllmClient(
+        url="http://127.0.0.1:8888/v1", adapter=model_adapters.get_adapter("mineru2.5"),
+    )
+    result = client._chat(
+        Image.new("RGB", (12, 12), "white"), "\nText Recognition:",
+        sampling=client._sampling_for("text"), task="text",
+    )
+    assert result == "ok"
+    assert captured["vllm_xargs"]["no_repeat_ngram_size"] == 72
+    assert "extra_args" not in captured
 
 
 def test_dots_serve_uses_required_chat_template_content_format():
@@ -337,7 +392,7 @@ def test_unlimited_end2end_accepts_grounded_markdown_until_server_finish(monkeyp
     assert items[0]["label"] == "text"
     assert items[0]["content"] == "Hello"
     assert requests_seen[0]["skip_special_tokens"] is False
-    assert "images_config" not in requests_seen[0]
+    assert requests_seen[0]["images_config"] == {"image_mode": "gundam"}
     assert requests_seen[0]["max_tokens"] == 8192
     assert requests_seen[0]["messages"][0]["content"][0]["type"] == "text"
     assert requests_seen[0]["messages"][0]["content"][1]["type"] == "image_url"

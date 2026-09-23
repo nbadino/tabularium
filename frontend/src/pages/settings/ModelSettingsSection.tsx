@@ -158,7 +158,7 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
               <section>
                 <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelGeneration')}</h3>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-                  {GENERATION_FIELDS.map((field) => numberField('generation', field.key, t(`settings.modelField.${field.key}`), field.min, field.max, field.step, true))}
+                  {GENERATION_FIELDS.filter((field) => field.key !== 'no_repeat_ngram_size' || ['teleocr', 'mineru2.5'].includes(selected.adapter_id)).map((field) => numberField('generation', field.key, t(`settings.modelField.${field.key}`), field.min, field.max, field.step, true))}
                 </div>
               </section>
               <section>
@@ -232,6 +232,27 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
                 <div className="grid gap-2 sm:grid-cols-2">
                   {numberField('workflow', 'ngram_size', t('settings.deepseekNgramSize'), 1, 256, 1)}
                   {numberField('workflow', 'window_size', t('settings.deepseekWindowSize'), 1, 1024, 1)}
+                </div>
+              </section>
+            )}
+            {selected.adapter_id === 'unlimited-ocr' && (
+              <section className="mt-4 max-w-xl border-t border-[color:var(--color-rule)] pt-3">
+                <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelWorkflow')}</h3>
+                <p className="mb-3 max-w-[75ch] text-[11px] text-[color:var(--color-ink-2)]">{t('settings.unlimitedWorkflowIntro')}</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {numberField('workflow', 'ngram_size', t('settings.unlimitedNgramSize'), 1, 512, 1)}
+                  {numberField('workflow', 'window_size', t('settings.unlimitedWindowSize'), 1, 2048, 1)}
+                  <label className="block border-t border-[color:var(--color-rule)] pt-2">
+                    <span className="lbl">{t('settings.unlimitedImageMode')}</span>
+                    <select className="fld mt-1 w-full" value={String(draft.workflow?.image_mode ?? 'gundam')} disabled={!isAdmin || loading || saving}
+                      onChange={(event) => {
+                        setDraft((current) => ({ ...current, workflow: { ...(current.workflow ?? {}), image_mode: event.target.value } }))
+                        setSaved(false)
+                      }}>
+                      <option value="gundam">gundam · {t('settings.unlimitedGundamHint')}</option>
+                      <option value="base">base · {t('settings.unlimitedBaseHint')}</option>
+                    </select>
+                  </label>
                 </div>
               </section>
             )}

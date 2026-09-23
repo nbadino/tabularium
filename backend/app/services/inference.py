@@ -454,10 +454,16 @@ class VllmClient:
         if sampling:
             no_repeat_ngram_size = sampling.pop("no_repeat_ngram_size", None)
             if no_repeat_ngram_size is not None:
-                payload["extra_args"] = {
-                    **(payload.get("extra_args") or {}),
-                    "no_repeat_ngram_size": no_repeat_ngram_size,
-                }
+                if self.adapter.adapter_id == "mineru2.5":
+                    sampling["vllm_xargs"] = {
+                        **(sampling.get("vllm_xargs") or {}),
+                        "no_repeat_ngram_size": no_repeat_ngram_size,
+                    }
+                else:
+                    payload["extra_args"] = {
+                        **(payload.get("extra_args") or {}),
+                        "no_repeat_ngram_size": no_repeat_ngram_size,
+                    }
             payload.update(sampling)
         request_overrides = getattr(self.adapter, "request_overrides", None)
         if callable(request_overrides):
