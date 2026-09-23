@@ -275,8 +275,10 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
     effective_context = serving.get("max_model_len", model_context)
     if effective_context > model_context:
         raise HTTPException(status_code=422, detail=f"max_model_len supera il contesto del modello ({model_context})")
-    if serving.get("max_num_batched_tokens") and serving["max_num_batched_tokens"] > effective_context:
-        raise HTTPException(status_code=422, detail="max_num_batched_tokens non può superare max_model_len")
+    # `max_num_batched_tokens` è il budget del batch di prefill sull'intero
+    # scheduler, non la lunghezza massima di una singola sequenza. Ricette
+    # ufficiali possono (e GLM-OCR lo fa) impostarlo sopra `max_model_len`;
+    # i due valori vanno quindi validati separatamente.
     if overrides.get("generation", {}).get("max_tokens", 0) > max(1, effective_context - 2048):
         raise HTTPException(status_code=422, detail=f"generation.max_tokens deve lasciare spazio per l'immagine nel contesto ({effective_context})")
     overrides = {section: values for section, values in overrides.items() if values}

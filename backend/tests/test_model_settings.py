@@ -83,6 +83,20 @@ def test_serve_recipe_applies_only_explicit_supported_overrides():
     assert "--dtype" in argv and "bfloat16" in argv
 
 
+def test_glm_batched_token_budget_can_exceed_single_sequence_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "glm-settings.db")
+    init_db()
+
+    defaults = model_settings.get_settings("glm-ocr")["recommended"]["serving"]
+    assert defaults["max_model_len"] == 16384
+    assert defaults["max_num_batched_tokens"] == 32768
+
+    saved = model_settings.save_settings("glm-ocr", {
+        "serving": {"max_num_batched_tokens": 32768},
+    })
+    assert saved["effective"]["serving"]["max_num_batched_tokens"] == 32768
+
+
 def test_mlx_settings_are_validated_and_applied_to_local_server():
     from app.services import mlx_runtime
 
