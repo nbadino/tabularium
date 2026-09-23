@@ -1444,6 +1444,14 @@ def test_teleocr_cloud_provision_installs_official_architecture_plugin():
     import base64
     assert b"aio_batch_two_step_extract" in base64.b64decode(recipe["native_gateway_b64"])
 
+    glm = cm.build_provision_recipe("glm-ocr")
+    assert glm["vllm_version"] == "0.19.0"
+    assert glm["transformers_version"] == "5.3.1"
+    assert "glmocr[selfhosted]" in glm["pip_extra"]
+    assert glm["native_remote_port"] == 8890
+    assert glm["native_gateway_b64"]
+    assert b"from glmocr import GlmOcr" in base64.b64decode(glm["native_gateway_b64"])
+
     monkey = cm.build_provision_recipe("monkeyocrv2-parsing")
     assert monkey["runtime"] == "monkeyocr" and monkey["needs_monkeyocr_repo"] is True
     assert monkey["argv"][0] == "serve.py"

@@ -24,7 +24,7 @@ const SERVING_FIELDS = [
 ] as const
 const GENERATION_FIELDS = [
   { key: 'temperature', min: 0, max: 2, step: 0.05 },
-  { key: 'top_p', min: 0.01, max: 1, step: 0.01 },
+  { key: 'top_p', min: 0.000001, max: 1, step: 0.00001 },
   { key: 'top_k', min: 1, max: 1000, step: 1 },
   { key: 'max_tokens', min: 1, max: 131072, step: 128 },
   { key: 'repetition_penalty', min: 0.5, max: 2, step: 0.05 },
@@ -164,7 +164,7 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
               <section>
                 <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelImage')}</h3>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-                  {numberField('image', 'max_pixels', t('settings.modelField.max_pixels'), 0, 64000000, 1000, true)}
+                  {numberField('image', 'max_pixels', t('settings.modelField.max_pixels'), 0, 128000000, 1000, true)}
                   {selected.adapter_id === 'paddleocr-vl' && numberField('image', 'min_pixels', t('settings.modelField.min_pixels'), 1, 64000000, 1000, true)}
                 </div>
                 <p className="mt-2 text-[10px] text-[color:var(--color-ink-3)]">{t('settings.modelPixelsHint')}</p>

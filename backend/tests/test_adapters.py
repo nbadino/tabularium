@@ -29,6 +29,7 @@ def test_monkeyocr_adapter_contract():
         ("deepseek-ocr", "end2end"),
         ("dots-ocr", "end2end"),
         ("paddleocr-vl", "official"),
+        ("glm-ocr", "official"),
     ],
 )
 def test_native_prefill_selects_model_workflow(adapter_id, expected):
@@ -37,7 +38,24 @@ def test_native_prefill_selects_model_workflow(adapter_id, expected):
     assert supported_prefill_modes(adapter)["supports_native"]
 
 
-@pytest.mark.parametrize("adapter_id", ["glm-ocr", "qwen3-vl-8b"])
+def test_glm_native_result_uses_vendor_normalized_boxes_and_labels():
+    adapter = get_adapter("glm-ocr")
+    assert adapter.parse_native_result([[{
+        "index": 0, "label": "table", "content": "| Ship | Port |",
+        "bbox_2d": [10, 20, 900, 800],
+    }, {
+        "index": 1, "label": "display_formula", "content": "$x^2$",
+        "bbox_2d": [10, 810, 900, 900],
+    }, {
+        "index": 2, "label": "text", "content": "bad bbox",
+        "bbox_2d": [900, 900, 10, 10],
+    }]]) == [
+        {"bbox": [10, 20, 900, 800], "label": "Table", "content": "| Ship | Port |"},
+        {"bbox": [10, 810, 900, 900], "label": "Formula", "content": "$x^2$"},
+    ]
+
+
+@pytest.mark.parametrize("adapter_id", ["qwen3-vl-8b"])
 def test_custom_layout_prompts_are_not_misrepresented_as_native(adapter_id):
     adapter = get_adapter(adapter_id)
     assert supported_prefill_modes(adapter)["supports_native"] is False

@@ -84,6 +84,111 @@ def test_paddle_vl_exposes_gpu_recognition_with_explicit_layout_fallback():
     assert adapter.capabilities.table_format == "html"
 
 
+def test_glm_native_gateway_forwards_official_page_and_sampling(monkeypatch):
+    from types import SimpleNamespace
+
+    adapter = model_adapters.get_adapter("glm-ocr")
+    client = infmod.VllmClient(
+        url="http://127.0.0.1:8888/v1", adapter=adapter,
+        native_url="http://127.0.0.1:18890/glmocr", provider="vast",
+    )
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return {"json_result": [[{
+                "label": "table", "content": "record", "bbox_2d": [0, 0, 1000, 1000],
+            }]]}
+
+    def post(url, **kwargs):
+        captured.update({"url": url, **kwargs})
+        return Response()
+
+    monkeypatch.setattr(infmod.requests, "post", post)
+    blocks = client.glmocr_native_page(Image.new("RGB", (32, 24), "white"))
+    assert captured["url"] == "http://127.0.0.1:18890/glmocr/parse"
+    assert captured["headers"]["x-glmocr-generation"] == json.dumps(
+        model_adapters.get_adapter("glm-ocr").recommended_generation, separators=(",", ":")
+    )
+    assert captured["headers"]["x-glmocr-max-pixels"] == "71372800"
+    assert blocks == [{"bbox": [0, 0, 1000, 1000], "label": "Table", "content": "record"}]
+
+
+def test_glm_native_gateway_applies_and_restores_vendor_sdk_settings():
+    import importlib.util
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    gateway_path = Path(__file__).resolve().parents[2] / "scripts/cloud/glmocr_native_gateway.py"
+    spec = importlib.util.spec_from_file_location("glmocr_native_gateway_test", gateway_path)
+    assert spec is not None and spec.loader is not None
+    gateway = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gateway)
+    page_loader = SimpleNamespace(
+        max_tokens=8192, temperature=0.0, top_p=0.00001, top_k=1,
+        repetition_penalty=1.1, max_pixels=1_003_520,
+    )
+    seen = {}
+
+    class Parser:
+        config_model = SimpleNamespace(pipeline=SimpleNamespace(page_loader=page_loader))
+        def parse(self, body, *, save_layout_visualization):
+            seen.update({
+                "body": body,
+                "settings": {key: getattr(page_loader, key) for key in (
+                    "max_tokens", "temperature", "top_p", "top_k",
+                    "repetition_penalty", "max_pixels",
+                )},
+                "save_layout_visualization": save_layout_visualization,
+            })
+            return SimpleNamespace(json_result=[[{"label": "text"}],], markdown_result="text")
+
+    gateway._parser = Parser()
+    result = gateway._parse(b"page", {"max_tokens": 4096, "temperature": 0.2}, 2_000_000)
+
+    assert seen == {
+        "body": b"page",
+        "settings": {
+            "max_tokens": 4096, "temperature": 0.2, "top_p": 0.00001,
+            "top_k": 1, "repetition_penalty": 1.1, "max_pixels": 2_000_000,
+        },
+        "save_layout_visualization": False,
+    }
+    assert result == {"json_result": [[{"label": "text"}]], "markdown_result": "text"}
+    assert page_loader.max_tokens == 8192 and page_loader.temperature == 0.0
+    assert page_loader.max_pixels == 1_003_520
+
+
+def test_glm_native_gateway_configures_the_official_selfhosted_sdk(monkeypatch):
+    import asyncio
+    import importlib.util
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    gateway_path = Path(__file__).resolve().parents[2] / "scripts/cloud/glmocr_native_gateway.py"
+    spec = importlib.util.spec_from_file_location("glmocr_native_gateway_start_test", gateway_path)
+    assert spec is not None and spec.loader is not None
+    gateway = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gateway)
+    captured = {}
+    parser = object()
+    monkeypatch.setitem(sys.modules, "glmocr", SimpleNamespace(GlmOcr=lambda **kwargs: captured.update(kwargs) or parser))
+    monkeypatch.setenv("TABULARIUM_SERVER_API_KEY", "test-key")
+    monkeypatch.setenv("TABULARIUM_GLMOCR_VLLM_PORT", "8123")
+
+    asyncio.run(gateway._startup())
+
+    assert captured == {
+        "mode": "selfhosted", "api_key": "test-key",
+        "ocr_api_host": "127.0.0.1", "ocr_api_port": 8123,
+        "layout_device": None,
+    }
+    assert gateway._parser is parser
+
+
 def test_mineru_keeps_official_layout_and_full_table_context():
     adapter = model_adapters.get_adapter("mineru2.5")
     assert adapter.official_layout_size == (1036, 1036)

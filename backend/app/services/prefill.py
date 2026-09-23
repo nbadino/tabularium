@@ -435,6 +435,10 @@ def model_prelabel_events(
                         # block crops, recognition and post-processing. Its
                         # gateway already returns normalized 0–1000 boxes.
                         items = client.teleocr_native_page(image)
+                    elif client.adapter.adapter_id == "glm-ocr":
+                        # GLM-OCR's official SDK owns PP-DocLayout, region OCR,
+                        # and document-order formatting for self-hosted vLLM.
+                        items = client.glmocr_native_page(image)
                     else:
                         paddle_backend = "vllm-server"
                         if client.provider == "local":

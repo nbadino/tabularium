@@ -684,6 +684,17 @@ class GlmOcrAdapter(_StubAdapter):
     checkpoint molto piccolo (~2.7 GB) su una GPU da 8 GB."""
 
     adapter_id = "glm-ocr"
+    native_prefill_mode = "official"
+    # Self-hosted SDK runs PP-DocLayout, parallel region OCR and its native
+    # result formatter against the local vLLM server.
+    page_layout_fallback = "official-pipeline"
+    recommended_generation = {
+        "max_tokens": 8192,
+        "temperature": 0.0,
+        "top_p": 0.00001,
+        "top_k": 1,
+        "repetition_penalty": 1.1,
+    }
     capabilities = ModelCapabilities(
         adapter_id=adapter_id,
         display_name="GLM-OCR",
@@ -719,6 +730,44 @@ class GlmOcrAdapter(_StubAdapter):
         if prompt is None:
             raise NotImplementedError(f"adapter '{self.adapter_id}': task '{task}' non supportato")
         return prompt
+
+    def sampling_for(self, task: str) -> dict:
+        return dict(self.recommended_generation)
+
+    def parse_native_result(self, pages: object) -> list[dict]:
+        """Convert GLM-OCR SDK's normalized page regions into app blocks."""
+        if not isinstance(pages, list) or not pages:
+            return []
+        regions = pages[0]
+        if not isinstance(regions, list):
+            return []
+        labels = {
+            "title": "Title", "text": "Text", "table": "Table",
+            "figure": "Picture", "formula": "Formula", "header": "Page-header",
+            "footer": "Page-footer", "page_number": "Page-footer", "seal": "Picture",
+            "reference": "Text", "chart": "Picture", "image": "Picture",
+            "display_formula": "Formula", "inline_formula": "Formula",
+        }
+        result = []
+        for region in regions:
+            if not isinstance(region, dict):
+                continue
+            bbox = region.get("bbox_2d")
+            if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                continue
+            try:
+                coords = [round(float(value)) for value in bbox]
+            except (TypeError, ValueError):
+                continue
+            if not (0 <= coords[0] < coords[2] <= 1000 and 0 <= coords[1] < coords[3] <= 1000):
+                continue
+            kind = str(region.get("label") or "text").strip().lower()
+            result.append({
+                "bbox": coords,
+                "label": labels.get(kind, "Text"),
+                "content": str(region.get("content") or ""),
+            })
+        return result
 
     def serialize_target(self, task: str, value: object) -> str:
         return json.dumps(value, ensure_ascii=False, separators=(",", ":")) if task == "layout" else str(value)

@@ -139,12 +139,15 @@ RECIPES: dict[str, ServeRecipe] = {
         served_model_name="glm-ocr",
         runtime="vllm",
         vllm_version="0.19.0",
+        transformers_version="5.3.1",
+        native_remote_port=8890,
+        pip_extra=("glmocr[selfhosted]", "fastapi", "uvicorn"),
         serve_args=(
             "--speculative-config", '{"method": "mtp", "num_speculative_tokens": 1}',
             "--max-num-batched-tokens", "32768",
             "--max-num-seqs", str(DEFAULT_MAX_INPUTS),
         ),
-        source="README GLM-OCR: MTP speculativo con 1 token (comando vLLM pubblicato)",
+        source="README GLM-OCR: vLLM MTP ufficiale + SDK self-hosted PP-DocLayout/OCR",
     ),
     "deepseek-ocr": ServeRecipe(
         adapter_id="deepseek-ocr",

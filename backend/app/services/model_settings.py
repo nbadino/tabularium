@@ -26,7 +26,7 @@ _SERVING_LIMITS = {
 }
 _GENERATION_LIMITS = {
     "temperature": (0.0, 2.0),
-    "top_p": (0.01, 1.0),
+    "top_p": (0.000001, 1.0),
     "top_k": (1, 1000),
     "max_tokens": (1, 131072),
     "repetition_penalty": (0.5, 2.0),
@@ -34,7 +34,7 @@ _GENERATION_LIMITS = {
     "frequency_penalty": (-2.0, 2.0),
     "no_repeat_ngram_size": (0, 512),
 }
-_IMAGE_LIMITS = {"min_pixels": (1, 64000000), "max_pixels": (0, 64000000)}
+_IMAGE_LIMITS = {"min_pixels": (1, 128000000), "max_pixels": (0, 128000000)}
 _MLX_LIMITS = {
     "kv_bits": (2, 8),
     "kv_group_size": (16, 256),
@@ -98,11 +98,16 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
         "serving": serving,
         # Empty means keep the adapter's per-task, source-verified sampling.
         "generation": dict(getattr(adapter, "recommended_generation", {}) or {}),
-        # TeleOCR/config.py upstream uses MAX_PIXELS=8000*8000. Other models
-        # keep the application-wide image cap unless their workflow says more.
+        # These are upstream pipeline defaults: TeleOCR/config.py uses
+        # 8000*8000; GLM-OCR's packaged config.yaml uses 71,372,800. Other
+        # models keep the application-wide image cap unless their workflow says more.
         "image": {
             "min_pixels": None,
-            "max_pixels": 64_000_000 if adapter_id == "teleocr" else None,
+            "max_pixels": (
+                64_000_000 if adapter_id == "teleocr"
+                else 71_372_800 if adapter_id == "glm-ocr"
+                else None
+            ),
         },
         # TeleOCR publishes two layout modes. Detection is the upstream
         # default; Segmentation is explicitly recommended for real degraded
@@ -226,6 +231,11 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
             if section == "image" and adapter_id != "paddleocr-vl" and "min_pixels" in values:
                 raise HTTPException(status_code=422, detail="image.min_pixels è disponibile solo nel pipeline ufficiale PaddleOCR-VL")
             overrides[section] = _validated_section(section, values)
+            if (
+                section == "image" and adapter_id == "teleocr"
+                and overrides[section].get("max_pixels", 0) > 64_000_000
+            ):
+                raise HTTPException(status_code=422, detail="image.max_pixels supera il limite ufficiale TeleOCR (64000000)")
             continue
         if not isinstance(values, dict):
             raise HTTPException(status_code=422, detail="'workflow' deve essere un oggetto")

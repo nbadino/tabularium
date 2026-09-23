@@ -532,17 +532,27 @@ echo ">> [Tabularium Cloud Server] Avvio vLLM su $HOST:$PORT..."
 echo ">> Endpoint: http://$HOST:$PORT/v1"
 echo "=========================================================="
 
-if [ "$RECIPE_ADAPTER" = "teleocr" ]; then
+if [ "$RECIPE_ADAPTER" = "teleocr" ] || [ "$RECIPE_ADAPTER" = "glm-ocr" ]; then
   if [ -z "$RECIPE_NATIVE_GATEWAY_B64" ] || [ -z "$RECIPE_NATIVE_REMOTE_PORT" ]; then
-    echo "!! Runner nativo TeleOCR non incluso nella ricetta; rifiuto un avvio parziale." >&2
+    echo "!! Gateway del pipeline nativo non incluso nella ricetta ${RECIPE_ADAPTER}; rifiuto un avvio parziale." >&2
     exit 2
   fi
-  NATIVE_GATEWAY="$VENV_DIR/tabularium_teleocr_gateway.py"
+  if [ "$RECIPE_ADAPTER" = "teleocr" ]; then
+    NATIVE_GATEWAY="$VENV_DIR/tabularium_teleocr_gateway.py"
+    NATIVE_MODULE="tabularium_teleocr_gateway"
+  else
+    NATIVE_GATEWAY="$VENV_DIR/tabularium_glmocr_gateway.py"
+    NATIVE_MODULE="tabularium_glmocr_gateway"
+  fi
   printf '%s' "$RECIPE_NATIVE_GATEWAY_B64" | base64 -d > "$NATIVE_GATEWAY"
   export TABULARIUM_SERVER_API_KEY="$API_KEY"
-  TABULARIUM_TELEOCR_MODEL="$MODEL_NAME" \
-  TABULARIUM_TELEOCR_VLLM_URL="http://127.0.0.1:$PORT/v1" \
-  "$PY_BIN" -m uvicorn tabularium_teleocr_gateway:app \
+  if [ "$RECIPE_ADAPTER" = "teleocr" ]; then
+    export TABULARIUM_TELEOCR_MODEL="$MODEL_NAME"
+    export TABULARIUM_TELEOCR_VLLM_URL="http://127.0.0.1:$PORT/v1"
+  else
+    export TABULARIUM_GLMOCR_VLLM_PORT="$PORT"
+  fi
+  "$PY_BIN" -m uvicorn "$NATIVE_MODULE:app" \
     --app-dir "$VENV_DIR" --host 127.0.0.1 \
     --port "$RECIPE_NATIVE_REMOTE_PORT" --no-access-log \
     >> "$REMOTE_LOG_PATH" 2>&1 < /dev/null &

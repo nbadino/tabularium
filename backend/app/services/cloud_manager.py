@@ -1500,10 +1500,13 @@ def build_provision_recipe(
     if not _MODEL.fullmatch(hf_repo):
         raise ValueError("Nome modello non valido.")
     effective_model_dir = model_dir.strip() or f"{REMOTE_MODEL_ROOT}/{hf_repo.rsplit('/', 1)[-1]}"
-    native_gateway = config.REPO_DIR / "scripts" / "cloud" / "teleocr_native_gateway.py"
+    native_gateway = config.REPO_DIR / "scripts" / "cloud" / {
+        "teleocr": "teleocr_native_gateway.py",
+        "glm-ocr": "glmocr_native_gateway.py",
+    }.get(adapter_id, "__no_native_gateway__.py")
     native_gateway_b64 = (
         base64.b64encode(native_gateway.read_bytes()).decode("ascii")
-        if adapter_id == "teleocr" and native_gateway.is_file()
+        if adapter_id in {"teleocr", "glm-ocr"} and native_gateway.is_file()
         else ""
     )
     return {

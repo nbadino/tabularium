@@ -42,6 +42,8 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
         })
     with pytest.raises(HTTPException, match="Detection o Segmentation"):
         model_settings.save_settings("teleocr", {"workflow": {"layout_mode": "automatic"}})
+    with pytest.raises(HTTPException, match="limite ufficiale TeleOCR"):
+        model_settings.save_settings("teleocr", {"image": {"max_pixels": 71_372_800}})
     with pytest.raises(HTTPException, match="workflow PaddleOCR-VL non riconosciuto"):
         model_settings.save_settings("paddleocr-vl", {"workflow": {"layout_mode": "Segmentation"}})
     paddle_defaults = model_settings.get_settings("paddleocr-vl")["recommended"]["workflow"]
@@ -92,11 +94,22 @@ def test_glm_batched_token_budget_can_exceed_single_sequence_context(tmp_path, m
     # conservative 16k cap is not a Vast recommendation.
     assert defaults["max_model_len"] is None
     assert defaults["max_num_batched_tokens"] == 32768
+    glm = model_settings.get_settings("glm-ocr")["recommended"]
+    assert glm["generation"] == {
+        "max_tokens": 8192,
+        "temperature": 0.0,
+        "top_p": 0.00001,
+        "top_k": 1,
+        "repetition_penalty": 1.1,
+    }
+    assert glm["image"]["max_pixels"] == 71_372_800
 
     saved = model_settings.save_settings("glm-ocr", {
         "serving": {"max_num_batched_tokens": 32768},
+        "generation": {"top_p": 0.00001},
     })
     assert saved["effective"]["serving"]["max_num_batched_tokens"] == 32768
+    assert saved["effective"]["generation"]["top_p"] == 0.00001
 
 
 def test_model_settings_use_official_qwen_generation_and_deepseek_n_gram_defaults(tmp_path, monkeypatch):

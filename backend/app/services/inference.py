@@ -317,6 +317,46 @@ class VllmClient:
             raise RuntimeError("risposta non JSON dal runner ufficiale TeleOCR") from exc
         return self.adapter.parse_native_result(payload.get("blocks"))
 
+    def glmocr_native_page(self, image: Image.Image) -> list[dict]:
+        """Run the vendor's self-hosted GLM-OCR layout+region OCR pipeline."""
+        if self.adapter.adapter_id != "glm-ocr":
+            raise RuntimeError("il runner nativo GLM-OCR richiede l'adapter GLM-OCR")
+        if not self.native_url:
+            raise RuntimeError(
+                "pipeline ufficiale GLM-OCR non raggiungibile: collega il tunnel Vast "
+                "dell'istanza preparata con la ricetta GLM-OCR"
+            )
+        buffer = io.BytesIO()
+        image.convert("RGB").save(buffer, format="PNG")
+        headers = self._headers()
+        headers.pop("Content-Type", None)
+        try:
+            from . import model_settings
+
+            effective = model_settings.get_settings("glm-ocr")["effective"]
+            generation = effective.get("generation", {})
+            if generation:
+                headers["x-glmocr-generation"] = json.dumps(generation, separators=(",", ":"))
+            max_pixels = effective.get("image", {}).get("max_pixels")
+            if max_pixels is not None:
+                headers["x-glmocr-max-pixels"] = str(max_pixels)
+        except (ImportError, KeyError, ValueError):
+            pass
+        try:
+            response = requests.post(
+                f"{self.native_url}/parse",
+                content=buffer.getvalue(),
+                headers=headers,
+                timeout=max(self.timeout, 600),
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except requests.RequestException as exc:
+            raise RuntimeError(f"pipeline ufficiale GLM-OCR non disponibile: {exc}") from exc
+        except ValueError as exc:
+            raise RuntimeError("risposta non JSON dal pipeline ufficiale GLM-OCR") from exc
+        return self.adapter.parse_native_result(payload.get("json_result"))
+
     @property
     def is_cloud(self) -> bool:
         """Indica se l'endpoint punta a un server remoto/cloud o alla macchina locale.
@@ -1152,12 +1192,14 @@ def get_inference_config() -> dict:
         profile = None
 
     native_url = None
-    if adapter_id == "teleocr" and provider == "vast":
+    if adapter_id in {"teleocr", "glm-ocr"} and provider == "vast":
         try:
             from . import cloud_manager
             tunnel = cloud_manager.get_tunnel_status()
             if tunnel.running and getattr(tunnel, "native_local_port", None):
-                native_url = f"http://127.0.0.1:{tunnel.native_local_port}/teleocr"
+                native_url = f"http://127.0.0.1:{tunnel.native_local_port}/" + (
+                    "teleocr" if adapter_id == "teleocr" else "glmocr"
+                )
         except Exception:  # noqa: BLE001 - legacy/non-Vast profiles have no sidecar
             native_url = None
 
