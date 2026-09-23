@@ -106,7 +106,8 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
         "image": {
             "min_pixels": None,
             "max_pixels": (
-                64_000_000 if adapter_id == "teleocr"
+                1_003_520 if adapter_id == "monkeyocrv2-parsing"
+                else 64_000_000 if adapter_id == "teleocr"
                 else 71_372_800 if adapter_id == "glm-ocr"
                 else None
             ),
@@ -234,14 +235,22 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
         if section != "workflow":
             if section == "mlx" and not adapter.capabilities.local_mlx_repo:
                 raise HTTPException(status_code=422, detail="impostazioni MLX non disponibili per questo modello")
-            if section == "image" and adapter_id != "paddleocr-vl" and "min_pixels" in values:
-                raise HTTPException(status_code=422, detail="image.min_pixels è disponibile solo nel pipeline ufficiale PaddleOCR-VL")
+            if section == "image" and adapter_id not in {"paddleocr-vl", "qwen3-vl-8b"} and "min_pixels" in values:
+                raise HTTPException(status_code=422, detail="image.min_pixels è disponibile solo nei workflow PaddleOCR-VL e Qwen3-VL")
             overrides[section] = _validated_section(section, values)
             if (
                 section == "image" and adapter_id == "teleocr"
                 and overrides[section].get("max_pixels", 0) > 64_000_000
             ):
                 raise HTTPException(status_code=422, detail="image.max_pixels supera il limite ufficiale TeleOCR (64000000)")
+            image = overrides[section]
+            if (
+                adapter_id == "qwen3-vl-8b"
+                and image.get("min_pixels") is not None
+                and image.get("max_pixels") not in (None, 0)
+                and image["max_pixels"] < image["min_pixels"]
+            ):
+                raise HTTPException(status_code=422, detail="image.max_pixels deve essere maggiore o uguale a image.min_pixels")
             continue
         if not isinstance(values, dict):
             raise HTTPException(status_code=422, detail="'workflow' deve essere un oggetto")

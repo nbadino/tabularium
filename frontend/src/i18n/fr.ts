@@ -1988,6 +1988,7 @@ export const fr: Dict = {
       presence_penalty: 'Pénalité de présence',
       frequency_penalty: 'Pénalité de fréquence',
       no_repeat_ngram_size: 'Taille du n-gramme sans répétition',
+      min_pixels: 'Pixels minimum de l’image',
       max_pixels: 'Pixels maximum de l’image',
     },
 

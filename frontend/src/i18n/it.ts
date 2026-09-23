@@ -1989,6 +1989,7 @@ export const it = {
       presence_penalty: 'Penalità presenza',
       frequency_penalty: 'Penalità frequenza',
       no_repeat_ngram_size: 'Dimensione n-gram non ripetuto',
+      min_pixels: 'Pixel minimi immagine',
       max_pixels: 'Pixel massimi immagine',
     },
 

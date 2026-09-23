@@ -165,7 +165,7 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
                 <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelImage')}</h3>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
                   {numberField('image', 'max_pixels', t('settings.modelField.max_pixels'), 0, 128000000, 1000, true)}
-                  {selected.adapter_id === 'paddleocr-vl' && numberField('image', 'min_pixels', t('settings.modelField.min_pixels'), 1, 64000000, 1000, true)}
+                  {['paddleocr-vl', 'qwen3-vl-8b'].includes(selected.adapter_id) && numberField('image', 'min_pixels', t('settings.modelField.min_pixels'), 1, 64000000, 1000, true)}
                 </div>
                 <p className="mt-2 text-[10px] text-[color:var(--color-ink-3)]">{t('settings.modelPixelsHint')}</p>
               </section>

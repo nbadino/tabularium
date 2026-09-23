@@ -98,11 +98,12 @@ degrada. Misurato su una pagina `index` del campione (2864×3952 = 11,3 MP), a p
 | 2.0 MP | 5 | `Title`, numero, data, corpo — corretto |
 | **1.0 MP** | **4** | corretto, meno granulare — **default ufficiale** |
 
-Il default è il valore ufficiale: `config.VLLM_MAX_PIXELS` vale `1003520` e si applica a ogni
-chiamata, esattamente come `MOCR2_MAX_PIXELS`. La granularità in più a 2 MP era una nostra
-deviazione misurata su una pagina, non il protocollo del checkpoint: chi la rivuole imposta
-`TABULARIUM_VLLM_MAX_PIXELS=2000000` (o il campo *max pixels* in Impostazioni, che ora arriva
-davvero al client). `TABULARIUM_VLLM_MAX_PIXELS=0` toglie il tetto; in quel caso resta
+Il default MonkeyOCRv2 è il valore ufficiale: `1003520`, coerente con `MOCR2_MAX_PIXELS`.
+Questo limite appartiene alla ricetta MonkeyOCRv2 e non va applicato agli altri VLM, che devono
+conservare il proprio preprocessore nativo quando la ricetta non dichiara un tetto. La granularità
+in più a 2 MP era una nostra deviazione misurata su una pagina, non il protocollo del checkpoint:
+chi la rivuole imposta `TABULARIUM_VLLM_MAX_PIXELS=2000000` (override globale) o il campo
+*max pixels* del singolo modello in Impostazioni. `TABULARIUM_VLLM_MAX_PIXELS=0` toglie il tetto; in quel caso resta
 `LAYOUT_MAX_PIXELS` (2 MP) come sola rete di sicurezza sul layout, perché a 11 MP collassa.
 
 ### 2.3.4 Preprocessore ufficiale delle pagine

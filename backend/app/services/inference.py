@@ -253,15 +253,31 @@ class VllmClient:
         self.adapter: ModelAdapter = adapter or MonkeyOCRv2ParsingAdapter()
         # Equivalente di `MOCR2_MAX_PIXELS`: vale per ogni chiamata al modello.
         # 0 o negativo = nessun tetto, come non impostare la env ufficiale.
-        cap = config.VLLM_MAX_PIXELS if max_pixels is _MAX_PIXELS_DEFAULT else max_pixels
+        cap = max_pixels
+        explicit_global_cap = False
         if max_pixels is _MAX_PIXELS_DEFAULT:
-            try:
-                from . import model_settings
-                per_model_cap = model_settings.get_settings(self.adapter.adapter_id)["effective"]["image"].get("max_pixels")
-                if per_model_cap is not None:
-                    cap = per_model_cap
-            except (ImportError, ValueError, KeyError):
-                pass
+            # Do not apply MonkeyOCRv2's 1 MP preprocessing limit to unrelated
+            # VLMs. Each recipe owns its recommendation; models without a
+            # documented cap keep their original pixels for native processing.
+            explicit_global_cap = "TABULARIUM_VLLM_MAX_PIXELS" in os.environ
+            cap = config.VLLM_MAX_PIXELS if explicit_global_cap else None
+        try:
+            from . import model_settings
+
+            settings = model_settings.get_settings(self.adapter.adapter_id)
+            image_override = settings["overrides"].get("image", {})
+            if "max_pixels" in image_override:
+                cap = image_override["max_pixels"]
+            elif max_pixels is _MAX_PIXELS_DEFAULT and not explicit_global_cap:
+                recommended_cap = settings["recommended"]["image"].get("max_pixels")
+                if recommended_cap is not None:
+                    cap = recommended_cap
+            if self.adapter.adapter_id == "qwen3-vl-8b":
+                self.min_pixels = image_override.get("min_pixels")
+            else:
+                self.min_pixels = None
+        except (ImportError, ValueError, KeyError, TypeError):
+            self.min_pixels = None
         self.max_pixels: int | None = cap if (cap or 0) > 0 else None
         self.last_trace: dict = {}
         self.last_text = ""
@@ -414,6 +430,8 @@ class VllmClient:
             )
         else:
             cap = max_pixels
+        if min_pixels is None and self.adapter.adapter_id == "qwen3-vl-8b":
+            min_pixels = self.min_pixels
         prepared = _fit_pixels(image, min_pixels=min_pixels, max_pixels=cap)
         prepared.convert("RGB").save(buf, format="PNG")
         data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
@@ -1139,11 +1157,14 @@ def get_inference_config() -> dict:
     )
 
     max_pixels_raw = rows.get("inference_max_pixels")
-    max_pixels = (
-        int(max_pixels_raw)
-        if max_pixels_raw and max_pixels_raw.isdigit()
-        else config.VLLM_MAX_PIXELS
-    )
+    if max_pixels_raw and max_pixels_raw.isdigit():
+        max_pixels = int(max_pixels_raw)
+    elif "TABULARIUM_VLLM_MAX_PIXELS" in os.environ:
+        max_pixels = config.VLLM_MAX_PIXELS
+    else:
+        # No user override: let model_settings resolve that model's own image
+        # recipe instead of applying the legacy MonkeyOCRv2 cap globally.
+        max_pixels = None
 
     # Quale adapter interpreta prompt/formato per l'endpoint servito. Se il
     # vecchio client aveva salvato solo URL/modello, riallineiamo il profilo
@@ -1373,19 +1394,21 @@ def get_vllm_client(
         # ripiegare su MonkeyOCRv2 che rifiutare la richiesta di inferenza.
         adapter = MonkeyOCRv2ParsingAdapter()
     try:
-        return VllmClient(
-            url=url or cfg["url"],
-            model=model or cfg["model"],
-            api_key=api_key if api_key is not None else cfg.get("api_key"),
-            extra_headers=(
+        kwargs = {
+            "url": url or cfg["url"],
+            "model": model or cfg["model"],
+            "api_key": api_key if api_key is not None else cfg.get("api_key"),
+            "extra_headers": (
                 extra_headers if extra_headers is not None else cfg.get("extra_headers")
             ),
-            timeout=timeout if timeout is not None else cfg.get("timeout", 180),
-            adapter=adapter,
-            max_pixels=cfg.get("max_pixels"),
-            provider=cfg.get("provider"),
-            native_url=cfg.get("native_url"),
-        )
+            "timeout": timeout if timeout is not None else cfg.get("timeout", 180),
+            "adapter": adapter,
+            "provider": cfg.get("provider"),
+            "native_url": cfg.get("native_url"),
+        }
+        if cfg.get("max_pixels") is not None:
+            kwargs["max_pixels"] = cfg["max_pixels"]
+        return VllmClient(**kwargs)
     except TypeError:
         try:
             return VllmClient(url=url or cfg["url"], model=model or cfg["model"], adapter=adapter)

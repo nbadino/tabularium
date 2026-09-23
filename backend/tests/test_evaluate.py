@@ -447,6 +447,39 @@ def test_client_takes_the_pixel_cap_from_the_runtime_configuration(monkeypatch):
     assert inference.get_vllm_client().max_pixels == 4_000_000
 
 
+def test_default_pixel_preprocessing_is_model_specific(monkeypatch):
+    """Models without a documented client cap retain native resolution."""
+    from app.services import inference
+    from app.services.model_adapters import get_adapter
+
+    monkeypatch.delenv("TABULARIUM_VLLM_MAX_PIXELS", raising=False)
+    dots = inference.VllmClient(
+        url="http://127.0.0.1:9/v1", adapter=get_adapter("dots-ocr"),
+    )
+    monkey = inference.VllmClient(
+        url="http://127.0.0.1:9/v1", adapter=get_adapter("monkeyocrv2-parsing"),
+    )
+    assert dots.max_pixels is None
+    assert monkey.max_pixels == 1_003_520
+
+
+def test_qwen_pixel_controls_are_loaded_from_per_model_settings(monkeypatch):
+    from app.services import inference, model_settings
+    from app.services.model_adapters import get_adapter
+
+    monkeypatch.delenv("TABULARIUM_VLLM_MAX_PIXELS", raising=False)
+    monkeypatch.setattr(model_settings, "get_settings", lambda _adapter_id: {
+        "recommended": {"image": {"min_pixels": None, "max_pixels": None}},
+        "overrides": {"image": {"min_pixels": 150_000, "max_pixels": 2_500_000}},
+        "effective": {"image": {"min_pixels": 150_000, "max_pixels": 2_500_000}},
+    })
+    qwen = inference.VllmClient(
+        url="http://127.0.0.1:9/v1", adapter=get_adapter("qwen3-vl-8b"),
+    )
+    assert qwen.min_pixels == 150_000
+    assert qwen.max_pixels == 2_500_000
+
+
 def test_a_zero_pixel_cap_means_no_cap():
     """0 = "non impostare `MOCR2_MAX_PIXELS`", non "riscala a zero pixel"."""
     from app.services.inference import VllmClient

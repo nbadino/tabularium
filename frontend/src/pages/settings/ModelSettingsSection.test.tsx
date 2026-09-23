@@ -116,4 +116,22 @@ describe('ModelSettingsSection', () => {
     ))
   })
 
+  it('espone i limiti pixel minimi e massimi per Qwen3-VL', async () => {
+    vi.mocked(apiGet).mockResolvedValueOnce({ items: [{
+      adapter_id: 'qwen3-vl-8b', display_name: 'Qwen3-VL-8B',
+      recommended: { serving: {}, generation: {}, image: { min_pixels: null, max_pixels: null }, workflow: {} },
+      overrides: {},
+      effective: { serving: {}, generation: {}, image: { min_pixels: null, max_pixels: null }, workflow: {} },
+      restart_required: false,
+    }] } as never)
+    render(<ModelSettingsSection isAdmin />)
+    fireEvent.change(await screen.findByLabelText(/Pixel minimi/i), { target: { value: '100000' } })
+    fireEvent.change(screen.getByLabelText(/Pixel massimi/i), { target: { value: '2000000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salva override' }))
+    await waitFor(() => expect(apiPut).toHaveBeenCalledWith(
+      '/system/model-settings/qwen3-vl-8b',
+      { image: { min_pixels: 100000, max_pixels: 2000000 } },
+    ))
+  })
+
 })

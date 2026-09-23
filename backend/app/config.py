@@ -91,12 +91,10 @@ try:
 except Exception:
     VLLM_EXTRA_HEADERS = {}
 
-# Tetto ai pixel inviati al modello, equivalente della env `MOCR2_MAX_PIXELS`
-# del repo ufficiale. Il default 1.003.520 è quello di `parsing/parse.py`
-# (`--max-pixels`), che `configure_runtime()` propaga come `MOCR2_MAX_PIXELS` a
-# TUTTE le chiamate (layout, testo, tabella, end2end): con `min_pixels=1003520`
-# già imposto dal layout ufficiale, la pagina arriva al VLM esattamente a 1 MP.
-# `0` disattiva il tetto e riproduce il comportamento senza `MOCR2_MAX_PIXELS`.
+# Override globale esplicito del tetto pixel. Senza questa env, le ricette
+# per-modello scelgono il default: MonkeyOCRv2 usa 1 MP come upstream; gli altri
+# modelli mantengono il preprocessore nativo quando la recipe non dichiara un
+# tetto. `0` disattiva il limite globale.
 _max_pixels_env = os.environ.get("TABULARIUM_VLLM_MAX_PIXELS", "").strip()
 VLLM_MAX_PIXELS: int | None = int(_max_pixels_env) if _max_pixels_env else 1_003_520
 if VLLM_MAX_PIXELS is not None and VLLM_MAX_PIXELS <= 0:

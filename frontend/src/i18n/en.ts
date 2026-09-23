@@ -1987,6 +1987,7 @@ export const en: Dict = {
       presence_penalty: 'Presence penalty',
       frequency_penalty: 'Frequency penalty',
       no_repeat_ngram_size: 'No-repeat n-gram size',
+      min_pixels: 'Minimum image pixels',
       max_pixels: 'Maximum image pixels',
     },
 

@@ -18,6 +18,9 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
     assert defaults["recommended"]["image"]["max_pixels"] == 64_000_000
     assert defaults["recommended"]["workflow"]["layout_mode"] == "Detection"
     assert defaults["overrides"] == {}
+    assert model_settings.get_settings("monkeyocrv2-parsing")["recommended"]["image"]["max_pixels"] == 1_003_520
+    qwen_defaults = model_settings.get_settings("qwen3-vl-8b")["recommended"]["image"]
+    assert qwen_defaults == {"min_pixels": None, "max_pixels": None}
 
     saved = model_settings.save_settings("teleocr", {
         "serving": {"max_num_seqs": 2},
@@ -65,6 +68,14 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
         model_settings.save_settings("paddleocr-vl", {"workflow": {"layout_merge_bboxes_mode": "auto"}})
     with pytest.raises(HTTPException, match="image.min_pixels è disponibile solo"):
         model_settings.save_settings("teleocr", {"image": {"min_pixels": 1000}})
+    qwen = model_settings.save_settings("qwen3-vl-8b", {
+        "image": {"min_pixels": 100_000, "max_pixels": 2_000_000},
+    })
+    assert qwen["effective"]["image"] == {"min_pixels": 100_000, "max_pixels": 2_000_000}
+    with pytest.raises(HTTPException, match="maggiore o uguale"):
+        model_settings.save_settings("qwen3-vl-8b", {
+            "image": {"min_pixels": 2_000_000, "max_pixels": 100_000},
+        })
     with pytest.raises(HTTPException, match="richiede un logits processor"):
         model_settings.save_settings("paddleocr-vl", {"generation": {"no_repeat_ngram_size": 100}})
     unlimited = model_settings.get_settings("unlimited-ocr")
