@@ -13,6 +13,14 @@ def test_teleocr_has_a_modal_template():
     assert template.script.name == "modal_teleocr.py"
 
 
+def test_modal_templates_leave_input_concurrency_at_platform_default_unless_tuned():
+    # Modal assigns one input per container by default. A higher limit is an
+    # explicit per-model setting, passed through TABULARIUM_SERVE_MAX_NUM_SEQS.
+    for template in modal_manager.TEMPLATES.values():
+        source = template.script.read_text(encoding="utf-8")
+        assert 'os.environ.get("TABULARIUM_SERVE_MAX_NUM_SEQS", "1")' in source
+
+
 def test_modal_deploy_receives_saved_model_serving_overrides(monkeypatch):
     template = modal_manager.TEMPLATES["teleocr"]
     captured = {}

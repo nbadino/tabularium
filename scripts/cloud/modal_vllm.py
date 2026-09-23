@@ -31,7 +31,7 @@ Configurazione opzionale (env, letti al deploy):
   TABULARIUM_MODAL_MODEL     checkpoint HF (default MonkeyOCRv2-B-Parsing)
   TABULARIUM_MODAL_DFLASH    1 (default): abilita il draft ufficiale 2x
   TABULARIUM_MODAL_MIN_CONTAINERS 1 (default): elimina il cold start
-  TABULARIUM_MODAL_MAX_INPUTS 4 (default): concorrenza per container
+  TABULARIUM_MODAL_MAX_INPUTS 1 (default): concorrenza per container; aumentare dopo aver misurato il modello
   TABULARIUM_VLLM_API_KEY    se impostata, il server esige questa Bearer key
 """
 
@@ -57,7 +57,7 @@ USE_DFLASH = os.environ.get("TABULARIUM_MODAL_DFLASH", "1").strip() != "0"
 VLLM_VERSION = os.environ.get("TABULARIUM_VLLM_VERSION", "0.25.1")
 MIN_CONTAINERS = int(os.environ.get("TABULARIUM_MODAL_MIN_CONTAINERS", "0"))
 MAX_CONTAINERS = int(os.environ.get("TABULARIUM_MODAL_MAX_CONTAINERS", "2"))
-MAX_INPUTS = int(os.environ.get("TABULARIUM_MODAL_MAX_INPUTS", os.environ.get("TABULARIUM_SERVE_MAX_NUM_SEQS", "4")))
+MAX_INPUTS = int(os.environ.get("TABULARIUM_MODAL_MAX_INPUTS", os.environ.get("TABULARIUM_SERVE_MAX_NUM_SEQS", "1")))
 SERVING_OVERRIDES = {
     "--gpu-memory-utilization": os.environ.get("TABULARIUM_SERVE_GPU_MEMORY_UTILIZATION"),
     "--max-model-len": os.environ.get("TABULARIUM_SERVE_MAX_MODEL_LEN"),
