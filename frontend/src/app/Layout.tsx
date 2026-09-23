@@ -13,6 +13,7 @@ import { Link, NavLink, Outlet, useLocation } from 'react-router'
 import { useEffect, useState } from 'react'
 import { apiGet } from '../lib/api'
 import { syncInferenceFromBackend, useInference } from './inference'
+import { useModelNames } from './models/names'
 import type { HealthResponse } from '../lib/types'
 import { LOCALES, LOCALE_LABELS, useI18n } from '../i18n'
 import type { Locale } from '../i18n'
@@ -130,6 +131,7 @@ function UserMenu() {
 export default function Layout() {
   const { t } = useI18n()
   const inference = useInference()
+  const nameOf = useModelNames()
   const location = useLocation()
   // Ogni pagina legge lo stato inferenza (chip GPU, banner, motori prefill):
   // il sync all'avvio evita di mostrare disponibilità/latenza stantie da
@@ -180,7 +182,7 @@ export default function Layout() {
               className="flex min-w-0 items-center gap-1.5 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)] px-2 py-1 text-[11px] no-underline hover:bg-[color:var(--color-fill)]"
               title={t('recognition.changeModel')}
             >
-              <span className="max-w-[24ch] truncate font-semibold">{inference.model || t('recognition.activeModel')}</span>
+              <span className="max-w-[24ch] truncate font-semibold" title={inference.model || undefined}>{nameOf(inference.adapterId) ?? (inference.model || t('recognition.activeModel'))}</span>
               <span className="text-[color:var(--color-ink-3)]">· {providerLabel}</span>
               <span className={inference.enabled && inference.available ? 'text-[color:var(--color-ok)]' : 'text-[color:var(--color-warn)]'}>
                 {statusLabel}

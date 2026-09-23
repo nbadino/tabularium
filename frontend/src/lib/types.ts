@@ -148,6 +148,11 @@ export interface PageItem {
   status: string
   annotation_revision?: number
   created_at: string
+  /** Blocchi sulla pagina e, fra questi, bozze generate e non ancora
+   *  confermate. `status` dice solo cosa ne ha fatto una persona: una pagina
+   *  riconosciuta e mai rivista resta `new`, ma ha bozze da verificare. */
+  blocks?: number
+  drafts?: number
 }
 
 export type TransformEngine = 'deskew' | 'monkeyocr' | 'perspective' | 'mesh'
@@ -637,10 +642,12 @@ export interface RecognitionRunItem {
   inserted: number
   blocks: number
   drafts: number
+  /** Output grezzo del modello: arriva solo per la pagina chiesta con
+   *  `?result_page=` (e negli export), altrimenti `null`. */
   result: {
     summary?: Record<string, unknown>
     blocks?: Array<Record<string, unknown>>
-  }
+  } | null
   error: string | null
   started_at: string | null
   ended_at: string | null

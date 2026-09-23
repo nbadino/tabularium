@@ -181,9 +181,13 @@ export interface Branch {
 export interface BranchInput extends PipelineInput {
   /** Run di riconoscimento del progetto, più recente per primo. */
   runs: RecognitionRun[]
+  /** Pagine con bozze generate e non ancora confermate. L'ultima run da sola
+   *  non basta: una run da una pagina dopo una da duecento faceva dire
+   *  «1 pagina con risultati» a un corpus riconosciuto per intero. */
+  draftPages?: number
 }
 
-export function buildBranches({ project, workflow, dataset, training, runs }: BranchInput): Branch[] {
+export function buildBranches({ project, workflow, dataset, training, runs, draftPages = 0 }: BranchInput): Branch[] {
   const total = workflow?.total_pages ?? 0
   // «Lavorata» è la stessa cosa che dice la testata dell'archivio: una pagina
   // uscita dallo stato `new`. Contare qui le sole pagine approvate faceva
@@ -218,9 +222,11 @@ export function buildBranches({ project, workflow, dataset, training, runs }: Br
                 done: latest.completed_pages,
                 total: latest.total_pages,
               })
-            : latest
-              ? t('pipeline.paths.recognizeResults', { n: latest.succeeded_pages })
-              : t('pipeline.paths.recognizeTodo', { n: total }),
+            : draftPages > 0
+              ? t('pipeline.paths.recognizeDrafts', { n: draftPages })
+              : latest
+                ? t('pipeline.paths.recognizeResults', { n: latest.succeeded_pages })
+                : t('pipeline.paths.recognizeTodo', { n: total }),
       needs: t('pipeline.paths.recognizeNeeds'),
       recommended: total > 0,
       action:

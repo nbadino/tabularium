@@ -45,7 +45,10 @@ def list_pages(
     project_id: int,
     page_type: str | None = None,
     status: str | None = None,
-    limit: int = Query(default=200, ge=1, le=2000),
+    # Il default era 200 e troncava in silenzio: un corpus di 361 pagine ne
+    # mostrava 200 ovunque, e le altre non si potevano né vedere né
+    # selezionare. Il tetto è lo stesso di una sessione di riconoscimento.
+    limit: int = Query(default=10000, ge=1, le=10000),
     _auth: dict = Depends(require_resource(write=False)),
 ) -> PageList:
     sql = "SELECT * FROM pages WHERE project_id=?"
@@ -60,10 +63,21 @@ def list_pages(
         # Una nuova scan marca come mancanti le sorgenti rimosse, preservando
         # annotazioni e risultati ma evitando di mostrarle nel lavoro attivo.
         sql += " AND status != 'missing'"
+    count_sql = sql.replace("SELECT *", "SELECT COUNT(*)", 1)
+    count_params = list(params)
+    sql = sql.replace(
+        "SELECT * FROM pages",
+        "SELECT pages.*, COALESCE(b.blocks, 0) AS blocks, COALESCE(b.drafts, 0) AS drafts FROM pages "
+        "LEFT JOIN (SELECT page_id, COUNT(*) AS blocks, "
+        "SUM(CASE WHEN confirmed=0 AND prefill_source IS NOT NULL THEN 1 ELSE 0 END) AS drafts "
+        "FROM blocks GROUP BY page_id) b ON b.page_id = pages.id",
+        1,
+    )
     sql += " ORDER BY rel_path, pdf_page LIMIT ?"
     params.append(limit)
     with connect() as conn:
         rows = conn.execute(sql, params).fetchall()
+        total = conn.execute(count_sql, count_params).fetchone()[0]
         items = [
             PageOut(
                 id=r["id"],
@@ -81,10 +95,12 @@ def list_pages(
                 status=r["status"],
                 annotation_revision=r["annotation_revision"],
                 created_at=r["created_at"],
+                blocks=r["blocks"],
+                drafts=r["drafts"],
             )
             for r in rows
         ]
-        return PageList(items=items)
+        return PageList(items=items, total=total)
 
 
 # Esito per tabella, per impronta del contenuto: si ricalcola solo ciò che è
@@ -247,7 +263,11 @@ def page_thumbnail(
     with connect() as conn:
         page = _get_page_or_404(conn, page_id)
         thumb = pagesvc.ensure_thumbnail(conn, page)
-    return FileResponse(thumb, media_type="image/jpeg")
+    # Archivio, Riconosci e Studio mostrano le stesse centinaia di miniature:
+    # senza una cache anche breve il browser le rivalidava una per una a ogni
+    # cambio di schermata. Un minuto basta a un giro fra le schermate, e dopo un nuovo master la
+    # ETag cambia comunque alla prima rivalidazione.
+    return FileResponse(thumb, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=60"})
 
 
 @router.get("/api/pages/{page_id}/preview")

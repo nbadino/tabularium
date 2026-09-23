@@ -67,9 +67,12 @@ def create_recognition_run(
 def get_recognition_run(
     project_id: int,
     run_id: int,
+    result_page: int | None = None,
     _user: dict = Depends(require_resource(write=False)),
 ) -> dict:
-    run = recognitionsvc.get_run(run_id)
+    # L'output grezzo viaggia solo per la pagina chiesta: la lista delle
+    # pagine non lo mostra e pesava megabyte su una sessione lunga.
+    run = recognitionsvc.get_run(run_id, results=result_page if result_page is not None else "none")
     if int(run["project_id"]) != project_id:
         raise HTTPException(status_code=404, detail="sessione di riconoscimento non trovata")
     return run

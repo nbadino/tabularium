@@ -20,12 +20,15 @@ import { pageLabel, pageShortLabel } from '../lib/pageLabel'
 import { CorpusPaths } from '../app/PipelineView'
 import { buildBranches, usePipelineState } from '../app/pipeline'
 
+/** Filtro trasversale agli stati: le pagine con bozze generate da verificare. */
+const DRAFTS_FILTER = '__drafts'
+
 /** Una pagina del muro: anteprima ritagliata dall'alto, dove sta la testata. */
 function PageCell({ page }: { page: PageItem }) {
   const { t } = useI18n()
   return (
     <li className="relative border-b border-r border-[color:var(--color-rule)] bg-[color:var(--color-sheet)]">
-      <Link to={`/annotazione?page=${page.id}`} className="block text-[color:var(--color-ink)] no-underline hover:bg-[color:var(--color-fill)]">
+      <Link to={`/annotazione?project=${page.project_id}&page=${page.id}`} className="block text-[color:var(--color-ink)] no-underline hover:bg-[color:var(--color-fill)]">
         <div className="lighttable aspect-[3/4] overflow-hidden">
           <img
             src={`/api/pages/${page.id}/thumbnail`}
@@ -41,7 +44,13 @@ function PageCell({ page }: { page: PageItem }) {
           >
             {pageShortLabel(page)}
           </span>
-          <Badge tone={STATUS_TONE[page.status] ?? 'neutral'}>{statusLabel(page.status)}</Badge>
+          {/* Una pagina mai toccata da una persona ma già riconosciuta non è
+              «nuova»: ha bozze da verificare, ed è quello il lavoro. */}
+          {page.status === 'new' && (page.drafts ?? 0) > 0 ? (
+            <Badge tone="warn">{t('home.draftsBadge', { n: page.drafts ?? 0 })}</Badge>
+          ) : (
+            <Badge tone={STATUS_TONE[page.status] ?? 'neutral'}>{statusLabel(page.status)}</Badge>
+          )}
         </div>
       </Link>
     </li>
@@ -87,7 +96,14 @@ export default function HomePage() {
 
   const project = projects.find((p) => p.id === projectId) ?? null
   const { workflow, dataset, training, runs } = usePipelineState(projectId)
-  const branches = buildBranches({ project, workflow, dataset, training, runs })
+  const branches = buildBranches({
+    project,
+    workflow,
+    dataset,
+    training,
+    runs,
+    draftPages: pages.filter((p) => (p.drafts ?? 0) > 0).length,
+  })
   // Il muro si ordina per avanzamento: il lavoro da fare viene per primo.
   const sorted = useMemo(
     () =>
@@ -98,7 +114,13 @@ export default function HomePage() {
       ),
     [pages],
   )
-  const shown = filter ? sorted.filter((p) => p.status === filter) : sorted
+  const withDrafts = pages.filter((p) => (p.drafts ?? 0) > 0).length
+  const shown =
+    filter === DRAFTS_FILTER
+      ? sorted.filter((p) => (p.drafts ?? 0) > 0)
+      : filter
+        ? sorted.filter((p) => p.status === filter)
+        : sorted
 
   const counts = pages.reduce<Record<string, number>>((out, page) => {
     out[page.status] = (out[page.status] ?? 0) + 1
@@ -211,6 +233,16 @@ export default function HomePage() {
               >
                 {t('home.all', { n: pages.length })}
               </button>
+              {withDrafts > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setFilter(filter === DRAFTS_FILTER ? '' : DRAFTS_FILTER)}
+                  aria-pressed={filter === DRAFTS_FILTER}
+                  className={`btn btn-sm ${filter === DRAFTS_FILTER ? '!border-[color:var(--color-ink)] !bg-[color:var(--color-ink)] !text-white' : ''}`}
+                >
+                  {t('home.withDrafts', { n: withDrafts })}
+                </button>
+              )}
               {statuses.map((s) => (
                 <button
                   key={s}
@@ -241,7 +273,7 @@ export default function HomePage() {
                 : projects.length === 0
                   ? t('home.emptyNoArchive')
                   : filter
-                    ? t('home.emptyNoPageInState', { state: statusLabel(filter) })
+                    ? t('home.emptyNoPageInState', { state: filter === DRAFTS_FILTER ? t('home.withDrafts', { n: 0 }) : statusLabel(filter) })
                     : t('home.emptyNoPagesYet')}
             </p>
             <p className="max-w-[60ch] text-[12px] text-[color:var(--color-ink-2)]">

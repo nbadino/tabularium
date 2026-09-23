@@ -8,6 +8,8 @@ import { syncInferenceFromBackend, toggleInferenceEnabled, useInference } from '
 import { useI18n } from '../i18n'
 import { useAuth } from '../app/auth'
 import { pageLabel } from '../lib/pageLabel'
+import { runTitle, useModelNames } from '../app/models/names'
+import { formatShortDate } from '../lib/dates'
 
 const isActive = (run: RecognitionRun | null) => run?.state === 'queued' || run?.state === 'running'
 
@@ -30,12 +32,16 @@ function providerLabel(provider: string, engine: RecognitionRun['engine'], t: (k
     : effectiveProvider
 }
 
-function runTitle(run: RecognitionRun, t: (key: string) => string): string {
-  return run.model_name || (run.engine === 'ocr' ? t('recognition.localOcr') : t('recognition.servedModel'))
-}
+/** Una pagina «completata» senza blocchi non è un successo: il modello ha
+ *  risposto e non ha trovato niente. Mostrarla in verde la nascondeva. */
+const isEmptyResult = (item: NonNullable<RecognitionRun['items']>[number]) => item.state === 'finished' && item.blocks === 0
+
+type PageFilter = 'all' | 'drafts' | 'empty' | 'failed'
 
 export default function ResultsPage() {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
+  const nameOf = useModelNames()
+  const [pageFilter, setPageFilter] = useState<PageFilter>('all')
   const [params, setParams] = useSearchParams()
   const inference = useInference()
   const auth = useAuth()
@@ -49,6 +55,7 @@ export default function ResultsPage() {
   const openRun = async (pid: number, runId: number) => {
     const next = await apiGet<RecognitionRun>(`/projects/${pid}/recognition-runs/${runId}`)
     setRun(next)
+    setPageFilter('all')
     setParams({ project: String(pid), run: String(runId) }, { replace: true })
   }
 
@@ -127,6 +134,22 @@ export default function ResultsPage() {
 
   const pct = run?.total_pages ? (run.completed_pages / run.total_pages) * 100 : 0
   const nextReview = run?.items?.find((item) => item.drafts > 0) ?? run?.items?.[0]
+  const items = run?.items ?? []
+  const counts: Record<PageFilter, number> = {
+    all: items.length,
+    drafts: items.filter((item) => item.drafts > 0).length,
+    empty: items.filter(isEmptyResult).length,
+    failed: items.filter((item) => item.state === 'failed').length,
+  }
+  const shownItems = items.filter((item) =>
+    pageFilter === 'drafts'
+      ? item.drafts > 0
+      : pageFilter === 'empty'
+        ? isEmptyResult(item)
+        : pageFilter === 'failed'
+          ? item.state === 'failed'
+          : true,
+  )
 
   return (
     <div className="p-3">
@@ -139,7 +162,7 @@ export default function ResultsPage() {
       <div className="grid gap-3 lg:grid-cols-[300px_minmax(0,1fr)]">
         <div className="space-y-3">
           <Module tab={t('recognition.project')}>
-            <Field label={t('recognition.project')}>
+            <Field label={t('recognition.projectPick')}>
               <select value={projectId} onChange={(e) => void onProject(e.target.value === '' ? '' : Number(e.target.value))} className="fld">
                 <option value="">{t('common.chooseProject')}</option>
                 {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
@@ -152,8 +175,13 @@ export default function ResultsPage() {
                 {runs.map((item) => (
                   <li key={item.id}>
                     <button type="button" onClick={() => projectId !== '' && void openRun(projectId, item.id)} className={`w-full p-2 text-left ${run?.id === item.id ? 'bg-[color:var(--color-sig-wash)] outline outline-2 -outline-offset-2 outline-[color:var(--color-sig)]' : 'hover:bg-[color:var(--color-fill)]'}`}>
-                      <span className="flex items-center gap-2"><b className="mono text-[11px]">#{item.id}</b><span className="min-w-0 flex-1 truncate text-[12px]">{runTitle(item, t)}</span></span>
-                      <span className="mt-1 block text-[11px] text-[color:var(--color-ink-3)]">{item.completed_pages}/{item.total_pages} · {providerLabel(item.provider, item.engine, t)}</span>
+                      <span className="flex items-center gap-2"><b className="mono text-[11px]">#{item.id}</b><span className="min-w-0 flex-1 truncate text-[12px] font-semibold">{runTitle(item, nameOf)}</span></span>
+                      <span className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-[color:var(--color-ink-3)]">
+                        <span>{t('recognition.runPagesCount', { done: item.completed_pages, total: item.total_pages })}</span>
+                        <span>· {providerLabel(item.provider, item.engine, t)}</span>
+                        <span className="mono">· {formatShortDate(item.created_at, locale)}</span>
+                        {item.state !== 'finished' && <Badge tone={isActive(item) ? 'progress' : 'warn'}>{t(stateKey(item.state))}</Badge>}
+                      </span>
                     </button>
                   </li>
                 ))}
@@ -166,7 +194,11 @@ export default function ResultsPage() {
           <Module tab={t('recognition.resultsTitle')} quiet><p className="text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.pickRun')}</p></Module>
         ) : (
           <div className="space-y-3">
-            <Module tab={`${t('recognition.resultsTitle')} · #${run.id}`} aux={<Badge tone={isActive(run) ? 'progress' : run.failed_pages ? 'warn' : 'ok'}>{runTitle(run, t)}</Badge>}>
+            <Module tab={`${t('recognition.resultsTitle')} · #${run.id}`} aux={<Badge tone={isActive(run) ? 'progress' : run.failed_pages ? 'warn' : 'ok'}>{t(stateKey(run.state))}</Badge>}>
+              <div className="mb-2 flex flex-wrap items-baseline gap-x-3">
+                <span className="text-[18px] font-bold">{runTitle(run, nameOf)}</span>
+                <span className="mono text-[11px] text-[color:var(--color-ink-3)]">{formatShortDate(run.created_at, locale)}</span>
+              </div>
               <Progress value={pct} label={t('recognition.progress', { done: run.completed_pages, total: run.total_pages })} />
               <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px]">
                 <span>{t('recognition.progress', { done: run.completed_pages, total: run.total_pages })}</span>
@@ -192,21 +224,56 @@ export default function ResultsPage() {
                   {(run.failed_pages > 0 || run.state === 'cancelled') && (
                     <button type="button" className="btn btn-primary" onClick={() => void retryFailed()}>{t('recognition.retryFailed')}</button>
                   )}
-                  {inference.enabled && canManageInference && <button type="button" className="btn" onClick={() => void disable()}>{t('recognition.disableNow')}</button>}
+                  {/* Spegnere il modello ha senso solo se questa elaborazione
+                      l'ha usato: dopo un OCR locale non c'è niente da fermare. */}
+                  {run.engine === 'model' && inference.enabled && canManageInference && <button type="button" className="btn" onClick={() => void disable()}>{t('recognition.disableNow')}</button>}
                 </div>
               )}
             </Module>
 
-            <Module tab={t('recognition.pages')} quiet flush>
+            <Module
+              tab={t('recognition.runPages')}
+              quiet
+              flush
+              aux={
+                <div role="group" aria-label={t('recognition.filterLabel')} className="flex flex-wrap gap-1">
+                  {(['all', 'drafts', 'empty', 'failed'] as const)
+                    .filter((key) => key === 'all' || counts[key] > 0)
+                    .map((key) => (
+                      <button
+                        key={key}
+                        type="button"
+                        aria-pressed={pageFilter === key}
+                        onClick={() => setPageFilter(key)}
+                        className={`btn btn-sm ${pageFilter === key ? '!border-[color:var(--color-ink)] !bg-[color:var(--color-ink)] !text-white' : ''}`}
+                      >
+                        {t(`recognition.filter.${key}`, { n: counts[key] })}
+                      </button>
+                    ))}
+                </div>
+              }
+            >
+              {counts.empty > 0 && pageFilter !== 'failed' && (
+                <p className="border-b border-[color:var(--color-rule)] bg-[color:var(--color-warn-wash)] px-3 py-2 text-[12px] text-[color:var(--color-warn)]">
+                  {t('recognition.emptyHint', { n: counts.empty })}
+                </p>
+              )}
+              {shownItems.length === 0 && <p className="p-3 text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.noneInFilter')}</p>}
               <ul className="divide-y divide-[color:var(--color-rule)]">
-                {(run.items ?? []).map((item) => (
+                {shownItems.map((item) => (
                   <li key={item.id} className="grid gap-2 p-2 sm:grid-cols-[56px_minmax(0,1fr)_auto] sm:items-center">
                     <img src={`/api/pages/${item.page_id}/thumbnail`} alt="" className="h-16 w-12 border border-[color:var(--color-rule)] bg-white object-cover object-top" />
                     <div className="min-w-0">
                       <div className="mono truncate text-[12px] font-semibold" title={pageLabel(item)}>{pageLabel(item)}</div>
                       <div className="mt-1 flex flex-wrap gap-1.5">
-                        <Badge tone={item.state === 'finished' ? 'ok' : item.state === 'failed' ? 'sig' : 'progress'}>{t(stateKey(item.state))}</Badge>
-                        <Badge>{t('recognition.blocks', { n: item.blocks })}</Badge>
+                        {isEmptyResult(item) ? (
+                          <Badge tone="warn">{t('recognition.emptyResult')}</Badge>
+                        ) : (
+                          <>
+                            <Badge tone={item.state === 'finished' ? 'ok' : item.state === 'failed' ? 'sig' : 'progress'}>{t(stateKey(item.state))}</Badge>
+                            <Badge>{t('recognition.blocks', { n: item.blocks })}</Badge>
+                          </>
+                        )}
                         {item.drafts > 0 && <Badge tone="warn">{t('recognition.drafts', { n: item.drafts })}</Badge>}
                       </div>
                       {item.error && <p className="mt-1 text-[11px] text-[color:var(--color-sig-text)]">{item.error}</p>}

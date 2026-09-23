@@ -686,6 +686,16 @@ tabella dei fallimenti peggiori per guidare la nuova iterazione di annotazione.
 - **M1 — Progetti & pagine** ✅ — CRUD progetto, scan cartella (immagini+PDF, PDF lazy via pypdfium2),
   registro pagine con metadati (issue_date/issue_no/page_no/page_type/status), thumbnail/preview on-demand,
   pagina Progetti + Dettaglio progetto (griglia pagine, edit metadati inline). Test end-to-end coperti.
+  - **La lista pagine non tronca in silenzio.** `GET /api/projects/{id}/pages` restituisce `total`
+    oltre agli `items`, con `limit` di default e massimo a 10000 (il tetto di una sessione di
+    riconoscimento). Il default era 200: un corpus di 361 pagine ne mostrava 200 in ogni
+    schermata, e le altre non si potevano vedere né selezionare.
+  - **Ogni pagina porta `blocks` e `drafts`** (bozze generate e non confermate). `status` dice
+    solo cosa ne ha fatto una persona: una pagina riconosciuta e mai rivista resta `new`, e
+    senza `drafts` nessuna lista sapeva dire dove sono le bozze da verificare. Archivio, Studio
+    e Riconosci mostrano «N bozze» al posto di «Nuova» e filtrano per «Con bozze».
+  - **Le date del server sono UTC senza fuso** (`datetime('now')` di SQLite): si leggono con
+    `lib/dates.ts::parseServerDate`, mai con `new Date(...)` diretto, che le prende per ora locale.
 - **M2 — Studio annotazione core** ✅ — canvas Konva zoom/pan (zoom rotellina, pan con tool Panoramica),
   strumenti rettangolo/poligono, palette classi, ispezione/label/trascrizione base, spostamento/ridimensionamento
   con Transformer, **ordine di lettura** (indici con spostamento su/giù + riordino automatico), delete, undo/redo
@@ -745,6 +755,14 @@ tabella dei fallimenti peggiori per guidare la nuova iterazione di annotazione.
   `order_idx`, modalità replace/merge. `BlockOut` ora espone `prefill_source`. UI: pulsante
   La modalità modello espone sia `two_stage` sia l'ufficiale `end2end`; OTSL END2END valido evita
   una seconda chiamata, altrimenti il risultato dichiara il fallback sul crop tabella.
+- **Sessioni di riconoscimento: peso e revisione.** `GET …/recognition-runs/{id}` non porta
+  l'output grezzo delle pagine (`result: null`) salvo `?result_page=<page_id>`, che lo Studio
+  chiede per la sola pagina aperta; l'export continua a usarlo tutto. Con l'output di ogni
+  pagina una sessione da 200 pagine pesava 4,7 MB, riletta ogni 1,2 s dallo Studio: ora 60 KB.
+  Risultati distingue le pagine «completate» senza blocchi (un modello che risponde e non trova
+  niente non è un successo) e filtra per da verificare / senza blocchi / con errori. Lo Studio
+  tiene `?project=&page=` nell'URL: un refresh riapre la stessa pagina. I nomi dei modelli in UI
+  passano da `app/models/names.ts` (nome di catalogo dall'adapter), mai dal nome servito.
 - **M8 — Utilizzo reale & polish** ✅ — frontend `dist` **servito dal backend** (monoprocesso
   `scripts/run.sh`; mount `/assets` + catch-all SPA con deep-link, API prioritarie), **lazy-loading**
   delle pagine (bundle iniziale −63%, 257 kB), `noUnusedLocals`/`noUnusedParameters` riattivati,

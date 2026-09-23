@@ -112,3 +112,20 @@ def test_project_crud_and_scan(tmp_path: Path):
         assert client.delete(f"/api/projects/{pid}").status_code == 400
         assert client.delete(f"/api/projects/{pid}?confirm=true").status_code == 200
         assert client.get(f"/api/projects/{pid}").status_code == 404
+
+
+def test_page_list_is_not_silently_truncated(tmp_path):
+    """Il default troncava a 200: un corpus più grande perdeva pagine ovunque."""
+    from PIL import Image
+    archive = tmp_path / "big"
+    archive.mkdir()
+    for index in range(205):
+        Image.new("L", (8, 8), 255).save(archive / f"p{index:03d}.png")
+    with TestClient(app) as client:
+        pid = client.post("/api/projects", json={"name": "Big", "archive_dir": str(archive)}).json()["id"]
+        client.post(f"/api/projects/{pid}/scan")
+        listed = client.get(f"/api/projects/{pid}/pages").json()
+        assert listed["total"] == 205
+        assert len(listed["items"]) == 205
+        capped = client.get(f"/api/projects/{pid}/pages", params={"limit": 10}).json()
+        assert len(capped["items"]) == 10 and capped["total"] == 205

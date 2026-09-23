@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import type { PageItem, PageSums, Project } from '../../lib/types'
 import { statusLabel, STATUS_TONE } from '../../lib/vocab'
@@ -66,6 +66,18 @@ export default function PageSidebar({
     setPageQuery('')
     setPageLimit(INITIAL_PAGE_LIMIT)
   }, [projectId])
+
+  // La pagina aperta deve stare in vista, al suo posto nell'elenco: aperta da
+  // un link o dopo un refresh poteva essere la 359ª di 361, fuori dalle prime
+  // cento e quindi introvabile nella colonna.
+  const listRef = useRef<HTMLUListElement>(null)
+  useEffect(() => {
+    if (index >= pageLimit) {
+      setPageLimit(Math.ceil((index + 1) / INITIAL_PAGE_LIMIT) * INITIAL_PAGE_LIMIT)
+      return
+    }
+    listRef.current?.querySelector<HTMLElement>('[aria-current="true"]')?.scrollIntoView?.({ block: 'nearest' })
+  }, [currentPage?.id, index, pageLimit])
 
   return (
     <aside
@@ -152,7 +164,7 @@ export default function PageSidebar({
         </div>
       )}
 
-      <ul className="min-h-0 flex-1 overflow-y-auto">
+      <ul ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
         {projectId === '' && (
           <li className="p-2 text-[12px] text-[color:var(--color-ink-2)]">
             {t('sidebar.noProject')}
@@ -192,7 +204,11 @@ export default function PageSidebar({
                   <span className="mono truncate text-[11px]" title={pageLabel(p)}>
                     {pageShortLabel(p)}
                   </span>
-                  <Badge tone={STATUS_TONE[p.status] ?? 'neutral'}>{statusLabel(p.status)}</Badge>
+                  {p.status === 'new' && (p.drafts ?? 0) > 0 ? (
+                    <Badge tone="warn">{t('home.draftsBadge', { n: p.drafts ?? 0 })}</Badge>
+                  ) : (
+                    <Badge tone={STATUS_TONE[p.status] ?? 'neutral'}>{statusLabel(p.status)}</Badge>
+                  )}
                   {sums?.[p.id] && (
                     <span
                       title={sums[p.id].failed > 0

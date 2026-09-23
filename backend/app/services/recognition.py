@@ -88,7 +88,14 @@ def _release_inference(
         cloud_manager.control_runpod_pod(api_key, str(resource_id), "stop")
 
 
-def _run_out(row, *, include_items: bool = True) -> dict[str, Any]:
+def _run_out(row, *, include_items: bool = True, results: str | int = "all") -> dict[str, Any]:
+    """Una sessione con le sue pagine.
+
+    `results` decide quanto output grezzo del modello viaggia con le pagine:
+    `"all"` (export), `"none"` (liste) o l'id di una pagina (lo Studio, che
+    ne mostra una sola). Tutto l'output di 200 pagine pesava 4,7 MB, riletto
+    ogni due secondi da una lista che non lo mostra.
+    """
     out = dict(row)
     if not include_items:
         return out
@@ -105,18 +112,23 @@ def _run_out(row, *, include_items: bool = True) -> dict[str, Any]:
                 WHERE i.run_id=? ORDER BY i.id""",
             (row["id"],),
         ).fetchall()
-    out["items"] = [dict(item) | {"result": json.loads(item["result_json"] or "{}")} for item in items]
+    def _result(item) -> dict[str, Any] | None:
+        if results == "all" or (results != "none" and int(item["page_id"]) == int(results)):
+            return json.loads(item["result_json"] or "{}")
+        return None
+
+    out["items"] = [dict(item) | {"result": _result(item)} for item in items]
     for item in out["items"]:
         item.pop("result_json", None)
     return out
 
 
-def get_run(run_id: int) -> dict[str, Any]:
+def get_run(run_id: int, *, results: str | int = "all") -> dict[str, Any]:
     with connect() as conn:
         row = conn.execute("SELECT * FROM recognition_runs WHERE id=?", (run_id,)).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="sessione di riconoscimento non trovata")
-    return _run_out(row)
+    return _run_out(row, results=results)
 
 
 def list_runs(project_id: int | None = None, limit: int = 50) -> list[dict[str, Any]]:

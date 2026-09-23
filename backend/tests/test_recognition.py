@@ -68,6 +68,21 @@ def test_bulk_run_persists_pages_and_exports_raw_and_reviewed(tmp_path, monkeypa
         assert [item["state"] for item in body["items"]] == ["finished", "finished"]
         assert all(item["drafts"] == 1 for item in body["items"])
 
+        # La lista non porta l'output grezzo; lo Studio lo chiede per una pagina.
+        assert all(item["result"] is None for item in body["items"])
+        one = client.get(
+            f"/api/projects/{project_id}/recognition-runs/{run_id}",
+            params={"result_page": page_ids[0]},
+        ).json()
+        by_page = {item["page_id"]: item for item in one["items"]}
+        assert by_page[page_ids[0]]["result"]["blocks"][0]["content"] == "Recognized text"
+        assert by_page[page_ids[1]]["result"] is None
+
+        # Le pagine riconosciute restano `new`, ma la lista dice che hanno bozze.
+        listed = client.get(f"/api/projects/{project_id}/pages").json()
+        assert listed["total"] == 2
+        assert all(page["status"] == "new" and page["drafts"] == 1 for page in listed["items"])
+
         raw = client.get(
             f"/api/projects/{project_id}/recognition-runs/{run_id}/export?scope=raw"
         ).json()

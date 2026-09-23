@@ -12,6 +12,7 @@ import { useConfirm } from '../../app/confirm'
 import { describeError } from '../../lib/errors'
 import { useI18n } from '../../i18n'
 import type { SectionProps } from './SettingsPage'
+import { formatDateTime } from '../../lib/dates'
 
 interface BackupItem {
   name: string
@@ -25,7 +26,7 @@ interface BackupState {
 }
 
 export default function DataSection({ isAdmin }: SectionProps) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const confirm = useConfirm()
   const [state, setState] = useState<BackupState | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -147,7 +148,7 @@ export default function DataSection({ isAdmin }: SectionProps) {
                   {new Intl.NumberFormat(undefined, { style: 'unit', unit: item.size >= 1_048_576 ? 'megabyte' : 'kilobyte', maximumFractionDigits: 1 }).format(item.size / (item.size >= 1_048_576 ? 1_048_576 : 1024))}
                 </span>
                 <time className="text-[11px] text-[color:var(--color-ink-3)]" dateTime={item.modified_at}>
-                  {new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(item.modified_at))}
+                  {formatDateTime(item.modified_at, locale)}
                 </time>
                 <span className="ml-auto flex items-center gap-2">
                   <a className="btn btn-sm" href={`/api/system/backup/${encodeURIComponent(item.name)}`}>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import { ApiError } from '../lib/api'
@@ -10,6 +10,7 @@ import { useAuth } from '../app/auth'
 import { IconArchive, IconPlayground } from '../app/icons'
 import { useI18n } from '../i18n'
 import { pageLabel, pageShortLabel } from '../lib/pageLabel'
+import { runTitle, useModelNames } from '../app/models/names'
 
 function runLabel(run: RecognitionRun, t: (key: string) => string): string {
   const key = {
@@ -34,9 +35,6 @@ function runProvider(run: RecognitionRun): string {
   return run.engine === 'ocr' ? 'local' : run.provider
 }
 
-function runTitle(run: RecognitionRun, t: (key: string) => string): string {
-  return run.model_name || (run.engine === 'ocr' ? t('recognition.localOcr') : t('recognition.servedModel'))
-}
 
 const INITIAL_PAGE_LIMIT = 100
 
@@ -48,6 +46,7 @@ interface ModelRuntimeInfo {
 
 function RunSummary({ run, onCancel }: { run: RecognitionRun; onCancel: () => void }) {
   const { t } = useI18n()
+  const nameOf = useModelNames()
   const active = run.state === 'queued' || run.state === 'running'
   const pct = run.total_pages ? (run.completed_pages / run.total_pages) * 100 : 0
   const provider = runProvider(run)
@@ -57,7 +56,7 @@ function RunSummary({ run, onCancel }: { run: RecognitionRun; onCancel: () => vo
   return (
     <Module tab={active ? t('recognition.current') : t('recognition.recent')} aux={<Badge tone={runTone(run)}>{runLabel(run, t)}</Badge>}>
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-        <strong className="text-[16px]">{runTitle(run, t)}</strong>
+        <strong className="text-[16px]">{runTitle(run, nameOf)}</strong>
         <span className="mono text-[11px] text-[color:var(--color-ink-3)]">
           {providerKey ? t(providerKey) : provider} · #{run.id}
         </span>
@@ -94,6 +93,7 @@ function RunSummary({ run, onCancel }: { run: RecognitionRun; onCancel: () => vo
 
 export default function RecognizePage() {
   const { t } = useI18n()
+  const nameOf = useModelNames()
   const inference = useInference()
   const auth = useAuth()
   const canManageInference = !auth.enabled || auth.user?.role === 'admin'
@@ -202,6 +202,7 @@ export default function RecognizePage() {
     return pages.filter((page) => pageLabel(page).toLocaleLowerCase().includes(query))
   }, [pages, pageQuery])
   const renderedPages = visiblePages.slice(0, pageLimit)
+  const unrecognized = useMemo(() => pages.filter((page) => (page.blocks ?? 0) === 0), [pages])
   const runtimeWarning = modelRuntime.find((item) => item.adapter_id === inference.adapterId)
   // «Pronto» = raggiungibile davvero (ping del backend), non solo attivato:
   // un endpoint configurato ma giù non deve sembrare operativo.
@@ -219,12 +220,34 @@ export default function RecognizePage() {
   // cose evita di dire «questa macchina non può» quando può, solo con un
   // altro modello.
   const localRuntimeAvailable = (caps?.local_compute?.usable_runtimes?.length ?? 0) > 0
-  const toggle = (id: number) => setSelected((before) => {
-    const next = new Set(before)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    return next
-  })
+  // Shift+clic seleziona l'intervallo dall'ultima pagina toccata, come in
+  // qualsiasi elenco di file: su 361 pagine, una alla volta non è un gesto.
+  const lastPicked = useRef<number | null>(null)
+  const shiftHeld = useRef(false)
+  const toggle = (id: number) => {
+    const anchor = lastPicked.current
+    const range = shiftHeld.current && anchor != null && anchor !== id
+    lastPicked.current = id
+    setSelected((before) => {
+      const next = new Set(before)
+      if (range) {
+        const ids = visiblePages.map((page) => page.id)
+        const from = ids.indexOf(anchor)
+        const to = ids.indexOf(id)
+        if (from >= 0 && to >= 0) {
+          const on = !before.has(id)
+          for (const pageId of ids.slice(Math.min(from, to), Math.max(from, to) + 1)) {
+            if (on) next.add(pageId)
+            else next.delete(pageId)
+          }
+          return next
+        }
+      }
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   const start = async () => {
     if (projectId === '' || selected.size === 0) return
@@ -277,7 +300,7 @@ export default function RecognizePage() {
       {current && <div className="mb-3"><RunSummary run={current} onCancel={() => void cancel()} /></div>}
 
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <Module tab={t('recognition.pages')} flush aux={<span>{t('recognition.selected', { n: selected.size })}</span>}>
+        <Module tab={t('recognition.pages')} flush aux={<span>{t('recognition.selected', { n: selected.size })} <span className="text-[color:var(--color-ink-3)]">· {t('recognition.rangeHint')}</span></span>}>
           <div className="flex flex-wrap items-end gap-3 border-b border-[color:var(--color-rule)] p-3">
             <div className="min-w-56 flex-1">
               <Field label={t('recognition.project')}>
@@ -298,6 +321,13 @@ export default function RecognizePage() {
               </Field>
             </div>
             <button type="button" className="btn" disabled={visiblePages.length === 0} onClick={() => setSelected((before) => new Set([...before, ...visiblePages.map((page) => page.id)]))}>{t('recognition.selectAll')}</button>
+            {/* La scelta più frequente su un corpus già in parte riconosciuto:
+                le pagine che non hanno ancora nessun blocco. */}
+            {unrecognized.length > 0 && unrecognized.length < pages.length && (
+              <button type="button" className="btn" onClick={() => setSelected(new Set(unrecognized.map((page) => page.id)))}>
+                {t('recognition.selectUnrecognized', { n: unrecognized.length })}
+              </button>
+            )}
             <button type="button" className="btn" disabled={selected.size === 0} onClick={() => setSelected(new Set())}>{t('recognition.clearSelection')}</button>
           </div>
           {pages.length === 0 ? (
@@ -339,8 +369,16 @@ export default function RecognizePage() {
                       <label className={`block cursor-pointer ${checked ? 'bg-[color:var(--color-sig-wash)] outline outline-2 -outline-offset-2 outline-[color:var(--color-sig)]' : 'hover:bg-[color:var(--color-fill)]'}`}>
                         <img src={`/api/pages/${page.id}/thumbnail`} alt="" loading="lazy" className="aspect-[3/4] w-full bg-white object-cover object-top" />
                         <span className="flex items-center gap-2 border-t border-[color:var(--color-rule)] p-1.5">
-                          <input type="checkbox" checked={checked} onChange={() => toggle(page.id)} />
-                          <span className="mono min-w-0 truncate text-[11px]" title={pageLabel(page)}>{pageShortLabel(page)}</span>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onClick={(e) => {
+                              shiftHeld.current = e.shiftKey
+                            }}
+                            onChange={() => toggle(page.id)}
+                          />
+                          <span className="mono min-w-0 flex-1 truncate text-[11px]" title={pageLabel(page)}>{pageShortLabel(page)}</span>
+                          {(page.drafts ?? 0) > 0 && <Badge tone="warn">{t('home.draftsBadge', { n: page.drafts ?? 0 })}</Badge>}
                         </span>
                       </label>
                     </li>
@@ -449,7 +487,7 @@ export default function RecognizePage() {
                   <li key={run.id}>
                     <Link to={`/risultati?project=${run.project_id}&run=${run.id}`} className="flex items-center gap-2 p-2 text-[12px] no-underline hover:bg-[color:var(--color-fill)]">
                       <span className="mono text-[11px]">#{run.id}</span>
-                      <span className="min-w-0 flex-1 truncate">{runTitle(run, t)}</span>
+                      <span className="min-w-0 flex-1 truncate">{runTitle(run, nameOf)}</span>
                       <Badge tone={runTone(run)}>{runLabel(run, t)}</Badge>
                     </Link>
                   </li>

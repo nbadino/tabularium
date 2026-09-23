@@ -75,7 +75,7 @@ function loadSplit(): { sidebar: number; content: number } {
 export default function AnnotationPage() {
   const { t } = useI18n()
   const confirm = useConfirm()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const requestedProject = Number(searchParams.get('project')) || null
   const requestedPage = Number(searchParams.get('page')) || null
   const requestedRun = Number(searchParams.get('run')) || null
@@ -172,7 +172,7 @@ export default function AnnotationPage() {
   // non parte mai direttamente quando la pagina contiene blocchi.
   const [prefillOpen, setPrefillOpen] = useState(false)
   const [navBusy, setNavBusy] = useState(false)
-  const [nextTask, setNextTask] = useState<{ id: number; reason: string } | null>(null)
+  const [nextTask, setNextTask] = useState<{ id: number; reason: string; rel_path?: string } | null>(null)
 
   const syncModelDefault = (out: PrefillEngines) => {
     const identity = `${out.model.adapter_id ?? inf.adapterId}|${out.model.model}|${out.model.url}`
@@ -407,7 +407,7 @@ export default function AnnotationPage() {
     if (!page || prefillBusy) return
     const ok = await confirm({
       title: t('annotate.clearAll'),
-      message: t('annotate.clearAllConfirm'),
+      message: `${t('annotate.clearAllConfirm')} ${t('annotate.clearAllCount', { n: prefillDrafts.length + ann.blocks.length })}`,
     })
     if (!ok) return
     setError(null)
@@ -451,6 +451,19 @@ export default function AnnotationPage() {
     }
     setProjectId(pid)
     writeActiveProject(pid === '' ? null : pid)
+    // L'URL dice dove si lavora: un refresh o un link riaprono lo stesso
+    // punto. Cambiare progetto lascia cadere pagina e sessione, che
+    // appartenevano all'altro.
+    if (pid !== requestedProject) {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        if (pid === '') next.delete('project')
+        else next.set('project', String(pid))
+        next.delete('page')
+        next.delete('run')
+        return next
+      }, { replace: true })
+    }
     loadSums(pid)
     setPage(null)
     pageIdRef.current = null
@@ -461,12 +474,12 @@ export default function AnnotationPage() {
     if (pid === '') return
     try {
       const runPromise = requestedRun && (requestedProject == null || requestedProject === pid)
-        ? apiGet<RecognitionRun>(`/projects/${pid}/recognition-runs/${requestedRun}`)
+        ? apiGet<RecognitionRun>(`/projects/${pid}/recognition-runs/${requestedRun}${requestedPage ? `?result_page=${requestedPage}` : ''}`)
         : Promise.resolve(null)
       const [pr, pg, queue, scopedRun] = await Promise.all([
         apiGet<{ items: PageItem[] }>(`/projects/${pid}/pages`),
         apiGet<{ labels: LabelDef[] }>(`/projects/${pid}/labels`),
-        apiGet<{ items: Array<{ id: number; reason: string }> }>(`/projects/${pid}/annotation-queue?limit=1`),
+        apiGet<{ items: Array<{ id: number; reason: string; rel_path?: string }> }>(`/projects/${pid}/annotation-queue?limit=1`),
         runPromise,
       ])
       if (scopedRun) {
@@ -508,10 +521,11 @@ export default function AnnotationPage() {
       setLiveOutput(text ? { phase: item?.state === 'finished' ? 'completed' : 'streaming', text } : null)
     }
     updateOutput(reviewRun)
-    if (reviewRun.state !== 'queued' && reviewRun.state !== 'running') return
+    // La sessione arriva senza output grezzo (pesava megabyte): lo si chiede
+    // per la sola pagina aperta, subito, e di nuovo a ogni giro se è viva.
     const tick = async () => {
       try {
-        const next = await apiGet<RecognitionRun>(`/projects/${reviewRun.project_id}/recognition-runs/${reviewRun.id}`)
+        const next = await apiGet<RecognitionRun>(`/projects/${reviewRun.project_id}/recognition-runs/${reviewRun.id}?result_page=${page.id}`)
         if (!stopped) {
           setReviewRun(next)
           updateOutput(next)
@@ -519,6 +533,12 @@ export default function AnnotationPage() {
       } catch {
         // Il canvas resta utilizzabile anche durante un'interruzione breve
         // del polling; il risultato salvato riapparirà al tick successivo.
+      }
+    }
+    void tick()
+    if (reviewRun.state !== 'queued' && reviewRun.state !== 'running') {
+      return () => {
+        stopped = true
       }
     }
     const timer = window.setInterval(() => void tick(), 1200)
@@ -665,7 +685,15 @@ export default function AnnotationPage() {
     }
     setPage(p)
     pageIdRef.current = p.id
-    pageIdRef.current = p.id
+    // Senza, un refresh riportava lo Studio vuoto e la pagina aperta si perdeva.
+    if (requestedPage !== p.id) {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        if (projectId !== '') next.set('project', String(projectId))
+        next.set('page', String(p.id))
+        return next
+      }, { replace: true })
+    }
     // Una run avviata sulla pagina precedente prosegue sul server ma non
     // riguarda più questa vista: si azzerano gli indicatori locali, i suoi
     // eventi restano ignorati (v. isCurrent in runPrelabel). Le bozze che
@@ -828,7 +856,9 @@ export default function AnnotationPage() {
   const prefillCount = prefillDrafts.length + ann.blocks.filter((b) => b.prefill).length
   const contentCount = prefillDrafts.length + ann.blocks.length
   const guideHint = !page
-    ? t('annotate.selectHint')
+    ? projectId === ''
+      ? t('annotate.selectHint')
+      : t('annotate.pickPageHint')
     : contentCount === 0
       ? t('annotate.guideStart')
       : prefillCount > 0
@@ -1037,7 +1067,10 @@ export default function AnnotationPage() {
               type="button"
               onClick={() => void ann.saveNow()}
               disabled={!page || prefillBusy}
-              className="btn btn-primary"
+              // L'autosave salva da sé: «Salva» è l'azione primaria solo
+              // quando c'è davvero qualcosa da salvare. Altrimenti lo è
+              // passare alla prossima pagina.
+              className={`btn ${ann.dirty ? 'btn-primary' : ''}`}
             >
               <IconSave size={12} />
               {t('annotate.save')}
@@ -1053,23 +1086,25 @@ export default function AnnotationPage() {
               </button>
             )}
             <button
-              type="button"
-              onClick={() => void clearPageAnnotations()}
-              disabled={!page || prefillBusy}
-              className="btn btn-danger"
-              title={t('annotate.clearAllTitle')}
-            >
-              <IconTrash size={12} />
-              {t('annotate.clearAll')}
-            </button>
-            <button
               onClick={openNextTask}
               disabled={reviewRun ? !nextReviewPage : !nextTask}
-              className="btn"
+              className={`btn ${page && !ann.dirty ? 'btn-primary' : ''}`}
               title={reviewRun ? t('annotate.nextRunPage') : nextTask?.reason}
             >
               <IconNext size={12} />
               {t('annotate.nextTask')}
+            </button>
+            {/* Distruttivo e raro: lontano da «Salva», con il peso di un
+                comando secondario e la conferma che dice quanto si perde. */}
+            <button
+              type="button"
+              onClick={() => void clearPageAnnotations()}
+              disabled={!page || prefillBusy || contentCount === 0}
+              className="btn btn-sm ml-auto text-[color:var(--color-sig-text)]"
+              title={t('annotate.clearAllTitle')}
+            >
+              <IconTrash size={12} />
+              {t('annotate.clearAll')}
             </button>
           </div>
           <div className="flex items-center gap-2 text-xs">
@@ -1133,8 +1168,28 @@ export default function AnnotationPage() {
             </div>
           )}
           {!page ? (
-            <div className="flex h-full items-center justify-center text-sm text-[color:var(--color-ink-3)]">
-              {t('annotate.selectHint')}
+            // Senza pagina lo Studio propone la prossima, invece di un invito
+            // generico a «scegliere progetto e pagina» anche a progetto scelto.
+            <div className="flex h-full items-center justify-center p-6">
+              {projectId !== '' && (reviewRun ? nextReviewPage : nextTask) ? (
+                <div className="max-w-[46ch] border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] p-4">
+                  <span className="lbl">{t('annotate.nextTask')}</span>
+                  <div className="mono truncate text-[13px] font-semibold">
+                    {reviewRun ? nextReviewPage?.rel_path : nextTask?.rel_path ?? pages.find((item) => item.id === nextTask?.id)?.rel_path}
+                  </div>
+                  {!reviewRun && nextTask?.reason && (
+                    <p className="mt-1 text-[12px] text-[color:var(--color-ink-2)]">{nextTask.reason}</p>
+                  )}
+                  <button type="button" className="btn btn-primary mt-3" onClick={openNextTask}>
+                    {t('annotate.openNextTask')}
+                  </button>
+                  <p className="mt-2 text-[11px] text-[color:var(--color-ink-3)]">{t('annotate.pickPageHint')}</p>
+                </div>
+              ) : (
+                <p className="text-sm text-[color:var(--color-ink-3)]">
+                  {projectId === '' ? t('annotate.selectHint') : t('annotate.pickPageHint')}
+                </p>
+              )}
             </div>
           ) : (
             previewUrl && (

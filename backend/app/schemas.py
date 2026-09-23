@@ -193,6 +193,12 @@ class PageOut(BaseModel):
     status: str
     annotation_revision: int = 0
     created_at: str
+    # Quanto contiene la pagina: `status` dice solo che cosa ne ha fatto una
+    # persona, e una pagina riconosciuta ma non ancora rivista resta `new`.
+    # Senza questi due numeri nessuna lista sapeva dire quali pagine hanno
+    # bozze da verificare.
+    blocks: int = 0
+    drafts: int = 0
 
 
 class PageUpdate(BaseModel):
@@ -205,6 +211,9 @@ class PageUpdate(BaseModel):
 
 class PageList(BaseModel):
     items: list[PageOut]
+    # Pagine che corrispondono ai filtri, anche oltre `limit`: una lista
+    # troncata deve poterlo dire.
+    total: int = 0
 
 
 class PageSums(BaseModel):
