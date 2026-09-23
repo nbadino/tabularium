@@ -48,6 +48,12 @@ def test_paddle_install_does_not_recreate_venv_after_opening_log(tmp_path, monke
     monkeypatch.setattr(paddle_runtime, "_dir", lambda: tmp_path)
     monkeypatch.setattr(paddle_runtime.venv, "EnvBuilder", Builder)
     monkeypatch.setattr(paddle_runtime, "ready", lambda: next(probes))
+    # This test covers install ordering, not host CUDA detection. Keep the
+    # package choice deterministic instead of letting the subprocess.run mock
+    # below intercept the nvidia-smi probe on Linux.
+    monkeypatch.setattr(
+        paddle_runtime, "default_paddle_packages", lambda: ["paddlepaddle==3.2.1"]
+    )
     monkeypatch.setattr(paddle_runtime.subprocess, "run", lambda *_args, **_kwargs: None)
 
     paddle_runtime.ensure_ready()
