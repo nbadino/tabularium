@@ -1065,7 +1065,10 @@ class Qwen3VlAdapter(_StubAdapter):
         display_name="Qwen3-VL-8B",
         tasks=("layout", "text", "table", "formula"),
         coordinate_system="unverified",
-        table_format=None,
+        # The adapter's table prompt and grid parser require the same OTSL
+        # contract as Tabularium exports; do not treat arbitrary prose as a
+        # valid extraction merely because Qwen is a general-purpose VLM.
+        table_format="otsl",
         training_types=("lora", "full"),
         inference_modes=("vllm",),
         hardware=("cuda",),
