@@ -369,6 +369,10 @@ def start_deploy(
             env[f"TABULARIUM_SERVE_{key.upper()}"] = str(serving[key])
     if "max_num_seqs" in serving:
         env["TABULARIUM_MODAL_MAX_INPUTS"] = str(serving["max_num_seqs"])
+    if template.id == "glm-ocr":
+        workflow = overrides.get("workflow", {})
+        if "speculative_tokens" in workflow:
+            env["TABULARIUM_GLM_SPECULATIVE_TOKENS"] = str(workflow["speculative_tokens"])
     _start("deploy", ["deploy", str(template.script)], env=env, template_id=template.id, owner_id=owner_id)
 
 

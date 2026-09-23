@@ -37,6 +37,23 @@ def test_modal_deploy_receives_saved_model_serving_overrides(monkeypatch):
     assert captured["env"]["TABULARIUM_MODAL_MAX_INPUTS"] == "2"
 
 
+def test_glm_modal_deploy_receives_the_configured_mtp_value(monkeypatch):
+    template = modal_manager.TEMPLATES["glm-ocr"]
+    captured = {}
+    monkeypatch.setattr(modal_manager, "_template", lambda _template_id: template)
+    monkeypatch.setattr(modal_manager, "_start", lambda *args, **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(modal_manager.os, "environ", {})
+    monkeypatch.setattr(model_settings, "get_settings", lambda _adapter_id: {
+        "overrides": {"workflow": {"speculative_tokens": 4}},
+    })
+
+    modal_manager.start_deploy("glm-ocr", keep_warm=False)
+
+    assert captured["env"]["TABULARIUM_GLM_SPECULATIVE_TOKENS"] == "4"
+    script = template.script.read_text(encoding="utf-8")
+    assert 'os.environ.get("TABULARIUM_GLM_SPECULATIVE_TOKENS", "1")' in script
+
+
 def test_modal_status_recovers_persisted_task_after_backend_restart(tmp_path, monkeypatch):
     db.init_db()
     log = tmp_path / "modal.log"

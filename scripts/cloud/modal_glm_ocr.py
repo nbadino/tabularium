@@ -99,7 +99,11 @@ def serve():
         "vllm", "serve", MODEL_ID,
         "--host", "0.0.0.0",
         "--port", str(PORT),
-        "--speculative-config", '{"method": "mtp", "num_speculative_tokens": 3}',
+        "--speculative-config", (
+            '{"method": "mtp", "num_speculative_tokens": '
+            + os.environ.get("TABULARIUM_GLM_SPECULATIVE_TOKENS", "1")
+            + "}"
+        ),
         "--max-num-batched-tokens", "32768",
         "--max-num-seqs", str(MAX_INPUTS),
         "--served-model-name", "glm-ocr",
