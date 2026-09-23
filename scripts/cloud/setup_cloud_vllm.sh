@@ -84,6 +84,8 @@ RECIPE_INSTALL_VLLM="1"
 RECIPE_MIN_DISK_GB=20
 RECIPE_MIN_VRAM_GB=10
 RECIPE_MIN_RAM_GB=12
+RECIPE_NATIVE_GATEWAY_B64=""
+RECIPE_NATIVE_REMOTE_PORT=""
 SERVE_ARGV=()
 if [ -n "$RECIPE_B64" ]; then
   RECIPE_JSON=$(printf '%s' "$RECIPE_B64" | base64 -d)
@@ -96,6 +98,8 @@ EOF
   RECIPE_MIN_DISK_GB=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('min_free_disk_gb', 20)))")
   RECIPE_MIN_VRAM_GB=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('min_free_vram_gb', 10)))")
   RECIPE_MIN_RAM_GB=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('min_free_ram_gb', 12)))")
+  RECIPE_NATIVE_GATEWAY_B64=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('native_gateway_b64') or '')")
+  RECIPE_NATIVE_REMOTE_PORT=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('native_remote_port') or '')")
   RECIPE_TRANSFORMERS_VERSION=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('transformers_version') or '')")
   if [ -n "$RECIPE_TRANSFORMERS_VERSION" ]; then TRANSFORMERS_VERSION="$RECIPE_TRANSFORMERS_VERSION"; fi
   # The recipe owns the minimum: an external environment override may make
@@ -527,5 +531,30 @@ echo "=========================================================="
 echo ">> [Tabularium Cloud Server] Avvio vLLM su $HOST:$PORT..."
 echo ">> Endpoint: http://$HOST:$PORT/v1"
 echo "=========================================================="
+
+if [ "$RECIPE_ADAPTER" = "teleocr" ]; then
+  if [ -z "$RECIPE_NATIVE_GATEWAY_B64" ] || [ -z "$RECIPE_NATIVE_REMOTE_PORT" ]; then
+    echo "!! Runner nativo TeleOCR non incluso nella ricetta; rifiuto un avvio parziale." >&2
+    exit 2
+  fi
+  NATIVE_GATEWAY="$VENV_DIR/tabularium_teleocr_gateway.py"
+  printf '%s' "$RECIPE_NATIVE_GATEWAY_B64" | base64 -d > "$NATIVE_GATEWAY"
+  export TABULARIUM_SERVER_API_KEY="$API_KEY"
+  TABULARIUM_TELEOCR_MODEL="$MODEL_NAME" \
+  TABULARIUM_TELEOCR_VLLM_URL="http://127.0.0.1:$PORT/v1" \
+  "$PY_BIN" -m uvicorn tabularium_teleocr_gateway:app \
+    --app-dir "$VENV_DIR" --host 127.0.0.1 \
+    --port "$RECIPE_NATIVE_REMOTE_PORT" --no-access-log \
+    >> "$REMOTE_LOG_PATH" 2>&1 < /dev/null &
+  GATEWAY_PID=$!
+  "$PY_BIN" "${SERVE_ARGV[@]}" >> "$REMOTE_LOG_PATH" 2>&1 < /dev/null &
+  MODEL_PID=$!
+  trap 'kill "$GATEWAY_PID" "$MODEL_PID" 2>/dev/null || true; wait 2>/dev/null || true' EXIT TERM INT
+  set +e
+  wait -n "$GATEWAY_PID" "$MODEL_PID"
+  RESULT=$?
+  set -e
+  exit "$RESULT"
+fi
 
 exec "$PY_BIN" "${SERVE_ARGV[@]}"

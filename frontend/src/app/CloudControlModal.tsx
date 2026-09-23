@@ -41,6 +41,7 @@ interface TunnelState {
   host?: string | null
   port?: number | null
   local_port?: number
+  native_local_port?: number | null
   pid?: number | null
   error?: string | null
 }
@@ -728,6 +729,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
         // spesso già occupata dall'inferenza locale: non è un errore cloud.
         local_port: 0,
         remote_port: 8888,
+        adapter_id: vastAdapter,
       })
       setTunnelState(res)
       const localUrl = `http://127.0.0.1:${res.local_port || 8888}/v1`

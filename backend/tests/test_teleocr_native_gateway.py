@@ -1,0 +1,97 @@
+from __future__ import annotations
+
+import importlib.util
+import io
+import sys
+import types
+from pathlib import Path
+from types import SimpleNamespace
+
+from fastapi.testclient import TestClient
+from PIL import Image
+
+
+def _load_gateway():
+    path = Path(__file__).resolve().parents[2] / "scripts/cloud/teleocr_native_gateway.py"
+    spec = importlib.util.spec_from_file_location("teleocr_native_gateway_under_test", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_gateway_delegates_to_official_batch_runner_and_forwards_settings(monkeypatch):
+    gateway = _load_gateway()
+    async def noop_startup():
+        return None
+
+    monkeypatch.setattr(gateway, "_startup", noop_startup)
+
+    called = {}
+
+    class FakeTeleOCRClient:
+        def __init__(self):
+            self.sampling_params = {
+                "text": SimpleNamespace(
+                    temperature=0.0, top_p=0.01, top_k=1, presence_penalty=1.0,
+                    frequency_penalty=0.05, repetition_penalty=1.0,
+                    no_repeat_ngram_size=100, max_new_tokens=None,
+                )
+            }
+
+        async def aio_batch_two_step_extract(self, images):
+            called["image_count"] = len(images)
+            called["image_size"] = images[0].size
+            called["layout_mode"] = config.LAYOUT_MODE
+            called["max_pixels"] = config.MAX_PIXELS
+            called["sampling"] = self.sampling_params["text"].temperature
+            return [[{"type": "text", "bbox": [0.1, 0.2, 0.9, 0.8], "content": "native"}]]
+
+    gateway._client = FakeTeleOCRClient()
+    config = types.ModuleType("TeleOCR.config")
+    config.LAYOUT_MODE = "Detection"
+    config.MAX_PIXELS = 64_000_000
+    package = types.ModuleType("TeleOCR")
+    package.__path__ = []
+    subpackage = types.ModuleType("TeleOCR.vlm_utils")
+    subpackage.__path__ = []
+    client_module = types.ModuleType("TeleOCR.vlm_utils.TeleOCR_client")
+
+    class FakeSamplingParams:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    client_module.TeleOCRSamplingParams = FakeSamplingParams
+    monkeypatch.setitem(sys.modules, "TeleOCR", package)
+    monkeypatch.setitem(sys.modules, "TeleOCR.config", config)
+    monkeypatch.setitem(sys.modules, "TeleOCR.vlm_utils", subpackage)
+    monkeypatch.setitem(sys.modules, "TeleOCR.vlm_utils.TeleOCR_client", client_module)
+    monkeypatch.setenv("TABULARIUM_SERVER_API_KEY", "secret-test-key")
+
+    image = Image.new("RGB", (12, 8), "white")
+    payload = io.BytesIO()
+    image.save(payload, format="PNG")
+    with TestClient(gateway.app) as client:
+        response = client.post(
+            "/parse",
+            content=payload.getvalue(),
+            headers={
+                "Authorization": "Bearer secret-test-key",
+                "x-teleocr-layout-mode": "Segmentation",
+                "x-teleocr-max-pixels": "2000000",
+                "x-teleocr-generation": '{"temperature":0.2}',
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["blocks"] == [
+        {"type": "text", "bbox": [0.1, 0.2, 0.9, 0.8], "content": "native"}
+    ]
+    assert called == {
+        "image_count": 1,
+        "image_size": (12, 8),
+        "layout_mode": "Segmentation",
+        "max_pixels": 2_000_000,
+        "sampling": 0.2,
+    }

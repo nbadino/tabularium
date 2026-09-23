@@ -41,6 +41,8 @@ class TunnelStatus:
     user: str | None = None
     local_port: int = 8888
     remote_port: int = 8888
+    native_local_port: int | None = None
+    native_remote_port: int | None = None
     pid: int | None = None
     error: str | None = None
 
@@ -149,6 +151,8 @@ def get_tunnel_status() -> TunnelStatus:
                 user=_ACTIVE_TUNNEL_INFO.get("user"),
                 local_port=_ACTIVE_TUNNEL_INFO.get("local_port", 8888),
                 remote_port=_ACTIVE_TUNNEL_INFO.get("remote_port", 8888),
+                native_local_port=_ACTIVE_TUNNEL_INFO.get("native_local_port"),
+                native_remote_port=_ACTIVE_TUNNEL_INFO.get("native_remote_port"),
                 pid=_ACTIVE_TUNNEL_PROC.pid,
             )
         else:
@@ -169,6 +173,8 @@ def get_tunnel_status() -> TunnelStatus:
             user=info.get("user"),
             local_port=info.get("local_port", 8888),
             remote_port=info.get("remote_port", 8888),
+            native_local_port=info.get("native_local_port"),
+            native_remote_port=info.get("native_remote_port"),
             pid=info.get("pid"),
         )
     return TunnelStatus(running=False)
@@ -181,6 +187,7 @@ def start_ssh_tunnel(
     key_path: str | None = None,
     local_port: int = 8888,
     remote_port: int = 8888,
+    native_remote_port: int | None = None,
     owner_id: int | None = None,
 ) -> TunnelStatus:
     """Avvia un tunnel SSH in background inoltrando 127.0.0.1:local_port a remote_port."""
@@ -208,6 +215,17 @@ def start_ssh_tunnel(
         raise ValueError("Porta remota non valida.")
 
     # Argomenti del comando SSH
+    native_local_port = None
+    if native_remote_port is not None:
+        native_remote_port = int(native_remote_port)
+        if not (0 < native_remote_port < 65536) or native_remote_port == remote_port:
+            raise ValueError("Porta del runner nativo non valida.")
+        # Keep the sidecar local endpoint independent: the OS may have taken
+        # local_port+1 since the primary forward was allocated.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            native_local_port = int(probe.getsockname()[1])
+
     cmd = [
         "ssh",
         # Alcune distribuzioni/container installano un ssh_config.d con
@@ -235,6 +253,8 @@ def start_ssh_tunnel(
         "-o",
         "ConnectTimeout=10",
     ]
+    if native_local_port is not None and native_remote_port is not None:
+        cmd.extend(["-L", f"{native_local_port}:127.0.0.1:{native_remote_port}"])
 
     if key_path and Path(key_path).expanduser().exists():
         cmd.extend(["-i", str(Path(key_path).expanduser())])
@@ -281,6 +301,8 @@ def start_ssh_tunnel(
         "user": user,
         "local_port": local_port,
         "remote_port": remote_port,
+        "native_local_port": native_local_port,
+        "native_remote_port": native_remote_port,
         "key_path": key_path,
         "owner_id": owner_id,
     }
@@ -384,15 +406,16 @@ def reconcile_tunnel() -> None:
     # limitato, senza tenere bloccata l'app indefinitamente.
     for attempt in range(3):
         try:
-            status = start_ssh_tunnel(
-                host,
-                int(info.get("port") or 22),
-                user=str(info.get("user") or "root"),
-                key_path=info.get("key_path"),
-                local_port=int(info.get("local_port") or 8888),
-                remote_port=int(info.get("remote_port") or 8888),
-                owner_id=info.get("owner_id"),
-            )
+            tunnel_options = {
+                "user": str(info.get("user") or "root"),
+                "key_path": info.get("key_path"),
+                "local_port": int(info.get("local_port") or 8888),
+                "remote_port": int(info.get("remote_port") or 8888),
+                "owner_id": info.get("owner_id"),
+            }
+            if info.get("native_remote_port"):
+                tunnel_options["native_remote_port"] = int(info["native_remote_port"])
+            status = start_ssh_tunnel(host, int(info.get("port") or 22), **tunnel_options)
             # Mantieni il client inferenza allineato alla porta realmente
             # ripristinata, anche se il browser aveva conservato una config
             # precedente o il sistema aveva scelto una porta dinamica.
@@ -1428,6 +1451,21 @@ def probe_vast_server(host: str, port: int, *, user: str = "root", remote_port: 
     return {"ready": bool(model), "model": model}
 
 
+def probe_vast_native_gateway(
+    host: str, port: int, *, user: str = "root", remote_port: int,
+) -> bool:
+    """Check an optional model-owned gateway without exposing its port publicly."""
+    cmd = _ssh_base_args(host, port, user) + [
+        f"curl -fsS --max-time 4 http://127.0.0.1:{int(remote_port)}/health"
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=12, check=False)
+        payload = json.loads(proc.stdout) if proc.returncode == 0 else {}
+    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
+        return False
+    return isinstance(payload, dict) and payload.get("status") == "ready"
+
+
 REMOTE_MODEL_ROOT = "/root/models"
 # Un ambiente per modello: le ricette pinnano versioni di vLLM diverse (0.12
 # per DeepSeek, 0.19 per GLM, 0.21 per MinerU…), incompatibili fra loro nello
@@ -1462,6 +1500,12 @@ def build_provision_recipe(
     if not _MODEL.fullmatch(hf_repo):
         raise ValueError("Nome modello non valido.")
     effective_model_dir = model_dir.strip() or f"{REMOTE_MODEL_ROOT}/{hf_repo.rsplit('/', 1)[-1]}"
+    native_gateway = config.REPO_DIR / "scripts" / "cloud" / "teleocr_native_gateway.py"
+    native_gateway_b64 = (
+        base64.b64encode(native_gateway.read_bytes()).decode("ascii")
+        if adapter_id == "teleocr" and native_gateway.is_file()
+        else ""
+    )
     return {
         "adapter_id": recipe.adapter_id,
         "runtime": recipe.runtime,
@@ -1474,6 +1518,8 @@ def build_provision_recipe(
         "install_vllm": recipe.installs_vllm,
         "venv_dir": f"{REMOTE_ENV_ROOT}/{recipe.adapter_id}",
         "docker_image": recipe.docker_image,
+        "native_gateway_b64": native_gateway_b64,
+        "native_remote_port": recipe.native_remote_port,
         "pip_extra": list(recipe.pip_extra),
         **serve_recipes.resource_budget(recipe),
         "needs_monkeyocr_repo": recipe.runtime == "monkeyocr",
@@ -1540,15 +1586,23 @@ def provision_vast_server(
     ensure_ssh_access(host, port, user=user)
     existing = probe_vast_server(host, port, user=user, remote_port=remote_port)
     if existing["ready"] and existing["model"] == recipe["served_model_name"]:
-        return {
-            "ok": True,
-            "already_ready": True,
-            "host": host,
-            "port": int(port),
-            "remote_port": int(remote_port),
-            "served_model_name": existing["model"],
-            "message": "server già configurato: nessuna reinstallazione eseguita",
-        }
+        native_ready = (
+            not recipe.get("native_remote_port")
+            or probe_vast_native_gateway(
+                host, port, user=user, remote_port=recipe["native_remote_port"]
+            )
+        )
+        if native_ready:
+            return {
+                "ok": True,
+                "already_ready": True,
+                "host": host,
+                "port": int(port),
+                "remote_port": int(remote_port),
+                "native_remote_port": recipe.get("native_remote_port"),
+                "served_model_name": existing["model"],
+                "message": "server già configurato: nessuna reinstallazione eseguita",
+            }
     remote_port = int(remote_port)
     if not (0 < remote_port < 65536):
         raise ValueError("Porta remota non valida.")

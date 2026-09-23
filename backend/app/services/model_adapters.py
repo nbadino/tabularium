@@ -976,18 +976,13 @@ class Qwen3VlAdapter(_StubAdapter):
 
 
 class TeleOcrAdapter(_StubAdapter):
-    """Adapter cloud StarDoc-AI/TeleOCR con prompt e protocollo layout upstream.
-
-    Il prefill usa i prompt ufficiali TeleOCR per layout, testo, OTSL e formule.
-    Per efficienza batch e post-processing avanzato resta da collegare
-    direttamente il runner infer.py; non si inventano prompt/layout proprietari.
-    Non esiste un checkpoint MLX verificato.
-    """
+    """Adapter cloud StarDoc-AI/TeleOCR con runner nativo upstream."""
 
     adapter_id = "teleocr"
-    # TeleOCR's official infer.py calls aio_batch_two_step_extract; "native"
-    # therefore resolves to its vendor-defined two-pass workflow.
-    native_prefill_mode = "two_stage"
+    # The cloud sidecar invokes TeleOCRClient.aio_batch_two_step_extract, which
+    # owns layout, crop preparation, concurrent OCR and post-processing.
+    native_prefill_mode = "official"
+    page_layout_fallback = "official-pipeline"
     supports_dataset_export = False
     capabilities = ModelCapabilities(
         adapter_id=adapter_id,
@@ -1083,6 +1078,51 @@ class TeleOcrAdapter(_StubAdapter):
                 "bbox": [min(xs), min(ys), max(xs), max(ys)],
                 "label": labels.get(raw_label.lower(), "Text"),
                 "content": "",
+            })
+        return items
+
+    def parse_native_result(self, blocks: object) -> list[dict]:
+        """Map official TeleOCR ContentBlock JSON into Tabularium's bbox scale.
+
+        Upstream ContentBlock coordinates are normalized to 0–1 and may be a
+        four-corner polygon. We retain its enclosing rectangle while keeping
+        the vendor's label and post-processed content.
+        """
+        if not isinstance(blocks, list):
+            return []
+        labels = {
+            "text": "Text", "title": "Title", "table": "Table",
+            "image": "Picture", "header": "Page-header",
+            "footer": "Page-footer", "page_number": "Issue-number",
+            "page_footnote": "Footnote", "aside_text": "Text",
+            "equation": "Formula", "equation_block": "Formula",
+            "ref_text": "List-item", "list": "List-item",
+            "table_caption": "Caption", "image_caption": "Caption",
+            "table_footnote": "Footnote", "image_footnote": "Footnote",
+        }
+        items: list[dict] = []
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            raw_bbox = block.get("bbox")
+            if not isinstance(raw_bbox, (list, tuple)) or len(raw_bbox) < 4:
+                continue
+            try:
+                coords = [float(v) for v in raw_bbox]
+            except (TypeError, ValueError):
+                continue
+            xs, ys = coords[0::2], coords[1::2]
+            if not xs or not ys or any(v < 0 or v > 1 for v in coords):
+                continue
+            x1, y1 = round(min(xs) * 1000), round(min(ys) * 1000)
+            x2, y2 = round(max(xs) * 1000), round(max(ys) * 1000)
+            if x2 <= x1 or y2 <= y1:
+                continue
+            kind = str(block.get("type") or "unknown").lower()
+            items.append({
+                "bbox": [x1, y1, x2, y2],
+                "label": labels.get(kind, "Text"),
+                "content": str(block.get("content") or ""),
             })
         return items
 

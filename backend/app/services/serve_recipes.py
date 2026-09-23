@@ -37,6 +37,8 @@ class ServeRecipe:
     # Model plugins may constrain Transformers themselves (TeleOCR does).
     transformers_version: str = ""
     docker_image: str = ""
+    # Optional model-owned HTTP bridge port (e.g. TeleOCR's official runner).
+    native_remote_port: int | None = None
     pip_extra: tuple[str, ...] = ()
     # Flag dopo il modello. `--host`, `--port` e `--served-model-name` li
     # aggiunge `serve_argv`: sono infrastruttura, non ricetta.
@@ -70,6 +72,7 @@ RECIPES: dict[str, ServeRecipe] = {
         # l'architettura personalizzata del checkpoint non viene caricata.
         vllm_version="0.11.0",
         transformers_version="4.57.1",
+        native_remote_port=8889,
         pip_extra=(
             # Upstream documents pip install -e . at the repository root.
             # This registers both the architecture plugin and the official
@@ -305,6 +308,7 @@ def remote_models() -> list[dict[str, object]]:
             "supported": True,
             "needs_own_image": recipe.needs_own_image,
             "docker_image": recipe.docker_image,
+            "native_remote_port": recipe.native_remote_port,
             **resource_budget(recipe),
         }
         for recipe in RECIPES.values()

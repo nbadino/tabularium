@@ -24,7 +24,7 @@ def test_monkeyocr_adapter_contract():
     [
         ("monkeyocrv2-parsing", "two_stage"),
         ("mineru2.5", "two_stage"),
-        ("teleocr", "two_stage"),
+        ("teleocr", "official"),
         ("unlimited-ocr", "end2end"),
         ("dots-ocr", "end2end"),
         ("paddleocr-vl", "official"),
@@ -42,3 +42,16 @@ def test_custom_layout_prompts_are_not_misrepresented_as_native(adapter_id):
     assert supported_prefill_modes(adapter)["supports_native"] is False
     with pytest.raises(ValueError, match="workflow nativo"):
         native_mode(adapter)
+
+
+def test_teleocr_native_result_maps_vendor_content_blocks():
+    adapter = get_adapter("teleocr")
+    items = adapter.parse_native_result([
+        {"type": "table", "bbox": [0.1, 0.2, 0.8, 0.2, 0.8, 0.9, 0.1, 0.9], "content": "<fcel>x</fcel>"},
+        {"type": "equation_block", "bbox": [0.2, 0.3, 0.4, 0.5], "content": "$x$"},
+        {"type": "table", "bbox": [0.9, 0.9, 0.9, 0.9], "content": "invalid"},
+    ])
+    assert items == [
+        {"bbox": [100, 200, 800, 900], "label": "Table", "content": "<fcel>x</fcel>"},
+        {"bbox": [200, 300, 400, 500], "label": "Formula", "content": "$x$"},
+    ]

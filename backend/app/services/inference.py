@@ -235,6 +235,7 @@ class VllmClient:
         adapter: ModelAdapter | None = None,
         max_pixels: int | None | object = _MAX_PIXELS_DEFAULT,
         provider: str | None = None,
+        native_url: str | None = None,
     ) -> None:
         self.url = (url or config.VLLM_URL).rstrip("/")
         self.model = model or config.VLLM_MODEL
@@ -246,6 +247,7 @@ class VllmClient:
         # anche quando l'URL mente (un tunnel SSH Vast ascolta su localhost,
         # ma la GPU è remota). None = si ripiega sulla sola forma dell'URL.
         self.provider = (provider or "").strip() or None
+        self.native_url = (native_url or "").rstrip("/") or None
         # Default MonkeyOCRv2: i chiamanti esistenti (test compresi) costruiscono
         # `VllmClient` senza adapter e si aspettano il comportamento storico.
         self.adapter: ModelAdapter = adapter or MonkeyOCRv2ParsingAdapter()
@@ -271,6 +273,49 @@ class VllmClient:
         if self.extra_headers:
             headers.update(self.extra_headers)
         return headers
+
+    def teleocr_native_page(self, image: Image.Image) -> list[dict]:
+        """Run the official TeleOCR page pipeline on its cloud-side gateway."""
+        if self.adapter.adapter_id != "teleocr":
+            raise RuntimeError("il runner nativo TeleOCR richiede l'adapter TeleOCR")
+        if not self.native_url:
+            raise RuntimeError(
+                "runner TeleOCR ufficiale non raggiungibile: collega il tunnel Vast "
+                "dell'istanza preparata con la ricetta TeleOCR"
+            )
+        buffer = io.BytesIO()
+        image.convert("RGB").save(buffer, format="PNG")
+        headers = self._headers()
+        headers.pop("Content-Type", None)
+        try:
+            from . import model_settings
+
+            effective = model_settings.get_settings("teleocr")["effective"]
+            headers["x-teleocr-layout-mode"] = str(
+                effective.get("workflow", {}).get("layout_mode") or "Detection"
+            )
+            max_pixels = effective.get("image", {}).get("max_pixels")
+            if max_pixels is not None:
+                headers["x-teleocr-max-pixels"] = str(max_pixels)
+            generation = effective.get("generation", {})
+            if generation:
+                headers["x-teleocr-generation"] = json.dumps(generation, separators=(",", ":"))
+        except (ImportError, KeyError, ValueError):
+            pass
+        try:
+            response = requests.post(
+                f"{self.native_url}/parse",
+                content=buffer.getvalue(),
+                headers=headers,
+                timeout=max(self.timeout, 600),
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except requests.RequestException as exc:
+            raise RuntimeError(f"runner ufficiale TeleOCR non disponibile: {exc}") from exc
+        except ValueError as exc:
+            raise RuntimeError("risposta non JSON dal runner ufficiale TeleOCR") from exc
+        return self.adapter.parse_native_result(payload.get("blocks"))
 
     @property
     def is_cloud(self) -> bool:
@@ -1104,6 +1149,16 @@ def get_inference_config() -> dict:
     except Exception:
         profile = None
 
+    native_url = None
+    if adapter_id == "teleocr" and provider == "vast":
+        try:
+            from . import cloud_manager
+            tunnel = cloud_manager.get_tunnel_status()
+            if tunnel.running and getattr(tunnel, "native_local_port", None):
+                native_url = f"http://127.0.0.1:{tunnel.native_local_port}/teleocr"
+        except Exception:  # noqa: BLE001 - legacy/non-Vast profiles have no sidecar
+            native_url = None
+
     return {
         "enabled": enabled,
         "url": url,
@@ -1117,6 +1172,7 @@ def get_inference_config() -> dict:
         "resource_id": resource_id,
         "provider_credential_ref": provider_credential_ref,
         "source_profile_id": source_profile_id,
+        "native_url": native_url,
     }
 
 
@@ -1278,6 +1334,7 @@ def get_vllm_client(
             adapter=adapter,
             max_pixels=cfg.get("max_pixels"),
             provider=cfg.get("provider"),
+            native_url=cfg.get("native_url"),
         )
     except TypeError:
         try:

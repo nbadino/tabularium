@@ -469,6 +469,46 @@ def test_tunnel_can_choose_a_free_local_port(monkeypatch, tmp_path):
     assert forward == f"{status.local_port}:127.0.0.1:8888"
 
 
+def test_tunnel_can_forward_the_model_native_sidecar(monkeypatch, tmp_path):
+    chiave = tmp_path / "tabularium_vast_ed25519"
+    chiave.write_text("chiave-finta")
+    monkeypatch.setattr(cloud_manager, "ssh_key_path", lambda: chiave)
+    captured = {}
+
+    class Proc:
+        pid = 4244
+        def poll(self):
+            return None
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return Proc()
+
+    class FakeSocket:
+        next_port = 43000
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def bind(self, _address): return None
+        def getsockname(self):
+            port = FakeSocket.next_port
+            FakeSocket.next_port += 1
+            return ("127.0.0.1", port)
+
+    monkeypatch.setattr(cloud_manager.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(cloud_manager.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(cloud_manager, "_persist_tunnel_job", lambda info, pid: 3)
+    monkeypatch.setattr(cloud_manager.socket, "socket", lambda *_args: FakeSocket())
+    status = cloud_manager.start_ssh_tunnel(
+        "gpu.example", 2222, local_port=0, native_remote_port=8889,
+    )
+    forwards = [captured["cmd"][i + 1] for i, token in enumerate(captured["cmd"][:-1]) if token == "-L"]
+    assert status.native_local_port == 43001
+    assert forwards == [
+        "43000:127.0.0.1:8888",
+        "43001:127.0.0.1:8889",
+    ]
+
+
 def test_cloud_resource_cost_is_persisted_and_closed():
     init_db()
     resource_id = "test-resource-cost"
@@ -1399,6 +1439,10 @@ def test_teleocr_cloud_provision_installs_official_architecture_plugin():
     ]
     assert "--trust-remote-code" in recipe["argv"]
     assert recipe["served_model_name"] == "StarDoc-AI/TeleOCR"
+    assert recipe["native_remote_port"] == 8889
+    assert recipe["native_gateway_b64"]
+    import base64
+    assert b"aio_batch_two_step_extract" in base64.b64decode(recipe["native_gateway_b64"])
 
     monkey = cm.build_provision_recipe("monkeyocrv2-parsing")
     assert monkey["runtime"] == "monkeyocr" and monkey["needs_monkeyocr_repo"] is True

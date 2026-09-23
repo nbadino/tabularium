@@ -315,8 +315,9 @@ def native_mode(adapter) -> str:
     """Restituisce il percorso predefinito dal produttore per questo adapter.
 
     Il numero di passaggi è una proprietà del modello, non una preferenza
-    globale: MonkeyOCRv2 e TeleOCR usano il layout seguito dai crop; Unlimited
-    e dots.mocr usano la generazione completa; Paddle esegue il suo pipeline.
+    globale: MonkeyOCRv2 e MinerU usano layout + crop; TeleOCR e Paddle
+    eseguono i rispettivi pipeline ufficiali; Unlimited e dots.mocr usano la
+    generazione completa.
     Un prompt disponibile non basta a dichiarare supporto nativo: se il
     workflow del produttore non è integrato, il prefill deve fermarsi.
     """
@@ -429,18 +430,24 @@ def model_prelabel_events(
                             return method(*args)
 
                 if mm == "official":
-                    items = paddle_official.parse_page(
-                        image, client.url, client.model, image.width, image.height
-                    )
-                    for item in items:
-                        bbox = item.get("bbox") or []
-                        if len(bbox) == 4:
-                            item["bbox"] = [
-                                round(float(bbox[0]) / image.width * 1000),
-                                round(float(bbox[1]) / image.height * 1000),
-                                round(float(bbox[2]) / image.width * 1000),
-                                round(float(bbox[3]) / image.height * 1000),
-                            ]
+                    if client.adapter.adapter_id == "teleocr":
+                        # TeleOCR's own async client owns layout preparation,
+                        # block crops, recognition and post-processing. Its
+                        # gateway already returns normalized 0–1000 boxes.
+                        items = client.teleocr_native_page(image)
+                    else:
+                        items = paddle_official.parse_page(
+                            image, client.url, client.model, image.width, image.height
+                        )
+                        for item in items:
+                            bbox = item.get("bbox") or []
+                            if len(bbox) == 4:
+                                item["bbox"] = [
+                                    round(float(bbox[0]) / image.width * 1000),
+                                    round(float(bbox[1]) / image.height * 1000),
+                                    round(float(bbox[2]) / image.width * 1000),
+                                    round(float(bbox[3]) / image.height * 1000),
+                                ]
                 elif mm == "end2end":
                     items = call_live(
                         client.end2end,
@@ -612,11 +619,18 @@ def model_prelabel_events(
                             grid = None
                     try:
                         if grid is None:
-                            grid = _recognize_table(
-                                client, image, k["bbox"],
-                                on_delta=lambda d: emit(d, "table"),
-                                cancel_event=cancel_event,
-                            )
+                            if mm == "official" and client.adapter.adapter_id == "teleocr":
+                                # The official TeleOCR runner has already
+                                # recognized and post-processed the table.
+                                # Do not replace it with Tabularium's separate
+                                # crop workflow when its result is malformed.
+                                k["error"] = "output OTSL TeleOCR non valido: tabella lasciata da revisionare"
+                            else:
+                                grid = _recognize_table(
+                                    client, image, k["bbox"],
+                                    on_delta=lambda d: emit(d, "table"),
+                                    cancel_event=cancel_event,
+                                )
                     except Exception as exc:  # noqa: BLE001
                         k["error"] = f"{k['bbox']}: {exc}"
                         grid = None

@@ -43,6 +43,8 @@ def get_cloud_tunnel(_admin: dict = Depends(_admin)) -> dict:
         "user": st.user,
         "local_port": st.local_port,
         "remote_port": st.remote_port,
+        "native_local_port": st.native_local_port,
+        "native_remote_port": st.native_remote_port,
         "pid": st.pid,
         "error": st.error,
     }
@@ -59,6 +61,13 @@ def start_cloud_tunnel(payload: dict, _admin: dict = Depends(_admin)) -> dict:
     key_path = payload.get("key_path")
     local_port = int(payload.get("local_port", 8888))
     remote_port = int(payload.get("remote_port", 8888))
+    native_remote_port = payload.get("native_remote_port")
+    if native_remote_port is None and payload.get("adapter_id"):
+        try:
+            from ..services import serve_recipes
+            native_remote_port = serve_recipes.recipe_for(str(payload["adapter_id"])).native_remote_port
+        except ValueError:
+            native_remote_port = None
 
     if not host or not port:
         raise HTTPException(status_code=400, detail="Host e porta SSH obbligatori.")
@@ -71,6 +80,7 @@ def start_cloud_tunnel(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             key_path=key_path,
             local_port=local_port,
             remote_port=remote_port,
+            native_remote_port=(int(native_remote_port) if native_remote_port else None),
             owner_id=_admin.get("id"),
         )
         # La porta locale può essere scelta dinamicamente (per evitare
@@ -88,6 +98,7 @@ def start_cloud_tunnel(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             "host": st.host,
             "port": st.port,
             "local_port": st.local_port,
+            "native_local_port": st.native_local_port,
             "pid": st.pid,
         }
     except Exception as exc:
