@@ -52,6 +52,9 @@ def runs_dir(project_id: int) -> Path:
     return _project_dir(project_id) / "runs"
 
 
+REMOTE_EXECUTORS = {"ssh", "vast", "runpod"}
+
+
 def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dict:
     """Controlli non distruttivi prima di avviare un run.
 
@@ -97,19 +100,34 @@ def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dic
     if family_counts["table"]["train"] == 0:
         warnings.append(msg("no_table_train_w", lang))
 
+    # Dove gira il training decide che cosa va controllato qui. Prima questi
+    # controlli guardavano sempre *questa* macchina: con un executor SSH/Vast
+    # /RunPod un Mac senza CUDA né repo di training veniva respinto per una
+    # GPU che non doveva avere, e il training remoto non partiva mai.
+    executor_kind = str(cfg.get("executor") or "local").strip().lower()
+    remote = executor_kind in REMOTE_EXECUTORS
     repo_train = Path(config.TRAIN_REPO) / "parsing" / "train" if config.TRAIN_REPO else None
-    if not config.TRAIN_REPO:
-        errors.append(msg("repo_not_configured", lang))
-    elif not repo_train.is_dir():
-        errors.append(msg("repo_invalid", lang, path=repo_train))
-    if config.TRAIN_PYTHON:
-        if not Path(config.TRAIN_PYTHON).exists():
-            errors.append(msg("python_not_found", lang, path=config.TRAIN_PYTHON))
-    elif not shutil.which("conda"):
-        errors.append(msg("conda_not_found", lang))
-    gpus = gpu_snapshot()
-    if not gpus:
-        errors.append(msg("no_gpu_w", lang))
+    gpus: list[dict] = []
+    if remote:
+        if not str(cfg.get("ssh_host") or "").strip():
+            errors.append(msg("ssh_host_missing", lang))
+        if not str(cfg.get("ssh_train_repo") or "").strip():
+            errors.append(msg("ssh_repo_missing", lang))
+        if not str(cfg.get("ssh_python") or "").strip():
+            warnings.append(msg("ssh_python_missing_w", lang))
+    else:
+        if not config.TRAIN_REPO:
+            errors.append(msg("repo_not_configured", lang))
+        elif not repo_train.is_dir():
+            errors.append(msg("repo_invalid", lang, path=repo_train))
+        if config.TRAIN_PYTHON:
+            if not Path(config.TRAIN_PYTHON).exists():
+                errors.append(msg("python_not_found", lang, path=config.TRAIN_PYTHON))
+        elif not shutil.which("conda"):
+            errors.append(msg("conda_not_found", lang))
+        gpus = gpu_snapshot()
+        if not gpus:
+            errors.append(msg("no_gpu_w", lang))
     requested = str(cfg.get("gpus", "0"))
     if gpus and requested:
         available = {str(g["index"]) for g in gpus}
@@ -205,8 +223,10 @@ def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dic
             "counts": counts,
             "families": family_counts,
         },
-        "training_repo": str(repo_train) if repo_train else None,
-        "python": config.TRAIN_PYTHON or config.TRAIN_ENV,
+        "executor": executor_kind,
+        "remote": remote,
+        "training_repo": str(cfg.get("ssh_train_repo") or "") if remote else (str(repo_train) if repo_train else None),
+        "python": str(cfg.get("ssh_python") or "") if remote else (config.TRAIN_PYTHON or config.TRAIN_ENV),
         "gpus": gpus,
         "output_dir": str(output_dir),
         "existing_checkpoints": [str(path) for path in sorted(checkpoints)],
@@ -260,6 +280,16 @@ def start_run(project_id: int, cfg: dict, *, owner_id: int | None = None) -> dic
     run_id = run_dir.name
     snapshot_id = check["dataset"].get("snapshot_id")
     executor = executor_from_config(cfg, known_hosts=config.SSH_KNOWN_HOSTS)
+    if isinstance(executor, SshExecutor):
+        # Stessa politica del tunnel Vast: la host key si fissa alla prima
+        # connessione (trust-on-first-use), e da lì ogni cambiamento fallisce.
+        # Senza, l'executor rifiutava qualunque host mai visto prima.
+        from . import cloud_manager
+
+        try:
+            cloud_manager.pin_ssh_host_key(executor.host, executor.port)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(f"host SSH non raggiungibile per fissarne la chiave: {exc}") from exc
     meta = {
         "run_id": run_id,
         "state": "running",

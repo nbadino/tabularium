@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiGet, apiPost } from '../lib/api'
-import type { GpuInfo, TrainConfigBody, TrainingStatus } from '../lib/types'
+import type { GpuInfo, TrainConfigBody, TrainingPreflight, TrainingStatus } from '../lib/types'
 import { ErrorNotice } from '../app/ui'
 import { PipelineStrip } from '../app/PipelineView'
 import { buildPipeline, usePipelineState } from '../app/pipeline'
 import { useProjects, writeActiveProject } from '../app/activeProject'
-import TrainingConfigForm from './training/TrainingConfigForm'
+import TrainingConfigForm, { effectiveExecutor } from './training/TrainingConfigForm'
 import TrainingStatusPanel from './training/TrainingStatusPanel'
 import { BASE_CFG } from './training/presets'
 import { useI18n } from '../i18n'
@@ -16,6 +16,10 @@ export default function TrainingPage() {
   const [cfg, setCfg] = useState<TrainConfigBody>(BASE_CFG)
   const [status, setStatus] = useState<TrainingStatus | null>(null)
   const [gpuInfo, setGpuInfo] = useState<GpuInfo[]>([])
+  /** `null` finché nvidia-smi non ha risposto: «nessuna GPU» è un verdetto, non un default. */
+  const [gpuChecked, setGpuChecked] = useState(false)
+  const [preflight, setPreflight] = useState<TrainingPreflight | null>(null)
+  const [preflightLoading, setPreflightLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [stopArmed, setStopArmed] = useState(false)
@@ -27,6 +31,7 @@ export default function TrainingPage() {
     apiGet<{ gpus: GpuInfo[] }>('/system/gpu')
       .then((r) => setGpuInfo(r.gpus))
       .catch(() => setGpuInfo([]))
+      .finally(() => setGpuChecked(true))
   }, [])
 
   useEffect(
@@ -81,16 +86,45 @@ export default function TrainingPage() {
 
   const set = (patch: Partial<TrainConfigBody>) => setCfg((c) => ({ ...c, ...patch }))
 
+  // Finché nvidia-smi non ha risposto si considera la GPU presente: meglio
+  // non spegnere «Locale» per un istante su una macchina che ce l'ha.
+  const localGpu = !gpuChecked || gpuInfo.length > 0
+  const executor = effectiveExecutor(cfg, localGpu)
+  const requestBody = (): TrainConfigBody => ({
+    ...cfg,
+    executor: executor ?? cfg.executor,
+    model_path: cfg.model_path?.trim() ? cfg.model_path.trim() : undefined,
+  })
+
+  // I controlli preliminari si leggono mentre si compila, non al clic: ciò
+  // che bloccherà il run è scritto accanto al pulsante, con la causa.
+  const { workflow, dataset } = usePipelineState(projectId === '' ? null : projectId)
+  useEffect(() => {
+    if (projectId === '' || executor === null) {
+      setPreflight(null)
+      return
+    }
+    let alive = true
+    setPreflightLoading(true)
+    const timer = setTimeout(() => {
+      apiPost<TrainingPreflight>(`/projects/${projectId}/training/preflight`, requestBody())
+        .then((out) => alive && setPreflight(out))
+        .catch(() => alive && setPreflight(null))
+        .finally(() => alive && setPreflightLoading(false))
+    }, 400)
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, JSON.stringify(cfg), executor, dataset?.built])
+
   const start = async () => {
     if (projectId === '') return
     setBusy(true)
     setError(null)
     try {
-      const body: TrainConfigBody = {
-        ...cfg,
-        model_path: cfg.model_path?.trim() ? cfg.model_path.trim() : undefined,
-      }
-      setStatus(await apiPost<TrainingStatus>(`/projects/${projectId}/training/start`, body))
+      setStatus(await apiPost<TrainingStatus>(`/projects/${projectId}/training/start`, requestBody()))
     } catch (e) {
       setError(e)
     } finally {
@@ -141,7 +175,6 @@ export default function TrainingPage() {
   }
 
   const project = projects.find((p) => p.id === projectId) ?? null
-  const { workflow, dataset } = usePipelineState(projectId === '' ? null : projectId)
   const stages = buildPipeline({ project, workflow, dataset, training: status })
 
   const state = status?.run?.state ?? '—'
@@ -180,6 +213,9 @@ export default function TrainingPage() {
           isActive={status?.active === true}
           datasetReady={dataset?.built === true}
           stopArmed={stopArmed}
+          localGpu={localGpu}
+          preflight={preflight}
+          preflightLoading={preflightLoading}
           onProjectChange={onProject}
           onConfigChange={set}
           onStart={() => void start()}
@@ -200,6 +236,7 @@ export default function TrainingPage() {
           )}
           cleanupArmed={cleanupArmed}
           onCleanup={() => void cleanupRemote()}
+          remote={executor !== null && executor !== 'local'}
         />
       </div>
     </div>

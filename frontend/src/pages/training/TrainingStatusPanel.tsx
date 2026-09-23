@@ -25,6 +25,8 @@ interface TrainingStatusPanelProps {
   canCleanup: boolean
   cleanupArmed: boolean
   onCleanup: () => void
+  /** Il training scelto gira su una GPU remota: la GPU locale non conta. */
+  remote?: boolean
 }
 
 /** Cosa significa davvero lo stato in cui è finito il run. */
@@ -48,6 +50,7 @@ export default function TrainingStatusPanel({
   canCleanup,
   cleanupArmed,
   onCleanup,
+  remote = false,
 }: TrainingStatusPanelProps) {
   const { t, tn } = useI18n()
   const hasLr = metricsData.some((m) => m.lr != null)
@@ -125,7 +128,9 @@ export default function TrainingStatusPanel({
         )}
       </Module>
 
-      {gpuList.length === 0 ? (
+      {/* Senza GPU locale non è un allarme: il training ha la sua via remota
+          al passo 1, e il pannello lo dice invece di mandare l'utente altrove. */}
+      {remote ? null : gpuList.length === 0 ? (
         <WarnNotice title={t('training.noGpuTitle')}>
           <p>
             {t('training.noGpuBody', { cmd: 'nvidia-smi' })}

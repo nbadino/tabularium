@@ -292,3 +292,27 @@ def test_preflight_says_free_the_gpu_when_something_else_holds_it(monkeypatch):
         1, {"batch_size": 1, "max_length": 8192, "train_type": "lora", "gpus": "0"}, "it"
     )
     assert [w for w in out["warnings"] if "vLLM" in w]
+
+
+def test_preflight_for_a_remote_gpu_does_not_ask_for_a_local_one(monkeypatch):
+    """Un training su Vast/SSH non deve fallire perché *questa* macchina non ha CUDA."""
+    monkeypatch.setattr(trainer.config, "TRAIN_REPO", "")
+    monkeypatch.setattr(trainer.config, "TRAIN_PYTHON", "")
+    monkeypatch.setattr(trainer, "gpu_snapshot", lambda: [])
+    monkeypatch.setattr(trainer.shutil, "which", lambda _name: None)
+
+    local = trainer.preflight(1, {"gpus": "0"}, "it")
+    assert any("CUDA" in e for e in local["errors"])
+
+    remote = trainer.preflight(1, {"executor": "vast"}, "it")
+    assert not any("CUDA" in e or "TABULARIUM_TRAIN_REPO" in e or "conda" in e for e in remote["errors"])
+    assert any("host SSH" in e for e in remote["errors"])
+    assert any("repo di training" in e for e in remote["errors"])
+    assert remote["remote"] is True
+
+    ready = trainer.preflight(
+        1,
+        {"executor": "vast", "ssh_host": "1.2.3.4", "ssh_train_repo": "/opt/MonkeyOCRv2/parsing/train", "ssh_python": "/opt/venv/bin/python"},
+        "it",
+    )
+    assert not any("host SSH" in e or "repo di training" in e for e in ready["errors"])

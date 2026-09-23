@@ -742,6 +742,15 @@ tabella dei fallimenti peggiori per guidare la nuova iterazione di annotazione.
   `runs/<run_id>/{run.json,train.sh,train.log}`. API: `POST /api/projects/{id}/training/{start,stop}`,
   `GET …/status`, `GET …/stream` (SSE), `GET /api/system/gpu`. Pagina Training: wizard config,
   grafico loss (Recharts), GPU cards, log live con polling.
+  - **Dove si addestra è il primo passo del form**, non l'ultimo: «Questa macchina» si spegne con
+    la causa quando nvidia-smi non trova GPU, e le istanze Vast.ai accese sull'account si scelgono
+    da una lista (host e porta compilati). `trainer.preflight()` distingue l'esecutore: in locale
+    controlla repo, Python/conda, GPU e VRAM di *questa* macchina; con `ssh`/`vast`/`runpod` chiede
+    host e repo di training remoti e non guarda la GPU locale. Prima li controllava sempre, e da un
+    Mac un training remoto non partiva mai. La UI legge il preflight **dal vivo** (debounce 400 ms)
+    accanto al pulsante, che resta spento finché qualcosa blocca. Su Vast/RunPod la chiave SSH di
+    default è quella che Tabularium registra sull'account; la host key si fissa al lancio (TOFU,
+    come il tunnel), e `UserKnownHostsFile` va fra virgolette.
 - **M6 — Valutazione & playground** ✅ — `services/inference.py` (client vLLM OpenAI-compatibile:
   layout tollerante, riconoscimento testo/tabelle, ping), `services/evaluate.py` (metriche:
   IoU+label layout, Levenshtein ordine di lettura, CER/WER testo, struttura+CER tabelle; split del

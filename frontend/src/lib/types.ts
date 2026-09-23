@@ -475,6 +475,8 @@ export interface TrainingPreflight {
   errors: string[]
   warnings: string[]
   dataset: { dir: string; counts: Record<string, number> }
+  executor?: string
+  remote?: boolean
   training_repo: string | null
   python: string
   gpus: GpuInfo[]

@@ -111,7 +111,10 @@ class SshExecutor:
         options = [
             "-p", str(self.port),
             "-o", "StrictHostKeyChecking=yes",
-            "-o", f"UserKnownHostsFile={self.known_hosts}",
+            # Fra virgolette: ssh legge il valore come lista separata da spazi,
+            # e un data root con uno spazio spezzava il percorso (v.
+            # `cloud_manager._known_hosts_option`).
+            "-o", f'UserKnownHostsFile="{self.known_hosts}"',
         ]
         if self.key_path:
             options.extend(["-i", self.key_path])
@@ -282,11 +285,20 @@ def executor_from_config(cfg: dict, *, known_hosts: Path | None = None) -> Train
         return LocalProcessExecutor()
     if provider in {"ssh", "vast", "runpod"}:
         executor_type = {"ssh": SshExecutor, "vast": VastExecutor, "runpod": RunPodExecutor}[provider]
+        key_path = str(cfg.get("ssh_key_path") or "") or None
+        if key_path is None and provider in {"vast", "runpod"}:
+            # La chiave che Tabularium registra sull'account del provider è
+            # quella che le istanze accettano: chiederne il percorso a mano
+            # era un passo che l'app sapeva già fare da sé.
+            from .cloud_manager import ssh_key_path
+
+            if ssh_key_path().exists():
+                key_path = str(ssh_key_path())
         return executor_type(
             host=str(cfg.get("ssh_host") or ""),
             user=str(cfg.get("ssh_user") or "root"),
             port=int(cfg.get("ssh_port", 22)),
-            key_path=str(cfg.get("ssh_key_path") or "") or None,
+            key_path=key_path,
             remote_root=str(cfg.get("ssh_root") or "/tmp/tabularium-runs"),
             known_hosts=known_hosts,
         )
