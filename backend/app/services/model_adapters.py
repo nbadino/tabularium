@@ -4,13 +4,10 @@ Il database conserva annotazioni ricche e indipendenti dal modello. Un adapter
 traduce quello schema nei prompt, nei formati e nei vincoli del modello scelto.
 MonkeyOCRv2 è il primo adapter, non il contratto globale dell'applicazione.
 
-Ogni adapter dichiara anche una *ricetta* di installazione (repo Hugging Face,
-toolchain di training, backend di serving): è quanto serve al registro modelli
-(`model_registry.py`) per scaricare i pesi e, nelle fasi successive, per
-servirli e addestrarli. Per i modelli aggiunti nella prima fase multi-modello
-(oltre a MonkeyOCRv2) solo la ricetta di download è verificata sul repo
-ufficiale; `serve_command` resta `None` finché non arriva il relativo lavoro di
-serving (vedi `docs/OCR_MODEL_ALTERNATIVES.md` e il piano multi-modello).
+Ogni adapter dichiara la propria identità e il protocollo OCR. Le ricette di
+download e serving vivono in `model_registry.py` e `serve_recipes.py`, così il
+framework e i flag dipendono dal runtime selezionato. Il supporto
+all'inferenza e al fine-tuning resta dichiarato separatamente nelle capacità.
 """
 from __future__ import annotations
 

@@ -101,8 +101,9 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
         # Empty means keep the adapter's per-task, source-verified sampling.
         "generation": dict(getattr(adapter, "recommended_generation", {}) or {}),
         # These are upstream pipeline defaults: TeleOCR/config.py uses
-        # 8000*8000; GLM-OCR's packaged config.yaml uses 71,372,800. Other
-        # models keep the application-wide image cap unless their workflow says more.
+        # 8000*8000; GLM-OCR's packaged config.yaml uses 71,372,800. Models
+        # without a documented cap receive no app-imposed resize; their native
+        # processor and model config choose the supported resolution.
         "image": {
             "min_pixels": None,
             "max_pixels": (
