@@ -97,6 +97,29 @@ def test_glm_batched_token_budget_can_exceed_single_sequence_context(tmp_path, m
     assert saved["effective"]["serving"]["max_num_batched_tokens"] == 32768
 
 
+def test_glm_mtp_tokens_are_model_specific_and_applied_to_cloud_recipe(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "glm-mtp.db")
+    init_db()
+    defaults = model_settings.get_settings("glm-ocr")
+    assert defaults["recommended"]["workflow"]["speculative_tokens"] == 3
+
+    saved = model_settings.save_settings("glm-ocr", {
+        "workflow": {"speculative_tokens": 5},
+    })
+    assert saved["effective"]["workflow"]["speculative_tokens"] == 5
+    assert saved["restart_required"] is True
+    argv = serve_recipes.serve_argv(
+        serve_recipes.recipe_for("glm-ocr"), model_path="zai-org/GLM-OCR",
+        port=8000, settings=saved["overrides"],
+    )
+    config_json = argv[argv.index("--speculative-config") + 1]
+    assert '"num_speculative_tokens":5' in config_json
+    with pytest.raises(HTTPException, match="intero tra 1 e 16"):
+        model_settings.save_settings("glm-ocr", {"workflow": {"speculative_tokens": 0}})
+    with pytest.raises(HTTPException, match="non riconosciuto"):
+        model_settings.save_settings("teleocr", {"workflow": {"speculative_tokens": 5}})
+
+
 def test_mlx_settings_are_validated_and_applied_to_local_server():
     from app.services import mlx_runtime
 

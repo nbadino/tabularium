@@ -645,6 +645,9 @@ def start(
                         env[env_name] = str(serving_overrides[key])
             else:
                 argv = serve_recipes.apply_serving_overrides(argv, serving_overrides)
+                argv = serve_recipes.apply_workflow_overrides(
+                    adapter_id, argv, saved_overrides.get("workflow", {})
+                )
 
         if argv[0] == "vllm" and not config.SERVE_PYTHON and not shutil.which("vllm"):
             # Serve command generico (qualunque adapter con `vllm serve`,

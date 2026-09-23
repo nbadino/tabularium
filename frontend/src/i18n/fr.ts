@@ -1943,6 +1943,8 @@ export const fr: Dict = {
     teleocrDetectionHint: 'par défaut',
     teleocrSegmentationHint: 'recommandé pour les scans dégradés',
     teleocrLayoutOfficial: 'Le mode sélectionné modifie le prompt de mise en page TeleOCR utilisé pendant le préremplissage.',
+    glmWorkflowIntro: 'GLM-OCR utilise le décodage spéculatif MTP de la recette vLLM officielle. Davantage de jetons spéculatifs peut accélérer la génération, avec une mémoire accrue ; mesurez la meilleure valeur sur votre GPU.',
+    glmSpeculativeTokens: 'Jetons spéculatifs MTP',
     paddleWorkflowIntro: 'Laissez Automatique pour suivre les valeurs par défaut du pipeline PaddleOCR-VL installé. Les réglages sont transmis à sa méthode officielle predict.',
     paddleEnabled: 'Activé',
     paddleDisabled: 'Désactivé',

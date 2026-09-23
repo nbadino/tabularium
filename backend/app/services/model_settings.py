@@ -119,6 +119,8 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
         "workflow": (
             {"layout_mode": "Detection"}
             if adapter_id == "teleocr"
+            else {"speculative_tokens": 3}
+            if adapter_id == "glm-ocr"
             else {key: None for key in sorted(_PADDLE_WORKFLOW_FIELDS)}
             if adapter_id == "paddleocr-vl"
             else {}
@@ -160,7 +162,11 @@ def get_settings(adapter_id: str) -> dict[str, Any]:
         "recommended": recommended,
         "overrides": overrides,
         "effective": effective,
-        "restart_required": bool(overrides.get("serving") or overrides.get("mlx")),
+        "restart_required": bool(
+            overrides.get("serving")
+            or overrides.get("mlx")
+            or (adapter_id == "glm-ocr" and overrides.get("workflow"))
+        ),
     }
 
 
@@ -237,6 +243,15 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
             if mode is not None and mode not in {"Detection", "Segmentation"}:
                 raise HTTPException(status_code=422, detail="workflow.layout_mode deve essere Detection o Segmentation")
             overrides[section] = {"layout_mode": mode} if mode is not None else {}
+        elif adapter_id == "glm-ocr":
+            if set(values) - {"speculative_tokens"}:
+                raise HTTPException(status_code=422, detail="parametro workflow GLM-OCR non riconosciuto")
+            tokens = values.get("speculative_tokens")
+            if tokens is not None and (
+                isinstance(tokens, bool) or not isinstance(tokens, int) or not 1 <= tokens <= 16
+            ):
+                raise HTTPException(status_code=422, detail="workflow.speculative_tokens deve essere un intero tra 1 e 16")
+            overrides[section] = {"speculative_tokens": tokens} if tokens is not None else {}
         elif adapter_id == "paddleocr-vl":
             if set(values) - _PADDLE_WORKFLOW_FIELDS:
                 raise HTTPException(status_code=422, detail="parametro workflow PaddleOCR-VL non riconosciuto")

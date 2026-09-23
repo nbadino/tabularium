@@ -269,6 +269,7 @@ def serve_argv(
     argv += ["--host", host, "--port", str(int(port))]
     argv += list(recipe.serve_args)
     argv = apply_serving_overrides(argv, (settings or {}).get("serving") or {})
+    argv = apply_workflow_overrides(recipe.adapter_id, argv, (settings or {}).get("workflow") or {})
     if lora_path.strip():
         argv += ["--enable-lora", "--lora-modules", f"{lora_name.strip() or recipe.served_model_name}={lora_path.strip()}"]
     argv += ["--served-model-name", served_model_name or recipe.served_model_name]
@@ -294,6 +295,22 @@ def apply_serving_overrides(argv: list[str], serving: dict) -> list[str]:
             argv[argv.index(flag) + 1] = str(value)
         else:
             argv += [flag, str(value)]
+    return argv
+
+
+def apply_workflow_overrides(adapter_id: str, argv: list[str], workflow: dict) -> list[str]:
+    """Apply only model-specific performance controls to the vendor command."""
+    argv = list(argv)
+    if adapter_id == "glm-ocr" and workflow.get("speculative_tokens") is not None:
+        import json
+
+        flag = "--speculative-config"
+        config = {"method": "mtp", "num_speculative_tokens": int(workflow["speculative_tokens"])}
+        encoded = json.dumps(config, separators=(",", ":"))
+        if flag in argv:
+            argv[argv.index(flag) + 1] = encoded
+        else:
+            argv += [flag, encoded]
     return argv
 
 

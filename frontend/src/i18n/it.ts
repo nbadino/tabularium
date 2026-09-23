@@ -1944,6 +1944,8 @@ export const it = {
     teleocrDetectionHint: 'predefinita',
     teleocrSegmentationHint: 'consigliata su scansioni degradate',
     teleocrLayoutOfficial: 'La modalità selezionata cambia il prompt layout TeleOCR inviato durante il prefill.',
+    glmWorkflowIntro: 'GLM-OCR usa il decoding speculativo MTP della ricetta vLLM ufficiale. Più token speculativi possono aumentare la velocità, con un uso maggiore di memoria; misura il valore migliore sulla tua GPU.',
+    glmSpeculativeTokens: 'Token speculativi MTP',
     paddleWorkflowIntro: 'Lascia Automatico per seguire i default della pipeline PaddleOCR-VL installata. Gli override vengono passati al metodo predict ufficiale.',
     paddleEnabled: 'Attivo',
     paddleDisabled: 'Disattivo',
