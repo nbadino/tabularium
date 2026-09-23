@@ -1200,6 +1200,8 @@ MONKEYOCR_REPO = "Yuliang-Liu/MonkeyOCRv2"
 SETUP_SCRIPT = "scripts/cloud/setup_cloud_vllm.sh"
 REMOTE_SETUP_PATH = "/root/tabularium_setup_cloud_vllm.sh"
 REMOTE_LOG_PATH = "/var/log/tabularium_setup.log"
+# Riga che `setup_cloud_vllm.sh` scrive in testa: «>> Ricetta ufficiale: <adapter> · vLLM …».
+_RECIPE_MARKER = ">> Ricetta ufficiale:"
 
 _SSH_USER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 _REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
@@ -1750,7 +1752,11 @@ def provision_log(host: str, port: int, *, user: str = "root", lines: int = 80) 
     # il file (vLLM stampa centinaia di righe e li spingerebbe fuori dalla coda,
     # facendo *regredire* la fase mostrata) e la coda vera per il pannello log.
     # Il sentinella distingue "mai preparata" da "preparazione appena avviata".
-    markers = "|".join(marker for marker, _ in _PROVISION_PHASES) + "|" + "|".join(_PROVISION_READY)
+    markers = (
+        "|".join(marker for marker, _ in _PROVISION_PHASES)
+        + "|" + "|".join(_PROVISION_READY)
+        + "|" + _RECIPE_MARKER
+    )
     # La sonda di liveness è la parte decisiva: senza, un processo morto a metà
     # resta indistinguibile da uno lento, e la UI mente per sempre.
     cmd = _ssh_base_args(host, port, user) + [
@@ -1774,7 +1780,7 @@ def provision_log(host: str, port: int, *, user: str = "root", lines: int = 80) 
     output = proc.stdout.splitlines()
     alive = any(line.strip() == _ALIVE_MARKER for line in output)
     if any("tabularium-log-missing" in line for line in output):
-        return {"lines": [], "ready": False, "phase": "absent", "failed": False, "error": "", "present": False}
+        return {"lines": [], "ready": False, "phase": "absent", "failed": False, "error": "", "present": False, "adapter_id": ""}
     try:
         phase_start = output.index(_PHASE_SECTION)
         tail_start = output.index(_TAIL_SECTION)
@@ -1785,6 +1791,16 @@ def provision_log(host: str, port: int, *, user: str = "root", lines: int = 80) 
         # leggibile anche senza la sezione dei marcatori.
         markers_seen, log = output, output
     ready = any(marker in line for line in markers_seen for marker in _PROVISION_READY)
+    # Il log è uno per istanza, qualunque modello si sia preparato: senza sapere
+    # di chi è, la UI attribuiva a MonkeyOCRv2 il fallimento di un Qwen3-VL.
+    adapter_id = next(
+        (
+            line.split(_RECIPE_MARKER, 1)[1].strip().split(" ", 1)[0]
+            for line in reversed(markers_seen)
+            if _RECIPE_MARKER in line
+        ),
+        "",
+    )
     phase = "" if ready else next(
         (name for marker, name in _PROVISION_PHASES if any(marker in line for line in markers_seen)),
         "",
@@ -1811,6 +1827,7 @@ def provision_log(host: str, port: int, *, user: str = "root", lines: int = 80) 
         "error": failure[:400],
         "present": True,
         "alive": alive,
+        "adapter_id": adapter_id,
     }
 
 

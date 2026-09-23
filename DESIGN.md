@@ -122,15 +122,24 @@ Modello e luogo di esecuzione sono sempre visibili nello stesso indicatore globa
 locale a un provider remoto non cambia il flusso operativo: selezione pagine, avanzamento,
 risultati, revisione ed export conservano componenti, stati e vocabolario.
 
-Nell'hub Modelli **la libreria è la pagina, non una modale**, e la destinazione decide il gesto:
-la testata dichiara «modello in uso» e «dove gira», la libreria elenca i modelli e ogni riga
-offre l'azione primaria della destinazione attiva — servire in locale, deployare sul provider
-remoto. La scelta del modello precede quella della destinazione: finché non c'è una
-destinazione il catalogo è neutro e le righe non installano niente. La destinazione si sceglie
-nello stesso posto, in un modulo in pagina, che **dichiara prima cosa può fare questa
-macchina**: piattaforma, memoria, runtime ospitabili. «Locale» non è un'opzione sempre vera —
-dipende dall'hardware e dal modello — e quando non lo è il modulo scrive la causa invece di
-lasciare al click il compito di scoprirla.
+Nell'hub Modelli **la configurazione è un percorso in tre passi — modello, dove, configura —
+non una libreria con sette pulsanti per riga.** In testa sta sempre «In uso ora» (modello,
+destinazione, endpoint, stato), poi tre linguette bordo a bordo: l'attiva su fondo nero con la
+piastra rossa, le compiute portano scritta la scelta fatta, le future sono spente. Ogni passo
+mostra solo ciò che gli serve: il catalogo non offre download né porte, perché dipendono da
+dove si eseguirà il modello, che non è ancora stato deciso. Le destinazioni sono schede che
+dichiarano prima del click se accolgono *quel* modello (e se no perché), cosa comportano e
+«Ti servirà:»; la prima praticabile porta «Consigliato». La scheda Locale **dichiara prima cosa
+può fare questa macchina**: piattaforma, memoria, runtime ospitabili. «Locale» non è
+un'opzione sempre vera — dipende dall'hardware e dal modello — e quando non lo è la scheda
+scrive la causa invece di lasciare al click il compito di scoprirla.
+
+Il passo «Configura» è una **lista di controllo**: voci numerate, ciascuna con il suo stato
+scritto e un gesto solo, attenuate finché la precedente non è compiuta (`app/models/Checklist.tsx`).
+In locale: pesi, server, verifica. Su Vast.ai: account, GPU, server, collegamento. Lo stato
+di ogni voce si ricava da ciò che è vero adesso — account, istanza, log remoto, tunnel — e mai
+da ciò che si è cliccato, così un refresh non fa regredire nulla e un lavoro lungo (una
+preparazione di 15 minuti) si ritrova a che punto è.
 
 **Dove gira il locale non è una proprietà dell'OS, è una proprietà della coppia macchina +
 modello.** Ogni riga del catalogo porta il verdetto per *questa* macchina: «in locale · MLX»,

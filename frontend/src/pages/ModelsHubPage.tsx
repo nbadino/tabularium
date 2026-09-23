@@ -1,231 +1,314 @@
 /**
  * L'hub Modelli: il luogo unico in cui si sceglie il modello, si decide dove
- * eseguirlo e si aprono gli strumenti che lo migliorano.
+ * eseguirlo e lo si mette in servizio.
  *
- * La libreria non è più una modale: è la pagina. Prima il catalogo stava
- * dietro «Scegli il modello» e l'hub restava due riquadri su fondo bianco;
- * ora il catalogo è il corpo e la destinazione è dichiarata in testa, come
- * vuole il design: ogni riga offre l'azione che vale nella destinazione
- * attiva (servire in locale, deployare sul provider remoto).
+ * Il percorso è in tre passi, nell'ordine in cui la decisione si prende
+ * davvero: **modello → dove → configura**. Prima la libreria offriva su ogni
+ * riga l'azione della destinazione salvata (scarica, avvia, deploya) e la
+ * destinazione si cambiava da un modulo a parte: chi arrivava per la prima
+ * volta vedeva porta, account Hugging Face e sette badge per riga prima di
+ * aver scelto qualsiasi cosa. Ora ogni passo mostra solo ciò che serve a
+ * quel passo, e la scelta fatta resta scritta nella linguetta del passo.
+ *
+ * Lo stato del percorso vive nell'URL (`?modello=…&dove=…&passo=…`): il
+ * pulsante Indietro del browser torna al passo precedente e un link
+ * condiviso riapre la stessa configurazione.
  */
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useSearchParams } from 'react-router'
 import { Badge, ErrorNotice, Module, Notice } from '../app/ui'
 import { apiGet } from '../lib/api'
 import type { SystemInfo } from '../lib/types'
 import { syncInferenceFromBackend, useInference } from '../app/inference'
-import { ModelsCatalog } from '../app/ModelsCatalog'
 import { CloudControlModal } from '../app/CloudControlModal'
-import { localRuntimeLabel } from '../lib/vocab'
+import { ModelPicker } from '../app/models/ModelPicker'
+import { DestinationPicker } from '../app/models/DestinationPicker'
+import { LocalSetup } from '../app/models/LocalSetup'
+import {
+  destinationVerdict,
+  fetchModelRegistry,
+  isDestination,
+  readStoredModelRegistry,
+  resolveStep,
+  type Destination,
+  type ModelItem,
+  type StepId,
+} from '../app/models/registry'
 import { useI18n } from '../i18n'
 
-type Provider = 'local' | 'vast' | 'runpod' | 'modal' | 'manual'
-
-const PROVIDERS: readonly Provider[] = ['local', 'vast', 'runpod', 'modal', 'manual']
+/** Parole dell'URL, in italiano come le rotte (`/modelli`). */
+const STEP_PARAM: Record<StepId, string> = { model: 'modello', destination: 'dove', configure: 'configura' }
+const PARAM_STEP: Record<string, StepId> = { modello: 'model', dove: 'destination', configura: 'configure' }
 
 export default function ModelsHubPage() {
   const { t } = useI18n()
   const inference = useInference()
-  const [providersOpen, setProvidersOpen] = useState(false)
-  /** Scheda provider da aprire quando l'apertura nasce da «Deploya qui». */
-  const [focusProvider, setFocusProvider] = useState<Provider | null>(null)
-  const [focusAdapterId, setFocusAdapterId] = useState<string | null>(null)
-  const [focusModelLabel, setFocusModelLabel] = useState<string | null>(null)
-  const [destinationChoiceOpen, setDestinationChoiceOpen] = useState(false)
-  const [selectedModel, setSelectedModel] = useState<{ id: string; label: string } | null>(null)
+  const [params, setParams] = useSearchParams()
+  const [models, setModels] = useState<ModelItem[]>(readStoredModelRegistry)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
-  /** Capacità della macchina: senza CUDA locale il serving in locale non parte. */
   const [caps, setCaps] = useState<SystemInfo['capabilities'] | null>(null)
+  const [remoteDone, setRemoteDone] = useState(false)
+  const stepsRef = useRef<HTMLElement>(null)
+
+  const reload = useCallback(async (force = true) => {
+    try {
+      setModels(await fetchModelRegistry(force))
+    } catch (e) {
+      setError(e)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     void syncInferenceFromBackend().catch(setError)
+    void reload(false)
     apiGet<SystemInfo>('/system/info')
       .then((info) => setCaps(info.capabilities ?? null))
       .catch(() => {})
-  }, [])
+  }, [reload])
 
-  const usableLocalRuntimes = caps?.local_compute?.usable_runtimes ?? []
-  const localAvailable = usableLocalRuntimes.length > 0
-  // La ragione mostrata è quella del primo runtime che la macchina *non*
-  // può ospitare: è la causa più vicina a «perché non posso usare il locale».
-  const localReason =
-    caps?.local_compute?.runtimes?.['vllm']?.reason ??
-    caps?.local_compute?.runtimes?.['mlx-vlm']?.reason ??
-    'no_local_runtime'
-  const savedProvider = inference.provider ?? null
-  const savedModelLabel = selectedModel?.label || inference.model || null
-  // La destinazione della libreria: quella scelta adesso, altrimenti il
-  // profilo salvato. Se non c'è né l'una né l'altro il catalogo resta
-  // neutro — nessun provider ereditato in silenzio. Se la macchina non può
-  // servire nulla in locale, «locale» non è una destinazione praticabile e
-  // il catalogo torna neutro invece di offrire un serving che non partirà.
-  const wantedProvider = focusProvider ?? savedProvider
-  const catalogProvider = !localAvailable && wantedProvider === 'local' ? null : wantedProvider
-  const catalogAdapterId = focusProvider ? focusAdapterId : inference.adapterId ?? null
-  const destinationIsLocal = wantedProvider === 'local' || wantedProvider === null
+  // La configurazione salvata è il punto di partenza quando l'URL non dice
+  // niente: si riapre il passo «Configura» di ciò che è in uso, così lo
+  // stato del server o dell'istanza è la prima cosa che si vede.
+  const configured = Boolean(inference.provider && inference.adapterId)
+  const urlModel = params.get('modello')
+  const urlDest = params.get('dove')
+  const urlStep = PARAM_STEP[params.get('passo') ?? ''] ?? null
+  const pristine = !urlModel && !urlDest && !urlStep
+  const modelId = urlModel ?? (pristine && configured ? inference.adapterId : null)
+  const destRaw = urlDest ?? (pristine && configured ? inference.provider : null)
+  const dest: Destination | null = isDestination(destRaw) ? destRaw : null
+  const model = useMemo(() => models.find((m) => m.adapter_id === modelId) ?? null, [models, modelId])
+  const step = resolveStep(urlStep ?? (pristine && configured ? 'configure' : null), model, dest)
 
-  const destinationLabel = savedProvider
-    ? t(`recognition.provider.${savedProvider}`)
-    : t('recognition.locationLocal')
-
-  const handleDeploy = (adapterId: string, displayName: string) => {
-    setSelectedModel({ id: adapterId, label: displayName })
-    setDestinationChoiceOpen(true)
+  const go = (next: { model?: string | null; dest?: Destination | null; step: StepId }) => {
+    const p = new URLSearchParams()
+    const m = next.model !== undefined ? next.model : modelId
+    const d = next.dest !== undefined ? next.dest : dest
+    if (m) p.set('modello', m)
+    if (d) p.set('dove', d)
+    p.set('passo', STEP_PARAM[next.step])
+    setRemoteDone(false)
+    setParams(p)
+    // Il passo nuovo comincia sotto la linguetta: se la si è lasciata fuori
+    // schermo scorrendo il catalogo, la si riporta in vista.
+    const top = stepsRef.current?.getBoundingClientRect().top
+    if (top != null && top < 0) stepsRef.current?.scrollIntoView({ block: 'start' })
   }
 
-  const chooseDestination = (provider: Provider) => {
-    setFocusAdapterId(selectedModel?.id ?? inference.adapterId ?? null)
-    setFocusModelLabel(selectedModel?.label ?? inference.model ?? null)
-    setDestinationChoiceOpen(false)
-    if (provider === 'local') {
-      setFocusProvider('local')
-      return
-    }
-    setFocusProvider(provider)
-    setProvidersOpen(true)
+  const selectModel = (m: ModelItem) => {
+    // Cambiare modello invalida la destinazione solo se il nuovo modello non
+    // la accetta: chi ha scelto «Modal» e prova un altro modello resta lì.
+    const keep = dest && destinationVerdict(m, dest).ok ? dest : null
+    go({ model: m.adapter_id, dest: keep, step: 'destination' })
   }
+
+  const inUse = inference.enabled && configured
+  const inUseReady = inUse && inference.available
+  const inUseLabel = models.find((m) => m.adapter_id === inference.adapterId)?.display_name ?? inference.model
+
+  const stepTabs: { id: StepId; n: number; label: string; value: string | null; enabled: boolean }[] = [
+    { id: 'model', n: 1, label: t('modelsHub.step.model'), value: model?.display_name ?? null, enabled: true },
+    {
+      id: 'destination',
+      n: 2,
+      label: t('modelsHub.step.destination'),
+      value: dest && model ? t(`recognition.provider.${dest}`) : null,
+      enabled: !!model,
+    },
+    {
+      id: 'configure',
+      n: 3,
+      label: t('modelsHub.step.configure'),
+      // Il terzo passo non ha una scelta da ricordare: ha uno stato.
+      value:
+        model && dest
+          ? inUseReady && model.adapter_id === inference.adapterId && dest === inference.provider
+            ? t('modelsHub.stepReady')
+            : t('modelsHub.stepConfiguring')
+          : null,
+      enabled: !!model && !!dest,
+    },
+  ]
 
   return (
     <div className="p-3">
       <div className="mb-3 border-b border-[color:var(--color-rule-strong)] pb-3">
         <h1 className="text-[26px] font-bold leading-tight tracking-[-0.03em]">{t('nav.models')}</h1>
-        <p className="mt-1 max-w-[72ch] text-[13px] text-[color:var(--color-ink-2)]">{t('recognition.modelsIntro')}</p>
+        <p className="mt-1 max-w-[80ch] text-[13px] text-[color:var(--color-ink-2)]">{t('modelsHub.intro')}</p>
       </div>
 
       {error != null && <div className="mb-3"><ErrorNotice error={error} /></div>}
 
-      {!localAvailable && destinationIsLocal && (
-        <div className="mb-3">
-          <Notice tone="warn">
-            <b className="font-semibold">{t('localCompute.reason.no_local_runtime')}</b>{' '}
-            {t(`localCompute.reason.${localReason}`)}
-          </Notice>
-        </div>
-      )}
-      {localAvailable && destinationIsLocal && !caps?.local_compute?.cuda?.available && (
-        <div className="mb-3">
-          <Notice>{t('localCompute.mlxHint')}</Notice>
-        </div>
-      )}
-
-      {/* La destinazione è dichiarata in testa, prima della libreria: è ciò
-          che decide l'azione di ogni riga. */}
+      {/* Cosa usa Tabularium adesso: la risposta a «cosa sto usando?» non
+          deve dipendere dal passo aperto. */}
       <Module
-        tab={t('modelsHub.activeSetup')}
+        tab={t('modelsHub.inUseTitle')}
+        quiet
         aux={
-          <Badge tone={inference.enabled && inference.available ? 'ok' : 'warn'}>
-            {inference.enabled && inference.available
+          <Badge tone={inUseReady ? 'ok' : inUse ? 'warn' : 'neutral'}>
+            {inUseReady
               ? t('recognition.modelReady')
-              : inference.model && !inference.available
+              : inUse
                 ? t('recognition.modelUnavailable')
-                : inference.model
-                  ? t('modelsHub.modelConfigured')
-                  : t('modelsHub.chooseModelFirst')}
+                : t('modelsHub.nothingInUse')}
           </Badge>
         }
       >
-        <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
-          <div className="min-w-0">
-            <span className="lbl">{t('modelsHub.runningModel')}</span>
-            <div className="truncate text-[18px] font-bold">
-              {savedModelLabel ?? t('modelsHub.chooseModelFirst')}
+        {inUse ? (
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <div className="min-w-0">
+              <span className="lbl">{t('modelsHub.runningModel')}</span>
+              <div className="truncate text-[16px] font-bold">{inUseLabel}</div>
             </div>
-            <div className="mono truncate text-[11px] text-[color:var(--color-ink-3)]">
-              {(selectedModel?.id ?? inference.adapterId) || t('modelsHub.chooseModelFirst')}
+            <div>
+              <span className="lbl">{t('cloud.models.destinationLabel')}</span>
+              <div className="text-[14px] font-semibold">{t(`recognition.provider.${inference.provider}`)}</div>
+            </div>
+            <div className="min-w-0">
+              <span className="lbl">{t('modelsHub.endpoint')}</span>
+              <div className="mono truncate text-[12px]">{inference.url || '—'}</div>
+            </div>
+            <div className="ml-auto flex flex-wrap gap-2">
+              {!(step === 'configure' && modelId === inference.adapterId && dest === inference.provider) && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() =>
+                    go({
+                      model: inference.adapterId,
+                      dest: isDestination(inference.provider) ? inference.provider : null,
+                      step: 'configure',
+                    })
+                  }
+                >
+                  {t('modelsHub.manageInUse')}
+                </button>
+              )}
+              {inUseReady && (
+                <Link to="/" className="btn btn-primary no-underline">
+                  {t('modelsHub.goRecognize')}
+                </Link>
+              )}
             </div>
           </div>
-          <div className="min-w-0">
-            <span className="lbl">{t('cloud.models.destinationLabel')}</span>
-            <div className="text-[15px] font-semibold">{destinationLabel}</div>
-            <div className="text-[11px] text-[color:var(--color-ink-2)]">
-              {t(`modelsHub.destination.${savedProvider ?? 'local'}`)}
-            </div>
-          </div>
-          <div className="ml-auto flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="btn"
-              onClick={() => setDestinationChoiceOpen(true)}
-            >
-              {t('cloud.models.changeDestination')}
-            </button>
-          </div>
-        </div>
+        ) : (
+          <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('modelsHub.nothingInUseHint')}</p>
+        )}
       </Module>
 
-      {destinationChoiceOpen && (
-        <div className="mt-3">
-          <Module tab={t('modelsHub.chooseDestinationTitle')}>
-            <p className="text-[12px] text-[color:var(--color-ink-2)]">
-              {selectedModel
-                ? t('modelsHub.chooseDestinationHint')
-                : t('modelsHub.chooseExecution')}
-            </p>
-            {/* Cosa può fare questa macchina, prima che l'utente scelga: senza
-                questo, «Locale» sembra sempre possibile e il rifiuto arriva
-                dopo il click. */}
-            {caps?.local_compute && (
-              <p className="mt-2 border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-2 py-1.5 text-[11px] text-[color:var(--color-ink-2)]">
-                <span className="lbl !mb-0 mr-2">{t('localCompute.title')}</span>
-                {t('localCompute.machine', {
-                  os: caps.local_compute.platform,
-                  arch: caps.local_compute.arch,
-                })}
-                {' · '}
-                {caps.local_compute.memory_gb
-                  ? t('localCompute.memory', { gb: String(caps.local_compute.memory_gb) })
-                  : t('localCompute.memoryUnknown')}
-                {' · '}
-                {caps.local_compute.usable_runtimes.length > 0
-                  ? caps.local_compute.usable_runtimes
-                      .map((r) => localRuntimeLabel(r))
-                      .join(', ')
-                  : t('localCompute.reason.no_local_runtime')}
-              </p>
-            )}
-            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {PROVIDERS.map((provider) => {
-                const blocked = provider === 'local' && !localAvailable
-                return (
-                  <button
-                    key={provider}
-                    type="button"
-                    disabled={blocked}
-                    className="border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] p-3 text-left hover:border-[color:var(--color-sig)] disabled:cursor-not-allowed disabled:border-[color:var(--color-rule)] disabled:bg-[color:var(--color-fill)] disabled:hover:border-[color:var(--color-rule)]"
-                    onClick={() => chooseDestination(provider)}
+      {/* I tre passi: la linguetta porta la scelta fatta, così tornare
+          indietro non costa rileggere la pagina per ricordarla. */}
+      <nav ref={stepsRef} aria-label={t('modelsHub.stepsLabel')} className="mt-3 scroll-mt-3">
+        <ol className="grid border border-[color:var(--color-rule)] sm:grid-cols-3">
+          {stepTabs.map((s) => {
+            const active = s.id === step
+            return (
+              <li key={s.id} className="border-b border-[color:var(--color-rule)] last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
+                <button
+                  type="button"
+                  disabled={!s.enabled}
+                  aria-current={active ? 'step' : undefined}
+                  onClick={() => go({ step: s.id })}
+                  className={`relative flex w-full items-center gap-2.5 px-3 py-2 text-left disabled:cursor-not-allowed ${
+                    active ? 'bg-[color:var(--color-ink)] text-white' : 'bg-[color:var(--color-sheet)] hover:bg-[color:var(--color-fill)] disabled:hover:bg-[color:var(--color-sheet)]'
+                  }`}
+                >
+                  <span
+                    className={`flex h-6 w-6 shrink-0 items-center justify-center text-[12px] font-bold ${
+                      active
+                        ? 'bg-[color:var(--color-sig-plate)] text-white'
+                        : s.value
+                          ? 'bg-[color:var(--color-ink)] text-white'
+                          : 'border border-[color:var(--color-rule)] text-[color:var(--color-ink-3)]'
+                    }`}
+                    aria-hidden
                   >
-                    <span className={`block font-bold ${blocked ? 'text-[color:var(--color-ink-3)]' : ''}`}>
-                      {t(`recognition.provider.${provider}`)}
+                    {s.n}
+                  </span>
+                  <span className="min-w-0">
+                    <span className={`block text-[11px] font-semibold uppercase tracking-[0.04em] ${active ? 'text-white/80' : s.enabled ? 'text-[color:var(--color-ink-2)]' : 'text-[color:var(--color-ink-3)]'}`}>
+                      {s.label}
                     </span>
-                    <span className="mt-1 block text-[11px] text-[color:var(--color-ink-2)]">
-                      {provider === 'local'
-                        ? localAvailable
-                          ? t('localCompute.runnable', {
-                              runtime: localRuntimeLabel(caps?.local_compute?.usable_runtimes?.[0]),
-                            })
-                          : t(`localCompute.reason.${localReason}`)
-                        : t(`modelsHub.destination.${provider}`)}
+                    <span className={`block truncate text-[13px] font-semibold ${active ? 'text-white' : s.enabled ? '' : 'text-[color:var(--color-ink-3)]'}`}>
+                      {s.value ?? (active ? t('modelsHub.stepNow') : '—')}
                     </span>
-                  </button>
-                )
-              })}
-            </div>
-          </Module>
-        </div>
-      )}
+                  </span>
+                  {active && <span className="absolute inset-x-0 bottom-0 h-[3px] bg-[color:var(--color-sig)]" aria-hidden />}
+                </button>
+              </li>
+            )
+          })}
+        </ol>
+      </nav>
 
       <div className="mt-3">
-        <ModelsCatalog
-          activeProvider={catalogProvider}
-          selectedAdapterId={catalogAdapterId}
-          onDeploy={handleDeploy}
-        />
+        {step === 'model' && (
+          <ModelPicker
+            models={models}
+            loading={loading}
+            selectedId={model?.adapter_id ?? null}
+            onSelect={selectModel}
+            onChanged={() => reload(true)}
+          />
+        )}
+
+        {step === 'destination' && model && (
+          <DestinationPicker
+            model={model}
+            selected={dest}
+            caps={caps}
+            onSelect={(d) => go({ dest: d, step: 'configure' })}
+          />
+        )}
+
+        {step === 'configure' && model && dest === 'local' && (
+          <LocalSetup model={model} onChanged={() => reload(true)} />
+        )}
+
+        {step === 'configure' && model && dest && dest !== 'local' && (
+          <div className="space-y-3">
+            <p className="max-w-[80ch] text-[12px] text-[color:var(--color-ink-2)]">
+              {t('modelsHub.remoteIntro', {
+                model: model.display_name,
+                provider: t(`recognition.provider.${dest}`),
+              })}
+            </p>
+            {remoteDone && (
+              <Notice tone="ok">
+                {t('modelsHub.remoteDone', { model: model.display_name, provider: t(`recognition.provider.${dest}`) })}{' '}
+                <Link to="/">{t('modelsHub.goRecognize')}</Link>
+              </Notice>
+            )}
+            <CloudControlModal
+              key={`${dest}:${model.adapter_id}`}
+              open
+              inline
+              onlyProvider={dest}
+              focusProvider={dest}
+              focusAdapterId={model.adapter_id}
+              focusModelLabel={model.display_name}
+              onClose={() => {
+                // In linea «chiudere» vuol dire «configurazione salvata»: si
+                // resta sul passo e lo si dice.
+                void syncInferenceFromBackend().catch(() => {})
+                setRemoteDone(true)
+              }}
+            />
+          </div>
+        )}
+
+        {step !== 'model' && !model && !loading && (
+          <Notice tone="warn">{t('modelsHub.modelMissing')}</Notice>
+        )}
       </div>
 
       <div className="mt-3">
         <Module tab={t('modelsHub.improveModel')} quiet>
           <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('modelsHub.toolsIntro')}</p>
-          <ul className="ruled mt-3 border-t border-[color:var(--color-rule)]">
+          <ul className="mt-3 grid border-t border-[color:var(--color-rule)] sm:grid-cols-2 xl:grid-cols-4">
             {(
               [
                 { to: '/dataset', label: t('nav.dataset'), hint: t('modelsHub.toolDatasetHint') },
@@ -235,10 +318,7 @@ export default function ModelsHubPage() {
               ] as const
             ).map((tool) => (
               <li key={tool.to} className="border-b border-[color:var(--color-rule)]">
-                <Link
-                  to={tool.to}
-                  className="block px-1 py-1.5 no-underline hover:bg-[color:var(--color-fill)]"
-                >
+                <Link to={tool.to} className="block px-1 py-1.5 no-underline hover:bg-[color:var(--color-fill)]">
                   <span className="text-[13px] font-semibold text-[color:var(--color-ink)]">{tool.label}</span>
                   <span className="mt-0.5 block text-[11px] text-[color:var(--color-ink-2)]">{tool.hint}</span>
                 </Link>
@@ -247,19 +327,6 @@ export default function ModelsHubPage() {
           </ul>
         </Module>
       </div>
-
-      <CloudControlModal
-        open={providersOpen}
-        onClose={() => {
-          setProvidersOpen(false)
-          setFocusProvider(null)
-          setFocusAdapterId(null)
-          setFocusModelLabel(null)
-        }}
-        focusProvider={focusProvider === 'local' ? null : focusProvider}
-        focusAdapterId={focusAdapterId}
-        focusModelLabel={focusModelLabel}
-      />
     </div>
   )
 }

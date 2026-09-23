@@ -753,17 +753,28 @@ tabella dei fallimenti peggiori per guidare la nuova iterazione di annotazione.
   disinstallare `frontend/node_modules` se si ricompila.
 - **M9 — Modello, provider e destinazione** — l'hub Modelli è il solo luogo di configurazione
   modello/provider (Impostazioni non lo duplica: v. `DESIGN.md` § Navigazione), ed è anche
-  l'unico posto in cui il corpus si configura: **il catalogo è la pagina, non una modale**
-  (`app/ModelsCatalog.tsx`), con la testata che dichiara «modello in uso» e «dove gira» e la
-  scelta della destinazione in un modulo in pagina. Dataset, fine-tuning, valutazione e
+  l'unico posto in cui il corpus si configura. È un **percorso in tre passi — modello → dove →
+  configura** (`pages/ModelsHubPage.tsx` + `app/models/`), nell'ordine in cui la decisione si
+  prende: ogni passo mostra solo ciò che gli serve e la scelta fatta resta scritta nella sua
+  linguetta. Lo stato vive nell'URL (`?modello=…&dove=…&passo=…`), così Indietro torna al passo
+  precedente; senza parametri si riapre «Configura» di ciò che è in uso. La compatibilità
+  modello ↔ destinazione è **una funzione pura sola** (`app/models/registry.ts` →
+  `destinationVerdict`, testata): selettore, destinazioni e pannelli leggono la stessa
+  risposta, quindi nessuna opzione cliccabile porta a un rifiuto e un modello senza alcuna
+  destinazione non è selezionabile. Il passo 3 locale è una lista di controllo pesi → server →
+  verifica (`LocalSetup`); quello remoto è il pannello del provider reso in pagina
+  (`CloudControlModal inline onlyProvider=…`), non più una modale. Su Vast.ai il pannello è a
+  sua volta una lista di quattro tappe (account → GPU → server → collegamento) **ricavate dallo
+  stato vero**, non dai click: dopo un refresh la preparazione in corso si riprende
+  (promemoria `tabularium.vast.job` + una lettura del log remoto per istanza), e
+  `provision_log` dichiara `adapter_id` perché il log è uno per istanza — senza, il fallimento
+  di un modello veniva attribuito a quello appena scelto. Dataset, fine-tuning, valutazione e
   playground non stanno nel rail (cinque destinazioni globali: Riconosci, Annotazione, Risultati,
   Archivio, Modelli): sono strumenti del modello e si aprono dall'hub. Il profilo attivo
   è la fonte di verità atomica (`compute_profiles`, DB v10+); `get_inference_config()` espone
   anche `provider`, `resource_id` e `source_profile_id`, e il client VLLM li usa così che
   «`is_cloud`» non si deduca dall'URL (un tunnel SSH Vast ascolta su `localhost` ma è cloud).
-  La libreria adatta l'azione primaria a riga: in locale = scarica/avvia, su provider remoto =
-  **deploy** (Vast/RunPod/Modal) con la scheda del provider aperta sul modello già scelto
-  (`focusProvider`/`focusAdapterId`). L'avvio di una
+  L'avvio di una
   sessione di riconoscimento sonda l'endpoint (409 `model_endpoint_unreachable` localizzato)
   invece di accodare pagine destinate a fallire; la VRAM locale non viene evocata per run remote;
   lo stop con `disable_inference` arresta la risorsa **identificata** (`resource_id` +

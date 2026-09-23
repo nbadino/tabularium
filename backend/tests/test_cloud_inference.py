@@ -1067,6 +1067,29 @@ def test_provision_log_phase_survives_a_flooded_tail(monkeypatch, tmp_path):
     assert cloud_manager._PHASE_SECTION not in out["lines"]
 
 
+def test_provision_log_names_the_model_being_prepared(monkeypatch, tmp_path):
+    """Il log è uno per istanza: dice di quale modello è, o la UI attribuisce
+    a un modello lo stato (e il fallimento) di un altro."""
+    monkeypatch.setattr(cloud_manager.config, "SSH_KNOWN_HOSTS", tmp_path / "known_hosts")
+
+    class Result:
+        returncode = 0
+        stderr = ""
+        stdout = "\n".join([
+            cloud_manager._DEAD_MARKER,
+            cloud_manager._PHASE_SECTION,
+            ">> Ricetta ufficiale: qwen3-vl-8b · vLLM 0.11.0 · vllm",
+            ">> [Tabularium Cloud Server] Avvio vLLM su 0.0.0.0:8888...",
+            cloud_manager._TAIL_SECTION,
+            "RuntimeError: Engine core initialization failed.",
+        ])
+
+    monkeypatch.setattr(cloud_manager.subprocess, "run", lambda *a, **k: Result())
+    out = cloud_manager.provision_log("ssh5.vast.ai", 34567)
+    assert out["adapter_id"] == "qwen3-vl-8b"
+    assert out["failed"] is True
+
+
 def test_provision_log_reports_ready_from_the_whole_file(monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_manager.config, "SSH_KNOWN_HOSTS", tmp_path / "known_hosts")
 
