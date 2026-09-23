@@ -1337,6 +1337,10 @@ export const it = {
   },
 
   playground: {
+    engine: 'Motore',
+    engineModel: 'Modello · {name}',
+    engineOcr: 'OCR locale · {engine}',
+    ocrNote: 'Solo righe di testo, senza layout né tabelle: dice subito se la pagina si legge.',
     title: 'Playground',
     intro:
       'Prova il modello affinato — o quello di base — su una pagina qualsiasi del progetto. Nessun risultato viene salvato: è un banco di prova, non un’annotazione.',

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from typing import Literal
+
 from pydantic import BaseModel
 
 from ..db import connect
@@ -25,6 +27,9 @@ class ParseRequest(BaseModel):
     page_id: int
     server_url: str | None = None
     model: str | None = None
+    # `ocr` = motore OCR locale: righe di testo, senza modello servito. Serve
+    # a provare una pagina anche quando nessun endpoint risponde.
+    engine: Literal["model", "ocr"] = "model"
 
 
 @router.post("/api/playground/parse")
@@ -48,6 +53,8 @@ def playground_parse(
         raise HTTPException(status_code=404, detail="immagine sorgente non disponibile")
     if payload.server_url is not None or payload.model is not None:
         raise HTTPException(status_code=400, detail="usa il profilo di inferenza approvato dall'amministratore")
+    if payload.engine == "ocr":
+        return _parse_with_ocr(page, image, request)
     client = infmod.get_vllm_client()
 
     # Il playground disegna il layout: non tutti i modelli lo sanno fare. Tre
@@ -137,6 +144,45 @@ def playground_parse(
         "server": client.url,
         "model": client.model,
         "provider": client.provider,
+        "width": w,
+        "height": h,
+        "items": items,
+    }
+
+
+def _parse_with_ocr(page, image, request: Request) -> dict:
+    """La stessa risposta del percorso modello, fatta dall'OCR locale.
+
+    L'OCR non conosce il layout: ogni riga è un blocco `Text`. È meno di
+    quanto dia un modello, ma è ciò che la macchina sa fare senza endpoint,
+    e dice subito se una pagina è leggibile.
+    """
+    from ..services import ocr as ocrmod
+
+    engine = ocrmod.OcrEngine()
+    if not engine.available:
+        lang = parse_lang(request.headers.get("accept-language"))
+        raise HTTPException(status_code=409, detail=msg("playground_ocr_unavailable", lang))
+    w, h = page["width"], page["height"]
+    sx = w / image.width if image.width else 1.0
+    sy = h / image.height if image.height else 1.0
+    items = []
+    for row in engine.detect(image):
+        x1, y1, x2, y2 = row["bbox"]
+        bbox_px = [int(round(x1 * sx)), int(round(y1 * sy)), int(round(x2 * sx)), int(round(y2 * sy))]
+        if bbox_px[2] <= bbox_px[0] or bbox_px[3] <= bbox_px[1]:
+            continue
+        items.append({
+            "bbox_norm": [bbox_px[0] / w * 1000, bbox_px[1] / h * 1000, bbox_px[2] / w * 1000, bbox_px[3] / h * 1000],
+            "bbox_px": bbox_px,
+            "label": "Text",
+            "content": row.get("text") or "",
+        })
+    return {
+        "ok": bool(items),
+        "server": None,
+        "model": f"OCR · {engine.name}",
+        "provider": "local",
         "width": w,
         "height": h,
         "items": items,

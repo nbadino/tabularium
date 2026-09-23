@@ -225,3 +225,23 @@ def test_retry_creates_a_run_with_only_failed_pages(tmp_path, monkeypatch):
         retried = recognition.retry_failed_run(int(old.lastrowid))
         assert retried["total_pages"] == 1
         assert [item["page_id"] for item in retried["items"]] == [page_ids[1]]
+
+
+def test_playground_parses_with_local_ocr_without_an_endpoint(tmp_path, monkeypatch):
+    """Il playground prova una pagina anche senza modello servito."""
+    from app.services import ocr as ocrmod
+
+    monkeypatch.setattr(ocrmod, "OcrEngine", FakeOcr)
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        res = client.post(
+            "/api/playground/parse",
+            json={"project_id": project_id, "page_id": page_ids[0], "engine": "ocr"},
+        )
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["ok"] is True
+        assert body["provider"] == "local"
+        assert body["items"][0]["label"] == "Text"
+        assert body["items"][0]["content"] == "Recognized text"
+        assert body["items"][0]["bbox_px"] == [10, 20, 180, 50]

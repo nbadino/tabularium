@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
-import type { PageItem, PlaygroundResult } from '../lib/types'
+import type { PageItem, PlaygroundResult, PrefillEngines } from '../lib/types'
 import { blocks } from '../lib/vocab'
 import { ErrorNotice, Field, Loading, Module, Notice } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
@@ -31,6 +31,15 @@ export default function PlaygroundPage() {
   const [img, setImg] = useState<{ w: number; h: number } | null>(null)
   const [copied, setCopied] = useState(false)
   const [hovered, setHovered] = useState<number | null>(null)
+  /** Motore della prova: il modello servito oppure l'OCR locale, che
+   *  funziona anche quando nessun endpoint risponde. */
+  const [engine, setEngine] = useState<'model' | 'ocr'>('model')
+  const [ocr, setOcr] = useState<PrefillEngines['ocr'] | null>(null)
+  useEffect(() => {
+    apiGet<PrefillEngines>('/system/prefill-engines')
+      .then((out) => setOcr(out.ocr))
+      .catch(() => setOcr(null))
+  }, [])
 
   const onProject = async (pid: number | '') => {
     setProjectId(pid)
@@ -58,6 +67,7 @@ export default function PlaygroundPage() {
       const res = await apiPost<PlaygroundResult>('/playground/parse', {
         project_id: projectId,
         page_id: pageId,
+        engine: activeEngine,
       })
       setResult(res)
       const im = new Image()
@@ -87,6 +97,10 @@ export default function PlaygroundPage() {
   const kx = (v: number) => (img && img.w ? (v / 1000) * img.w : 0)
   const ky = (v: number) => (img && img.h ? (v / 1000) * img.h : 0)
   const inferenceReady = inference.enabled && inference.available
+  // Senza endpoint che risponda si parte dall'OCR locale, se c'è: una prova
+  // spenta per un modello irraggiungibile non dice nulla della pagina.
+  const activeEngine: 'model' | 'ocr' = engine === 'model' && !inferenceReady && ocr?.available ? 'ocr' : engine
+  const engineReady = activeEngine === 'ocr' ? Boolean(ocr?.available) : inferenceReady
 
   return (
     <div className="p-3">
@@ -161,10 +175,23 @@ export default function PlaygroundPage() {
             </Field>
 
           </div>
+          <div className="mt-3 max-w-md">
+            <Field label={t('playground.engine')} hint={activeEngine === 'ocr' ? t('playground.ocrNote') : undefined}>
+              <select value={activeEngine} onChange={(e) => setEngine(e.target.value as 'model' | 'ocr')} className="fld">
+                <option value="model" disabled={!inferenceReady}>
+                  {t('playground.engineModel', { name: nameOf(inference.adapterId) ?? (inference.model || '—') })}
+                  {!inferenceReady ? ` — ${t('recognition.modelUnavailable')}` : ''}
+                </option>
+                <option value="ocr" disabled={!ocr?.available}>
+                  {t('playground.engineOcr', { engine: ocr?.engine ?? '—' })}
+                </option>
+              </select>
+            </Field>
+          </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               onClick={() => void analyse()}
-              disabled={busy || !pageId || !inferenceReady}
+              disabled={busy || !pageId || !engineReady}
               className="btn btn-primary"
             >
               <IconPlayground size={13} />

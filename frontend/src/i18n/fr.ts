@@ -1336,6 +1336,10 @@ export const fr: Dict = {
   },
 
   playground: {
+    engine: 'Moteur',
+    engineModel: 'Modèle · {name}',
+    engineOcr: 'OCR local · {engine}',
+    ocrNote: 'Seulement des lignes de texte, sans mise en page ni tableaux : dit tout de suite si la page se lit.',
     title: 'Playground',
     intro:
       'Essayez le modèle affiné — ou le modèle de base — sur n’importe quelle page du projet. Aucun résultat n’est enregistré : c’est un banc d’essai, pas une annotation.',

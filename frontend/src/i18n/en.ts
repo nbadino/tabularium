@@ -1336,6 +1336,10 @@ export const en: Dict = {
   },
 
   playground: {
+    engine: 'Engine',
+    engineModel: 'Model · {name}',
+    engineOcr: 'Local OCR · {engine}',
+    ocrNote: 'Text lines only, no layout or tables: it tells you at once whether the page reads.',
     title: 'Playground',
     intro:
       'Try the fine-tuned model — or the base one — on any page of the project. No result is saved: it is a test bench, not an annotation.',

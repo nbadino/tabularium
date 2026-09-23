@@ -579,7 +579,7 @@ export interface EvalReport {
 
 export interface PlaygroundResult {
   ok: boolean
-  server: string
+  server: string | null
   model: string
   provider?: string | null
   width: number
