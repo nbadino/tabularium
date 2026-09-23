@@ -1455,9 +1455,38 @@ def test_teleocr_cloud_provision_installs_official_architecture_plugin():
     monkey = cm.build_provision_recipe("monkeyocrv2-parsing")
     assert monkey["runtime"] == "monkeyocr" and monkey["needs_monkeyocr_repo"] is True
     assert monkey["argv"][0] == "serve.py"
+    assert monkey["draft_hf_repo"] == "zenosai/MonkeyOCRv2-B-Parsing-DFlash"
+    assert monkey["draft_model_dir"].endswith("/MonkeyOCRv2-B-Parsing-DFlash")
+    assert monkey["argv"][monkey["argv"].index("-d") + 1] == monkey["draft_model_dir"]
 
     mineru = cm.build_provision_recipe("mineru2.5")
     assert mineru["pip_extra"] == ["mineru-vl-utils"]
+
+
+def test_monkey_dflash_is_skipped_for_custom_or_lora_checkpoints_when_disabled(tmp_path, monkeypatch):
+    from app import config
+    from app.db import init_db
+    from app.services import cloud_manager as cm, model_settings
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "dflash-cloud.db")
+    init_db()
+    with pytest.raises(ValueError, match="compatibile solo con MonkeyOCRv2-B-Parsing"):
+        cm.build_provision_recipe("monkeyocrv2-parsing", model="org/custom-parser")
+    with pytest.raises(ValueError, match="non viene abilitato per un checkpoint LoRA"):
+        cm.build_provision_recipe(
+            "monkeyocrv2-parsing", lora_path="/models/fine-tuned-adapter",
+        )
+    with pytest.raises(ValueError, match="disattivalo in Settings se specifichi un percorso pesi"):
+        cm.build_provision_recipe(
+            "monkeyocrv2-parsing", model_dir="/models/fine-tuned-full-checkpoint",
+        )
+
+    model_settings.save_settings("monkeyocrv2-parsing", {
+        "workflow": {"dflash_enabled": False},
+    })
+    custom = cm.build_provision_recipe("monkeyocrv2-parsing", model="org/custom-parser")
+    assert custom["draft_hf_repo"] == ""
+    assert "-d" not in custom["argv"]
 
 
 def test_docker_only_model_rents_its_own_image():

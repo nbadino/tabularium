@@ -98,6 +98,56 @@ def test_serve_recipe_applies_only_explicit_supported_overrides():
     assert "--trust-remote-code" in argv
     assert "--dtype" in argv and "bfloat16" in argv
 
+    monkey_recipe = serve_recipes.recipe_for("monkeyocrv2-parsing")
+    monkey_argv = serve_recipes.serve_argv(
+        monkey_recipe,
+        model_path="/models/MonkeyOCRv2-B-Parsing",
+        draft_model_path="/models/MonkeyOCRv2-B-Parsing-DFlash",
+        port=8000,
+        settings={"workflow": {
+            "dflash_enabled": True,
+            "dflash_num_speculative_tokens": 4,
+        }},
+    )
+    assert monkey_argv[monkey_argv.index("-d") + 1] == "/models/MonkeyOCRv2-B-Parsing-DFlash"
+    assert monkey_argv[monkey_argv.index("--dflash-num-speculative-tokens") + 1] == "4"
+    without_draft = serve_recipes.serve_argv(
+        monkey_recipe,
+        model_path="/models/MonkeyOCRv2-B-Parsing",
+        draft_model_path="/models/MonkeyOCRv2-B-Parsing-DFlash",
+        port=8000,
+        settings={"workflow": {"dflash_enabled": False}},
+    )
+    assert "-d" not in without_draft
+
+
+def test_monkey_dflash_is_official_default_and_can_be_disabled(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "monkey-settings.db")
+    init_db()
+
+    settings = model_settings.get_settings("monkeyocrv2-parsing")
+    assert settings["recommended"]["workflow"] == {
+        "dflash_enabled": True, "dflash_num_speculative_tokens": None,
+    }
+    assert settings["effective"]["workflow"]["dflash_enabled"] is True
+    disabled = model_settings.save_settings("monkeyocrv2-parsing", {
+        "workflow": {"dflash_enabled": False},
+    })
+    assert disabled["effective"]["workflow"]["dflash_enabled"] is False
+    assert disabled["restart_required"] is True
+    tuned = model_settings.save_settings("monkeyocrv2-parsing", {
+        "workflow": {"dflash_num_speculative_tokens": 4},
+    })
+    assert tuned["effective"]["workflow"]["dflash_num_speculative_tokens"] == 4
+    with pytest.raises(HTTPException, match="deve essere booleano"):
+        model_settings.save_settings("monkeyocrv2-parsing", {
+            "workflow": {"dflash_enabled": "no"},
+        })
+    with pytest.raises(HTTPException, match="intero tra 1 e 16"):
+        model_settings.save_settings("monkeyocrv2-parsing", {
+            "workflow": {"dflash_num_speculative_tokens": 17},
+        })
+
 
 def test_glm_uses_upstream_scheduler_default_and_allows_manual_batch_budget(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "glm-settings.db")

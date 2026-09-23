@@ -240,6 +240,7 @@ def serve_argv(
     lora_path: str = "",
     lora_name: str = "",
     served_model_name: str | None = None,
+    draft_model_path: str = "",
     settings: dict | None = None,
 ) -> list[str]:
     """Comando di serving completo, ricetta più infrastruttura."""
@@ -252,7 +253,19 @@ def serve_argv(
     argv += ["--host", host, "--port", str(int(port))]
     argv += list(recipe.serve_args)
     argv = apply_serving_overrides(argv, (settings or {}).get("serving") or {})
-    argv = apply_workflow_overrides(recipe.adapter_id, argv, (settings or {}).get("workflow") or {})
+    workflow = (settings or {}).get("workflow") or {}
+    use_dflash = bool(draft_model_path.strip() and workflow.get("dflash_enabled", True))
+    if use_dflash:
+        if recipe.adapter_id != "monkeyocrv2-parsing" or recipe.runtime != "monkeyocr":
+            raise ValueError("il draft DFlash è disponibile solo per MonkeyOCRv2-Parsing")
+        if lora_path.strip():
+            raise ValueError("DFlash non è abilitato per checkpoint LoRA")
+        argv += ["-d", draft_model_path.strip()]
+    workflow_overrides = workflow if use_dflash else {
+        key: value for key, value in workflow.items()
+        if key != "dflash_num_speculative_tokens"
+    }
+    argv = apply_workflow_overrides(recipe.adapter_id, argv, workflow_overrides)
     if lora_path.strip():
         argv += ["--enable-lora", "--lora-modules", f"{lora_name.strip() or recipe.served_model_name}={lora_path.strip()}"]
     argv += ["--served-model-name", served_model_name or recipe.served_model_name]
@@ -284,6 +297,13 @@ def apply_serving_overrides(argv: list[str], serving: dict) -> list[str]:
 def apply_workflow_overrides(adapter_id: str, argv: list[str], workflow: dict) -> list[str]:
     """Apply only model-specific performance controls to the vendor command."""
     argv = list(argv)
+    if adapter_id == "monkeyocrv2-parsing" and workflow.get("dflash_num_speculative_tokens") is not None:
+        flag = "--dflash-num-speculative-tokens"
+        value = str(int(workflow["dflash_num_speculative_tokens"]))
+        if flag in argv:
+            argv[argv.index(flag) + 1] = value
+        else:
+            argv += [flag, value]
     if adapter_id == "glm-ocr" and workflow.get("speculative_tokens") is not None:
         import json
 

@@ -574,10 +574,15 @@ def start(
     quando il draft non entra nel budget VRAM.
     """
     global _ACTIVE_PROC, _ACTIVE_INFO
-    use_dflash = config.MONKEY_DFLASH if dflash is None else bool(dflash)
-    draft = None
-
     adapter = get_adapter(adapter_id)  # ValueError se sconosciuto
+    from . import model_settings
+    model_config = model_settings.get_settings(adapter_id)
+    workflow = model_config["effective"].get("workflow", {})
+    configured_dflash = workflow.get("dflash_enabled")
+    use_dflash = (
+        bool(configured_dflash) if configured_dflash is not None else config.MONKEY_DFLASH
+    ) if dflash is None else bool(dflash)
+    draft = None
     # Su Apple Silicon vLLM non gira: il percorso locale è MLX. I pesi li
     # scarica `mlx-vlm` dalla cache Hugging Face alla prima richiesta, quindi
     # non passano dal registro modelli e `is_installed()` non si applica.
@@ -595,7 +600,6 @@ def start(
 
     try:
         if local_runtime_id == hardware.RUNTIME_MLX:
-            from . import model_settings
             mlx_overrides = model_settings.get_settings(adapter_id)["overrides"].get("mlx", {})
             argv = mlx_runtime.serve_argv(model_path, port=port, settings=mlx_overrides)
         elif adapter_id == "monkeyocrv2-parsing":
@@ -628,7 +632,7 @@ def start(
                 raise ValueError(
                     f"adapter '{adapter_id}' non ha ancora un comando di serving implementato"
                 )
-            from . import model_settings, serve_recipes
+            from . import serve_recipes
             saved_overrides = model_settings.get_settings(adapter_id)["overrides"]
             serving_overrides = saved_overrides.get("serving", {})
             if adapter_id == "monkeyocrv2-parsing":
@@ -643,6 +647,9 @@ def start(
                 ):
                     if key in serving_overrides:
                         env[env_name] = str(serving_overrides[key])
+                dflash_tokens = (saved_overrides.get("workflow") or {}).get("dflash_num_speculative_tokens")
+                if dflash_tokens is not None:
+                    env["TABULARIUM_MONKEY_DFLASH_TOKENS"] = str(dflash_tokens)
             else:
                 argv = serve_recipes.apply_serving_overrides(argv, serving_overrides)
                 argv = serve_recipes.apply_workflow_overrides(

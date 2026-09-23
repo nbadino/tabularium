@@ -86,6 +86,8 @@ RECIPE_MIN_VRAM_GB=10
 RECIPE_MIN_RAM_GB=12
 RECIPE_NATIVE_GATEWAY_B64=""
 RECIPE_NATIVE_REMOTE_PORT=""
+RECIPE_DRAFT_HF_REPO=""
+RECIPE_DRAFT_MODEL_DIR=""
 SERVE_ARGV=()
 if [ -n "$RECIPE_B64" ]; then
   RECIPE_JSON=$(printf '%s' "$RECIPE_B64" | base64 -d)
@@ -100,6 +102,8 @@ EOF
   RECIPE_MIN_RAM_GB=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('min_free_ram_gb', 12)))")
   RECIPE_NATIVE_GATEWAY_B64=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('native_gateway_b64') or '')")
   RECIPE_NATIVE_REMOTE_PORT=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('native_remote_port') or '')")
+  RECIPE_DRAFT_HF_REPO=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('draft_hf_repo') or '')")
+  RECIPE_DRAFT_MODEL_DIR=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('draft_model_dir') or '')")
   RECIPE_TRANSFORMERS_VERSION=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('transformers_version') or '')")
   if [ -n "$RECIPE_TRANSFORMERS_VERSION" ]; then TRANSFORMERS_VERSION="$RECIPE_TRANSFORMERS_VERSION"; fi
   # The recipe owns the minimum: an external environment override may make
@@ -439,9 +443,30 @@ print("Download completato!")
 PY
 fi
 
+# Optional official MonkeyOCRv2 DFlash draft. The recipe only supplies these
+# fields when the compatible base checkpoint is selected and DFlash is enabled
+# in Settings; no draft weights are downloaded for custom/LoRA checkpoints.
+if [ -n "$RECIPE_DRAFT_HF_REPO" ]; then
+  if [ -z "$RECIPE_DRAFT_MODEL_DIR" ]; then
+    echo "!! Ricetta DFlash incompleta: percorso draft mancante." >&2
+    exit 2
+  fi
+  if [ ! -d "$RECIPE_DRAFT_MODEL_DIR" ] || [ ! -f "$RECIPE_DRAFT_MODEL_DIR/config.json" ]; then
+    echo ">> Download draft ufficiale $RECIPE_DRAFT_HF_REPO in $RECIPE_DRAFT_MODEL_DIR..."
+    mkdir -p "$(dirname "$RECIPE_DRAFT_MODEL_DIR")"
+    DRAFT_MODEL_NAME="$RECIPE_DRAFT_HF_REPO" DRAFT_MODEL_DIR="$RECIPE_DRAFT_MODEL_DIR" "$PY_BIN" - <<'PY'
+from huggingface_hub import snapshot_download
+import os
+
+snapshot_download(repo_id=os.environ["DRAFT_MODEL_NAME"], local_dir=os.environ["DRAFT_MODEL_DIR"])
+PY
+  fi
+fi
+
 MODEL_NAME="$MODEL_NAME" MODEL_DIR="$MODEL_DIR" VLLM_VERSION="$VLLM_VERSION" \
 TORCH_INDEX="$TORCH_INDEX" \
 RECIPE_RUNTIME="$RECIPE_RUNTIME" RECIPE_ADAPTER="${RECIPE_ADAPTER:-monkeyocrv2-parsing}" \
+RECIPE_DRAFT_HF_REPO="$RECIPE_DRAFT_HF_REPO" RECIPE_DRAFT_MODEL_DIR="$RECIPE_DRAFT_MODEL_DIR" \
 RECIPE_TRANSFORMERS_VERSION="$TRANSFORMERS_VERSION" MONKEYOCR_REF="$MONKEYOCR_REF" \
 GPU_QUERY="$GPU_QUERY" COMPUTE_CAP="$COMPUTE_CAP" DISK_AVAILABLE_GB="$DISK_AVAILABLE_GB" \
 MIN_DISK_GB="$MIN_DISK_GB" \
@@ -483,6 +508,8 @@ manifest = {
         else ""
     ),
     "requested_ref": os.environ["MONKEYOCR_REF"],
+    "draft_model": os.environ.get("RECIPE_DRAFT_HF_REPO", ""),
+    "draft_model_dir": os.environ.get("RECIPE_DRAFT_MODEL_DIR", ""),
     "adapter_id": os.environ.get("RECIPE_ADAPTER", ""),
     "runtime": os.environ.get("RECIPE_RUNTIME", ""),
     "gpu": os.environ["GPU_QUERY"],

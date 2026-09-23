@@ -115,7 +115,9 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
         # default; Segmentation is explicitly recommended for real degraded
         # scans, so expose the choice instead of freezing it in our prompt.
         "workflow": (
-            {"layout_mode": "Detection"}
+            {"dflash_enabled": True, "dflash_num_speculative_tokens": None}
+            if adapter_id == "monkeyocrv2-parsing" and adapter.capabilities.draft_hf_repo
+            else {"layout_mode": "Detection"}
             if adapter_id == "teleocr"
             else {"speculative_tokens": 1}
             if adapter_id == "glm-ocr"
@@ -167,7 +169,7 @@ def get_settings(adapter_id: str) -> dict[str, Any]:
         "restart_required": bool(
             overrides.get("serving")
             or overrides.get("mlx")
-            or (adapter_id == "glm-ocr" and overrides.get("workflow"))
+            or (adapter_id in {"glm-ocr", "monkeyocrv2-parsing"} and overrides.get("workflow"))
         ),
     }
 
@@ -243,7 +245,24 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
             continue
         if not isinstance(values, dict):
             raise HTTPException(status_code=422, detail="'workflow' deve essere un oggetto")
-        if adapter_id == "teleocr":
+        if adapter_id == "monkeyocrv2-parsing":
+            if set(values) - {"dflash_enabled", "dflash_num_speculative_tokens"}:
+                raise HTTPException(status_code=422, detail="parametro workflow MonkeyOCRv2 non riconosciuto")
+            enabled = values.get("dflash_enabled")
+            if enabled is not None and not isinstance(enabled, bool):
+                raise HTTPException(status_code=422, detail="workflow.dflash_enabled deve essere booleano")
+            tokens = values.get("dflash_num_speculative_tokens")
+            if tokens is not None and (
+                isinstance(tokens, bool) or not isinstance(tokens, int) or not 1 <= tokens <= 16
+            ):
+                raise HTTPException(status_code=422, detail="workflow.dflash_num_speculative_tokens deve essere un intero tra 1 e 16")
+            result = {}
+            if enabled is not None:
+                result["dflash_enabled"] = enabled
+            if tokens is not None:
+                result["dflash_num_speculative_tokens"] = tokens
+            overrides[section] = result
+        elif adapter_id == "teleocr":
             if set(values) - {"layout_mode"}:
                 raise HTTPException(status_code=422, detail="parametro workflow TeleOCR non riconosciuto")
             mode = values.get("layout_mode")

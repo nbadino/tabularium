@@ -216,6 +216,33 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
                 <p className="mt-1 text-[10px] text-[color:var(--color-ink-3)]">{t('settings.teleocrLayoutOfficial')}</p>
               </section>
             )}
+            {selected.adapter_id === 'monkeyocrv2-parsing' && (
+              <section className="mt-4 max-w-xl border-t border-[color:var(--color-rule)] pt-3">
+                <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelWorkflow')}</h3>
+                <p className="mb-3 max-w-[75ch] text-[11px] text-[color:var(--color-ink-2)]">{t('settings.monkeyDFlashIntro')}</p>
+                <label className="block border-t border-[color:var(--color-rule)] pt-2">
+                  <span className="lbl">{t('settings.monkeyDFlashEnabled')}</span>
+                  <select
+                    className="fld mt-1 w-full"
+                    value={String(draft.workflow?.dflash_enabled ?? true)}
+                    disabled={!isAdmin || loading || saving}
+                    onChange={(event) => {
+                      setDraft((current) => ({
+                        ...current,
+                        workflow: { ...(current.workflow ?? {}), dflash_enabled: event.target.value === 'true' },
+                      }))
+                      setSaved(false)
+                    }}
+                  >
+                    <option value="true">{t('settings.paddleEnabled')}</option>
+                    <option value="false">{t('settings.paddleDisabled')}</option>
+                  </select>
+                </label>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {numberField('workflow', 'dflash_num_speculative_tokens', t('settings.monkeyDFlashTokens'), 1, 16, 1, true)}
+                </div>
+              </section>
+            )}
             {selected.adapter_id === 'glm-ocr' && (
               <section className="mt-4 max-w-xl border-t border-[color:var(--color-rule)] pt-3">
                 <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelWorkflow')}</h3>

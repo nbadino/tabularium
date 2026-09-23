@@ -357,7 +357,8 @@ def start_deploy(
         "mineru": "mineru2.5",
         "qwen3-vl": "qwen3-vl-8b",
     }.get(template.id, template.id)
-    overrides = model_settings.get_settings(adapter_id)["overrides"]
+    model_model_settings = model_settings.get_settings(adapter_id)
+    overrides = model_model_settings["overrides"]
     serving = overrides.get("serving", {})
     for key in (
         "gpu_memory_utilization",
@@ -373,6 +374,14 @@ def start_deploy(
         workflow = overrides.get("workflow", {})
         if "speculative_tokens" in workflow:
             env["TABULARIUM_GLM_SPECULATIVE_TOKENS"] = str(workflow["speculative_tokens"])
+    if template.id == "monkeyocrv2":
+        workflow = model_model_settings["effective"].get("workflow", {})
+        env["TABULARIUM_MODAL_DFLASH"] = "1" if workflow.get("dflash_enabled", True) else "0"
+        tokens = workflow.get("dflash_num_speculative_tokens")
+        if tokens is None:
+            env.pop("TABULARIUM_MODAL_DFLASH_TOKENS", None)
+        else:
+            env["TABULARIUM_MODAL_DFLASH_TOKENS"] = str(tokens)
     _start("deploy", ["deploy", str(template.script)], env=env, template_id=template.id, owner_id=owner_id)
 
 

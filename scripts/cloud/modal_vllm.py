@@ -80,7 +80,7 @@ def apply_serving_overrides(argv):
             argv[boundary:boundary] = [flag, value]
     return argv
 
-DFLASH_TOKENS = int(os.environ.get("TABULARIUM_MODAL_DFLASH_TOKENS", "16"))
+DFLASH_TOKENS = os.environ.get("TABULARIUM_MODAL_DFLASH_TOKENS", "").strip()
 
 # Volume persistente: il checkpoint (~3 GB) si scarica una sola volta.
 weights = modal.Volume.from_name("monkeyocrv2-weights", create_if_missing=True)
@@ -190,7 +190,9 @@ def serve():
     ]
     if USE_DFLASH:
         # serve.py ufficiale espone il draft con l'opzione breve -d.
-        argv.extend(["-d", draft_dir, "--dflash-num-speculative-tokens", str(DFLASH_TOKENS)])
+        argv.extend(["-d", draft_dir])
+        if DFLASH_TOKENS:
+            argv.extend(["--dflash-num-speculative-tokens", DFLASH_TOKENS])
     if SERVED_MODEL_NAME:
         argv.extend(["--served-model-name", SERVED_MODEL_NAME])
     api_key = os.environ.get("TABULARIUM_VLLM_API_KEY", "").strip()

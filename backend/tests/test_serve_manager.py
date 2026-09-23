@@ -435,6 +435,13 @@ def test_monkeyocrv2_skips_draft_when_dflash_disabled(monkeypatch):
     monkeypatch.setattr("app.services.serve_manager.config.TRAIN_REPO", "/my/own/MonkeyOCRv2")
     monkeypatch.setattr("app.services.serve_manager.config.TRAIN_PYTHON", "/my/own/env/bin/python")
     monkeypatch.setattr("app.services.serve_manager.config.MONKEY_DFLASH", False)
+    monkeypatch.setattr(
+        "app.services.model_settings.get_settings",
+        lambda _adapter_id: {
+            "effective": {"workflow": {"dflash_enabled": False}},
+            "overrides": {"workflow": {"dflash_enabled": False}},
+        },
+    )
     calls: list[str] = []
     monkeypatch.setattr(
         "app.services.serve_manager.ensure_draft",

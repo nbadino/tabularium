@@ -8,15 +8,15 @@ import ModelSettingsSection from './ModelSettingsSection'
 vi.mock('../../lib/api', () => ({
   apiGet: vi.fn(async () => ({ items: [{
     adapter_id: 'monkeyocrv2-parsing', display_name: 'MonkeyOCRv2-Parsing',
-    recommended: { serving: { gpu_memory_utilization: 0.9, max_model_len: 24576, max_num_seqs: 8, max_num_batched_tokens: 24576 }, generation: {}, image: { max_pixels: null } },
+    recommended: { serving: { gpu_memory_utilization: null, max_model_len: null, max_num_seqs: null, max_num_batched_tokens: null }, generation: {}, image: { max_pixels: null }, workflow: { dflash_enabled: true, dflash_num_speculative_tokens: null } },
     overrides: {},
-    effective: { serving: { gpu_memory_utilization: 0.9, max_model_len: 24576, max_num_seqs: 8, max_num_batched_tokens: 24576 }, generation: {}, image: { max_pixels: null } },
+    effective: { serving: { gpu_memory_utilization: null, max_model_len: null, max_num_seqs: null, max_num_batched_tokens: null }, generation: {}, image: { max_pixels: null }, workflow: { dflash_enabled: true, dflash_num_speculative_tokens: null } },
     restart_required: false,
   }] })),
   apiPut: vi.fn(async (_path: string, payload: Record<string, unknown>) => ({
     adapter_id: 'monkeyocrv2-parsing', display_name: 'MonkeyOCRv2-Parsing',
-    recommended: { serving: { gpu_memory_utilization: 0.9, max_model_len: 24576, max_num_seqs: 8, max_num_batched_tokens: 24576 }, generation: {}, image: { max_pixels: null } },
-    overrides: payload, effective: payload, restart_required: Boolean(payload.serving),
+    recommended: { serving: { gpu_memory_utilization: null, max_model_len: null, max_num_seqs: null, max_num_batched_tokens: null }, generation: {}, image: { max_pixels: null }, workflow: { dflash_enabled: true, dflash_num_speculative_tokens: null } },
+    overrides: payload, effective: payload, restart_required: Boolean(payload.serving || payload.workflow),
   })),
 }))
 
@@ -26,7 +26,7 @@ describe('ModelSettingsSection', () => {
 
   it('carica valori consigliati e salva override distinti per il modello', async () => {
     render(<ModelSettingsSection isAdmin />)
-    expect((await screen.findAllByDisplayValue('24576')).length).toBeGreaterThan(0)
+    expect(await screen.findByLabelText('DFlash ufficiale')).toHaveValue('true')
     const temperature = screen.getByLabelText(/Temperature/i)
     fireEvent.change(temperature, { target: { value: '0.2' } })
     fireEvent.click(screen.getByRole('button', { name: 'Salva override' }))
@@ -35,6 +35,29 @@ describe('ModelSettingsSection', () => {
       { generation: { temperature: 0.2 } },
     ))
     expect(apiGet).toHaveBeenCalledWith('/system/model-settings')
+  })
+
+  it('permette di disattivare DFlash dalle impostazioni MonkeyOCRv2', async () => {
+    render(<ModelSettingsSection isAdmin />)
+    const dflash = await screen.findByLabelText('DFlash ufficiale')
+    fireEvent.change(dflash, { target: { value: 'false' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salva override' }))
+    await waitFor(() => expect(apiPut).toHaveBeenCalledWith(
+      '/system/model-settings/monkeyocrv2-parsing',
+      { workflow: { dflash_enabled: false } },
+    ))
+  })
+
+  it('permette di regolare i token speculativi DFlash', async () => {
+    render(<ModelSettingsSection isAdmin />)
+    await screen.findByLabelText('DFlash ufficiale')
+    const tokenControls = screen.getAllByRole('spinbutton')
+    fireEvent.change(tokenControls[tokenControls.length - 1], { target: { value: '4' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salva override' }))
+    await waitFor(() => expect(apiPut).toHaveBeenCalledWith(
+      '/system/model-settings/monkeyocrv2-parsing',
+      { workflow: { dflash_num_speculative_tokens: 4 } },
+    ))
   })
 
   it('rende i controlli di sola lettura se l’utente non è admin', async () => {

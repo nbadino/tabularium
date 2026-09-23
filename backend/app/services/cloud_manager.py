@@ -1492,6 +1492,7 @@ def build_provision_recipe(
     eseguirle. Così una ricetta si corregge qui, con i test, non in bash.
     """
     from . import serve_recipes
+    from .model_adapters import get_adapter
 
     recipe = serve_recipes.recipe_for(adapter_id)
     from . import model_settings
@@ -1500,6 +1501,24 @@ def build_provision_recipe(
     if not _MODEL.fullmatch(hf_repo):
         raise ValueError("Nome modello non valido.")
     effective_model_dir = model_dir.strip() or f"{REMOTE_MODEL_ROOT}/{hf_repo.rsplit('/', 1)[-1]}"
+    workflow = user_settings.get("workflow") or {}
+    draft_hf_repo = ""
+    draft_model_dir = ""
+    adapter = get_adapter(adapter_id)
+    if adapter_id == "monkeyocrv2-parsing" and workflow.get("dflash_enabled", True):
+        if hf_repo != recipe.hf_repo:
+            raise ValueError("DFlash è compatibile solo con MonkeyOCRv2-B-Parsing; disattivalo in Settings per un checkpoint diverso.")
+        if lora_path.strip():
+            raise ValueError("DFlash non viene abilitato per un checkpoint LoRA; disattivalo in Settings per questa run.")
+        if model_dir.strip():
+            raise ValueError("DFlash richiede il checkpoint base scaricato dalla ricetta; disattivalo in Settings se specifichi un percorso pesi.")
+        draft_hf_repo = adapter.capabilities.draft_hf_repo
+        draft_model_dir = effective_model_dir.rstrip("/") + "-DFlash"
+    budget = serve_recipes.resource_budget(recipe)
+    if draft_hf_repo:
+        # Il draft ufficiale è 168 MB; il GB aggiuntivo copre metadati/cache e
+        # mantiene il preflight conservativo durante l'estrazione del download.
+        budget["min_free_disk_gb"] += 1
     native_gateway = config.REPO_DIR / "scripts" / "cloud" / {
         "teleocr": "teleocr_native_gateway.py",
         "glm-ocr": "glmocr_native_gateway.py",
@@ -1524,8 +1543,10 @@ def build_provision_recipe(
         "native_gateway_b64": native_gateway_b64,
         "native_remote_port": recipe.native_remote_port,
         "pip_extra": list(recipe.pip_extra),
-        **serve_recipes.resource_budget(recipe),
+        **budget,
         "needs_monkeyocr_repo": recipe.runtime == "monkeyocr",
+        "draft_hf_repo": draft_hf_repo,
+        "draft_model_dir": draft_model_dir,
         "argv": serve_recipes.serve_argv(
             recipe,
             model_path=effective_model_dir,
@@ -1534,6 +1555,7 @@ def build_provision_recipe(
             lora_path=lora_path,
             lora_name=lora_name,
             served_model_name=served_model_name,
+            draft_model_path=draft_model_dir,
             settings=user_settings,
         ),
         "served_model_name": served_model_name or recipe.served_model_name,
