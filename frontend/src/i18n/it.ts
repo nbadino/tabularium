@@ -31,6 +31,7 @@ export const it = {
   },
 
   recognition: {
+    replace: { title: 'Le pagine hanno già delle bozze', body: 'Su {pages} delle pagine scelte ci sono già {drafts} bozze non verificate.', warning: 'Sostituirle le cancella, comprese le correzioni fatte senza spuntare «Verificato». I blocchi verificati o disegnati a mano non si toccano.', mergeHint: '«Aggiungi» lascia le bozze dove sono e mette accanto le nuove: utile per confrontare due motori.', replace: 'Sostituisci le bozze', merge: 'Aggiungi senza sostituire' },
     rangeHint: 'Shift+clic seleziona un intervallo.',
     unreachableModel: '{model} non risponde ({url}): controllalo nella pagina Modelli.',
     selectUnrecognized: 'Solo non riconosciute ({n})',

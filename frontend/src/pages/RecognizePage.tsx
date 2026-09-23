@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import { ApiError } from '../lib/api'
 import type { PageItem, PrefillEngines, RecognitionRun, SystemInfo } from '../lib/types'
-import { Badge, ErrorNotice, Field, Module, Notice, Progress } from '../app/ui'
+import { Badge, ErrorNotice, Field, Modal, Module, Notice, Progress } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { useInference } from '../app/inference'
 import { useCanAdminister } from '../app/auth'
@@ -183,6 +183,10 @@ export default function RecognizePage() {
         setCurrent(next)
         if (next.state !== 'queued' && next.state !== 'running') {
           await loadRuns(next.project_id)
+          // Bozze e blocchi delle pagine sono cambiati: le miniature e la
+          // domanda «sostituire le bozze?» devono vedere i numeri nuovi.
+          const refreshed = await apiGet<{ items: PageItem[] }>(`/projects/${next.project_id}/pages`)
+          if (!stopped) setPages(refreshed.items)
         }
       } catch (e) {
         if (!stopped) setError(e)
@@ -248,7 +252,22 @@ export default function RecognizePage() {
     })
   }
 
-  const start = async () => {
+  // Le pagine scelte che hanno già bozze: una sostituzione le cancella, e con
+  // loro le correzioni fatte senza spuntare «Verificato» (restano bozze).
+  // Si chiede prima, invece di sostituire in silenzio.
+  const [askReplace, setAskReplace] = useState<{ pages: number; drafts: number } | null>(null)
+  const onStartClick = () => {
+    if (projectId === '' || selected.size === 0) return
+    const withDrafts = pages.filter((page) => selected.has(page.id) && (page.drafts ?? 0) > 0)
+    if (withDrafts.length > 0) {
+      setAskReplace({ pages: withDrafts.length, drafts: withDrafts.reduce((sum, page) => sum + (page.drafts ?? 0), 0) })
+      return
+    }
+    void start('replace_drafts')
+  }
+
+  const start = async (mode: 'replace_drafts' | 'merge') => {
+    setAskReplace(null)
     if (projectId === '' || selected.size === 0) return
     setBusy(true)
     setError(null)
@@ -256,7 +275,7 @@ export default function RecognizePage() {
       const run = await apiPost<RecognitionRun>(`/projects/${projectId}/recognition-runs`, {
         page_ids: [...selected],
         engine,
-        mode: 'replace_drafts',
+        mode,
         model_mode: 'native',
         stop_policy: canManageInference && disableAfter && engine === 'model' ? 'disable_inference' : 'none',
       })
@@ -474,7 +493,7 @@ export default function RecognizePage() {
                 <span><b className="font-semibold">{t('recognition.stopAfter')}</b><span className="mt-0.5 block text-[11px] text-[color:var(--color-ink-3)]">{t('recognition.stopAfterHint')}</span></span>
               </label>
             )}
-            <button type="button" onClick={() => void start()} disabled={backendRestartRequired || busy || projectId === '' || selected.size === 0 || !modelReady} className="btn btn-primary mt-4 w-full">
+            <button type="button" onClick={onStartClick} disabled={backendRestartRequired || busy || projectId === '' || selected.size === 0 || !modelReady} className="btn btn-primary mt-4 w-full">
               <IconPlayground size={13} />{busy ? t('recognition.starting') : t('recognition.start')}
             </button>
           </Module>
@@ -496,6 +515,25 @@ export default function RecognizePage() {
           </Module>
         </div>
       </div>
+      {askReplace && (
+        <Modal
+          title={t('recognition.replace.title')}
+          onClose={() => setAskReplace(null)}
+          footer={
+            <div className="flex flex-wrap justify-end gap-2">
+              <button type="button" className="btn" onClick={() => setAskReplace(null)}>{t('common.cancel')}</button>
+              <button type="button" className="btn" onClick={() => void start('merge')}>{t('recognition.replace.merge')}</button>
+              <button type="button" className="btn btn-primary" onClick={() => void start('replace_drafts')}>{t('recognition.replace.replace')}</button>
+            </div>
+          }
+        >
+          <div className="space-y-2 p-3 text-[13px]">
+            <p>{t('recognition.replace.body', { pages: askReplace.pages, drafts: askReplace.drafts })}</p>
+            <p className="text-[12px] text-[color:var(--color-warn)]">{t('recognition.replace.warning')}</p>
+            <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.replace.mergeHint')}</p>
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }

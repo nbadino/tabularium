@@ -32,6 +32,7 @@ export const fr: Dict = {
   },
 
   recognition: {
+    replace: { title: 'Les pages ont déjà des brouillons', body: '{pages} des pages choisies contiennent déjà {drafts} brouillons non vérifiés.', warning: 'Les remplacer les supprime, y compris les corrections faites sans cocher « Vérifié ». Les blocs vérifiés ou dessinés à la main ne sont jamais touchés.', mergeHint: '« Ajouter » garde les brouillons et place les nouveaux à côté : utile pour comparer deux moteurs.', replace: 'Remplacer les brouillons', merge: 'Ajouter sans remplacer' },
     rangeHint: 'Maj+clic sélectionne une plage.',
     unreachableModel: '{model} ne répond pas ({url}) : vérifiez-le dans la page Modèles.',
     selectUnrecognized: 'Seulement non reconnues ({n})',

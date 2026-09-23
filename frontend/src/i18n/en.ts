@@ -32,6 +32,7 @@ export const en: Dict = {
   },
 
   recognition: {
+    replace: { title: 'The pages already have drafts', body: '{pages} of the selected pages already hold {drafts} unchecked drafts.', warning: 'Replacing deletes them, including corrections made without ticking “Checked”. Checked or hand-drawn blocks are never touched.', mergeHint: '“Add” keeps the drafts and puts the new ones beside them: useful to compare two engines.', replace: 'Replace drafts', merge: 'Add without replacing' },
     rangeHint: 'Shift+click selects a range.',
     unreachableModel: '{model} is not answering ({url}): check it in the Models page.',
     selectUnrecognized: 'Only unrecognised ({n})',
