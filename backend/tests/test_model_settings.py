@@ -44,6 +44,25 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
         model_settings.save_settings("teleocr", {"workflow": {"layout_mode": "automatic"}})
     with pytest.raises(HTTPException, match="workflow PaddleOCR-VL non riconosciuto"):
         model_settings.save_settings("paddleocr-vl", {"workflow": {"layout_mode": "Segmentation"}})
+    paddle_defaults = model_settings.get_settings("paddleocr-vl")["recommended"]["workflow"]
+    assert paddle_defaults["layout_threshold"] is None
+    assert paddle_defaults["layout_merge_bboxes_mode"] is None
+    paddle = model_settings.save_settings("paddleocr-vl", {
+        "workflow": {
+            "layout_threshold": 0.42,
+            "layout_nms": True,
+            "layout_merge_bboxes_mode": "union",
+        },
+    })
+    assert paddle["effective"]["workflow"]["layout_threshold"] == 0.42
+    assert paddle["effective"]["workflow"]["layout_nms"] is True
+    assert paddle["effective"]["workflow"]["layout_merge_bboxes_mode"] == "union"
+    with pytest.raises(HTTPException, match="layout_threshold deve essere tra"):
+        model_settings.save_settings("paddleocr-vl", {"workflow": {"layout_threshold": 1.1}})
+    with pytest.raises(HTTPException, match="layout_merge_bboxes_mode non valido"):
+        model_settings.save_settings("paddleocr-vl", {"workflow": {"layout_merge_bboxes_mode": "auto"}})
+    with pytest.raises(HTTPException, match="image.min_pixels è disponibile solo"):
+        model_settings.save_settings("teleocr", {"image": {"min_pixels": 1000}})
     with pytest.raises(HTTPException, match="richiede un logits processor"):
         model_settings.save_settings("paddleocr-vl", {"generation": {"no_repeat_ngram_size": 100}})
 
@@ -125,9 +144,13 @@ def test_paddle_predict_options_reach_the_official_pipeline(tmp_path, monkeypatc
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "paddle-workflow.db")
     init_db()
     model_settings.save_settings("paddleocr-vl", {
-        "workflow": {"use_layout_detection": True, "use_queues": False},
+        "workflow": {
+            "use_layout_detection": True, "use_queues": False,
+            "layout_threshold": 0.4, "layout_nms": True,
+            "layout_merge_bboxes_mode": "union",
+        },
         "generation": {"temperature": 0.1, "top_p": 0.8, "max_tokens": 5000, "top_k": 3},
-        "image": {"max_pixels": 2_000_000},
+        "image": {"min_pixels": 1000, "max_pixels": 2_000_000},
     })
 
     from app.services.paddle_official import _predict_options
@@ -136,7 +159,11 @@ def test_paddle_predict_options_reach_the_official_pipeline(tmp_path, monkeypatc
     assert _predict_options() == {
         "use_layout_detection": True,
         "use_queues": False,
+        "layout_threshold": 0.4,
+        "layout_nms": True,
+        "layout_merge_bboxes_mode": "union",
         "max_pixels": 2_000_000,
+        "min_pixels": 1000,
         "temperature": 0.1,
         "top_p": 0.8,
         "max_new_tokens": 5000,

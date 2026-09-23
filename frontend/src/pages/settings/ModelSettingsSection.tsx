@@ -33,9 +33,13 @@ const GENERATION_FIELDS = [
   { key: 'no_repeat_ngram_size', min: 0, max: 512, step: 1 },
 ] as const
 const PADDLE_WORKFLOW_FIELDS = [
-  'use_layout_detection', 'use_doc_orientation_classify', 'use_doc_unwarping',
+  'use_layout_detection', 'layout_nms', 'use_doc_orientation_classify', 'use_doc_unwarping',
   'use_chart_recognition', 'use_seal_recognition', 'use_ocr_for_image_block',
   'format_block_content', 'merge_layout_blocks', 'use_queues',
+] as const
+const PADDLE_LAYOUT_NUMBERS = [
+  { key: 'layout_threshold', min: 0, max: 1, step: 0.01 },
+  { key: 'layout_unclip_ratio', min: 0.01, max: 10, step: 0.05 },
 ] as const
 
 export default function ModelSettingsSection({ isAdmin }: SectionProps) {
@@ -161,6 +165,7 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
                 <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelImage')}</h3>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
                   {numberField('image', 'max_pixels', t('settings.modelField.max_pixels'), 0, 64000000, 1000, true)}
+                  {selected.adapter_id === 'paddleocr-vl' && numberField('image', 'min_pixels', t('settings.modelField.min_pixels'), 1, 64000000, 1000, true)}
                 </div>
                 <p className="mt-2 text-[10px] text-[color:var(--color-ink-3)]">{t('settings.modelPixelsHint')}</p>
               </section>
@@ -238,6 +243,31 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
                       </select>
                     </label>
                   ))}
+                  {PADDLE_LAYOUT_NUMBERS.map((field) => numberField(
+                    'workflow', field.key, field.key,
+                    field.min, field.max, field.step, true,
+                  ))}
+                  <label className="block border-t border-[color:var(--color-rule)] pt-2">
+                    <span className="lbl">layout_merge_bboxes_mode</span>
+                    <select
+                      className="fld mt-1 w-full"
+                      value={String(draft.workflow?.layout_merge_bboxes_mode ?? '')}
+                      disabled={!isAdmin || loading || saving}
+                      onChange={(event) => {
+                        const value = event.target.value || null
+                        setDraft((current) => ({
+                          ...current,
+                          workflow: { ...(current.workflow ?? {}), layout_merge_bboxes_mode: value },
+                        }))
+                        setSaved(false)
+                      }}
+                    >
+                      <option value="">{t('settings.modelAuto')}</option>
+                      <option value="large">large</option>
+                      <option value="small">small</option>
+                      <option value="union">union</option>
+                    </select>
+                  </label>
                 </div>
               </section>
             )}

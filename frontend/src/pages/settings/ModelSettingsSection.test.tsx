@@ -67,6 +67,9 @@ describe('ModelSettingsSection', () => {
       'use_chart_recognition', 'use_seal_recognition', 'use_ocr_for_image_block',
       'format_block_content', 'merge_layout_blocks', 'use_queues',
     ].map((key) => [key, null]))
+    workflow.layout_threshold = null
+    workflow.layout_unclip_ratio = null
+    workflow.layout_merge_bboxes_mode = null
     vi.mocked(apiGet).mockResolvedValueOnce({ items: [{
       adapter_id: 'paddleocr-vl', display_name: 'PaddleOCR-VL-1.6',
       recommended: { serving: { max_model_len: 12288 }, generation: {}, image: { max_pixels: null }, workflow },
@@ -77,10 +80,16 @@ describe('ModelSettingsSection', () => {
     render(<ModelSettingsSection isAdmin />)
     const layout = await screen.findByLabelText('Rilevamento layout')
     fireEvent.change(layout, { target: { value: 'true' } })
+    fireEvent.change(screen.getByLabelText(/layout_threshold/), { target: { value: '0.4' } })
+    fireEvent.change(screen.getByLabelText(/layout_merge_bboxes_mode/), { target: { value: 'union' } })
     fireEvent.click(screen.getByRole('button', { name: 'Salva override' }))
     await waitFor(() => expect(apiPut).toHaveBeenCalledWith(
       '/system/model-settings/paddleocr-vl',
-      { workflow: { use_layout_detection: true } },
+      { workflow: {
+        use_layout_detection: true,
+        layout_threshold: 0.4,
+        layout_merge_bboxes_mode: 'union',
+      } },
     ))
   })
 

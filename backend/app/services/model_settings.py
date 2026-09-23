@@ -34,7 +34,7 @@ _GENERATION_LIMITS = {
     "frequency_penalty": (-2.0, 2.0),
     "no_repeat_ngram_size": (0, 512),
 }
-_IMAGE_LIMITS = {"max_pixels": (0, 64000000)}
+_IMAGE_LIMITS = {"min_pixels": (1, 64000000), "max_pixels": (0, 64000000)}
 _MLX_LIMITS = {
     "kv_bits": (2, 8),
     "kv_group_size": (16, 256),
@@ -43,6 +43,7 @@ _MLX_LIMITS = {
 }
 _PADDLE_BOOLEAN_WORKFLOW = {
     "use_layout_detection",
+    "layout_nms",
     "use_doc_orientation_classify",
     "use_doc_unwarping",
     "use_chart_recognition",
@@ -52,6 +53,18 @@ _PADDLE_BOOLEAN_WORKFLOW = {
     "merge_layout_blocks",
     "use_queues",
 }
+_PADDLE_WORKFLOW_LIMITS = {
+    "layout_threshold": (0.0, 1.0),
+    "layout_unclip_ratio": (0.01, 10.0),
+}
+_PADDLE_WORKFLOW_ENUMS = {
+    "layout_merge_bboxes_mode": {"large", "small", "union"},
+}
+_PADDLE_WORKFLOW_FIELDS = (
+    _PADDLE_BOOLEAN_WORKFLOW
+    | set(_PADDLE_WORKFLOW_LIMITS)
+    | set(_PADDLE_WORKFLOW_ENUMS)
+)
 _NO_REPEAT_ADAPTERS = {"teleocr", "mineru2.5", "deepseek-ocr", "unlimited-ocr"}
 
 
@@ -96,14 +109,17 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
         "generation": {},
         # TeleOCR/config.py upstream uses MAX_PIXELS=8000*8000. Other models
         # keep the application-wide image cap unless their workflow says more.
-        "image": {"max_pixels": 64_000_000 if adapter_id == "teleocr" else None},
+        "image": {
+            "min_pixels": None,
+            "max_pixels": 64_000_000 if adapter_id == "teleocr" else None,
+        },
         # TeleOCR publishes two layout modes. Detection is the upstream
         # default; Segmentation is explicitly recommended for real degraded
         # scans, so expose the choice instead of freezing it in our prompt.
         "workflow": (
             {"layout_mode": "Detection"}
             if adapter_id == "teleocr"
-            else {key: None for key in sorted(_PADDLE_BOOLEAN_WORKFLOW)}
+            else {key: None for key in sorted(_PADDLE_WORKFLOW_FIELDS)}
             if adapter_id == "paddleocr-vl"
             else {}
         ),
@@ -208,6 +224,8 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
         if section != "workflow":
             if section == "mlx" and not adapter.capabilities.local_mlx_repo:
                 raise HTTPException(status_code=422, detail="impostazioni MLX non disponibili per questo modello")
+            if section == "image" and adapter_id != "paddleocr-vl" and "min_pixels" in values:
+                raise HTTPException(status_code=422, detail="image.min_pixels è disponibile solo nel pipeline ufficiale PaddleOCR-VL")
             overrides[section] = _validated_section(section, values)
             continue
         if not isinstance(values, dict):
@@ -220,11 +238,26 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
                 raise HTTPException(status_code=422, detail="workflow.layout_mode deve essere Detection o Segmentation")
             overrides[section] = {"layout_mode": mode} if mode is not None else {}
         elif adapter_id == "paddleocr-vl":
-            if set(values) - _PADDLE_BOOLEAN_WORKFLOW:
+            if set(values) - _PADDLE_WORKFLOW_FIELDS:
                 raise HTTPException(status_code=422, detail="parametro workflow PaddleOCR-VL non riconosciuto")
-            if any(value is not None and not isinstance(value, bool) for value in values.values()):
-                raise HTTPException(status_code=422, detail="i parametri workflow PaddleOCR-VL devono essere true o false")
-            overrides[section] = {key: value for key, value in values.items() if value is not None}
+            result = {}
+            for key, value in values.items():
+                if value is None:
+                    continue
+                if key in _PADDLE_BOOLEAN_WORKFLOW:
+                    if not isinstance(value, bool):
+                        raise HTTPException(status_code=422, detail=f"workflow.{key} deve essere booleano")
+                    result[key] = value
+                elif key in _PADDLE_WORKFLOW_LIMITS:
+                    lo, hi = _PADDLE_WORKFLOW_LIMITS[key]
+                    if isinstance(value, bool) or not isinstance(value, (int, float)) or not lo <= value <= hi:
+                        raise HTTPException(status_code=422, detail=f"workflow.{key} deve essere tra {lo:g} e {hi:g}")
+                    result[key] = float(value)
+                elif key in _PADDLE_WORKFLOW_ENUMS:
+                    if value not in _PADDLE_WORKFLOW_ENUMS[key]:
+                        raise HTTPException(status_code=422, detail=f"workflow.{key} non valido")
+                    result[key] = value
+            overrides[section] = result
         elif values:
             raise HTTPException(status_code=422, detail="workflow personalizzato non disponibile per questo modello")
         else:

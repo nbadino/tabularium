@@ -167,6 +167,8 @@ def _predict_options() -> dict:
         if value is not None
     }
     image = effective.get("image", {})
+    if image.get("min_pixels") is not None:
+        options["min_pixels"] = image["min_pixels"]
     if image.get("max_pixels") is not None:
         options["max_pixels"] = image["max_pixels"]
     generation = effective.get("generation", {})
