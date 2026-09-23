@@ -126,7 +126,7 @@ def test_glm_mtp_tokens_are_model_specific_and_applied_to_cloud_recipe(tmp_path,
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "glm-mtp.db")
     init_db()
     defaults = model_settings.get_settings("glm-ocr")
-    assert defaults["recommended"]["workflow"]["speculative_tokens"] == 3
+    assert defaults["recommended"]["workflow"]["speculative_tokens"] == 1
 
     saved = model_settings.save_settings("glm-ocr", {
         "workflow": {"speculative_tokens": 5},

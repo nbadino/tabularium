@@ -140,11 +140,11 @@ RECIPES: dict[str, ServeRecipe] = {
         runtime="vllm",
         vllm_version="0.19.0",
         serve_args=(
-            "--speculative-config", '{"method": "mtp", "num_speculative_tokens": 3}',
+            "--speculative-config", '{"method": "mtp", "num_speculative_tokens": 1}',
             "--max-num-batched-tokens", "32768",
             "--max-num-seqs", str(DEFAULT_MAX_INPUTS),
         ),
-        source="README GLM-OCR: MTP speculativo con 3 token è la configurazione pubblicata",
+        source="README GLM-OCR: MTP speculativo con 1 token (comando vLLM pubblicato)",
     ),
     "deepseek-ocr": ServeRecipe(
         adapter_id="deepseek-ocr",

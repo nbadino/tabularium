@@ -110,7 +110,7 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
         "workflow": (
             {"layout_mode": "Detection"}
             if adapter_id == "teleocr"
-            else {"speculative_tokens": 3}
+            else {"speculative_tokens": 1}
             if adapter_id == "glm-ocr"
             else {"ngram_size": 30, "window_size": 90}
             if adapter_id == "deepseek-ocr"
