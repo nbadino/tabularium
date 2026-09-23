@@ -289,11 +289,16 @@ def evaluate_project(
             approved_only = rep.get("approved_only", approved_only)
         except (TypeError, ValueError):
             pass
-    if approved_only:
-        page_data = {
-            pid: data for pid, data in page_data.items()
-            if data["page"]["status"] in {"approved", "exported"}
-        }
+    # La verità di una valutazione è solo ciò che una persona ha approvato,
+    # qualunque cosa dica l'ultima build del dataset: una pagina con bozze mai
+    # verificate conterebbe l'output del modello come risposta giusta, e il
+    # punteggio misurerebbe quanto il modello somiglia a se stesso.
+    page_data = {
+        pid: data for pid, data in page_data.items()
+        if data["page"]["status"] in {"approved", "exported"}
+    }
+    if not page_data:
+        raise ValueError(msg("no_gold_pages", lang))
     _train, val_ids = builder.compute_split(project_id, ratio, seed, split_strategy, approved_only=approved_only)
     val_ids &= set(page_data)
     val_ids = sorted(val_ids)[:limit]

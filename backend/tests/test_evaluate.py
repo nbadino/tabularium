@@ -153,6 +153,18 @@ def test_evaluate_project(tmp_path: Path, monkeypatch):
         client.post(f"/api/projects/{pid}/datasets/build", json={"split_ratio": 0.5})
 
     monkeypatch.setattr(infmod, "VllmClient", FakeClient)
+    # Senza pagine approvate non c'è verità: le annotazioni non ancora
+    # approvate (e le bozze del modello) non valgono come risposta giusta.
+    try:
+        evmod.evaluate_project(pid, with_text=True)
+        raise AssertionError("atteso ValueError senza pagine approvate")
+    except ValueError as exc:
+        assert "approvata" in str(exc)
+
+    from app.db import connect
+
+    with connect() as conn:
+        conn.execute("UPDATE pages SET status='approved' WHERE project_id=?", (pid,))
     report = evmod.evaluate_project(pid, with_text=True)
     assert report["pages_evaluated"] >= 1
     agg = report["aggregates"]

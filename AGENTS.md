@@ -758,6 +758,11 @@ tabella dei fallimenti peggiori per guidare la nuova iterazione di annotazione.
   `POST /api/playground/parse`. Pagine: Valutazione (cards aggregate, per-pagina, overlay GT vs
   predetto, errori pagine) e Playground (layout predetto overlay SVG + blocchi/contenuto, copia md).
   Degrada con warning se il server vLLM non è attivo.
+  - **La verità di una valutazione sono le sole pagine approvate** (`approved`/`exported`),
+    qualunque cosa dica l'ultima build del dataset: una pagina con bozze mai verificate contava
+    l'output del modello come risposta giusta. Senza pagine approvate l'API risponde
+    `no_gold_pages`. La valutazione **non richiede un training**: misurare il modello di partenza
+    sul proprio corpus è il riferimento che il fine-tuning deve battere.
 - **M7 — Pseudo-labeling** ✅ — `services/ocr.py` (import lazy RapidOCR/PaddleOCR, config
   `TABULARIUM_OCR_ENGINE`), `POST /api/projects/{id}/prelabel`: rileva righe di testo su una pagina,
   filtra per confidenza/dimensione + NMS-lite, inserisce blocchi `Text` con `prefill_source` e

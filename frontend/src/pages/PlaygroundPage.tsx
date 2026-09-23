@@ -9,6 +9,7 @@ import { useInference } from '../app/inference'
 import { IconCopy, IconPlayground } from '../app/icons'
 import { useI18n, tn } from '../i18n'
 import { pageLabel } from '../lib/pageLabel'
+import { useModelNames } from '../app/models/names'
 
 function providerLabel(provider: string | null | undefined, t: (key: string) => string): string {
   if (provider && ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom'].includes(provider)) {
@@ -23,6 +24,7 @@ export default function PlaygroundPage() {
   const [pages, setPages] = useState<PageItem[]>([])
   const [pageId, setPageId] = useState<number | null>(null)
   const inference = useInference()
+  const nameOf = useModelNames()
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<PlaygroundResult | null>(null)
   const [error, setError] = useState<unknown>(null)
@@ -109,7 +111,7 @@ export default function PlaygroundPage() {
       {inference.enabled && !inference.available && (
         <div className="mb-3">
           <Notice tone="warn">
-            <span>{t('recognition.unreachableNotice', { url: inference.url })}</span>{' '}
+            <span>{t('recognition.unreachableModel', { model: nameOf(inference.adapterId) ?? inference.model, url: inference.url })}</span>{' '}
             <Link to="/modelli" className="font-semibold underline underline-offset-2">
               {t('recognition.changeModel')}
             </Link>

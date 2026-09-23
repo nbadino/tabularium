@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiGet, apiPost } from '../lib/api'
-import type { DatasetReport, DatasetStatus } from '../lib/types'
+import type { DatasetReport, DatasetStatus, PageItem } from '../lib/types'
+import { formatDateTime } from '../lib/dates'
+import { Link } from 'react-router'
 import { familyLabel, lines as linesPlural, splitStrategyLabel } from '../lib/vocab'
-import { Collapsible, ErrorNotice, Field, Module, WarnNotice } from '../app/ui'
+import { Badge, Collapsible, ErrorNotice, Field, Module, WarnNotice } from '../app/ui'
 import { PipelineStrip } from '../app/PipelineView'
 import { buildPipeline, usePipelineState } from '../app/pipeline'
 import { useProjects, writeActiveProject } from '../app/activeProject'
@@ -17,7 +19,7 @@ function fmtSize(n: number): string {
 }
 
 export default function DatasetPage() {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const inference = useInference()
   const [projectId, setProjectId] = useState<number | ''>('')
   const [ratio, setRatio] = useState(0.9)
@@ -36,6 +38,9 @@ export default function DatasetPage() {
   const [alternativeBuilding, setAlternativeBuilding] = useState(false)
   const [paddleManifest, setPaddleManifest] = useState<{ counts?: { layout?: Record<string, number>; vlm?: Record<string, number> }; files?: Record<string, string>; warnings?: string[] } | null>(null)
   const [status, setStatus] = useState<DatasetStatus>({ built: false, report: null })
+  /** Pagine con sole bozze generate: non sono dati di training finché
+   *  qualcuno non le verifica, e il dataset deve dirlo. */
+  const [draftOnlyPages, setDraftOnlyPages] = useState<number | null>(null)
   const [error, setError] = useState<unknown>(null)
   const activeAdapterNotExportable = Boolean(
     inference.model &&
@@ -159,6 +164,20 @@ export default function DatasetPage() {
 
   const project = projects.find((p) => p.id === projectId) ?? null
   const { workflow, training } = usePipelineState(projectId === '' ? null : projectId)
+  useEffect(() => {
+    setDraftOnlyPages(null)
+    if (projectId === '') return
+    let alive = true
+    apiGet<{ items: PageItem[] }>(`/projects/${projectId}/pages`)
+      .then((r) => alive && setDraftOnlyPages(r.items.filter((p) => p.status === 'new' && (p.drafts ?? 0) > 0).length))
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [projectId])
+  const approvedPages = workflow?.approved_pages ?? 0
+  const humanPages = (workflow?.counts.annotated ?? 0) + (workflow?.counts.review ?? 0) + (workflow?.counts.qa ?? 0)
+  const nextStudio = workflow?.next_page ? `/annotazione?project=${projectId}&page=${workflow.next_page.id}` : '/annotazione'
   const stages = buildPipeline({ project, workflow, dataset: status, training })
 
   const report = status.report
@@ -186,6 +205,27 @@ export default function DatasetPage() {
       )}
 
       {projectId !== '' && <PipelineStrip stages={stages} here="dataset" />}
+
+      {/* Che cosa entrerebbe nel dataset, prima di costruirlo: le bozze del
+          modello non sono verità, e un corpus riconosciuto per intero può
+          avere zero pagine utilizzabili. */}
+      {projectId !== '' && workflow && (
+        <div className="mb-3">
+          <Module tab={t('dataset.material.title')} quiet>
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[12px]">
+              <span><b className="mono text-[18px]">{approvedPages}</b> {t('dataset.material.approved')}</span>
+              <span><b className="mono text-[18px]">{humanPages}</b> {t('dataset.material.annotated')}</span>
+              {draftOnlyPages != null && (
+                <span><b className="mono text-[18px]">{draftOnlyPages}</b> {t('dataset.material.drafts')}</span>
+              )}
+              <Link to={nextStudio} className="btn btn-sm ml-auto no-underline">{t('dataset.material.openStudio')}</Link>
+            </div>
+            <p className="mt-2 max-w-[80ch] text-[11px] text-[color:var(--color-ink-2)]">
+              {approvedOnly ? t('dataset.material.hintApproved') : t('dataset.material.hintAll')}
+            </p>
+          </Module>
+        </div>
+      )}
 
       <div className="mb-3">
         <Module tab={t('dataset.build')}>
@@ -338,11 +378,17 @@ export default function DatasetPage() {
                 {t('dataset.splitSeed', { pct: (report.split.ratio * 100).toFixed(0), seed: report.split.seed })}
               </p>
             </Module>
-            <Module tab={t('dataset.lastBuild')} quiet>
+            <Module
+              tab={t('dataset.lastBuild')}
+              quiet
+              aux={report.pages.with_blocks === 0 ? <Badge tone="warn">{t('dataset.emptyBuild')}</Badge> : undefined}
+            >
               <div className="mono text-[17px] font-semibold leading-tight">
-                {report.built_at.slice(0, 16).replace('T', ' ')}
+                {formatDateTime(report.built_at, locale)}
               </div>
-              <p className="mt-1 text-[12px] text-[color:var(--color-ink-2)]">{t('dataset.utc')}</p>
+              <p className="mt-1 text-[12px] text-[color:var(--color-ink-2)]">
+                {report.pages.with_blocks === 0 ? t('dataset.emptyBuildHint') : t('dataset.localTime')}
+              </p>
             </Module>
           </div>
 

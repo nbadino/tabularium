@@ -11,6 +11,7 @@ import { useInference } from '../app/inference'
 import { IconEvaluate, IconPlayground } from '../app/icons'
 import { useI18n, tn } from '../i18n'
 import { pageLabel } from '../lib/pageLabel'
+import { useModelNames } from '../app/models/names'
 
 const pct = (v: number | null | undefined) => (v == null ? '—' : `${(v * 100).toFixed(1)}%`)
 const num = (v: number | null | undefined, d = 3) => (v == null ? '—' : v.toFixed(d))
@@ -42,6 +43,7 @@ export default function EvaluationPage() {
   const { t } = useI18n()
   const [projectId, setProjectId] = useState<number | ''>('')
   const inference = useInference()
+  const nameOf = useModelNames()
   const [withText, setWithText] = useState(true)
   const [running, setRunning] = useState(false)
   const [report, setReport] = useState<EvalReport | null>(null)
@@ -83,6 +85,11 @@ export default function EvaluationPage() {
   const stages = buildPipeline({ project, workflow, dataset, training })
   const trainingReady = training?.run?.state === 'finished'
   const inferenceReady = inference.enabled && inference.available
+  // La verità sono le pagine approvate, non il training: misurare il modello
+  // di partenza sul proprio corpus è il riferimento che il fine-tuning deve
+  // battere, e serve anche a scegliere fra i modelli del catalogo.
+  const goldPages = workflow?.approved_pages ?? 0
+  const goldReady = goldPages > 0
 
   const a = report?.aggregates
 
@@ -103,7 +110,7 @@ export default function EvaluationPage() {
         </div>
       )}
 
-      {projectId !== '' && <PipelineStrip stages={stages} here="evaluate" />}
+      {projectId !== '' && goldReady && <PipelineStrip stages={stages} here="evaluate" />}
 
       {!inference.enabled && (
         <div className="mb-3 flex items-center justify-between border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-3 py-2 text-[12px] text-[color:var(--color-ink-2)]">
@@ -145,7 +152,7 @@ export default function EvaluationPage() {
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[color:var(--color-rule)] pt-2 text-[12px]">
             <span className="lbl !mb-0">{t('recognition.computeProfile')}</span>
-            <strong>{inference.model || '—'}</strong>
+            <strong title={inference.model || undefined}>{nameOf(inference.adapterId) ?? (inference.model || '—')}</strong>
             <span className="text-[color:var(--color-ink-2)]">
               · {inference.provider ? t(`recognition.provider.${inference.provider}`) : t('recognition.locationLocal')}
             </span>
@@ -153,17 +160,20 @@ export default function EvaluationPage() {
               {inference.model ? t('recognition.changeModel') : t('recognition.chooseModel')}
             </Link>
           </div>
-          {projectId !== '' && !trainingReady && (
+          {projectId !== '' && workflow && !goldReady && (
             <Notice tone="warn">
-              <span>{t('pipeline.steps.evaluateNeeds')}</span>{' '}
-              <Link to="/training" className="font-semibold underline underline-offset-2">
-                {t('pipeline.steps.trainAction')}
+              <span>{t('evaluate.needsGold')}</span>{' '}
+              <Link to={workflow.next_page ? `/annotazione?project=${projectId}&page=${workflow.next_page.id}` : '/annotazione'} className="font-semibold underline underline-offset-2">
+                {t('dataset.material.openStudio')}
               </Link>
             </Notice>
           )}
-          {trainingReady && inference.enabled && !inferenceReady && (
+          {projectId !== '' && goldReady && !trainingReady && (
+            <Notice>{t('evaluate.baselineNote', { n: goldPages })}</Notice>
+          )}
+          {inference.enabled && !inferenceReady && (
             <Notice tone="warn">
-              <span>{t('recognition.unreachableNotice', { url: inference.url })}</span>{' '}
+              <span>{t('recognition.unreachableModel', { model: nameOf(inference.adapterId) ?? inference.model, url: inference.url })}</span>{' '}
               <Link to="/modelli" className="font-semibold underline underline-offset-2">
                 {t('recognition.changeModel')}
               </Link>
@@ -171,7 +181,7 @@ export default function EvaluationPage() {
           )}
           <button
             onClick={() => void run()}
-            disabled={running || projectId === '' || !trainingReady || !inferenceReady}
+            disabled={running || projectId === '' || !goldReady || !inferenceReady}
             className="btn btn-primary mt-3"
           >
             <IconPlayground size={13} />
