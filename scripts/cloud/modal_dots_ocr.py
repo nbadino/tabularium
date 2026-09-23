@@ -98,7 +98,6 @@ def serve():
         "--port", str(PORT),
         "--trust-remote-code",
         "--chat-template-content-format", "string",
-        "--max-num-seqs", str(MAX_INPUTS),
         "--served-model-name", "dots-mocr",
     ]
     api_key = os.environ.get("TABULARIUM_VLLM_API_KEY", "").strip()

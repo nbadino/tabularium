@@ -113,7 +113,6 @@ def serve():
         "--max-num-batched-tokens", "16384",
         "--no-enable-prefix-caching",
         "--mm-processor-cache-gb", "0",
-        "--max-num-seqs", str(MAX_INPUTS),
         "--served-model-name", "PaddleOCR-VL-1.6",
     ]
     api_key = os.environ.get("TABULARIUM_VLLM_API_KEY", "").strip()

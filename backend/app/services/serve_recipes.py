@@ -7,18 +7,15 @@ prefix caching disattivato di PaddleOCR-VL, il decoding speculativo MTP di
 GLM-OCR. Servire un modello con i flag di un altro produce output plausibili e
 sbagliati, che è il modo peggiore di sbagliare.
 
-I valori qui sono copiati dalle template Modal già verificate contro le fonti
-ufficiali (`scripts/cloud/modal_*.py`, che citano README e recipe del modello);
-un test confronta le due liste e fallisce se divergono. Da qui li leggono sia il
-provisioning su GPU remota sia chi vorrà unificare le template.
+Qui compaiono i flag prescritti o documentati dalla fonte upstream del modello.
+Limiti applicativi di batch/VRAM non documentati dal produttore restano vuoti e
+si possono impostare per modello in Settings. Le template Modal condividono i
+flag della ricetta; un test verifica che li supportino.
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-
-# Richieste simultanee sul singolo container: stesso default delle template.
-DEFAULT_MAX_INPUTS = 4
 
 
 @dataclass(frozen=True)
@@ -87,7 +84,6 @@ RECIPES: dict[str, ServeRecipe] = {
             # TeleOCR/config.py upstream recommends 0.95.
             "--gpu-memory-utilization", "0.95",
             "--max-model-len", "16384",
-            "--max-num-seqs", str(DEFAULT_MAX_INPUTS),
         ),
         source="Repository ufficiale TeleOCR + model card StarDoc-AI/TeleOCR",
     ),
@@ -102,7 +98,6 @@ RECIPES: dict[str, ServeRecipe] = {
             "--gpu-memory-utilization", "0.9",
             "--max-model-len", "24576",
             "--max-num-batched-tokens", "24576",
-            "--max-num-seqs", "8",
         ),
         source="parsing/serve.py del repo ufficiale; stessi flag di scripts/serve_model.sh",
     ),
@@ -116,7 +111,6 @@ RECIPES: dict[str, ServeRecipe] = {
         pip_extra=("mineru-vl-utils",),
         serve_args=(
             "--logits-processors", "mineru_vl_utils:MinerULogitsProcessor",
-            "--max-num-seqs", str(DEFAULT_MAX_INPUTS),
         ),
         source="README MinerU2.5: il logits processor è parte della ricetta, non un'opzione",
     ),
@@ -129,7 +123,6 @@ RECIPES: dict[str, ServeRecipe] = {
         serve_args=(
             "--trust-remote-code",
             "--chat-template-content-format", "string",
-            "--max-num-seqs", str(DEFAULT_MAX_INPUTS),
         ),
         source="README dots.mocr: senza il formato stringa il template di chat non combacia",
     ),
@@ -145,7 +138,6 @@ RECIPES: dict[str, ServeRecipe] = {
         serve_args=(
             "--speculative-config", '{"method": "mtp", "num_speculative_tokens": 1}',
             "--max-num-batched-tokens", "32768",
-            "--max-num-seqs", str(DEFAULT_MAX_INPUTS),
         ),
         source="README GLM-OCR: vLLM MTP ufficiale + SDK self-hosted PP-DocLayout/OCR",
     ),
@@ -160,7 +152,6 @@ RECIPES: dict[str, ServeRecipe] = {
             "--logits-processors", "vllm.model_executor.models.deepseek_ocr:NGramPerReqLogitsProcessor",
             "--no-enable-prefix-caching",
             "--mm-processor-cache-gb", "0",
-            "--max-num-seqs", str(DEFAULT_MAX_INPUTS),
         ),
         source="recipe vLLM ufficiale DeepSeek-OCR: n-gram logits processor contro i loop",
     ),
@@ -175,7 +166,6 @@ RECIPES: dict[str, ServeRecipe] = {
             "--max-num-batched-tokens", "16384",
             "--no-enable-prefix-caching",
             "--mm-processor-cache-gb", "0",
-            "--max-num-seqs", str(DEFAULT_MAX_INPUTS),
         ),
         source="recipe PaddleOCR-VL: prefix caching e cache del processore multimodale vanno spenti",
     ),
@@ -189,7 +179,6 @@ RECIPES: dict[str, ServeRecipe] = {
             "--dtype", "bfloat16",
             "--max-model-len", "32768",
             "--limit-mm-per-prompt", '{"image":4,"video":0}',
-            "--max-num-seqs", str(DEFAULT_MAX_INPUTS),
         ),
         source="model card Qwen3-VL: limiti multimodali espliciti per non saturare il prefill",
     ),
@@ -206,10 +195,7 @@ RECIPES: dict[str, ServeRecipe] = {
             "--logits_processors", "vllm.model_executor.models.unlimited_ocr:NGramPerReqLogitsProcessor",
             "--no-enable-prefix-caching",
             "--mm-processor-cache-gb", "0",
-            "--max-num-batched-tokens", "8192",
             "--max-model-len", "32768",
-            "--max-num-seqs", str(DEFAULT_MAX_INPUTS),
-            "--gpu-memory-utilization", "0.95",
         ),
         source="recipes.vllm.ai/baidu/Unlimited-OCR",
     ),

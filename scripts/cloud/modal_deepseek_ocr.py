@@ -101,7 +101,6 @@ def serve():
         "--logits-processors", "vllm.model_executor.models.deepseek_ocr:NGramPerReqLogitsProcessor",
         "--no-enable-prefix-caching",
         "--mm-processor-cache-gb", "0",
-        "--max-num-seqs", str(MAX_INPUTS),
         "--served-model-name", "deepseek-ocr-2",
     ]
     api_key = os.environ.get("TABULARIUM_VLLM_API_KEY", "").strip()

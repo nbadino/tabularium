@@ -33,8 +33,9 @@ Uso:
 L'URL dell'endpoint è stampato da `modal deploy` e ha forma:
   https://<WORKSPACE>--tabularium-unlimited-ocr-serve.modal.run
 
-Il profilo performance usato dalla UI imposta anche `max-num-batched-tokens=8192`,
-`max-num-seqs=4` e `gpu-memory-utilization=0.95`, seguendo la recipe vLLM.
+Il profilo applicativo storico impostava limiti di batch e uso VRAM che la
+recipe upstream non prescrive. Se non configurati in Settings, ora vengono
+lasciati ai default di vLLM; i controlli restano modificabili per questo modello.
 """
 
 import os
@@ -117,12 +118,7 @@ def serve():
         "vllm.model_executor.models.unlimited_ocr:NGramPerReqLogitsProcessor",
         "--no-enable-prefix-caching",
         "--mm-processor-cache-gb", "0",
-        # Budget della recipe vLLM: più spazio al prefill multimodale senza
-        # alterare il modello o i parametri di decoding.
-        "--max-num-batched-tokens", "8192",
         "--max-model-len", "32768",
-        "--max-num-seqs", str(MAX_INPUTS),
-        "--gpu-memory-utilization", "0.95",
         "--served-model-name", SERVED_NAME,
     ]
     api_key = os.environ.get("TABULARIUM_VLLM_API_KEY", "").strip()

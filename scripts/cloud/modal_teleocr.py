@@ -93,7 +93,6 @@ def serve():
         "--dtype", "bfloat16",
         "--gpu-memory-utilization", "0.95",
         "--max-model-len", "16384",
-        "--max-num-seqs", str(MAX_INPUTS),
         "--served-model-name", "StarDoc-AI/TeleOCR",
     ]
     api_key = os.environ.get("TABULARIUM_VLLM_API_KEY", "").strip()

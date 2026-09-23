@@ -101,7 +101,6 @@ def serve():
         "--dtype", "bfloat16",
         "--max-model-len", "32768",
         "--limit-mm-per-prompt", '{"image":4,"video":0}',
-        "--max-num-seqs", str(MAX_INPUTS),
         "--served-model-name", "qwen3-vl-8b",
     ]
     api_key = os.environ.get("TABULARIUM_VLLM_API_KEY", "").strip()

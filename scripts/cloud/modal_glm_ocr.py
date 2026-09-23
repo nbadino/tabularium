@@ -105,7 +105,6 @@ def serve():
             + "}"
         ),
         "--max-num-batched-tokens", "32768",
-        "--max-num-seqs", str(MAX_INPUTS),
         "--served-model-name", "glm-ocr",
     ]
     api_key = os.environ.get("TABULARIUM_VLLM_API_KEY", "").strip()

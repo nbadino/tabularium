@@ -193,8 +193,6 @@ def serve():
         "24576",
         "--max-num-batched-tokens",
         "24576",
-        "--max-num-seqs",
-        str(MAX_INPUTS),
         # serve.py inoltra il resto degli argomenti a `vllm serve`.
     ]
     if USE_DFLASH:

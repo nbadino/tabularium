@@ -200,7 +200,6 @@ def test_teleocr_crop_prompts_and_vllm_recipe_are_explicitly_scoped():
         "TeleOCR.vlm_utils.vlm_client.vllm_v1_no_repeat_ngram:VllmV1NoRepeatNGramLogitsProcessor",
         "--dtype", "bfloat16",
         "--gpu-memory-utilization", "0.95", "--max-model-len", "16384",
-        "--max-num-seqs", "4",
     )
     assert "mlx-vlm" not in adapter.capabilities.local_runtimes
     assert not adapter.capabilities.local_mlx_repo

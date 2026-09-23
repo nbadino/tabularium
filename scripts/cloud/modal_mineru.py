@@ -126,7 +126,6 @@ def serve():
         "--host", "0.0.0.0",
         "--port", str(PORT),
         "--logits-processors", "mineru_vl_utils:MinerULogitsProcessor",
-        "--max-num-seqs", str(MAX_INPUTS),
         # Deve coincidere con l'adapter e con il target impostato dalla UI;
         # il nome vLLM è case-sensitive.
         "--served-model-name", "mineru2.5",
