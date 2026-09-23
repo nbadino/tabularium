@@ -344,11 +344,11 @@ def test_monkeyocrv2_auto_prepares_repo_and_runtime_when_unset(monkeypatch):
         "app.services.serve_manager.ensure_draft",
         lambda adapter_id: (calls.append("draft"), __import__("pathlib").Path("/fake/models/draft"))[1],
     )
-    captured: dict = {}
+    captured: list[tuple[list[str], dict | None]] = []
 
     class FakeProc:
         def __init__(self, *args, **kwargs):
-            captured["env"] = kwargs.get("env")
+            captured.append((list(args[0]), kwargs.get("env")))
             self.pid = 4244
 
         def poll(self):
@@ -359,11 +359,14 @@ def test_monkeyocrv2_auto_prepares_repo_and_runtime_when_unset(monkeypatch):
     serve_manager.start("monkeyocrv2-parsing", port=18893)
 
     assert "repo" in calls and "runtime" in calls and "draft" in calls
-    assert captured["env"]["TABULARIUM_TRAIN_REPO"] == "/fake/vendor/MonkeyOCRv2"
-    assert captured["env"]["TABULARIUM_TRAIN_PYTHON"] == "/fake/vllm-runtime/bin/python"
+    launch_env = next(
+        env for argv, env in captured if argv and argv[0].endswith("scripts/serve_model.sh")
+    )
+    assert launch_env["TABULARIUM_TRAIN_REPO"] == "/fake/vendor/MonkeyOCRv2"
+    assert launch_env["TABULARIUM_TRAIN_PYTHON"] == "/fake/vllm-runtime/bin/python"
     # DFlash ufficiale: il draft arriva a `scripts/serve_model.sh` via env, che
     # lo gira a `serve.py -d` (README §vLLM Serving).
-    assert captured["env"]["TABULARIUM_MONKEY_DFLASH_DRAFT"] == "/fake/models/draft"
+    assert launch_env["TABULARIUM_MONKEY_DFLASH_DRAFT"] == "/fake/models/draft"
 
 
 def test_monkeyocrv2_respects_existing_manual_overrides(monkeypatch):

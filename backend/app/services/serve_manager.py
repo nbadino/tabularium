@@ -50,6 +50,9 @@ from .model_registry import (
 )
 
 _ACTIVE_PROC: subprocess.Popen | None = None
+# Keep the real Popen type even when tests replace subprocess.Popen with a
+# fake. A fake PID is not provenance and must never be signalled.
+_POpenHandle = subprocess.Popen
 _ACTIVE_INFO: dict[str, Any] = {}
 _STARTING_INFO: dict[str, Any] = {}
 _STARTING_LOCK = threading.Lock()
@@ -877,15 +880,16 @@ def _terminate(
 def stop() -> ServeStatus:
     global _ACTIVE_PROC, _ACTIVE_INFO
     proc = _ACTIVE_PROC
+    managed_proc = proc if isinstance(proc, _POpenHandle) else None
     job_id = _ACTIVE_INFO.get("job_id")
     persisted = None if proc is not None else _persisted_running()
-    pid = proc.pid if proc is not None else (persisted or {}).get("pid")
-    process_group = (persisted or {}).get("process_group") if proc is None else None
+    pid = managed_proc.pid if managed_proc is not None else (persisted or {}).get("pid")
+    process_group = (persisted or {}).get("process_group") if managed_proc is None else None
     # A live Popen handle is provenance: this process was launched by this
     # manager, even when macOS rewrites or truncates its command line so the
     # persisted-command heuristic cannot recognize it. Apply the PID reuse
     # guard only after a backend restart, when we have lost that handle.
-    if pid and proc is None and not _is_our_serving_process(pid):
+    if pid and managed_proc is None and not _is_our_serving_process(pid):
         # Non si segnala un processo che non si riesce ad attribuire. Il PID può
         # arrivare da una riga in `jobs` scritta prima di un riavvio della
         # macchina, e i numeri di PID vengono riciclati: senza questo controllo
@@ -896,13 +900,18 @@ def stop() -> ServeStatus:
         _ACTIVE_INFO = {}
         return get_status()
     if pid:
-        _terminate(pid, process_group, process=proc)
-        if proc is not None:
+        _terminate(pid, process_group, process=managed_proc)
+        if managed_proc is not None:
             try:
-                proc.wait(timeout=1.0)
+                managed_proc.wait(timeout=1.0)
             except Exception:  # noqa: BLE001
                 pass
         _mark_job(job_id or (persisted or {}).get("id"), "stopped")
+        _ACTIVE_PROC = None
+    elif proc is not None and job_id:
+        # Test doubles and adapters that don't return a real Popen handle have
+        # no signalable process identity; close their bookkeeping only.
+        _mark_job(job_id, "stopped")
         _ACTIVE_PROC = None
     _ACTIVE_INFO = {}
     return get_status()
