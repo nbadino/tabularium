@@ -23,9 +23,9 @@ import json, sys, warnings
 warnings.filterwarnings("ignore")
 from paddleocr import PaddleOCRVL
 
-image, url, model, out_dir, options_json = sys.argv[1:]
+image, url, model, out_dir, options_json, backend = sys.argv[1:]
 pipeline = PaddleOCRVL(
-    vl_rec_backend="vllm-server",
+    vl_rec_backend=backend,
     vl_rec_server_url=url,
     vl_rec_api_model_name=model,
     use_layout_detection=True,
@@ -113,6 +113,7 @@ def _items(value) -> list[dict]:
                 "header": "Page-header",
                 "footer": "Page-footer",
                 "footnote": "Footnote",
+                "vision_footnote": "Footnote",
                 # corpi di testo
                 "text": "Text",
                 "abstract": "Text",
@@ -156,7 +157,7 @@ def parse_result(payload: dict, width: int, height: int) -> list[dict]:
     return []
 
 
-def _predict_options() -> dict:
+def _predict_options(vl_rec_backend: str = "vllm-server") -> dict:
     """Forward only settings documented by the official PaddleOCR-VL API."""
     from . import model_settings
 
@@ -167,10 +168,15 @@ def _predict_options() -> dict:
         if value is not None
     }
     image = effective.get("image", {})
-    if image.get("min_pixels") is not None:
-        options["min_pixels"] = image["min_pixels"]
-    if image.get("max_pixels") is not None:
-        options["max_pixels"] = image["max_pixels"]
+    # Paddle's mlx-vlm-server backend explicitly does not forward min/max
+    # pixels to mlx-vlm. Sending them only produces warnings and suggests a
+    # tuning effect that the Metal server cannot apply. vLLM supports them via
+    # mm_processor_kwargs, so preserve those model-specific controls there.
+    if vl_rec_backend != "mlx-vlm-server":
+        if image.get("min_pixels") is not None:
+            options["min_pixels"] = image["min_pixels"]
+        if image.get("max_pixels") is not None:
+            options["max_pixels"] = image["max_pixels"]
     generation = effective.get("generation", {})
     for key in ("temperature", "top_p", "repetition_penalty"):
         if generation.get(key) is not None:
@@ -187,7 +193,10 @@ def _predict_options() -> dict:
     return options
 
 
-def parse_page(image_source, endpoint: str, model: str, width: int, height: int) -> list[dict]:
+def parse_page(
+    image_source, endpoint: str, model: str, width: int, height: int,
+    *, vl_rec_backend: str = "vllm-server",
+) -> list[dict]:
     if not paddle_runtime.ready():
         # Due situazioni diverse, due istruzioni diverse: un'installazione in
         # corso chiede di riprovare, un runtime assente dice da dove arriva.
@@ -225,7 +234,8 @@ def parse_page(image_source, endpoint: str, model: str, width: int, height: int)
             [
                 str(paddle_runtime.python_bin()), "-c", _RUNNER,
                 str(input_path), endpoint, model, tmp,
-                json.dumps(_predict_options(), separators=(",", ":")),
+                json.dumps(_predict_options(vl_rec_backend), separators=(",", ":")),
+                vl_rec_backend,
             ],
             capture_output=True,
             text=True,

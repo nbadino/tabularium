@@ -436,8 +436,14 @@ def model_prelabel_events(
                         # gateway already returns normalized 0–1000 boxes.
                         items = client.teleocr_native_page(image)
                     else:
+                        paddle_backend = "vllm-server"
+                        if client.provider == "local":
+                            from . import hardware
+                            if hardware.pick_serve_runtime(client.adapter.capabilities) == hardware.RUNTIME_MLX:
+                                paddle_backend = "mlx-vlm-server"
                         items = paddle_official.parse_page(
-                            image, client.url, client.model, image.width, image.height
+                            image, client.url, client.model, image.width, image.height,
+                            vl_rec_backend=paddle_backend,
                         )
                         for item in items:
                             bbox = item.get("bbox") or []

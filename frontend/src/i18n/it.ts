@@ -1938,7 +1938,7 @@ export const it = {
     mlxField: { kv_bits: 'Bit cache KV', kv_group_size: 'Gruppo quantizzazione KV', max_kv_size: 'Dimensione massima cache KV', vision_cache_size: 'Cache visiva', kv_quant_scheme: 'Schema quantizzazione KV', log_level: 'Livello log' },
     modelGeneration: 'Generazione',
     modelImage: 'Immagine',
-    modelPixelsHint: 'Lascia vuoto per mantenere il limite globale; 0 disattiva il ridimensionamento lato client.',
+    modelPixelsHint: 'Lascia vuoto per il default. Paddle mlx-vlm-server su Apple Silicon non applica min_pixels/max_pixels; questi override funzionano con il backend vLLM.',
     modelWorkflow: 'Workflow ufficiale',
     teleocrLayoutMode: 'Modalità layout',
     teleocrDetectionHint: 'predefinita',

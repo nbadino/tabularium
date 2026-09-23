@@ -1937,7 +1937,7 @@ export const fr: Dict = {
     mlxField: { kv_bits: 'Bits du cache KV', kv_group_size: 'Taille du groupe de quantification KV', max_kv_size: 'Taille maximale du cache KV', vision_cache_size: 'Taille du cache visuel', kv_quant_scheme: 'Schéma de quantification KV', log_level: 'Niveau de journalisation' },
     modelGeneration: 'Génération',
     modelImage: 'Image',
-    modelPixelsHint: 'Laisser vide pour garder la limite globale ; 0 désactive le redimensionnement côté client.',
+    modelPixelsHint: 'Laissez vide pour le réglage par défaut. Paddle mlx-vlm-server sur Apple Silicon ignore min_pixels/max_pixels ; ces réglages fonctionnent avec le backend vLLM.',
     modelWorkflow: 'Flux officiel',
     teleocrLayoutMode: 'Mode de mise en page',
     teleocrDetectionHint: 'par défaut',

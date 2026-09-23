@@ -206,6 +206,10 @@ def test_paddle_predict_options_reach_the_official_pipeline(tmp_path, monkeypatc
         "max_new_tokens": 5000,
         "vlm_extra_args": {"top_k": 3},
     }
+    mlx_options = _predict_options("mlx-vlm-server")
+    assert "min_pixels" not in mlx_options
+    assert "max_pixels" not in mlx_options
+    assert mlx_options["layout_threshold"] == 0.4
     compile(_RUNNER, "paddle_official_runner", "exec")
     assert "pipeline.predict(image, **predict_options)" in _RUNNER
 

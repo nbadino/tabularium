@@ -54,6 +54,7 @@ def test_paddle_labels_land_in_the_tabularium_taxonomy():
         "header": "Page-header",
         "footer": "Page-footer",
         "footnote": "Footnote",
+        "vision_footnote": "Footnote",
         "text": "Text",
         "abstract": "Text",
         "vertical_text": "Text",
