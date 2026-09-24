@@ -57,7 +57,12 @@ def test_benchmark_configuration_records_effective_model_recipe():
     assert config["serve_recipe"]["vllm_version"] == "0.21.0"
 
 
-def test_benchmark_configuration_does_not_mislabel_local_mlx_as_vllm():
+def test_benchmark_configuration_does_not_mislabel_local_mlx_as_vllm(monkeypatch):
+    from app.services import hardware
+
+    monkeypatch.setattr(
+        hardware, "pick_serve_runtime", lambda _capabilities: hardware.RUNTIME_MLX,
+    )
     config = benchmark_models._configuration("qwen3-vl-8b", "local")
 
     assert config["serve_recipe"]["runtime"] == "mlx-vlm"
