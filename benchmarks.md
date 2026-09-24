@@ -580,3 +580,24 @@ endpoint e le tre prove sotto sono passate.
 Esito 3/3 valido a livello di protocollo; il numero di blocchi e i caratteri
 non certificano accuratezza senza annotazioni gold. I report schema v3
 registrano endpoint nativo, recipe e impostazioni effettive.
+
+### PaddleOCR-VL 1.6 — benchmark Vast con workflow nativo (2026-09-24)
+
+Sulla stessa RTX 4060 Ti, PaddleOCR-VL è stato servito con vLLM 0.28.0 e la
+ricetta del catalogo: `--trust-remote-code`, `--max-num-batched-tokens 16384`,
+cache dei prefissi disattivata e cache multimodale del processor a zero. Il
+server ha esposto `PaddleOCR-VL-1.6`; il benchmark ha chiamato l'adapter nativo
+`paddleocr-vl`, che usa il suo workflow ufficiale layout + riconoscimento.
+
+| Pagina | Blocchi validi | Caratteri | Wall | Report |
+|---|---:|---:|---:|---|
+| `LSI_17186_015` | 8/8 | 8.331 | 35,236 s | `data/benchmarks/vast-rtx-4060-ti-20260924/paddleocr-vl/LSI_17186_015.json` |
+| `LSI_17187_008` | 8/8 | 8.332 | 16,419 s | `data/benchmarks/vast-rtx-4060-ti-20260924/paddleocr-vl/LSI_17187_008.json` |
+| `LSIVS_17186_004` | 35/35 | 1.277 | 8,976 s | `data/benchmarks/vast-rtx-4060-ti-20260924/paddleocr-vl/LSIVS_17186_004.json` |
+
+Esito 3/3 valido a livello di protocollo; non è un punteggio di accuratezza
+gold. I report schema v3 riportano provider Vast, endpoint redatto, ricetta e
+impostazioni effettive. Durante il serving il modello ha occupato quasi tutta
+la VRAM disponibile (887 MiB liberi osservati dopo il warmup), quindi questa
+configurazione è verificata su 16 GB ma lascia poco margine per altri processi
+GPU concorrenti.
