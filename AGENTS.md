@@ -827,8 +827,9 @@ tabella dei fallimenti peggiori per guidare la nuova iterazione di annotazione.
   dal produttore, ma resta sperimentale finché non passa una prova live sul corpus. Gli altri
   modelli restano remoti, ognuno per una ragione **misurata** servendolo davvero su una pagina:
   **MonkeyOCRv2** perché `mlx-vlm` non ha quell'architettura (verificato sui moduli installati);
-  **MinerU2.5** era escluso perché l'engine MLX non è un server OpenAI; ora usa un runtime
-  isolato e attende il benchmark live; **DeepSeek-OCR-2** e **Unlimited-OCR** perché la loro ricetta verificata
+  **MinerU2.5** usa il runtime nativo isolato `MinerUClient` MLX 2.0.5, verificato su
+  scansioni corpus con layout completo e output tabellare HTML valido; le tabelle dense
+  restano da valutare contro annotazioni gold. **DeepSeek-OCR-2** e **Unlimited-OCR** perché la loro ricetta verificata
   si regge sul logits processor n-gram di vLLM, che `mlx-vlm` non ha (Unlimited-OCR via MLX
   produce 12288 caratteri di `alpha.alpha.alpha…` fino al tetto dei token); **dots.mocr**
   perché la generazione END2END si chiude a 682 caratteri e la run fallisce; **GLM-OCR** perché

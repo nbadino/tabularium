@@ -462,3 +462,25 @@ non un gold set validato dall’utente. Le prove generate in
 non entrano in alcuna classifica o conclusione di qualità. Il runner
 `scripts/benchmark_gold.py` resta pronto per un futuro validation set realmente
 revisionato, ma non certifica il dataset che riceve.
+
+### MinerU2.5 MLX nativo — pipeline ufficiale avviata e corpus verificato (2026-09-24)
+
+Il runtime macOS isolato usa ora `mineru-vl-utils[mlx]==2.0.5`: il pin precedente
+`1.0.5` caricava MLX-VLM 0.3.12 e Transformers 5.17, una combinazione che falliva
+durante il caricamento del processor (richiesta accidentale di PyTorch/Torchvision
+per il processor video Qwen2VL). La serie 2.0.5 installa l'extra MLX ufficiale
+`mlx-vlm>=0.7,<0.8`, compatibile con Transformers 5.14+; il gateway nativo
+`MinerUClient(backend="mlx-engine")` si avvia senza installare PyTorch.
+
+Verificato con le impostazioni raccomandate e senza override:
+
+| Pagina | Blocchi validi | Tabella | Caratteri | Wall |
+|---|---:|---:|---:|---:|
+| `LSI_17187_008` (registro) | 8/8 | 1 HTML | 8425 | 17,464 s |
+| `LSIVS_17186_004` (supplemento) | 80/80 | nessuna | 1236 | 15,072 s |
+
+Report completi e output grezzi: `data/benchmarks/mineru-mlx-20260924/`.
+Il protocollo è valido, ma la tabella del registro contiene righe ripetute;
+questo smoke test dimostra che il flusso ufficiale funziona, non che la
+trascrizione sia corretta. Serve confronto contro le annotazioni gold prima di
+valutare l'accuratezza o ottimizzare sampling e post-processing.

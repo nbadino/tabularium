@@ -1,8 +1,8 @@
 """Pinned native MinerU MLX runtime for Apple Silicon.
 
-MinerU's released ``mlx-engine`` extra pins an older mlx-vlm range than the
-shared Paddle/Qwen runtime. Keep the producer's stack isolated so preparing
-MinerU cannot downgrade or otherwise change the other local MLX models.
+Keep the producer's runtime isolated so preparing MinerU cannot downgrade or
+otherwise change the shared Paddle/Qwen MLX environment. The official 2.0
+extra carries its compatible mlx-vlm and Transformers requirements.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .. import config
 
-PACKAGES = ["fastapi", "uvicorn", "mineru-vl-utils[mlx]==1.0.5"]
+PACKAGES = ["fastapi", "uvicorn", "mineru-vl-utils[mlx]==2.0.5"]
 _GIB = 1024 ** 3
 
 
@@ -73,8 +73,12 @@ def is_ready() -> bool:
         probe = subprocess.run(
             [
                 str(python_bin()), "-c",
-                "import importlib.util,sys; names=('mlx_vlm','mineru_vl_utils','fastapi','uvicorn'); "
-                "sys.exit(0 if all(importlib.util.find_spec(n) for n in names) else 1)",
+                "import importlib.metadata as m,importlib.util,sys; "
+                "names=('mlx_vlm','mineru_vl_utils','fastapi','uvicorn'); "
+                "ok=all(importlib.util.find_spec(n) for n in names); "
+                "ok=ok and m.version('mineru-vl-utils')=='2.0.5'; "
+                "ok=ok and m.version('mlx-vlm').split('.')[0]=='0' and "
+                "m.version('mlx-vlm').split('.')[1]=='7'; sys.exit(0 if ok else 1)",
             ],
             capture_output=True, text=True, check=False, timeout=15,
         )

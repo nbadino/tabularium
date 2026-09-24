@@ -6,7 +6,7 @@ from app.services import mineru_mlx_runtime
 
 
 def test_mineru_mlx_runtime_isolated_and_pinned_to_the_official_extra():
-    assert "mineru-vl-utils[mlx]==1.0.5" in mineru_mlx_runtime.PACKAGES
+    assert "mineru-vl-utils[mlx]==2.0.5" in mineru_mlx_runtime.PACKAGES
 
 
 def test_mineru_mlx_runtime_launches_the_native_gateway_with_model_settings(monkeypatch):
