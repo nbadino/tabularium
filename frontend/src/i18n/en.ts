@@ -1932,6 +1932,7 @@ export const en: Dict = {
     modelRestartHint: 'Runtime overrides are saved. Restart or reconfigure serving to apply them.',
     modelRuntime: 'Runtime and concurrency',
     modelRemoteRuntime: 'Remote serving (vLLM)',
+    modelDtypeHint: 'Choose a precision supported by the GPU; Automatic follows the model recipe.',
     modelMlxRuntime: 'Local serving (MLX)',
     modelMlxIntro: 'These values are passed to mlx-vlm on Apple Silicon. Automatic keeps the installed version defaults; changes require a server restart.',
     mlxField: { kv_bits: 'KV cache bits', kv_group_size: 'KV quantization group size', max_kv_size: 'Maximum KV cache size', vision_cache_size: 'Vision cache size', kv_quant_scheme: 'KV quantization scheme', log_level: 'Log level' },
@@ -1981,6 +1982,7 @@ export const en: Dict = {
     modelReset: 'Restore recommended recipe',
     modelSaved: 'Model overrides saved.',
     modelField: {
+      dtype: 'Numeric precision',
       gpu_memory_utilization: 'vLLM GPU memory (0–1)',
       max_model_len: 'Maximum context (tokens)',
       max_num_seqs: 'Concurrent requests',

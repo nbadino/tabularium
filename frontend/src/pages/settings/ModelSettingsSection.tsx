@@ -162,6 +162,17 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
               <section>
                 <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelRemoteRuntime')}</h3>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+                  {selected.adapter_id !== 'monkeyocrv2-parsing' && (
+                    <label className="block border-t border-[color:var(--color-rule)] pt-2">
+                      <span className="lbl">{t('settings.modelField.dtype')}</span>
+                      <select className="fld mt-1 w-full" value={String(draft.serving?.dtype ?? '')} disabled={!isAdmin || loading || saving}
+                        onChange={(event) => { setDraft((current) => ({ ...current, serving: { ...(current.serving ?? {}), dtype: event.target.value || null } })); setSaved(false) }}>
+                        <option value="">{t('settings.modelAuto')}</option>
+                        {(['half', 'float16', 'bfloat16', 'float', 'float32'] as const).map((value) => <option key={value} value={value}>{value}</option>)}
+                      </select>
+                      <span className="mt-1 block text-[10px] text-[color:var(--color-ink-3)]">{t('settings.modelDtypeHint')}</span>
+                    </label>
+                  )}
                   {SERVING_FIELDS.map((field) => numberField('serving', field.key, t(`settings.modelField.${field.key}`), field.min, field.max, field.step))}
                 </div>
               </section>

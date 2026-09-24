@@ -76,11 +76,12 @@ describe('ModelSettingsSection', () => {
     }] } as never)
     render(<ModelSettingsSection isAdmin />)
     const mode = await screen.findByLabelText('Modalità layout')
+    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'half' } })
     fireEvent.change(mode, { target: { value: 'Segmentation' } })
     fireEvent.click(screen.getByRole('button', { name: 'Salva override' }))
     await waitFor(() => expect(apiPut).toHaveBeenCalledWith(
       '/system/model-settings/teleocr',
-      { workflow: { layout_mode: 'Segmentation' } },
+      { serving: { dtype: 'half' }, workflow: { layout_mode: 'Segmentation' } },
     ))
   })
 

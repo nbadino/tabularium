@@ -99,6 +99,7 @@ RECIPE_NATIVE_REMOTE_PORT=""
 RECIPE_DRAFT_HF_REPO=""
 RECIPE_DRAFT_MODEL_DIR=""
 RECIPE_TELEOCR_SETTINGS="{}"
+RECIPE_USER_DTYPE=""
 RECIPE_MINERU_SETTINGS="{}"
 RECIPE_CONFIG_SIGNATURE=""
 SERVE_ARGV=()
@@ -124,6 +125,7 @@ EOF
   RECIPE_DRAFT_MODEL_DIR=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('draft_model_dir') or '')")
   RECIPE_CONFIG_SIGNATURE=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('configuration_signature') or '')")
   RECIPE_TELEOCR_SETTINGS=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('settings') or {},separators=(',',':'))) ")
+  RECIPE_USER_DTYPE=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print((json.load(sys.stdin).get('serving_overrides') or {}).get('dtype') or '')")
   RECIPE_MINERU_SETTINGS=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('settings') or {},separators=(',',':'))) ")
   RECIPE_TRANSFORMERS_VERSION=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('transformers_version') or '')")
   if [ -n "$RECIPE_TRANSFORMERS_VERSION" ]; then TRANSFORMERS_VERSION="$RECIPE_TRANSFORMERS_VERSION"; fi
@@ -319,6 +321,13 @@ if command -v nvidia-smi &>/dev/null; then
   # producer-recommended BF16 on Ampere+ and select the equivalent supported
   # FP16 engine dtype on older cards instead of excluding them from search.
   if awk -v cap="$COMPUTE_CAP" 'BEGIN { exit !(cap + 0 < 8.0) }'; then
+    if [ "$RECIPE_USER_DTYPE" = "bfloat16" ]; then
+      echo "!! serving.dtype=bfloat16 non è supportato dalla GPU sm_${COMPUTE_CAP}; scegli half/float16 o ripristina Automatico." >&2
+      exit 2
+    fi
+    if [ -n "$RECIPE_USER_DTYPE" ]; then
+      echo ">> Precisione manuale rispettata: $RECIPE_USER_DTYPE."
+    else
     if [ "$RECIPE_RUNTIME" = "teleocr-native" ]; then
       RECIPE_TELEOCR_SETTINGS=$(printf '%s' "$RECIPE_TELEOCR_SETTINGS" | python3 -c 'import json,sys; x=json.load(sys.stdin); x.setdefault("serving", {})["dtype"]="half"; print(json.dumps(x,separators=(",",":")))')
     elif [ "$RECIPE_INSTALL_VLLM" = "1" ]; then
@@ -333,6 +342,7 @@ if command -v nvidia-smi &>/dev/null; then
       if [ "$has_dtype" = "0" ]; then SERVE_ARGV+=(--dtype half); fi
     fi
     echo ">> Precisione adattata alla GPU sm_${COMPUTE_CAP}: FP16 (BF16 richiede sm_80+)."
+    fi
   fi
 
   # La compute capability dice cosa sa fare la GPU, non cosa sa eseguire il

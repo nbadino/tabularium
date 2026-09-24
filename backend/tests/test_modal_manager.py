@@ -29,6 +29,7 @@ def test_modal_deploy_receives_saved_model_serving_overrides(monkeypatch):
     monkeypatch.setattr(modal_manager.os, "environ", {})
     monkeypatch.setattr(model_settings, "get_settings", lambda _adapter_id: {
         "overrides": {"serving": {
+            "dtype": "half",
             "gpu_memory_utilization": 0.8,
             "max_model_len": 8192,
             "max_num_seqs": 2,
@@ -39,6 +40,7 @@ def test_modal_deploy_receives_saved_model_serving_overrides(monkeypatch):
     modal_manager.start_deploy("teleocr", keep_warm=False)
 
     assert captured["env"]["TABULARIUM_SERVE_GPU_MEMORY_UTILIZATION"] == "0.8"
+    assert captured["env"]["TABULARIUM_SERVE_DTYPE"] == "half"
     assert captured["env"]["TABULARIUM_SERVE_MAX_MODEL_LEN"] == "8192"
     assert captured["env"]["TABULARIUM_SERVE_MAX_NUM_SEQS"] == "2"
     assert captured["env"]["TABULARIUM_SERVE_MAX_NUM_BATCHED_TOKENS"] == "4096"

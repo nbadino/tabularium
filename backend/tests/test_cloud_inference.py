@@ -1648,10 +1648,11 @@ def test_setup_checks_the_driver_cuda_before_downloading():
     script = (Path(__file__).resolve().parents[2] / "scripts" / "cloud" / "setup_cloud_vllm.sh").read_text()
 
     assert "MIN_CUDA_DRIVER" in script
-    # CUDA 12.8 e' il minimo per Blackwell; il toolkit locale (13.0 per nvcc)
-    # non deve alzare la soglia richiesta al driver del provider.
+    # The pinned vLLM wheel uses CUDA 12.9 by default. The cu128 torch index is
+    # used only for a targeted Blackwell compatibility reinstall and does not
+    # lower the driver floor for the vLLM runtime itself.
     assert 'TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cu128}"' in script
-    assert 'MIN_CUDA_DRIVER="${MIN_CUDA_DRIVER:-12.8}"' in script
+    assert 'MIN_CUDA_DRIVER="${MIN_CUDA_DRIVER:-12.9}"' in script
     # Deve precedere l'installazione, altrimenti non risparmia nulla: il
     # messaggio d'errore compare prima del primo pip install pesante.
     assert script.index("Max CUDA") < script.index("Installazione dipendenze Python")

@@ -361,6 +361,7 @@ def start_deploy(
     overrides = model_model_settings["overrides"]
     serving = overrides.get("serving", {})
     for key in (
+        "dtype",
         "gpu_memory_utilization",
         "max_model_len",
         "max_num_seqs",

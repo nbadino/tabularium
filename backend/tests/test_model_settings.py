@@ -15,6 +15,7 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
     defaults = model_settings.get_settings("teleocr")
     assert defaults["recommended"]["serving"]["max_model_len"] == 16384
     assert defaults["recommended"]["serving"]["gpu_memory_utilization"] == 0.95
+    assert defaults["recommended"]["serving"]["dtype"] == "bfloat16"
     assert defaults["recommended"]["image"]["max_pixels"] == 64_000_000
     assert defaults["recommended"]["workflow"]["layout_mode"] == "Detection"
     assert defaults["overrides"] == {}
@@ -26,7 +27,7 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
     assert dots_defaults["generation"] == {
         "temperature": 0.1,
         "top_p": 1.0,
-        "max_tokens": 16384,
+        "max_tokens": 32768,
     }
     assert dots_defaults["image"]["max_pixels"] == 11_289_600
 
@@ -49,12 +50,19 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
         model_settings.save_settings("mineru2.5", {"workflow": {"layout_image_size": [100, 100]}})
 
     saved = model_settings.save_settings("teleocr", {
-        "serving": {"max_num_seqs": 2},
+        "serving": {"max_num_seqs": 2, "dtype": "half"},
         "generation": {"temperature": 0.1},
         "image": {"max_pixels": 2_000_000},
         "workflow": {"layout_mode": "Segmentation"},
     })
     assert saved["effective"]["serving"]["max_num_seqs"] == 2
+    assert saved["effective"]["serving"]["dtype"] == "half"
+    assert saved["effective"]["serving"]["dtype"] == "half"  # consumed by TeleOCR's native AsyncLLM gateway
+    argv = serve_recipes.serve_argv(
+        serve_recipes.recipe_for("qwen3-vl-8b"), model_path="MODEL", port=8888,
+        settings={"serving": {"dtype": "half"}},
+    )
+    assert argv[argv.index("--dtype") + 1] == "half"
     assert saved["effective"]["generation"]["temperature"] == 0.1
     assert saved["effective"]["image"]["max_pixels"] == 2_000_000
     assert saved["effective"]["workflow"]["layout_mode"] == "Segmentation"
@@ -64,6 +72,10 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
         model_settings.save_settings("teleocr", {"serving": {"max_model_len": 32768}})
     with pytest.raises(HTTPException, match="tra 0.2 e 0.98"):
         model_settings.save_settings("teleocr", {"serving": {"gpu_memory_utilization": 1.0}})
+    with pytest.raises(HTTPException, match="serving.dtype non valido"):
+        model_settings.save_settings("teleocr", {"serving": {"dtype": "int8"}})
+    with pytest.raises(HTTPException, match="wrapper ufficiale MonkeyOCRv2"):
+        model_settings.save_settings("monkeyocrv2-parsing", {"serving": {"dtype": "half"}})
     with pytest.raises(HTTPException, match="lasciare spazio per l'immagine"):
         model_settings.save_settings("teleocr", {
             "serving": {"max_model_len": 4096},
@@ -378,6 +390,7 @@ def test_recommended_serving_values_only_come_from_remote_recipes():
         settings = model_settings.get_settings(adapter_id)
         recipe_args = list(serve_recipes.RECIPES[adapter_id].serve_args)
         for flag, key, cast in (
+            ("--dtype", "dtype", str),
             ("--gpu-memory-utilization", "gpu_memory_utilization", float),
             ("--max-model-len", "max_model_len", int),
             ("--max-num-seqs", "max_num_seqs", int),

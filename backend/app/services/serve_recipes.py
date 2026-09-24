@@ -308,6 +308,7 @@ def apply_serving_overrides(argv: list[str], serving: dict) -> list[str]:
     """Apply user overrides to the recipe argv without changing other flags."""
     argv = list(argv)
     flag_for = {
+        "dtype": "--dtype",
         "gpu_memory_utilization": "--gpu-memory-utilization",
         "max_model_len": "--max-model-len",
         "max_num_seqs": "--max-num-seqs",

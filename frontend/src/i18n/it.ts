@@ -1934,6 +1934,7 @@ export const it = {
     modelRestartHint: 'I parametri del runtime sono salvati. Riavvia o riconfigura il serving per applicarli.',
     modelRuntime: 'Runtime e concorrenza',
     modelRemoteRuntime: 'Serving remoto (vLLM)',
+    modelDtypeHint: 'Scegli la precisione supportata dalla GPU; Automatico segue la ricetta del modello.',
     modelMlxRuntime: 'Serving locale (MLX)',
     modelMlxIntro: 'Questi valori vengono passati a mlx-vlm su Apple Silicon. Automatico mantiene i default della versione installata; le modifiche richiedono il riavvio del server.',
     mlxField: { kv_bits: 'Bit cache KV', kv_group_size: 'Gruppo quantizzazione KV', max_kv_size: 'Dimensione massima cache KV', vision_cache_size: 'Cache visiva', kv_quant_scheme: 'Schema quantizzazione KV', log_level: 'Livello log' },
@@ -1983,6 +1984,7 @@ export const it = {
     modelReset: 'Ripristina ricetta consigliata',
     modelSaved: 'Override del modello salvati.',
     modelField: {
+      dtype: 'Precisione numerica',
       gpu_memory_utilization: 'Memoria GPU vLLM (0–1)',
       max_model_len: 'Contesto massimo (token)',
       max_num_seqs: 'Richieste simultanee',

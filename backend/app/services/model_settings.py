@@ -24,6 +24,11 @@ _SERVING_LIMITS = {
     "max_num_seqs": (1, 128),
     "max_num_batched_tokens": (512, 131072),
 }
+_SERVING_ENUMS = {
+    # vLLM's documented dtype values. The model's recommendation remains the
+    # default; this override lets users select FP16 on cards without BF16.
+    "dtype": {"half", "float16", "bfloat16", "float", "float32"},
+}
 _GENERATION_LIMITS = {
     "temperature": (0.0, 2.0),
     "top_p": (0.000001, 1.0),
@@ -80,6 +85,7 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
     # caps (for example an 8 GB GPU) and would misrepresent what Vast actually
     # launches. Missing recipe flags mean the runtime/model defaults apply.
     serving: dict[str, Any] = {
+        "dtype": None,
         "gpu_memory_utilization": None,
         "max_model_len": None,
         "max_num_seqs": None,
@@ -88,6 +94,7 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
     if recipe:
         args = list(recipe.serve_args)
         for flag, key, cast in (
+            ("--dtype", "dtype", str),
             ("--gpu-memory-utilization", "gpu_memory_utilization", float),
             ("--max-model-len", "max_model_len", int),
             ("--max-num-seqs", "max_num_seqs", int),
@@ -207,6 +214,24 @@ def _validated_section(section: str, values: Any) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=f"sezione '{section}' non riconosciuta")
 
     mlx_enums = {"kv_quant_scheme": {"uniform", "turboquant"}, "log_level": {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}}
+    serving_enums = _SERVING_ENUMS if section == "serving" else {}
+    if section == "serving" and set(values) - (set(limits) | set(serving_enums)):
+        raise HTTPException(status_code=422, detail="parametro serving non riconosciuto")
+    if section == "serving":
+        result = {}
+        for key, value in values.items():
+            if value is None:
+                continue
+            if key in serving_enums:
+                if not isinstance(value, str) or value not in serving_enums[key]:
+                    raise HTTPException(status_code=422, detail="serving.dtype non valido")
+                result[key] = value
+                continue
+            lo, hi = limits[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not lo <= value <= hi:
+                raise HTTPException(status_code=422, detail=f"serving.{key} deve essere tra {lo:g} e {hi:g}")
+            result[key] = float(value) if key == "gpu_memory_utilization" else int(value)
+        return result
     if section == "mlx":
         if set(values) - (set(limits) | set(mlx_enums)):
             raise HTTPException(status_code=422, detail="parametro mlx non riconosciuto")
@@ -247,6 +272,12 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
     overrides = {}
     for section, values in payload.items():
         if section != "workflow":
+            if (
+                section == "serving" and isinstance(values, dict) and "dtype" in values
+                and (serve_recipes.RECIPES.get(adapter_id) is not None)
+                and serve_recipes.RECIPES[adapter_id].runtime == "monkeyocr"
+            ):
+                raise HTTPException(status_code=422, detail="serving.dtype non è esposto dal wrapper ufficiale MonkeyOCRv2")
             if section == "mlx" and not getattr(adapter.capabilities, "local_mlx_settings", False):
                 raise HTTPException(status_code=422, detail="impostazioni MLX non disponibili per questo modello")
             if section == "image" and adapter_id not in {"paddleocr-vl", "qwen3-vl-8b"} and "min_pixels" in values:

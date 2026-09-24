@@ -1644,6 +1644,7 @@ def build_provision_recipe(
         # consumes the same effective per-model settings as the UI instead of
         # trying to mirror them in an unrelated `vllm serve` process.
         "settings": settings_payload["effective"] if adapter_id in {"teleocr", "mineru2.5"} else {},
+        "serving_overrides": settings_payload["overrides"].get("serving", {}),
         "pip_extra": list(recipe.pip_extra),
         **budget,
         "needs_monkeyocr_repo": recipe.runtime == "monkeyocr",

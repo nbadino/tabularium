@@ -44,6 +44,7 @@ MAX_CONTAINERS = int(os.environ.get("TABULARIUM_MODAL_MAX_CONTAINERS", "2"))
 MAX_INPUTS = int(os.environ.get("TABULARIUM_MODAL_MAX_INPUTS", os.environ.get("TABULARIUM_SERVE_MAX_NUM_SEQS", "1")))
 SERVING_OVERRIDES = {
     "--gpu-memory-utilization": os.environ.get("TABULARIUM_SERVE_GPU_MEMORY_UTILIZATION"),
+    "--dtype": os.environ.get("TABULARIUM_SERVE_DTYPE"),
     "--max-model-len": os.environ.get("TABULARIUM_SERVE_MAX_MODEL_LEN"),
     "--max-num-seqs": os.environ.get("TABULARIUM_SERVE_MAX_NUM_SEQS"),
     "--max-num-batched-tokens": os.environ.get("TABULARIUM_SERVE_MAX_NUM_BATCHED_TOKENS"),

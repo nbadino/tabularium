@@ -1933,6 +1933,7 @@ export const fr: Dict = {
     modelRestartHint: 'Les réglages du runtime sont enregistrés. Redémarrez ou reconfigurez le service pour les appliquer.',
     modelRuntime: 'Runtime et concurrence',
     modelRemoteRuntime: 'Service distant (vLLM)',
+    modelDtypeHint: 'Choisissez une précision prise en charge par le GPU ; Automatique suit la recette du modèle.',
     modelMlxRuntime: 'Service local (MLX)',
     modelMlxIntro: 'Ces valeurs sont transmises à mlx-vlm sur Apple Silicon. Automatique conserve les valeurs par défaut de la version installée ; les changements nécessitent un redémarrage du serveur.',
     mlxField: { kv_bits: 'Bits du cache KV', kv_group_size: 'Taille du groupe de quantification KV', max_kv_size: 'Taille maximale du cache KV', vision_cache_size: 'Taille du cache visuel', kv_quant_scheme: 'Schéma de quantification KV', log_level: 'Niveau de journalisation' },
@@ -1982,6 +1983,7 @@ export const fr: Dict = {
     modelReset: 'Restaurer la recette recommandée',
     modelSaved: 'Réglages du modèle enregistrés.',
     modelField: {
+      dtype: 'Précision numérique',
       gpu_memory_utilization: 'Mémoire GPU vLLM (0–1)',
       max_model_len: 'Contexte maximum (jetons)',
       max_num_seqs: 'Requêtes simultanées',
