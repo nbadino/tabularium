@@ -448,7 +448,7 @@ def test_client_takes_the_pixel_cap_from_the_runtime_configuration(monkeypatch):
 
 
 def test_default_pixel_preprocessing_is_model_specific(monkeypatch):
-    """Models without a documented client cap retain native resolution."""
+    """Use each model's documented image cap when no override is configured."""
     from app.services import inference
     from app.services.model_adapters import get_adapter
 
@@ -459,7 +459,7 @@ def test_default_pixel_preprocessing_is_model_specific(monkeypatch):
     monkey = inference.VllmClient(
         url="http://127.0.0.1:9/v1", adapter=get_adapter("monkeyocrv2-parsing"),
     )
-    assert dots.max_pixels is None
+    assert dots.max_pixels == 11_289_600
     assert monkey.max_pixels == 1_003_520
 
 
