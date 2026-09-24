@@ -665,3 +665,25 @@ oltre ai 16 GB totali della RTX 4060 Ti. Sono limiti di provisioning/hardware,
 non esiti negativi d’inferenza: completare la matrice su questa istanza richiede
 più disco e, per Qwen, una GPU con più VRAM o una ricetta quantizzata
 ufficialmente supportata.
+
+### MinerU2.5 — controllo live della tabella annotata (2026-09-24)
+
+Verificato nuovamente il server già in esecuzione sulla stessa istanza, senza
+sostituirlo: RTX 4060 Ti, 13 GB liberi su disco, 1.489 MiB liberi di VRAM,
+vLLM 0.21.0 e gateway `MinerUClient` ufficiale. Il benchmark nativo sulla pagina
+`LSI_17186_015` ha completato il workflow end-to-end in 24,724 s: 8/8 elementi
+hanno bbox valido e il risultato contiene una tabella HTML.
+
+La tabella prodotta (`[140.6, 600.7, 2723.7, 3735.8]` px) ha IoU **0,873** con
+il solo riquadro `Table` confermato disponibile per questa pagina
+(`[380, 540, 2750, 3700]`). È una misura di una regione su una pagina, non una
+valutazione globale di layout o trascrizione. Lo snapshot conferma che il test
+ha usato il workflow `official`, senza override, e i default dichiarati per
+MinerU (`layout_image_size 1036×1036`, `min_image_edge 28`,
+`max_image_edge_ratio 50`). Il report riproducibile, inclusi output e ricetta,
+è `data/benchmarks/vast-rtx-4060-ti-20260924/mineru2.5-live-goldcheck/report.json`
+(file ignorato dal repository insieme agli altri report di benchmark).
+
+L’istanza è sana e utilizzabile, ma lo spazio libero resta sotto i preflight
+di GLM-OCR, TeleOCR e DeepSeek-OCR-2; Qwen3-VL-8B resta oltre la VRAM totale.
+Questa verifica quindi non rimuove i blocker della matrice restante.
