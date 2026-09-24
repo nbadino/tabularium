@@ -113,8 +113,8 @@ EOF
   # The recipe owns the minimum: an external environment override may make
   # the check stricter, but can never reduce it below the model's budget.
   if [ "$MIN_DISK_GB" -lt "$RECIPE_MIN_DISK_GB" ]; then MIN_DISK_GB="$RECIPE_MIN_DISK_GB"; fi
-  # Un ambiente per modello: le versioni di vLLM delle ricette non convivono
-  # nello stesso site-packages, ma convivono benissimo sullo stesso disco.
+  # Un ambiente per combinazione compatibile di framework/pin/extra: i modelli
+  # senza extra e con la stessa vLLM riusano gli stessi site-packages.
   VENV_DIR=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('venv_dir') or '$VENV_DIR')")
   mapfile -t SERVE_ARGV < <(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; [print(a) for a in json.load(sys.stdin)['argv']]")
   echo ">> Ricetta ufficiale: $(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; r=json.load(sys.stdin); print(r['adapter_id'], '· vLLM', r['vllm_version'], '·', r['runtime'])")"

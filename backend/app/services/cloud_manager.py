@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import base64
+import hashlib
 import json
 import re
 import shlex
@@ -1467,6 +1468,26 @@ def probe_vast_native_gateway(
 
 
 REMOTE_MODEL_ROOT = "/root/models"
+
+
+def _recipe_venv_dir(recipe) -> str:
+    """Share an environment when the pinned framework and extras are identical.
+
+    vLLM itself (plus torch/transformers) is the bulk of each environment.
+    PaddleOCR-VL, dots.mocr, and Qwen3-VL all use the same vLLM 0.28 runtime
+    without Python extras, so installing it three times wastes roughly 20 GB
+    on a cloud container. Model-specific plugins or pins get an isolated env.
+    """
+    if recipe.runtime == "vllm":
+        signature = json.dumps(
+            [recipe.vllm_version, recipe.transformers_version, list(recipe.pip_extra)],
+            separators=(",", ":"),
+        )
+        name = f"vllm-{recipe.vllm_version or 'default'}"
+        if recipe.transformers_version or recipe.pip_extra:
+            name += "-" + hashlib.sha256(signature.encode("utf-8")).hexdigest()[:8]
+        return f"{REMOTE_ENV_ROOT}/{name}"
+    return f"{REMOTE_ENV_ROOT}/{recipe.adapter_id}"
 # Un ambiente per modello: le ricette pinnano versioni di vLLM diverse (0.12
 # per DeepSeek, 0.19 per GLM, 0.21 per MinerU…), incompatibili fra loro nello
 # stesso site-packages. Separandoli, la stessa istanza li ospita tutti e
@@ -1539,7 +1560,7 @@ def build_provision_recipe(
         # Con l'immagine dedicata vLLM è già installato: rimpiazzarlo con una
         # wheel pip cancellerebbe proprio l'architettura per cui è stata scelta.
         "install_vllm": recipe.installs_vllm,
-        "venv_dir": f"{REMOTE_ENV_ROOT}/{recipe.adapter_id}",
+        "venv_dir": _recipe_venv_dir(recipe),
         "docker_image": recipe.docker_image,
         "native_gateway_b64": native_gateway_b64,
         "native_remote_port": recipe.native_remote_port,

@@ -1553,19 +1553,21 @@ def test_provision_sends_the_recipe_to_the_instance(monkeypatch, tmp_path):
     assert "--no-enable-prefix-caching" in recipe["argv"]
 
 
-def test_each_model_gets_its_own_environment():
-    """Le ricette pinnano vLLM diverse (0.12, 0.19, 0.21, 0.28): condividere un
-    site-packages le farebbe sovrascrivere a vicenda. Ambienti separati sulla
-    stessa istanza le fanno convivere, e cambiare modello non riparte da zero."""
+def test_recipes_share_only_compatible_framework_environments():
+    """Identical framework pins share disk; plugins and version pins stay isolated."""
     from app.services import cloud_manager as cm
 
     envs = {
         adapter: cm.build_provision_recipe(adapter)["venv_dir"]
-        for adapter in ("monkeyocrv2-parsing", "deepseek-ocr", "mineru2.5", "glm-ocr")
+        for adapter in (
+            "monkeyocrv2-parsing", "deepseek-ocr", "mineru2.5", "glm-ocr",
+            "dots-ocr", "paddleocr-vl", "qwen3-vl-8b",
+        )
     }
-    assert len(set(envs.values())) == len(envs)
-    for adapter, path in envs.items():
-        assert path.endswith(adapter)
+    assert len({envs[a] for a in ("dots-ocr", "paddleocr-vl", "qwen3-vl-8b")}) == 1
+    assert len({envs[a] for a in ("monkeyocrv2-parsing", "deepseek-ocr", "mineru2.5", "glm-ocr")}) == 4
+    assert envs["mineru2.5"] != envs["dots-ocr"]
+    assert envs["glm-ocr"] != envs["dots-ocr"]
     # I pesi vivono in una radice comune: sono file, non ambienti.
     assert cm.build_provision_recipe("deepseek-ocr")["model_dir"].startswith(cm.REMOTE_MODEL_ROOT)
 

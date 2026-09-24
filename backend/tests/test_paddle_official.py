@@ -25,6 +25,26 @@ def test_parse_result_accepts_nested_paddlex_block_variants():
     }]
 
 
+def test_parse_result_uses_paddlex_ordered_blocks_without_layout_duplicates():
+    block = {
+        "block_bbox": [1, 2, 30, 40],
+        "block_label": "table",
+        "block_content": "<table><tr><td>A</td></tr></table>",
+    }
+    # Current PaddleOCRVL saves the same page regions in both fields. The
+    # ordered, content-bearing list is authoritative for annotations.
+    payload = {"res": {
+        "parsing_res_list": [block],
+        "layout_det_res": {"boxes": [block]},
+    }}
+    result = parse_result(payload, 100, 200)
+    assert result == [{
+        "bbox": [1, 2, 30, 40],
+        "label": "Table",
+        "content": "<table><tr><td>A</td></tr></table>",
+    }]
+
+
 def test_parse_result_falls_back_to_full_page_markdown():
     result = parse_result({"markdownText": "hello"}, 640, 480)
     assert result == [{"bbox": [0, 0, 640, 480], "label": "Text", "content": "hello"}]

@@ -142,15 +142,25 @@ def _items(value) -> list[dict]:
 
 
 def parse_result(payload: dict, width: int, height: int) -> list[dict]:
-    items = _items(payload)
+    # PaddleOCRVL 3.7 serializes the same detections twice: the canonical
+    # ordered blocks in `parsing_res_list`, and their layout-only projection in
+    # `layout_det_res`. Walking the whole JSON tree counts both and duplicates
+    # every page region. Prefer the producer's final parsing result whenever
+    # it is present; keep the recursive fallback for older PaddleX schemas.
+    root = payload.get("res") if isinstance(payload, dict) else None
+    if not isinstance(root, dict):
+        root = payload
+    canonical = root.get("parsing_res_list") if isinstance(root, dict) else None
+    items = _items(canonical if isinstance(canonical, list) else root)
     if items:
         return items
     # Alcune versioni salvano solo markdownText: resta comunque il risultato
     # ufficiale del modello, senza inventare una griglia lato Tabularium.
     markdown = ""
+    markdown_source = root if isinstance(root, dict) else {}
     for key in ("markdownText", "markdown", "text"):
-        if isinstance(payload.get(key), str):
-            markdown = payload[key]
+        if isinstance(markdown_source.get(key), str):
+            markdown = markdown_source[key]
             break
     if markdown.strip():
         return [{"bbox": [0, 0, width, height], "label": "Text", "content": markdown}]
