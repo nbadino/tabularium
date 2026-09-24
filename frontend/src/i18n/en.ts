@@ -1957,9 +1957,14 @@ export const en: Dict = {
     deepseekWindowSize: 'N-gram window size',
     glmSpeculativeTokens: 'MTP speculative tokens',
     paddleWorkflowIntro: 'Keep Automatic to use the installed PaddleOCR-VL pipeline defaults. Overrides are passed to its official predict method.',
+    paddleConcurrency: 'Concurrent OCR requests',
+    paddleLayoutShape: {
+      auto: 'producer automatic', rect: 'rectangle', quad: 'quadrilateral', poly: 'polygon',
+    },
     paddleEnabled: 'Enabled',
     paddleDisabled: 'Disabled',
     paddleWorkflow: {
+      layout_shape_mode: 'Layout box shape',
       use_layout_detection: 'Layout detection',
       use_doc_orientation_classify: 'Page orientation classification',
       use_doc_unwarping: 'Page unwarping',

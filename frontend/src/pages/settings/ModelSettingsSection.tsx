@@ -41,6 +41,7 @@ const PADDLE_LAYOUT_NUMBERS = [
   { key: 'layout_threshold', min: 0, max: 1, step: 0.01 },
   { key: 'layout_unclip_ratio', min: 0.01, max: 10, step: 0.05 },
 ] as const
+const PADDLE_LAYOUT_SHAPES = ['auto', 'rect', 'quad', 'poly'] as const
 
 export default function ModelSettingsSection({ isAdmin }: SectionProps) {
   const { t } = useI18n()
@@ -356,6 +357,25 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
                     'workflow', field.key, field.key,
                     field.min, field.max, field.step, true,
                   ))}
+                  {numberField('workflow', 'vl_rec_max_concurrency', t('settings.paddleConcurrency'), 1, 128, 1, true)}
+                  <label className="block border-t border-[color:var(--color-rule)] pt-2">
+                    <span className="lbl">{t('settings.paddleWorkflow.layout_shape_mode')}</span>
+                    <select
+                      className="fld mt-1 w-full"
+                      value={String(draft.workflow?.layout_shape_mode ?? 'auto')}
+                      disabled={!isAdmin || loading || saving}
+                      onChange={(event) => {
+                        const value = event.target.value || null
+                        setDraft((current) => ({
+                          ...current,
+                          workflow: { ...(current.workflow ?? {}), layout_shape_mode: value },
+                        }))
+                        setSaved(false)
+                      }}
+                    >
+                      {PADDLE_LAYOUT_SHAPES.map((value) => <option key={value} value={value}>{t(`settings.paddleLayoutShape.${value}`)}</option>)}
+                    </select>
+                  </label>
                   <label className="block border-t border-[color:var(--color-rule)] pt-2">
                     <span className="lbl">layout_merge_bboxes_mode</span>
                     <select

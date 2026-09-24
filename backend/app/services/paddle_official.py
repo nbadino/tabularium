@@ -6,6 +6,7 @@ principale non deve avere PaddlePaddle/PaddleX tra le dipendenze core.
 from __future__ import annotations
 
 import json
+import numbers
 import subprocess
 import tempfile
 from pathlib import Path
@@ -24,17 +25,50 @@ warnings.filterwarnings("ignore")
 from paddleocr import PaddleOCRVL
 
 image, url, model, out_dir, options_json, backend = sys.argv[1:]
+predict_options = json.loads(options_json)
+vl_rec_max_concurrency = predict_options.pop("vl_rec_max_concurrency", None)
+constructor_options = {}
+if vl_rec_max_concurrency is not None:
+    constructor_options["vl_rec_max_concurrency"] = vl_rec_max_concurrency
 pipeline = PaddleOCRVL(
     vl_rec_backend=backend,
     vl_rec_server_url=url,
     vl_rec_api_model_name=model,
     use_layout_detection=True,
+    **constructor_options,
 )
-predict_options = json.loads(options_json)
 result = next(iter(pipeline.predict(image, **predict_options)))
 path = result.save_to_json(save_path=out_dir)
 print(json.dumps({"path": str(path) if path else ""}))
 '''
+
+
+def _axis_aligned_bbox(value) -> list | None:
+    """Convert Paddle rect/quad/poly geometry to the app's xyxy box."""
+    if hasattr(value, "tolist"):
+        value = value.tolist()
+    if not isinstance(value, (list, tuple)):
+        return None
+    if len(value) == 4 and all(isinstance(v, numbers.Real) and not isinstance(v, bool) for v in value):
+        return list(value)
+    points = value
+    if points and all(isinstance(v, numbers.Real) and not isinstance(v, bool) for v in points):
+        if len(points) < 6 or len(points) % 2:
+            return None
+        points = list(zip(points[::2], points[1::2]))
+    if not isinstance(points, (list, tuple)) or not points:
+        return None
+    if any(not isinstance(point, (list, tuple)) or len(point) < 2 for point in points):
+        return None
+    coordinates = [point[:2] for point in points]
+    if any(
+        any(not isinstance(coordinate, numbers.Real) or isinstance(coordinate, bool) for coordinate in point)
+        for point in coordinates
+    ):
+        return None
+    xs = [point[0] for point in coordinates]
+    ys = [point[1] for point in coordinates]
+    return [min(xs), min(ys), max(xs), max(ys)]
 
 
 def _last_meaningful_line(text: str) -> str:
@@ -88,7 +122,7 @@ def _items(value) -> list[dict]:
     """Estrae i blocchi dalle varianti JSON delle release PaddleX."""
     found: list[dict] = []
     if isinstance(value, dict):
-        bbox = value.get("bbox") or value.get("block_bbox") or value.get("coordinate")
+        bbox = _axis_aligned_bbox(value.get("bbox") or value.get("block_bbox") or value.get("coordinate"))
         label = value.get("label") or value.get("block_label") or value.get("type")
         content = value.get("content") or value.get("block_content") or value.get("text") or ""
         if isinstance(bbox, (list, tuple)) and len(bbox) == 4 and label:

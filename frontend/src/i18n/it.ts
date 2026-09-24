@@ -1959,9 +1959,14 @@ export const it = {
     deepseekWindowSize: 'Finestra n-gram',
     glmSpeculativeTokens: 'Token speculativi MTP',
     paddleWorkflowIntro: 'Lascia Automatico per seguire i default della pipeline PaddleOCR-VL installata. Gli override vengono passati al metodo predict ufficiale.',
+    paddleConcurrency: 'Richieste OCR simultanee',
+    paddleLayoutShape: {
+      auto: 'automatico del produttore', rect: 'rettangolo', quad: 'quadrilatero', poly: 'poligono',
+    },
     paddleEnabled: 'Attivo',
     paddleDisabled: 'Disattivo',
     paddleWorkflow: {
+      layout_shape_mode: 'Forma dei riquadri layout',
       use_layout_detection: 'Rilevamento layout',
       use_doc_orientation_classify: 'Classificazione orientamento pagina',
       use_doc_unwarping: 'Raddrizzamento pagina',

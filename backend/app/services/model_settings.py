@@ -56,9 +56,11 @@ _PADDLE_BOOLEAN_WORKFLOW = {
 _PADDLE_WORKFLOW_LIMITS = {
     "layout_threshold": (0.0, 1.0),
     "layout_unclip_ratio": (0.01, 10.0),
+    "vl_rec_max_concurrency": (1, 128),
 }
 _PADDLE_WORKFLOW_ENUMS = {
     "layout_merge_bboxes_mode": {"large", "small", "union"},
+    "layout_shape_mode": {"auto", "rect", "quad", "poly"},
 }
 _UNLIMITED_WORKFLOW_LIMITS = {"ngram_size": (1, 512), "window_size": (1, 2048)}
 _UNLIMITED_WORKFLOW_ENUMS = {"image_mode": {"gundam", "base"}}
@@ -329,7 +331,12 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
                     lo, hi = _PADDLE_WORKFLOW_LIMITS[key]
                     if isinstance(value, bool) or not isinstance(value, (int, float)) or not lo <= value <= hi:
                         raise HTTPException(status_code=422, detail=f"workflow.{key} deve essere tra {lo:g} e {hi:g}")
-                    result[key] = float(value)
+                    if key == "vl_rec_max_concurrency":
+                        if int(value) != value:
+                            raise HTTPException(status_code=422, detail="workflow.vl_rec_max_concurrency deve essere un intero")
+                        result[key] = int(value)
+                    else:
+                        result[key] = float(value)
                 elif key in _PADDLE_WORKFLOW_ENUMS:
                     if value not in _PADDLE_WORKFLOW_ENUMS[key]:
                         raise HTTPException(status_code=422, detail=f"workflow.{key} non valido")

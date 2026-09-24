@@ -25,6 +25,21 @@ def test_parse_result_accepts_nested_paddlex_block_variants():
     }]
 
 
+def test_parse_result_converts_official_quad_and_polygon_geometry_to_xyxy():
+    result = parse_result(
+        {"parsing_res_list": [
+            {"block_bbox": [[5, 10], [40, 2], [48, 30], [12, 38]], "block_label": "text", "block_content": "quad"},
+            {"block_bbox": [2, 4, 30, 4, 36, 18, 20, 32, 2, 20], "block_label": "table", "block_content": "poly"},
+        ]},
+        100,
+        100,
+    )
+    assert result == [
+        {"bbox": [5, 2, 48, 38], "label": "Text", "content": "quad"},
+        {"bbox": [2, 4, 36, 32], "label": "Table", "content": "poly"},
+    ]
+
+
 def test_parse_result_uses_paddlex_ordered_blocks_without_layout_duplicates():
     block = {
         "block_bbox": [1, 2, 30, 40],

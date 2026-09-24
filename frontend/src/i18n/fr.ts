@@ -1958,9 +1958,14 @@ export const fr: Dict = {
     deepseekWindowSize: 'Fenêtre du n-gramme',
     glmSpeculativeTokens: 'Jetons spéculatifs MTP',
     paddleWorkflowIntro: 'Laissez Automatique pour suivre les valeurs par défaut du pipeline PaddleOCR-VL installé. Les réglages sont transmis à sa méthode officielle predict.',
+    paddleConcurrency: 'Requêtes OCR simultanées',
+    paddleLayoutShape: {
+      auto: 'automatique du modèle', rect: 'rectangle', quad: 'quadrilatère', poly: 'polygone',
+    },
     paddleEnabled: 'Activé',
     paddleDisabled: 'Désactivé',
     paddleWorkflow: {
+      layout_shape_mode: 'Forme des cadres de mise en page',
       use_layout_detection: 'Détection de mise en page',
       use_doc_orientation_classify: 'Classification de l’orientation de page',
       use_doc_unwarping: 'Redressement de page',

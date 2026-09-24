@@ -93,6 +93,8 @@ describe('ModelSettingsSection', () => {
     workflow.layout_threshold = null
     workflow.layout_unclip_ratio = null
     workflow.layout_merge_bboxes_mode = null
+    workflow.layout_shape_mode = null
+    workflow.vl_rec_max_concurrency = null
     vi.mocked(apiGet).mockResolvedValueOnce({ items: [{
       adapter_id: 'paddleocr-vl', display_name: 'PaddleOCR-VL-1.6',
       recommended: { serving: { max_model_len: null }, generation: {}, image: { max_pixels: null }, workflow },
@@ -105,6 +107,9 @@ describe('ModelSettingsSection', () => {
     fireEvent.change(layout, { target: { value: 'true' } })
     fireEvent.change(screen.getByLabelText(/layout_threshold/), { target: { value: '0.4' } })
     fireEvent.change(screen.getByLabelText(/layout_merge_bboxes_mode/), { target: { value: 'union' } })
+    fireEvent.change(screen.getByLabelText('Forma dei riquadri layout'), { target: { value: 'quad' } })
+    const numberFields = screen.getAllByRole('spinbutton')
+    fireEvent.change(numberFields[numberFields.length - 1], { target: { value: '8' } })
     fireEvent.click(screen.getByRole('button', { name: 'Salva override' }))
     await waitFor(() => expect(apiPut).toHaveBeenCalledWith(
       '/system/model-settings/paddleocr-vl',
@@ -112,6 +117,8 @@ describe('ModelSettingsSection', () => {
         use_layout_detection: true,
         layout_threshold: 0.4,
         layout_merge_bboxes_mode: 'union',
+        layout_shape_mode: 'quad',
+        vl_rec_max_concurrency: 8,
       } },
     ))
   })
