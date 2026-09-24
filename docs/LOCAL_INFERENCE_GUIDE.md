@@ -50,24 +50,25 @@ e «modello locale» senza dire dove è un pulsante che fallisce.
 | Linux senza GPU NVIDIA | — | nessun serving locale: resta il provider remoto |
 
 Su Apple Silicon vLLM non gira: è un progetto CUDA-first e non esiste un percorso Metal
-nativo. Il percorso locale nativo è **MLX**, esposto come endpoint OpenAI-compatibile da
-`mlx-vlm`. Copre le architetture che ha davvero — verificate sui moduli installati, non
-dedotte:
+nativo. I modelli locali usano MLX, ma non tutti condividono lo stesso server: PaddleOCR-VL
+e Qwen passano dall'endpoint OpenAI-compatibile `mlx-vlm`; MinerU usa il proprio
+`MinerUClient` con backend `mlx-engine` e un ambiente separato, pinnato alla release ufficiale.
 
 | Modello | vLLM (CUDA) | MLX (Apple Silicon) | Perché no, quando no |
 |---|---|---|---|
 | PaddleOCR-VL-1.6 | ✅ | ✅ `mlx-community/PaddleOCR-VL-1.6-4bit` | — |
 | Qwen3-VL-8B | ✅ | ✅ `mlx-community/Qwen3-VL-8B-Instruct-4bit` | — |
 | MonkeyOCRv2-Parsing | ✅ | ❌ | nessun port MLX dell'architettura |
-| MinerU2.5 | ✅ | ❌ | nessun port MLX; l'engine MLX di MinerU non è un server OpenAI |
+| MinerU2.5 | ✅ | 🧪 `MinerUClient` `mlx-engine` | percorso nativo aggiunto con runtime isolato; manca ancora la prova live sul corpus |
 | DeepSeek-OCR-2 | ✅ | ❌ | la ricetta richiede il logits processor n-gram di vLLM |
 | Unlimited-OCR | ✅ (immagine Docker) | ❌ | idem: senza il processore n-gram va in loop |
 | dots.mocr | ✅ | ❌ | servito davvero: END2END si chiude a 682 caratteri, run fallita |
 | GLM-OCR | ✅ | ❌ | servito davvero: run «riuscita» con **zero** blocchi inseriti |
 
-**Come sono state decise le due colonne MLX.** Non dall'esistenza di un checkpoint: dal
-servire il modello e riconoscere una pagina vera. `paddleocr-vl` (35 blocchi) e
-`qwen3-vl-8b` (137) passano; gli altri no, e ognuno per una ragione misurata. Due in
+**Come sono state decise le colonne MLX.** Un checkpoint o un backend dichiarato non bastano:
+la conferma richiede serving e riconoscimento di pagine reali. `paddleocr-vl` (35 blocchi) e
+`qwen3-vl-8b` (137) passano. MinerU ora ha il percorso MLX nativo del produttore, ma resta
+in prova finché non completa il benchmark live; gli altri no, per ragioni misurate. Due in
 particolare vale la pena ricordare, perché sono modi diversi di fallire:
 
 - **dots.mocr** fallisce in modo rumoroso: la generazione END2END si chiude a 682 caratteri

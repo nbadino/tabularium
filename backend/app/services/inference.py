@@ -379,8 +379,8 @@ class VllmClient:
             raise RuntimeError("il runner nativo MinerU richiede l'adapter MinerU2.5")
         if not self.native_url:
             raise RuntimeError(
-                "pipeline ufficiale MinerU non raggiungibile: collega il tunnel Vast "
-                "dell'istanza preparata con la ricetta MinerU2.5"
+                "pipeline ufficiale MinerU non raggiungibile: avvia il runner nativo "
+                "della destinazione selezionata (Vast.ai o MLX locale)"
             )
         buffer = io.BytesIO()
         image.convert("RGB").save(buffer, format="PNG")
@@ -1278,6 +1278,10 @@ def get_inference_config() -> dict:
                 native_url = f"http://127.0.0.1:{tunnel.native_local_port}"
         except Exception:  # noqa: BLE001 - legacy/non-Vast profiles have no sidecar
             native_url = None
+    elif adapter_id == "mineru2.5" and provider == "local":
+        # Local Apple Silicon uses MinerUClient's native mlx-engine gateway on
+        # the same port as the server's /v1/models readiness endpoint.
+        native_url = url[:-3].rstrip("/") if url.rstrip("/").endswith("/v1") else url.rstrip("/")
 
     return {
         "enabled": enabled,

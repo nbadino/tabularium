@@ -267,6 +267,7 @@ def _will_serve_locally(adapter_id: str) -> bool:
     plan = hardware.plan_local(
         getattr(adapter.capabilities, "local_runtimes", ()) or (),
         approx_size_gb=getattr(adapter.capabilities, "approx_size_gb", None),
+        mlx_weight_factor=getattr(adapter.capabilities, "local_mlx_weight_factor", None),
     )
     if not plan["runnable"]:
         return False
@@ -444,6 +445,7 @@ def list_models() -> list[dict]:
                     cap.get("local_runtimes") or (),
                     machine=local_machine,
                     approx_size_gb=cap.get("approx_size_gb"),
+                    mlx_weight_factor=cap.get("local_mlx_weight_factor"),
                 ),
                 "mlx_repo": cap.get("local_mlx_repo") or None,
             },

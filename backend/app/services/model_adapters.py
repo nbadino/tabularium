@@ -75,10 +75,14 @@ class ModelCapabilities:
     # tutte. Un modello senza `mlx-vlm` non gira in locale su un Mac, e la UI
     # lo dice invece di offrire un pulsante che fallisce.
     local_runtimes: tuple[str, ...] = ("vllm",)
-    # Checkpoint MLX da servire quando il runtime locale è `mlx-vlm`. Vuoto =
-    # nessun percorso MLX. I pesi sono quelli pubblicati per Metal, non i
-    # pesi pieni del repo ufficiale.
+    # Repository caricato dal percorso MLX dichiarato. Può essere un checkpoint
+    # Metal quantizzato o il repo ufficiale caricato dal backend nativo del
+    # produttore; il manager sceglie il runner in base all'adapter.
     local_mlx_repo: str = ""
+    # Frazione prudenziale dei pesi sorgente residente su MLX. I checkpoint
+    # MLX quantizzati usano il fattore globale; i loader nativi non quantizzati
+    # possono dichiarare il proprio.
+    local_mlx_weight_factor: float | None = None
 
 
 class ModelAdapter(Protocol):
@@ -256,10 +260,12 @@ class MinerU2_5Adapter(_StubAdapter):
         # text_config; vLLM 0.28 rifiuta correttamente 16384 senza il flag
         # pericoloso VLLM_ALLOW_LONG_MAX_MODEL_LEN.
         max_model_len=8192,
-        local_runtimes=("vllm",),
-        # Nessun percorso locale MLX: l'architettura non è in `mlx-vlm`
-        # (verificato sui moduli installati), quindi su Apple Silicon questo
-        # modello non gira in locale — e la UI lo dichiara.
+        # The upstream MinerUClient 1.0.5 has a native `mlx-engine` backend.
+        # Tabularium runs it in its own pinned environment; it must not be
+        # routed through the generic mlx-vlm OpenAI server.
+        local_runtimes=("vllm", "mlx-vlm"),
+        local_mlx_repo="opendatalab/MinerU2.5-Pro-2605-1.2B",
+        local_mlx_weight_factor=1.0,
     )
 
     _PROMPTS = {

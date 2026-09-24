@@ -93,6 +93,13 @@ def test_the_mlx_weight_factor_is_what_makes_a_8b_fit_on_24gb(monkeypatch):
     assert hardware.fits_in_memory(16.3, m, runtime=hardware.RUNTIME_MLX) is True
 
 
+def test_native_mineru_mlx_preflight_does_not_assume_a_four_bit_checkpoint(monkeypatch):
+    m = _machine(monkeypatch, system="Darwin", machine="arm64", memory_gb=4.0)
+    assert hardware.weight_factor(hardware.RUNTIME_MLX) == 0.35
+    assert hardware.weight_factor(hardware.RUNTIME_MLX, 1.0) == 1.0
+    assert hardware.fits_in_memory(2.5, m, runtime=hardware.RUNTIME_MLX, mlx_weight_factor=1.0) is False
+
+
 def test_the_serve_choice_is_additive_and_leaves_linux_alone(monkeypatch):
     """Su una macchina CUDA resta il percorso vLLM: l'aggiunta di MLX non deve
     cambiare il comportamento dove vLLM funziona già."""

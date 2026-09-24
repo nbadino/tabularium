@@ -128,12 +128,14 @@ def fits_in_memory(
     machine: dict,
     *,
     runtime: str | None = None,
+    mlx_weight_factor: float | None = None,
 ) -> bool:
     """Stima prudente: i pesi devono starci con margine.
 
-    `approx_size_gb` è la dimensione dei pesi *pieni* dichiarata dall'adapter.
-    Il runtime però non serve i pesi pieni: `mlx-vlm` serve un checkpoint
-    quantizzato a 4 bit, che occupa una frazione dello spazio. Confrontare
+    `approx_size_gb` è la dimensione dei pesi sorgente dichiarata dall'adapter.
+    I checkpoint MLX pubblicati quantizzati occupano una frazione; un backend
+    MLX nativo che carica i pesi sorgente può sovrascrivere quel fattore per
+    evitare che la stima lo dia per più piccolo del vero. Confrontare
     sempre il valore pieno contro la memoria della macchina produrrebbe un
     falso «non ci sta» proprio sui modelli che su un Mac girano meglio — e
     l'utente ha chiesto di sapere cosa è possibile, non una risposta
@@ -156,17 +158,17 @@ def fits_in_memory(
         if not memory:
             return True
         available_gb = memory * _MEMORY_HEADROOM
-    return approx_size_gb * weight_factor(runtime) <= available_gb
+    return approx_size_gb * weight_factor(runtime, mlx_weight_factor) <= available_gb
 
 
-def weight_factor(runtime: str | None) -> float:
+def weight_factor(runtime: str | None, mlx_weight_factor: float | None = None) -> float:
     """Quanto occupano i pesi serviti rispetto ai pesi pieni del repo.
 
     `mlx-vlm` serve i checkpoint `mlx-community` quantizzati a 4 bit
     (≈0,3× il bf16); vLLM serve i pesi pieni, con un margine per i buffer.
     """
     if runtime == RUNTIME_MLX:
-        return 0.35
+        return mlx_weight_factor if mlx_weight_factor is not None else 0.35
     return 1.2
 
 
@@ -192,6 +194,7 @@ def plan_local(
     *,
     machine: dict | None = None,
     approx_size_gb: float | None = None,
+    mlx_weight_factor: float | None = None,
 ) -> dict:
     """Il verdetto locale per un modello su questa macchina.
 
@@ -214,6 +217,8 @@ def plan_local(
             return {"runnable": False, "runtime": None, "reason": REASON_NO_LOCAL_RUNTIME}
         return {"runnable": False, "runtime": None, "reason": REASON_MODEL_UNSUPPORTED}
     runtime = usable[0]
-    if not fits_in_memory(approx_size_gb, machine, runtime=runtime):
+    if not fits_in_memory(
+        approx_size_gb, machine, runtime=runtime, mlx_weight_factor=mlx_weight_factor,
+    ):
         return {"runnable": False, "runtime": None, "reason": REASON_INSUFFICIENT_MEMORY}
     return {"runnable": True, "runtime": runtime, "reason": None}

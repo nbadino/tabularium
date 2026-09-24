@@ -820,10 +820,13 @@ tabella dei fallimenti peggiori per guidare la nuova iterazione di annotazione.
   registro espone per ogni modello `local: {runnable, runtime, reason, mlx_repo}`, con **codici
   stabili** che la UI traduce (`cuda_required`, `no_nvidia_gpu`, `apple_silicon_required`,
   `no_local_runtime`, `model_unsupported_locally`, `insufficient_memory`). Conseguenza di
-  prodotto: su un Mac girano in locale **due** modelli — PaddleOCR-VL e Qwen3-VL — e gli altri
-  sei restano remoti, ognuno per una ragione **misurata** servendolo davvero su una pagina:
-  **MonkeyOCRv2** e **MinerU2.5** perché `mlx-vlm` non ha quelle architetture (verificato sui
-  moduli installati); **DeepSeek-OCR-2** e **Unlimited-OCR** perché la loro ricetta verificata
+  prodotto: su un Mac hanno un benchmark MLX verificato **due** modelli — PaddleOCR-VL e
+  Qwen3-VL. MinerU2.5 ha anche il percorso nativo `MinerUClient` `mlx-engine` documentato
+  dal produttore, ma resta sperimentale finché non passa una prova live sul corpus. Gli altri
+  modelli restano remoti, ognuno per una ragione **misurata** servendolo davvero su una pagina:
+  **MonkeyOCRv2** perché `mlx-vlm` non ha quell'architettura (verificato sui moduli installati);
+  **MinerU2.5** era escluso perché l'engine MLX non è un server OpenAI; ora usa un runtime
+  isolato e attende il benchmark live; **DeepSeek-OCR-2** e **Unlimited-OCR** perché la loro ricetta verificata
   si regge sul logits processor n-gram di vLLM, che `mlx-vlm` non ha (Unlimited-OCR via MLX
   produce 12288 caratteri di `alpha.alpha.alpha…` fino al tetto dei token); **dots.mocr**
   perché la generazione END2END si chiude a 682 caratteri e la run fallisce; **GLM-OCR** perché

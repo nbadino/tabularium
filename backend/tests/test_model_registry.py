@@ -31,6 +31,8 @@ def test_supported_prefill_modes_probes_prompt_for_not_declared_tasks():
     assert model_adapters.supported_prefill_modes(mineru) == {
         "supports_two_stage": True, "supports_end2end": False, "supports_native": True,
     }
+    assert "mlx-vlm" in mineru.capabilities.local_runtimes
+    assert mineru.capabilities.local_mlx_repo == "opendatalab/MinerU2.5-Pro-2605-1.2B"
 
     paddle = model_adapters.get_adapter("paddleocr-vl")
     # `supports_native` è True qui non per un prompt verificato, ma per il

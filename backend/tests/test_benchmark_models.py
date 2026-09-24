@@ -61,6 +61,22 @@ def test_native_paddle_benchmark_uses_official_layout_and_vlm_pipeline(monkeypat
     assert items[0]["bbox"] == [100, 100, 500, 500]
 
 
+def test_native_mineru_benchmark_uses_the_official_page_client(monkeypatch):
+    monkeypatch.setattr("app.services.prefill.native_mode", lambda adapter: "official")
+    seen = []
+
+    class Client:
+        adapter = SimpleNamespace(adapter_id="mineru2.5", capabilities=SimpleNamespace())
+
+        def mineru_native_page(self, image):
+            seen.append(image.size)
+            return [{"bbox": [0, 0, 1000, 1000], "label": "Table", "content": "<table/>"}]
+
+    items = benchmark_models._run_native(Client(), Image.new("RGB", (100, 200)), 30)
+    assert seen == [(100, 200)]
+    assert items[0]["label"] == "Table"
+
+
 def test_native_two_stage_benchmark_recognizes_regions_on_source_crops(monkeypatch):
     monkeypatch.setattr("app.services.prefill.native_mode", lambda adapter: "two_stage")
     recognized = []

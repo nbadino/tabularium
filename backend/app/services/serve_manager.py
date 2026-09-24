@@ -241,6 +241,10 @@ def get_status() -> ServeStatus:
         starting = dict(_STARTING_INFO)
     if starting:
         adapter_id = starting.get("adapter_id")
+        runtime_log_tail = local_runtime.log_tail
+        if adapter_id == "mineru2.5":
+            from . import mineru_mlx_runtime
+            runtime_log_tail = mineru_mlx_runtime.log_tail
         return ServeStatus(
             running=False,
             starting=starting.get("phase") != "failed",
@@ -248,7 +252,7 @@ def get_status() -> ServeStatus:
             port=starting.get("port"),
             error=starting.get("error"),
             phase=starting.get("phase", "preparing"),
-            log_tail=(local_runtime.log_tail() if starting.get("phase") == "preparing" else log_tail(adapter_id or "")),
+            log_tail=(runtime_log_tail() if starting.get("phase") == "preparing_runtime" else log_tail(adapter_id or "")),
         )
     if _ACTIVE_PROC is not None:
         code = _ACTIVE_PROC.poll()
@@ -457,7 +461,7 @@ def _is_our_serving_process(pid: str | int) -> bool:
         return False
     if str(config.MODELS_DIR) in cmdline:
         return True
-    markers = ("vllm serve", "serve.py", "vllm/vllm-openai", "mlx_vlm.server")
+    markers = ("vllm serve", "serve.py", "vllm/vllm-openai", "mlx_vlm.server", "mineru_mlx_gateway.py")
     return any(marker in cmdline for marker in markers)
 
 
@@ -589,7 +593,11 @@ def start(
     local_runtime_id = hardware.pick_serve_runtime(adapter.capabilities)
     if local_runtime_id == hardware.RUNTIME_MLX:
         _set_phase(adapter_id, "preparing_runtime")
-        mlx_runtime.ensure_ready()
+        if adapter_id == "mineru2.5":
+            from . import mineru_mlx_runtime
+            mineru_mlx_runtime.ensure_ready()
+        else:
+            mlx_runtime.ensure_ready()
         model_path = adapter.capabilities.local_mlx_repo
     else:
         if not is_installed(adapter_id):
@@ -600,8 +608,14 @@ def start(
 
     try:
         if local_runtime_id == hardware.RUNTIME_MLX:
-            mlx_overrides = model_settings.get_settings(adapter_id)["overrides"].get("mlx", {})
-            argv = mlx_runtime.serve_argv(model_path, port=port, settings=mlx_overrides)
+            if adapter_id == "mineru2.5":
+                from . import mineru_mlx_runtime
+                argv = mineru_mlx_runtime.serve_argv(
+                    model_path, port=port, settings=model_config["effective"],
+                )
+            else:
+                mlx_overrides = model_settings.get_settings(adapter_id)["overrides"].get("mlx", {})
+                argv = mlx_runtime.serve_argv(model_path, port=port, settings=mlx_overrides)
         elif adapter_id == "monkeyocrv2-parsing":
             # `scripts/serve_model.sh` legge queste due env var: se l'utente non
             # le ha già impostate (uso avanzato/ambiente esistente), le
