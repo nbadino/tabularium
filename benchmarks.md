@@ -484,3 +484,41 @@ Il protocollo è valido, ma la tabella del registro contiene righe ripetute;
 questo smoke test dimostra che il flusso ufficiale funziona, non che la
 trascrizione sia corretta. Serve confronto contro le annotazioni gold prima di
 valutare l'accuratezza o ottimizzare sampling e post-processing.
+
+### Audit modelli su RTX Vast — copertura parziale (2026-09-24)
+
+I report `data/benchmarks/vast-rtx-pro-4000-20260924/` provano l'esecuzione del
+workflow nativo su GPU per quattro adapter:
+
+| Adapter | Pagine | Esito protocollo | Nota |
+|---|---:|---|---|
+| MonkeyOCRv2-Parsing | 3 | 3 valide | 7–34 blocchi per pagina |
+| dots.mocr | 3 | 3 valide | i report contengono anche una run fallita; le tre run finali sono valide |
+| PaddleOCR-VL 1.6 | 1 | valida dopo correzione | la prima run duplicava i blocchi (16); la run corretta ne produce 8 |
+| TeleOCR | 3 | 3 valide | workflow Detection; una pagina ha anche una prova Segmentation |
+
+Questi report sono schema v1: salvano output e tempi, ma non snapshot della
+configurazione effettiva. Dimostrano la validità del protocollo, non che ogni
+flag fosse identico alla ricetta raccomandata.
+
+Gli altri cinque adapter non hanno ancora un benchmark GPU Vast comparabile:
+MinerU2.5, GLM-OCR, DeepSeek-OCR-2, Unlimited-OCR e Qwen3-VL-8B. Qwen ha prove
+MLX locali, ma il workflow HTML nativo ha restituito zero bbox validi; non va
+conteggiato come test riuscito. I report schema v2 creati separatamente il
+24 settembre registrano configurazione e override per Dots, Paddle e Qwen, ma
+non persistono provider/hardware e quindi non li attribuisco alla RTX Vast.
+
+La ricetta di provisioning cloud MinerU è stata aggiornata a
+`mineru-vl-utils[vllm]==2.0.5`, mantenendo vLLM 0.21.0. L'extra upstream 2.0.x
+ammette vLLM `>=0.19.1,<0.29.0`; il pin 0.21.0 rientra nell'intervallo e
+preserva la versione già usata sul checkpoint. Il test della ricetta verifica
+che il vecchio client 1.0.5 non venga più installato. Vedi
+[pyproject upstream](https://github.com/opendatalab/mineru-vl-utils/blob/main/pyproject.toml).
+
+Audit statico delle impostazioni: i controlli di serving sono applicati al
+comando vLLM o al costruttore del client ufficiale; generazione, immagini e
+workflow passano nei rispettivi adapter (inclusi i flag PaddleOCR-VL per il
+pipeline layout + riconoscimento). I test backend degli override e quelli
+della UI passano. Questo non sostituisce i benchmark GPU: in questa verifica il
+tunnel Vast risulta spento e il profilo attivo locale è PaddleOCR-VL su MLX.
+Perciò l'obiettivo di testare tutti e nove i modelli sulla RTX resta aperto.
