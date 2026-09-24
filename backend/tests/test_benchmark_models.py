@@ -33,6 +33,14 @@ def test_benchmark_configuration_records_effective_model_recipe():
     assert config["serve_recipe"]["vllm_version"] == "0.21.0"
 
 
+def test_benchmark_configuration_does_not_mislabel_local_mlx_as_vllm():
+    config = benchmark_models._configuration("qwen3-vl-8b", "local")
+
+    assert config["serve_recipe"]["runtime"] == "mlx-vlm"
+    assert config["serve_recipe"]["vllm_version"] is None
+    assert config["serve_recipe"]["serve_args"] is None
+
+
 def test_table_output_validation_follows_the_model_format():
     assert benchmark_models._valid_table_output(_adapter("otsl"), "<fcel>A</fcel><nl><fcel>B</fcel>")
     assert benchmark_models._valid_table_output(_adapter("html"), "<table><tr><th>A</th></tr></table>")

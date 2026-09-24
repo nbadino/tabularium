@@ -35,7 +35,7 @@ from PIL import Image
 from app.services import inference, model_adapters, model_settings, otsl, paddle_official, serve_recipes
 
 
-def _configuration(adapter_id: str) -> dict:
+def _configuration(adapter_id: str, provider: str | None = None) -> dict:
     """Capture the exact selected model recipe and effective user settings.
 
     Latency/output without this snapshot is not enough to compare runs: two
@@ -45,6 +45,11 @@ def _configuration(adapter_id: str) -> dict:
     adapter = model_adapters.get_adapter(adapter_id)
     settings = model_settings.get_settings(adapter_id)
     recipe = serve_recipes.RECIPES.get(adapter_id)
+    runtime = recipe.runtime if recipe else None
+    if provider == "local":
+        from app.services import hardware
+
+        runtime = hardware.pick_serve_runtime(adapter.capabilities)
     try:
         from app.services.prefill import native_mode
 
@@ -62,11 +67,11 @@ def _configuration(adapter_id: str) -> dict:
         # instead of implying that the live process adopted it already.
         "restart_required": settings["restart_required"],
         "serve_recipe": None if recipe is None else {
-            "runtime": recipe.runtime,
-            "vllm_version": recipe.vllm_version,
-            "transformers_version": recipe.transformers_version,
-            "serve_args": list(recipe.serve_args),
-            "source": recipe.source,
+            "runtime": runtime,
+            "vllm_version": recipe.vllm_version if provider != "local" else None,
+            "transformers_version": recipe.transformers_version if provider != "local" else None,
+            "serve_args": list(recipe.serve_args) if provider != "local" else None,
+            "source": recipe.source if provider != "local" else "Tabularium local runtime selection",
         },
     }
 
@@ -272,7 +277,7 @@ def main() -> int:
             started = time.perf_counter()
             entry = {"adapter_id": adapter_id, "url": url, "model": model,
                      "iteration": iteration + 1,
-                     "configuration": _configuration(adapter_id)}
+                     "configuration": _configuration(adapter_id, provider)}
             try:
                 summary, trace, wall_s, output = _run(client, image, args.task, args.timeout, args.max_pixels)
                 protocol_valid = bool(summary.get("protocol_valid", True))
@@ -286,7 +291,9 @@ def main() -> int:
                 raw_path = raw_dir / f"{image_stem}-{args.task}-{iteration + 1:03d}.json"
                 raw_path.write_text(json.dumps({"adapter_id": adapter_id, "model": model,
                                                  "task": args.task, "summary": summary,
-                                                 "trace": trace, "output": output},
+                                                 "trace": trace, "output": output,
+                                                 **({"raw_text": client.last_text}
+                                                    if not protocol_valid and client.last_text else {})},
                                                 ensure_ascii=False, indent=2) + "\n",
                                      encoding="utf-8")
                 entry["output_file"] = str(raw_path)
