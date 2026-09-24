@@ -33,7 +33,10 @@ TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cu128}"
 CUDA_TOOLKIT_VERSION="${CUDA_TOOLKIT_VERSION:-13.0}"
 CUDA_TOOLKIT_PKG="${CUDA_TOOLKIT_PKG:-13-0}"
 MONKEYOCR_REF="${MONKEYOCR_REF:-}"
-MIN_DISK_GB="${MIN_DISK_GB:-20}"
+MIN_DISK_GB_WAS_SET=0
+if [ -n "${MIN_DISK_GB+x}" ]; then MIN_DISK_GB_WAS_SET=1; fi
+MIN_DISK_GB_REQUESTED="${MIN_DISK_GB:-20}"
+MIN_DISK_GB="$MIN_DISK_GB_REQUESTED"
 MIN_COMPUTE_CAP="${MIN_COMPUTE_CAP:-8.0}"
 # Il driver deve saper eseguire la CUDA con cui e' compilato il PyTorch che
 # installiamo (indice cu128): un driver piu' vecchio fa fallire vLLM molto
@@ -91,6 +94,7 @@ RECIPE_NATIVE_REMOTE_PORT=""
 RECIPE_DRAFT_HF_REPO=""
 RECIPE_DRAFT_MODEL_DIR=""
 RECIPE_TELEOCR_SETTINGS="{}"
+RECIPE_CONFIG_SIGNATURE=""
 SERVE_ARGV=()
 if [ -n "$RECIPE_B64" ]; then
   RECIPE_JSON=$(printf '%s' "$RECIPE_B64" | base64 -d)
@@ -101,21 +105,36 @@ EOF
   RECIPE_INSTALL_VLLM=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print('1' if json.load(sys.stdin).get('install_vllm', True) else '0')")
   RECIPE_ADAPTER=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['adapter_id'])")
   RECIPE_MIN_DISK_GB=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('min_free_disk_gb', 20)))")
+  RECIPE_MIN_DISK_GB_REUSE=$(printf '%s' "$RECIPE_B64" | base64 -d | python3 -c "import json,sys; r=json.load(sys.stdin); print(int(r.get('min_free_disk_gb_reuse',r.get('min_free_disk_gb',20))))")
+  RECIPE_MIN_DISK_GB_CACHED=$(printf '%s' "$RECIPE_B64" | base64 -d | python3 -c "import json,sys; r=json.load(sys.stdin); print(int(r.get('min_free_disk_gb_cached',r.get('min_free_disk_gb_reuse',r.get('min_free_disk_gb',20)))))")
   RECIPE_MIN_VRAM_GB=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('min_free_vram_gb', 10)))")
   RECIPE_MIN_RAM_GB=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('min_free_ram_gb', 12)))")
   RECIPE_NATIVE_GATEWAY_B64=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('native_gateway_b64') or '')")
   RECIPE_NATIVE_REMOTE_PORT=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('native_remote_port') or '')")
   RECIPE_DRAFT_HF_REPO=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('draft_hf_repo') or '')")
   RECIPE_DRAFT_MODEL_DIR=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('draft_model_dir') or '')")
+  RECIPE_CONFIG_SIGNATURE=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('configuration_signature') or '')")
   RECIPE_TELEOCR_SETTINGS=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('settings') or {},separators=(',',':'))) ")
   RECIPE_TRANSFORMERS_VERSION=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('transformers_version') or '')")
   if [ -n "$RECIPE_TRANSFORMERS_VERSION" ]; then TRANSFORMERS_VERSION="$RECIPE_TRANSFORMERS_VERSION"; fi
-  # The recipe owns the minimum: an external environment override may make
-  # the check stricter, but can never reduce it below the model's budget.
-  if [ "$MIN_DISK_GB" -lt "$RECIPE_MIN_DISK_GB" ]; then MIN_DISK_GB="$RECIPE_MIN_DISK_GB"; fi
   # Un ambiente per combinazione compatibile di framework/pin/extra: i modelli
   # senza extra e con la stessa vLLM riusano gli stessi site-packages.
   VENV_DIR=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('venv_dir') or '$VENV_DIR')")
+  # A fresh environment needs room for framework wheels as well as model files.
+  # A previously installed exact environment only needs the model headroom.
+  if [ "$RECIPE_INSTALL_VLLM" = "0" ] || [ -x "$VENV_DIR/bin/python" ]; then
+    if [ -f "$MODEL_DIR/config.json" ]; then
+      RECIPE_MIN_DISK_GB="$RECIPE_MIN_DISK_GB_CACHED"
+    else
+      RECIPE_MIN_DISK_GB="$RECIPE_MIN_DISK_GB_REUSE"
+    fi
+  fi
+  # An explicit operator threshold can make the recipe stricter, never looser.
+  if [ "$MIN_DISK_GB_WAS_SET" -eq 1 ] && [ "$MIN_DISK_GB_REQUESTED" -gt "$RECIPE_MIN_DISK_GB" ]; then
+    MIN_DISK_GB="$MIN_DISK_GB_REQUESTED"
+  else
+    MIN_DISK_GB="$RECIPE_MIN_DISK_GB"
+  fi
   mapfile -t SERVE_ARGV < <(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; [print(a) for a in json.load(sys.stdin)['argv']]")
   echo ">> Ricetta ufficiale: $(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; r=json.load(sys.stdin); print(r['adapter_id'], '· vLLM', r['vllm_version'], '·', r['runtime'])")"
 fi
@@ -475,6 +494,7 @@ RECIPE_TRANSFORMERS_VERSION="$TRANSFORMERS_VERSION" MONKEYOCR_REF="$MONKEYOCR_RE
 GPU_QUERY="$GPU_QUERY" COMPUTE_CAP="$COMPUTE_CAP" DISK_AVAILABLE_GB="$DISK_AVAILABLE_GB" \
 MIN_DISK_GB="$MIN_DISK_GB" \
 GPU_MEM_UTIL="$GPU_MEM_UTIL" MAX_MODEL_LEN="$MAX_MODEL_LEN" \
+RECIPE_B64="$RECIPE_B64" RECIPE_CONFIG_SIGNATURE="$RECIPE_CONFIG_SIGNATURE" \
 "$PY_BIN" - <<'PY'
 import json, os, platform, subprocess, sys
 from importlib.metadata import PackageNotFoundError, version
@@ -492,6 +512,29 @@ def torch_cuda_runtime():
         return str(torch.version.cuda or "")
     except Exception:
         return ""
+
+try:
+    recipe = json.loads(__import__("base64").b64decode(os.environ.get("RECIPE_B64", "")).decode())
+except Exception:
+    recipe = {}
+argv = list(recipe.get("argv") or [])
+
+def flag_value(flag):
+    try:
+        return argv[argv.index(flag) + 1]
+    except (ValueError, IndexError):
+        return None
+
+safe_argv = list(argv)
+for index, value in enumerate(safe_argv[:-1]):
+    if value == "--api-key":
+        safe_argv[index + 1] = "<redacted>"
+
+gpu_memory_utilization = flag_value("--gpu-memory-utilization")
+max_model_len = flag_value("--max-model-len")
+if not recipe:
+    gpu_memory_utilization = os.environ["GPU_MEM_UTIL"]
+    max_model_len = os.environ["MAX_MODEL_LEN"]
 
 manifest = {
     "model": os.environ["MODEL_NAME"],
@@ -519,10 +562,12 @@ manifest = {
     "gpu": os.environ["GPU_QUERY"],
     "compute_capability": os.environ.get("COMPUTE_CAP", ""),
     "dtype": "bfloat16",
-    "gpu_memory_utilization": float(os.environ["GPU_MEM_UTIL"]),
-    "max_model_len": int(os.environ["MAX_MODEL_LEN"]),
+    "gpu_memory_utilization": float(gpu_memory_utilization) if gpu_memory_utilization is not None else None,
+    "max_model_len": int(max_model_len) if max_model_len is not None else None,
+    "serve_argv": safe_argv,
+    "configuration_signature": os.environ.get("RECIPE_CONFIG_SIGNATURE", ""),
     "python": platform.python_version(),
-    "recipe": "tabularium-vast-2",
+    "recipe": "tabularium-vast-3",
     "disk_available_gb": int(os.environ["DISK_AVAILABLE_GB"]),
     "min_free_disk_gb": int(os.environ["MIN_DISK_GB"]),
 }

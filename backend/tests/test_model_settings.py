@@ -21,6 +21,14 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
     assert model_settings.get_settings("monkeyocrv2-parsing")["recommended"]["image"]["max_pixels"] == 1_003_520
     qwen_defaults = model_settings.get_settings("qwen3-vl-8b")["recommended"]["image"]
     assert qwen_defaults == {"min_pixels": None, "max_pixels": None}
+    dots_defaults = model_settings.get_settings("dots-ocr")["recommended"]
+    assert dots_defaults["serving"]["gpu_memory_utilization"] == 0.9
+    assert dots_defaults["generation"] == {
+        "temperature": 0.1,
+        "top_p": 1.0,
+        "max_tokens": 16384,
+    }
+    assert dots_defaults["image"]["max_pixels"] == 11_289_600
 
     saved = model_settings.save_settings("teleocr", {
         "serving": {"max_num_seqs": 2},
@@ -349,7 +357,7 @@ def test_recommended_serving_values_only_come_from_remote_recipes():
 
     # These adapters have local hardware caps that the cloud recipe omits.
     # The Settings panel must leave those fields automatic for Vast.
-    for adapter_id in ("mineru2.5", "dots-ocr", "glm-ocr", "deepseek-ocr", "paddleocr-vl"):
+    for adapter_id in ("mineru2.5", "glm-ocr", "deepseek-ocr", "paddleocr-vl"):
         recommended = model_settings.get_settings(adapter_id)["recommended"]["serving"]
         if "--gpu-memory-utilization" not in serve_recipes.recipe_for(adapter_id).serve_args:
             assert recommended["gpu_memory_utilization"] is None

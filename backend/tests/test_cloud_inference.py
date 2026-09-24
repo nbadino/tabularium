@@ -1427,6 +1427,31 @@ def test_provision_recipe_carries_the_official_flags():
     assert recipe["min_free_vram_gb"] == 12
 
 
+def test_existing_shared_vllm_environment_uses_model_only_disk_headroom():
+    from app.services import cloud_manager as cm
+
+    recipe = cm.build_provision_recipe("dots-ocr")
+    assert recipe["min_free_disk_gb"] == 28
+    assert recipe["min_free_disk_gb_reuse"] == 12
+    assert recipe["min_free_disk_gb_cached"] == 4
+    assert recipe["argv"][recipe["argv"].index("--gpu-memory-utilization") + 1] == "0.9"
+
+
+def test_vast_configuration_signature_changes_when_serving_settings_change(tmp_path, monkeypatch):
+    from app import config
+    from app.db import init_db
+    from app.services import cloud_manager as cm, model_settings
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "dots-recipe.db")
+    init_db()
+    default = cm.build_provision_recipe("dots-ocr")
+    model_settings.save_settings("dots-ocr", {"serving": {"gpu_memory_utilization": 0.8}})
+    tuned = cm.build_provision_recipe("dots-ocr")
+
+    assert default["configuration_signature"] != tuned["configuration_signature"]
+    assert tuned["argv"][tuned["argv"].index("--gpu-memory-utilization") + 1] == "0.8"
+
+
 def test_teleocr_cloud_provision_installs_official_architecture_plugin():
     from app.services import cloud_manager as cm
 

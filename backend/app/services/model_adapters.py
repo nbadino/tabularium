@@ -593,34 +593,31 @@ class DotsOcrAdapter(_StubAdapter):
     ``dots-studio``: il registro punta al repo corrente, non al redirect
     storico, così il download e la visualizzazione del modello sono coerenti.
 
-    `serve_command` e il prompt "end2end" sono verificati sul README
-    ufficiale. Lo schema esatto delle chiavi JSON restituite (`category` vs
-    `label`, forma dell'oggetto) NON è verificato contro un server reale:
-    `_tolerant_items()` in `inference.py` cerca la chiave `label`, che il
-    README descrive come `category` — va controllato prima di fidarsi del
-    parsing, non solo del prompt.
+    `serve_command`, il prompt completo, le chiavi `category`/`text` e le
+    coordinate in pixel sono verificati sul parser ufficiale e su vLLM reale.
 
     `approx_size_gb` corretto a 6.1 (verificato dai due shard safetensors
     reali su Hugging Face, agosto 2026): la stima precedente di 3.4 GB era
     quella dichiarata per il solo componente LLM (1.7B), non il checkpoint
     intero servito da vLLM (~3B totali). `--chat-template-content-format
-    string` è **obbligatorio** secondo il README ufficiale e mancava dal
-    comando qui sotto — non risulta in conflitto con l'invio di contenuto
-    multimodale in stile OpenAI (image_url + text) fatto da `VllmClient._chat`:
-    quel flag controlla solo come vLLM serializza il testo per il chat
-    template, l'estrazione dei dati immagine avviene prima e non ne dipende.
-    `--gpu-memory-utilization`/`--max-model-len` non sono nel README (nessuna
-    raccomandazione ufficiale per una GPU consumer): valori scelti qui per
-    lasciare margine su una scheda da 8 GB dato il checkpoint reale da 6+ GB,
-    non valori vendor-verificati."""
+    string` e `--gpu-memory-utilization 0.9` sono prescritti dal README
+    ufficiale. Il parser ufficiale usa temperature 0.1, top_p 1.0, massimo
+    16384 token e tetto immagine 11289600 pixel. `string` governa il template
+    testuale e non interferisce con l'invio multimodale OpenAI di
+    `VllmClient._chat`."""
 
     adapter_id = "dots-ocr"
     native_prefill_mode = "end2end"
+    recommended_generation = {
+        "temperature": 0.1,
+        "top_p": 1.0,
+        "max_tokens": 16384,
+    }
     capabilities = ModelCapabilities(
         adapter_id=adapter_id,
         display_name="dots.mocr",
         tasks=("layout", "text", "table"),
-        coordinate_system="unverified",
+        coordinate_system="image-pixels",
         table_format="html",
         training_types=(),
         inference_modes=("vllm",),
@@ -643,7 +640,20 @@ class DotsOcrAdapter(_StubAdapter):
     _PROMPTS = {
         "end2end": (
             "Please output the layout information from the PDF image, including each "
-            "layout element's bbox, its category, and the corresponding text content."
+            "layout element's bbox, its category, and the corresponding text content within the bbox.\n\n"
+            "1. Bbox format: [x1, y1, x2, y2]\n\n"
+            "2. Layout Categories: The possible categories are ['Caption', 'Footnote', 'Formula', "
+            "'List-item', 'Page-footer', 'Page-header', 'Picture', 'Section-header', 'Table', "
+            "'Text', 'Title'].\n\n"
+            "3. Text Extraction & Formatting Rules:\n\n"
+            "- Picture: For the 'Picture' category, the text field should be omitted.\n\n"
+            "- Formula: Format its text as LaTeX.\n\n"
+            "- Table: Format its text as HTML.\n\n"
+            "- All Others (Text, Title, etc.): Format their text as Markdown.\n\n"
+            "4. Constraints:\n\n"
+            "- The output text must be the original text from the image, with no translation.\n\n"
+            "- All layout elements must be sorted according to human reading order.\n\n"
+            "5. Final Output: The entire output must be a single JSON object."
         ),
     }
 
@@ -660,8 +670,7 @@ class DotsOcrAdapter(_StubAdapter):
             "vllm", "serve", model_path,
             "--port", str(port),
             "--tensor-parallel-size", "1",
-            "--gpu-memory-utilization", "0.80",
-            "--max-model-len", "16384",
+            "--gpu-memory-utilization", "0.90",
             "--chat-template-content-format", "string",
             "--served-model-name", self.capabilities.served_model_name,
             "--trust-remote-code",

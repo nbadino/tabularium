@@ -116,6 +116,7 @@ RECIPES: dict[str, ServeRecipe] = {
         runtime="vllm",
         vllm_version="0.28.0",
         serve_args=(
+            "--gpu-memory-utilization", "0.9",
             "--trust-remote-code",
             "--chat-template-content-format", "string",
         ),
@@ -218,8 +219,17 @@ def resource_budget(recipe: ServeRecipe) -> dict[str, int]:
     if size_gb is None or size_gb <= 0:
         raise ValueError(f"dimensione modello non dichiarata per {recipe.adapter_id}")
     runtime_disk_gb = 8 if recipe.runtime == "docker" else 16
+    # When the exact framework environment already exists, setup only needs
+    # headroom for model weights and their temporary download/extraction. Keep
+    # the fresh-install budget conservative; the remote setup script chooses
+    # this lower budget only after verifying the recipe venv is executable.
+    reuse_runtime_disk_gb = math.ceil(size_gb * 1.5 + 2)
     return {
         "min_free_disk_gb": math.ceil(runtime_disk_gb + size_gb * 1.5 + 2),
+        "min_free_disk_gb_reuse": reuse_runtime_disk_gb,
+        # A complete checkpoint and an installed compatible runtime need only
+        # operational headroom for logs, manifests and small metadata writes.
+        "min_free_disk_gb_cached": 4,
         # Leave six GB over approximate weight size for CUDA context, kernels,
         # and a modest KV cache. GPU total and live free memory are both
         # checked separately by the remote setup script.

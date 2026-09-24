@@ -46,6 +46,50 @@ def test_prompt_for_uses_verified_dots_ocr_end2end_prompt():
     assert resolved != "FALLBACK-PROMPT"
 
 
+def test_dots_ocr_end2end_uses_category_pixel_boxes_without_monkey_retry():
+    adapter = model_adapters.get_adapter("dots-ocr")
+    client = infmod.VllmClient(url="http://127.0.0.1:8888/v1", adapter=adapter)
+    calls = []
+    raw = json.dumps([{
+        "bbox": [10, 20, 150, 90],
+        "category": "Title",
+        "text": "Historic Shipping Index",
+    }])
+    client._chat = lambda image, prompt, **kwargs: calls.append(kwargs) or raw
+
+    items = client.end2end(Image.new("RGB", (200, 100), "white"), total_timeout=5)
+
+    assert len(calls) == 1
+    assert items == [{
+        "bbox": [50.0, 200.0, 750.0, 900.0],
+        "label": "Title",
+        "content": "Historic Shipping Index",
+    }]
+
+
+def test_dots_ocr_settings_override_vendor_sampling_and_image_limit(tmp_path, monkeypatch):
+    from app import config
+    from app.db import init_db
+    from app.services import model_settings
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "dots-settings.db")
+    init_db()
+    model_settings.save_settings("dots-ocr", {
+        "generation": {"temperature": 0.4, "max_tokens": 4096},
+        "image": {"max_pixels": 2_000_000},
+    })
+    client = infmod.VllmClient(
+        url="http://127.0.0.1:8888/v1", adapter=model_adapters.get_adapter("dots-ocr"),
+    )
+
+    assert client.max_pixels == 2_000_000
+    assert client._sampling_for("end2end") == {
+        "temperature": 0.4,
+        "top_p": 1.0,
+        "max_tokens": 4096,
+    }
+
+
 def test_teleocr_native_gateway_posts_binary_image_with_requests_data(monkeypatch):
     adapter = model_adapters.get_adapter("teleocr")
     client = infmod.VllmClient(

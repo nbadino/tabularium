@@ -135,11 +135,17 @@ def test_dots_ocr_serves_but_only_end2end_prompt_is_verified():
         raise AssertionError("doveva sollevare NotImplementedError")
     except NotImplementedError:
         pass
-    assert "layout information" in adapter.prompt_for("end2end")
+    prompt = adapter.prompt_for("end2end")
+    assert "layout information" in prompt
+    assert "within the bbox" in prompt
+    assert "Format its text as HTML" in prompt
+    assert "single JSON object" in prompt
+    assert "human reading order" in prompt
     # serve_command è verificato: il comando vLLM ufficiale del README.
     cmd = adapter.serve_command("/tmp/whatever", 8888)
     assert cmd[:3] == ["vllm", "serve", "/tmp/whatever"]
     assert "--trust-remote-code" in cmd
+    assert cmd[cmd.index("--gpu-memory-utilization") + 1] == "0.90"
 
 
 def test_mineru_serves_and_layout_table_prompts_are_implemented():

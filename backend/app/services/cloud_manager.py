@@ -1452,6 +1452,25 @@ def probe_vast_server(host: str, port: int, *, user: str = "root", remote_port: 
     return {"ready": bool(model), "model": model}
 
 
+def probe_vast_configuration_signature(
+    host: str, port: int, *, user: str = "root", model_dir: str,
+) -> str:
+    """Read the active serving-recipe signature without exposing credentials."""
+    manifest_path = str(Path(model_dir).parent / "cloud-manifest.json")
+    cmd = _ssh_base_args(host, port, user) + [f"cat -- {shlex.quote(manifest_path)}"]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20, check=False)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return ""
+    if proc.returncode != 0:
+        return ""
+    try:
+        payload = json.loads(proc.stdout)
+    except (TypeError, ValueError):
+        return ""
+    return str(payload.get("configuration_signature") or "") if isinstance(payload, dict) else ""
+
+
 def probe_vast_native_gateway(
     host: str, port: int, *, user: str = "root", remote_port: int,
 ) -> bool:
@@ -1550,6 +1569,33 @@ def build_provision_recipe(
         if adapter_id in {"teleocr", "glm-ocr"} and native_gateway.is_file()
         else ""
     )
+    argv = serve_recipes.serve_argv(
+        recipe,
+        model_path=effective_model_dir,
+        port=int(remote_port),
+        api_key=server_api_key,
+        lora_path=lora_path,
+        lora_name=lora_name,
+        served_model_name=served_model_name,
+        draft_model_path=draft_model_dir,
+        settings=user_settings,
+    )
+    signature_argv = list(argv)
+    for index, value in enumerate(signature_argv[:-1]):
+        if value == "--api-key":
+            signature_argv[index + 1] = "<configured>"
+    config_signature = hashlib.sha256(json.dumps({
+        "adapter_id": recipe.adapter_id,
+        "runtime": recipe.runtime,
+        "hf_repo": hf_repo,
+        "model_dir": effective_model_dir,
+        "vllm_version": recipe.vllm_version,
+        "transformers_version": recipe.transformers_version,
+        "pip_extra": list(recipe.pip_extra),
+        "argv": signature_argv,
+        "api_key_sha256": hashlib.sha256(str(server_api_key or "").encode("utf-8")).hexdigest(),
+        "native_settings": settings_payload["effective"] if adapter_id == "teleocr" else {},
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
     return {
         "adapter_id": recipe.adapter_id,
         "runtime": recipe.runtime,
@@ -1573,17 +1619,8 @@ def build_provision_recipe(
         "needs_monkeyocr_repo": recipe.runtime == "monkeyocr",
         "draft_hf_repo": draft_hf_repo,
         "draft_model_dir": draft_model_dir,
-        "argv": serve_recipes.serve_argv(
-            recipe,
-            model_path=effective_model_dir,
-            port=int(remote_port),
-            api_key=server_api_key,
-            lora_path=lora_path,
-            lora_name=lora_name,
-            served_model_name=served_model_name,
-            draft_model_path=draft_model_dir,
-            settings=user_settings,
-        ),
+        "configuration_signature": config_signature,
+        "argv": argv,
         "served_model_name": served_model_name or recipe.served_model_name,
     }
 
@@ -1654,7 +1691,10 @@ def provision_vast_server(
                 host, port, user=user, remote_port=recipe["native_remote_port"]
             )
         )
-        if native_ready:
+        active_signature = probe_vast_configuration_signature(
+            host, port, user=user, model_dir=recipe["model_dir"],
+        ) if native_ready else ""
+        if native_ready and active_signature == recipe["configuration_signature"]:
             return {
                 "ok": True,
                 "already_ready": True,
@@ -1663,7 +1703,7 @@ def provision_vast_server(
                 "remote_port": int(remote_port),
                 "native_remote_port": recipe.get("native_remote_port"),
                 "served_model_name": existing["model"],
-                "message": "server già configurato: nessuna reinstallazione eseguita",
+                "message": "server già configurato con la ricetta e le impostazioni correnti",
             }
     remote_port = int(remote_port)
     if not (0 < remote_port < 65536):

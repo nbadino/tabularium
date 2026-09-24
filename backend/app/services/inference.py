@@ -740,7 +740,7 @@ class VllmClient:
                 item for item in parsed
                 if isinstance(item.get("bbox"), (list, tuple))
                 and len(item["bbox"]) == 4
-                and item.get("label")
+                and (item.get("label") or item.get("category"))
             ]
 
         # Il repo ufficiale riconosce il loop di token e ritenta con un
@@ -749,13 +749,20 @@ class VllmClient:
         # normale resta una sola chiamata. Questo evita di salvare bbox come
         # [509, 21, 960, 998, 998, ...].
         first_valid = valid_items(raw)
+        # Only MonkeyOCR's upstream runner defines this anti-repeat retry.
+        # Other adapters own their own generation protocol and must not get a
+        # Tabularium-invented second sampling pass.
+        monkey_native_retry = getattr(self.adapter, "adapter_id", None) == "monkeyocrv2-parsing"
         # Grounded-markdown (Unlimited-OCR) is a native protocol, not a JSON
         # list. An empty parsed bbox list must not trigger the generic
         # MonkeyOCR retry: the raw response is still the authoritative output
         # to inspect and a second 8 GB generation can exceed the request
         # budget without adding evidence.
         native_grounded = getattr(self.adapter, "end2end_output_format", "list") == "grounded-markdown"
-        if not native_grounded and (not first_valid or _should_retry_repeat_output(raw)):
+        if not native_grounded and (
+            (not first_valid and monkey_native_retry)
+            or (first_valid and monkey_native_retry and _should_retry_repeat_output(raw))
+        ):
             if on_retry:
                 on_retry()
             retry_sampling = dict(sampling or {})
@@ -775,9 +782,10 @@ class VllmClient:
             if len(retry_valid) >= len(first_valid) and retry_valid:
                 raw = retry_raw
             elif not first_valid:
-                raise RuntimeError(
-                    "MonkeyOCRv2 ha prodotto un END2END invalido anche dopo il retry anti-ripetizione"
-                )
+                raise RuntimeError("MonkeyOCRv2 ha prodotto un END2END invalido anche dopo il retry nativo")
+        elif not first_valid and not native_grounded:
+            name = getattr(self.adapter.capabilities, "display_name", self.adapter.adapter_id)
+            raise RuntimeError(f"{name} ha prodotto un output END2END non conforme al formato del modello")
         cleaned = []
         for item in self._parse_items(raw):
             bbox = item.get("bbox")
@@ -788,6 +796,13 @@ class VllmClient:
                 values = [float(value) for value in bbox]
             except (TypeError, ValueError):
                 continue
+            if getattr(self.adapter.capabilities, "coordinate_system", "") == "image-pixels":
+                values = [
+                    values[0] / prepared.width * 1000,
+                    values[1] / prepared.height * 1000,
+                    values[2] / prepared.width * 1000,
+                    values[3] / prepared.height * 1000,
+                ]
             if values[0] >= values[2] or values[1] >= values[3]:
                 continue
             cleaned.append(

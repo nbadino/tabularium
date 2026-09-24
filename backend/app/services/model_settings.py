@@ -110,6 +110,7 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
                 1_003_520 if adapter_id == "monkeyocrv2-parsing"
                 else 64_000_000 if adapter_id == "teleocr"
                 else 71_372_800 if adapter_id == "glm-ocr"
+                else 11_289_600 if adapter_id == "dots-ocr"
                 else None
             ),
         },
