@@ -557,3 +557,26 @@ override effettivi. Il primo errore di benchmark (`Operation not permitted`)
 era il sandbox locale che bloccava il collegamento al tunnel; la prova è stata
 ripetuta con rete locale autorizzata e il risultato riportato sopra è valido.
 Il server è rimasto attivo sull'istanza al termine delle tre prove.
+
+### MinerU2.5 — benchmark Vast con client ufficiale (2026-09-24)
+
+Sulla stessa RTX 4060 Ti, la ricetta ha installato vLLM 0.21.0 e
+`mineru-vl-utils[vllm]==2.0.5`; il percorso verificato è
+`MinerUClient(backend="http-client")` con il suo pipeline layout + OCR, non
+una richiesta diretta al solo modello.
+
+Il primo avvio ha trovato due difetti di integrazione: il bridge partiva prima
+che vLLM fosse pronto, e veniva passato al client il repo HF invece del nome
+servito (`mineru2.5`). Lo script ora attende che `/v1/models` esponga il nome
+atteso, poi avvia MinerUClient con lo stesso id. La readiness di entrambi gli
+endpoint e le tre prove sotto sono passate.
+
+| Pagina | Blocchi validi | Caratteri | Wall | Report |
+|---|---:|---:|---:|---|
+| `LSI_17186_015` | 8/8 | 8.560 | 18,620 s | `data/benchmarks/vast-rtx-4060-ti-20260924/mineru2.5/LSI_17186_015.json` |
+| `LSI_17187_008` | 8/8 | 8.425 | 17,099 s | `data/benchmarks/vast-rtx-4060-ti-20260924/mineru2.5/LSI_17187_008.json` |
+| `LSIVS_17186_004` | 80/80 | 1.236 | 19,810 s | `data/benchmarks/vast-rtx-4060-ti-20260924/mineru2.5/LSIVS_17186_004.json` |
+
+Esito 3/3 valido a livello di protocollo; il numero di blocchi e i caratteri
+non certificano accuratezza senza annotazioni gold. I report schema v3
+registrano endpoint nativo, recipe e impostazioni effettive.

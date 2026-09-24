@@ -88,6 +88,7 @@ fi
 RECIPE_B64="${RECIPE_B64:-}"
 RECIPE_RUNTIME="monkeyocr"
 RECIPE_ADAPTER="monkeyocrv2-parsing"
+RECIPE_SERVED_MODEL_NAME="MonkeyOCRv2"
 RECIPE_PIP_EXTRA=""
 RECIPE_INSTALL_VLLM="1"
 RECIPE_MIN_DISK_GB=20
@@ -109,6 +110,7 @@ EOF
   RECIPE_PIP_EXTRA=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin)['pip_extra']))")
   RECIPE_INSTALL_VLLM=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print('1' if json.load(sys.stdin).get('install_vllm', True) else '0')")
   RECIPE_ADAPTER=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['adapter_id'])")
+  RECIPE_SERVED_MODEL_NAME=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('served_model_name') or '')")
   RECIPE_MIN_DISK_GB=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('min_free_disk_gb', 20)))")
   RECIPE_MIN_DISK_GB_REUSE=$(printf '%s' "$RECIPE_B64" | base64 -d | python3 -c "import json,sys; r=json.load(sys.stdin); print(int(r.get('min_free_disk_gb_reuse',r.get('min_free_disk_gb',20))))")
   RECIPE_MIN_DISK_GB_CACHED=$(printf '%s' "$RECIPE_B64" | base64 -d | python3 -c "import json,sys; r=json.load(sys.stdin); print(int(r.get('min_free_disk_gb_cached',r.get('min_free_disk_gb_reuse',r.get('min_free_disk_gb',20)))))")
@@ -693,16 +695,55 @@ if [ "$RECIPE_ADAPTER" = "mineru2.5" ]; then
   NATIVE_GATEWAY="$VENV_DIR/tabularium_mineru_gateway.py"
   printf '%s' "$RECIPE_NATIVE_GATEWAY_B64" | base64 -d > "$NATIVE_GATEWAY"
   export TABULARIUM_SERVER_API_KEY="$API_KEY"
-  export TABULARIUM_MINERU_MODEL="$MODEL_NAME"
+  # The native MinerUClient selects the server's exposed model id, which can
+  # differ from the Hugging Face repo passed to vLLM (here `mineru2.5`).
+  export TABULARIUM_MINERU_MODEL="$RECIPE_SERVED_MODEL_NAME"
   export TABULARIUM_MINERU_SETTINGS="$RECIPE_MINERU_SETTINGS"
   export TABULARIUM_MINERU_VLLM_URL="http://127.0.0.1:$PORT"
+  # MinerUClient checks /v1/models in its constructor. Start vLLM first and
+  # wait for the expected served model before launching the official bridge;
+  # starting both together races and makes the bridge exit on connection-refused.
+  export TABULARIUM_EXPECTED_VLLM_MODEL="$RECIPE_SERVED_MODEL_NAME"
+  "$PY_BIN" "${SERVE_ARGV[@]}" >> "$REMOTE_LOG_PATH" 2>&1 < /dev/null &
+  MODEL_PID=$!
+  model_ready=0
+  for _ in $(seq 1 180); do
+    if ! kill -0 "$MODEL_PID" 2>/dev/null; then
+      echo "!! Il server vLLM MinerU è terminato prima di esporre /v1/models." >&2
+      tail -n 60 "$REMOTE_LOG_PATH" >&2 || true
+      wait "$MODEL_PID" || true
+      exit 1
+    fi
+    if "$PY_BIN" - <<'PY' >/dev/null 2>&1
+import json, os, urllib.request
+url = os.environ["TABULARIUM_MINERU_VLLM_URL"].rstrip("/") + "/v1/models"
+headers = {}
+key = os.environ.get("TABULARIUM_SERVER_API_KEY", "")
+if key:
+    headers["Authorization"] = f"Bearer {key}"
+request = urllib.request.Request(url, headers=headers)
+with urllib.request.urlopen(request, timeout=3) as response:
+    models = json.load(response).get("data", [])
+if not any(item.get("id") == os.environ["TABULARIUM_EXPECTED_VLLM_MODEL"] for item in models):
+    raise SystemExit(1)
+PY
+    then
+      model_ready=1
+      break
+    fi
+    sleep 2
+  done
+  if [ "$model_ready" != "1" ]; then
+    echo "!! Timeout: vLLM non ha esposto ${RECIPE_SERVED_MODEL_NAME} su /v1/models entro 6 minuti; il bridge MinerU non è stato avviato." >&2
+    kill -TERM "$MODEL_PID" 2>/dev/null || true
+    wait "$MODEL_PID" 2>/dev/null || true
+    exit 1
+  fi
   "$PY_BIN" -m uvicorn tabularium_mineru_gateway:app \
     --app-dir "$VENV_DIR" --host 127.0.0.1 \
     --port "$RECIPE_NATIVE_REMOTE_PORT" --no-access-log \
     >> "$REMOTE_LOG_PATH" 2>&1 < /dev/null &
   GATEWAY_PID=$!
-  "$PY_BIN" "${SERVE_ARGV[@]}" >> "$REMOTE_LOG_PATH" 2>&1 < /dev/null &
-  MODEL_PID=$!
   trap 'kill "$GATEWAY_PID" "$MODEL_PID" 2>/dev/null || true; wait 2>/dev/null || true' EXIT TERM INT
   set +e
   wait -n "$GATEWAY_PID" "$MODEL_PID"
