@@ -98,7 +98,7 @@ export const en: Dict = {
     noLocalGpu: 'This machine cannot run models locally',
     modelNotLocalHere: 'This model does not run locally on this machine',
     modelNotLocalHereBody:
-      'On Apple Silicon, models with an MLX checkpoint run locally (PaddleOCR-VL, dots.mocr, GLM-OCR, DeepSeek-OCR-2, Unlimited-OCR, Qwen3-VL). The others need CUDA, or a remote provider: the Models area shows the verdict for each model.',
+      'On Apple Silicon, the app offers native local paths for MinerU 2.5, PaddleOCR-VL, and Qwen3-VL. The other catalog models need CUDA or a remote provider; the Models area shows the verdict for each one.',
     noLocalGpuBody:
       'Local CUDA serving is supported on Linux. Point at a remote provider: selection, progress, results and export stay identical.',
     noLocalGpuWslBody:
