@@ -485,6 +485,7 @@ class VllmClient:
         request_overrides = getattr(self.adapter, "request_overrides", None)
         if callable(request_overrides):
             payload.update(request_overrides(task) or {})
+        effective_max_tokens = payload.get("max_tokens")
         last: Exception | None = None
         for attempt in range(self.max_retries + 1):
             started = time.perf_counter()
@@ -576,14 +577,14 @@ class VllmClient:
                         else None
                     ),
                     "finish_reason": finish_reason,
-                    "max_tokens": max_tokens,
+                    "max_tokens": effective_max_tokens,
                     "chars": len(text),
                     "complete_list": scanner.complete if stop_when_complete_list else None,
                 }
                 if stop_when_complete_list and not scanner.complete:
                     raise RuntimeError(
                         "output END2END incompleto "
-                        f"(finish={finish_reason}, chars={len(text)}, max_tokens={max_tokens})"
+                        f"(finish={finish_reason}, chars={len(text)}, max_tokens={effective_max_tokens})"
                     )
                 return text
             except Exception as exc:  # noqa: BLE001

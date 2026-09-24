@@ -215,6 +215,34 @@ def test_adapter_without_sampling_keeps_native_vllm_generation_defaults(monkeypa
     assert "temperature" not in captured
 
 
+def test_trace_reports_effective_adapter_max_tokens(monkeypatch):
+    captured = {}
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def raise_for_status(self): return None
+        def iter_lines(self, decode_unicode=True):
+            del decode_unicode
+            yield 'data: ' + json.dumps({"choices": [{"delta": {"content": "ok"}}]})
+            yield "data: [DONE]"
+
+    def post(_url, **kwargs):
+        captured.update(kwargs["json"])
+        return Response()
+
+    monkeypatch.setattr(infmod.requests, "post", post)
+    adapter = model_adapters.get_adapter("dots-ocr")
+    client = infmod.VllmClient(url="http://127.0.0.1:8888/v1", adapter=adapter)
+
+    assert client._chat(
+        Image.new("RGB", (12, 12), "white"), adapter.prompt_for("end2end"),
+        max_tokens=20480, sampling=client._sampling_for("end2end"), task="end2end",
+    ) == "ok"
+    assert captured["max_tokens"] == 16384
+    assert client.last_trace["max_tokens"] == 16384
+
+
 def test_dots_serve_uses_required_chat_template_content_format():
     # Verificato sul README ufficiale: il flag è obbligatorio e non interferisce
     # con l'invio di contenuto multimodale in stile OpenAI (image_url + text) —
