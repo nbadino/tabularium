@@ -32,7 +32,43 @@ from html.parser import HTMLParser
 
 from PIL import Image
 
-from app.services import inference, model_adapters, otsl, paddle_official
+from app.services import inference, model_adapters, model_settings, otsl, paddle_official, serve_recipes
+
+
+def _configuration(adapter_id: str) -> dict:
+    """Capture the exact selected model recipe and effective user settings.
+
+    Latency/output without this snapshot is not enough to compare runs: two
+    results may use different image limits, sampling, speculative decoding,
+    or vLLM versions while appearing to be the same model benchmark.
+    """
+    adapter = model_adapters.get_adapter(adapter_id)
+    settings = model_settings.get_settings(adapter_id)
+    recipe = serve_recipes.RECIPES.get(adapter_id)
+    try:
+        from app.services.prefill import native_mode
+
+        workflow = native_mode(adapter)
+    except ValueError:
+        workflow = None
+    return {
+        "hf_repo": adapter.capabilities.hf_repo,
+        "native_workflow": workflow,
+        "recommended_settings": settings["recommended"],
+        "effective_settings": settings["effective"],
+        "overrides": settings["overrides"],
+        # `effective` is the requested configuration. A serving override may
+        # still need a restart, so keep that state beside benchmark evidence
+        # instead of implying that the live process adopted it already.
+        "restart_required": settings["restart_required"],
+        "serve_recipe": None if recipe is None else {
+            "runtime": recipe.runtime,
+            "vllm_version": recipe.vllm_version,
+            "transformers_version": recipe.transformers_version,
+            "serve_args": list(recipe.serve_args),
+            "source": recipe.source,
+        },
+    }
 
 
 def _target(value: str) -> tuple[str, str, str, str, str]:
@@ -208,7 +244,7 @@ def main() -> int:
     ) / "report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report = {
-        "schema": "tabularium-vlm-benchmark-v1",
+        "schema": "tabularium-vlm-benchmark-v2",
         "image": str(args.image),
         "image_size": [image.width, image.height],
         "task": args.task,
@@ -235,7 +271,8 @@ def main() -> int:
         for iteration in range(args.repeat):
             started = time.perf_counter()
             entry = {"adapter_id": adapter_id, "url": url, "model": model,
-                     "iteration": iteration + 1}
+                     "iteration": iteration + 1,
+                     "configuration": _configuration(adapter_id)}
             try:
                 summary, trace, wall_s, output = _run(client, image, args.task, args.timeout, args.max_pixels)
                 protocol_valid = bool(summary.get("protocol_valid", True))

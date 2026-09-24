@@ -326,9 +326,14 @@ Accetta più endpoint già avviati e registra, per ogni run:
 - TTFT, token/s e token usage restituiti dal server;
 - numero di elementi layout/end2end o caratteri riconosciuti;
 - validità OTSL per il task tabella.
+- configurazione raccomandata ed effettiva del modello, override salvati,
+  workflow nativo e versione/argomenti principali della ricetta di serving.
 
 Il campo `output_file` nel report collega ogni misura al raw output esatto che
 l’ha prodotta.
+Ogni run conserva anche il proprio snapshot di configurazione nel report
+(`tabularium-vlm-benchmark-v2`), così due misure con override diversi non
+vengono scambiate per un confronto a parità di ricetta.
 
 Il parametro `--timeout` è ora propagato a tutti i task (`layout`, `text`,
 `table` ed `end2end`), non soltanto a END2END: una generazione non delimitata

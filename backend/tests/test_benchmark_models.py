@@ -21,6 +21,18 @@ def test_target_accepts_provider_and_model_owned_gateway():
     )
 
 
+def test_benchmark_configuration_records_effective_model_recipe():
+    config = benchmark_models._configuration("mineru2.5")
+
+    assert config["native_workflow"] == "official"
+    assert config["recommended_settings"]["workflow"]["layout_image_size"] == [1036, 1036]
+    assert config["effective_settings"] == config["recommended_settings"]
+    assert config["overrides"] == {}
+    assert config["restart_required"] is False
+    assert config["serve_recipe"]["runtime"] == "mineru-native"
+    assert config["serve_recipe"]["vllm_version"] == "0.21.0"
+
+
 def test_table_output_validation_follows_the_model_format():
     assert benchmark_models._valid_table_output(_adapter("otsl"), "<fcel>A</fcel><nl><fcel>B</fcel>")
     assert benchmark_models._valid_table_output(_adapter("html"), "<table><tr><th>A</th></tr></table>")
