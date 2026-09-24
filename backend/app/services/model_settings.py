@@ -145,7 +145,7 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
         # None preserves the mlx-vlm version's own default. These only apply
         # to local Apple Silicon serving, never to remote vLLM deployments.
         "mlx": {key: None for key in (*_MLX_LIMITS, "kv_quant_scheme", "log_level")}
-        if adapter.capabilities.local_mlx_repo
+        if getattr(adapter.capabilities, "local_mlx_settings", False)
         else {},
     }
 
@@ -245,7 +245,7 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
     overrides = {}
     for section, values in payload.items():
         if section != "workflow":
-            if section == "mlx" and not adapter.capabilities.local_mlx_repo:
+            if section == "mlx" and not getattr(adapter.capabilities, "local_mlx_settings", False):
                 raise HTTPException(status_code=422, detail="impostazioni MLX non disponibili per questo modello")
             if section == "image" and adapter_id not in {"paddleocr-vl", "qwen3-vl-8b"} and "min_pixels" in values:
                 raise HTTPException(status_code=422, detail="image.min_pixels è disponibile solo nei workflow PaddleOCR-VL e Qwen3-VL")

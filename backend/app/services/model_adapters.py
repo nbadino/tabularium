@@ -81,6 +81,10 @@ class ModelCapabilities:
     # Metal quantizzato o il repo ufficiale caricato dal backend nativo del
     # produttore; il manager sceglie il runner in base all'adapter.
     local_mlx_repo: str = ""
+    # I controlli MLX avanzati Settings corrispondono alle opzioni CLI/API di
+    # mlx-vlm. Un backend del produttore che usa MLX internamente non li espone
+    # automaticamente (es. MinerUClient `mlx-engine`).
+    local_mlx_settings: bool = False
     # Frazione prudenziale dei pesi sorgente residente su MLX. I checkpoint
     # MLX quantizzati usano il fattore globale; i loader nativi non quantizzati
     # possono dichiarare il proprio.
@@ -1002,6 +1006,7 @@ class PaddleOcrVlAdapter(_StubAdapter):
         max_model_len=12288,
         local_runtimes=("vllm", "mlx-vlm"),
         local_mlx_repo="mlx-community/PaddleOCR-VL-1.6-4bit",
+        local_mlx_settings=True,
     )
 
     _PROMPTS = {
@@ -1137,6 +1142,7 @@ class Qwen3VlAdapter(_StubAdapter):
         max_model_len=32768,
         local_runtimes=("vllm", "mlx-vlm"),
         local_mlx_repo="mlx-community/Qwen3-VL-8B-Instruct-4bit",
+        local_mlx_settings=True,
     )
 
     _PROMPTS = {

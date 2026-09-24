@@ -32,6 +32,9 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
 
     mineru_defaults = model_settings.get_settings("mineru2.5")
     assert mineru_defaults["recommended"]["workflow"]["layout_image_size"] == [1036, 1036]
+    assert mineru_defaults["recommended"]["mlx"] == {}
+    with pytest.raises(HTTPException, match="impostazioni MLX non disponibili"):
+        model_settings.save_settings("mineru2.5", {"mlx": {"kv_bits": 4}})
     mineru = model_settings.save_settings("mineru2.5", {
         "generation": {"temperature": 0.15},
         "workflow": {"layout_image_size": [1200, 1200], "image_analysis": True},
