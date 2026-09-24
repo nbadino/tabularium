@@ -267,6 +267,25 @@ def test_paddle_vl_exposes_gpu_recognition_with_explicit_layout_fallback():
     assert adapter.capabilities.table_format == "html"
 
 
+def test_qwen_native_page_uses_official_qwenvl_html_prompt_and_parser():
+    adapter = model_adapters.get_adapter("qwen3-vl-8b")
+    client = infmod.VllmClient(url="http://127.0.0.1:8888/v1", adapter=adapter)
+    calls = []
+    client._chat = lambda image, prompt, **kwargs: calls.append((prompt, kwargs)) or (
+        '<p data-bbox="10 20 300 80">Historic Shipping Index</p>'
+    )
+
+    items = client.qwen_native_page(Image.new("RGB", (400, 200), "white"))
+
+    assert calls[0][0] == "qwenvl html"
+    assert calls[0][1]["task"] == "layout"
+    assert calls[0][1]["max_tokens"] == 16384
+    assert items == [{
+        "bbox": [10, 20, 300, 80], "label": "Text",
+        "content": "Historic Shipping Index",
+    }]
+
+
 def test_glm_native_gateway_forwards_official_page_and_sampling(monkeypatch):
     from types import SimpleNamespace
 

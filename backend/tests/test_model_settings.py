@@ -20,7 +20,7 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
     assert defaults["overrides"] == {}
     assert model_settings.get_settings("monkeyocrv2-parsing")["recommended"]["image"]["max_pixels"] == 1_003_520
     qwen_defaults = model_settings.get_settings("qwen3-vl-8b")["recommended"]["image"]
-    assert qwen_defaults == {"min_pixels": None, "max_pixels": None}
+    assert qwen_defaults == {"min_pixels": 512 * 32 * 32, "max_pixels": 2048 * 32 * 32}
     dots_defaults = model_settings.get_settings("dots-ocr")["recommended"]
     assert dots_defaults["serving"]["gpu_memory_utilization"] == 0.9
     assert dots_defaults["generation"] == {

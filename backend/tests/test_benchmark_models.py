@@ -30,14 +30,33 @@ def test_table_output_validation_follows_the_model_format():
     assert not benchmark_models._valid_table_output(_adapter("markdown"), "plain text")
 
 
-def test_qwen_table_contract_matches_its_otsl_prompt():
+def test_qwen_table_contract_uses_qwen_html_and_native_document_parser():
     from app.services.model_adapters import get_adapter
 
     adapter = get_adapter("qwen3-vl-8b")
-    assert adapter.capabilities.table_format == "otsl"
-    assert not benchmark_models._valid_table_output(
-        adapter, "OTSL\nTable\n| Vessel | Owner |\n| --- | --- |\n| AEGERAN | Ropner & Son |",
+    assert adapter.capabilities.table_format == "html"
+    assert adapter.prompt_for("layout") == "qwenvl html"
+    assert benchmark_models._valid_table_output(
+        adapter, "<table><tr><td>AEGERAN</td><td>Ropner &amp; Son</td></tr></table>",
     )
+
+
+def test_native_qwen_benchmark_uses_full_page_document_parser():
+    from app.services.model_adapters import get_adapter
+
+    seen = {}
+    def qwen_native_page(image):
+        seen["size"] = image.size
+        return [{"label": "Title"}]
+
+    client = SimpleNamespace(
+        adapter=get_adapter("qwen3-vl-8b"),
+        provider="local", url="http://127.0.0.1:8892/v1", model="qwen3-vl-8b",
+        qwen_native_page=qwen_native_page,
+    )
+    items = benchmark_models._run_native(client, Image.new("RGB", (100, 200)), 30)
+    assert seen["size"] == (100, 200)
+    assert items == [{"label": "Title"}]
 
 
 def test_native_paddle_benchmark_uses_official_layout_and_vlm_pipeline(monkeypatch):

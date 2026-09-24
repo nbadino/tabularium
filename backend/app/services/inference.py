@@ -333,6 +333,27 @@ class VllmClient:
             raise RuntimeError("risposta non JSON dal runner ufficiale TeleOCR") from exc
         return self.adapter.parse_native_result(payload.get("blocks"))
 
+    def qwen_native_page(
+        self,
+        image: Image.Image,
+        *,
+        on_delta: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> list[dict]:
+        """Run QwenVL's documented full-page ``qwenvl html`` parser."""
+        if self.adapter.adapter_id != "qwen3-vl-8b":
+            raise RuntimeError("il parser documenti QwenVL richiede l'adapter Qwen3-VL")
+        raw = self._chat(
+            image,
+            "qwenvl html",
+            task="layout",
+            max_tokens=self._output_budget(16384),
+            sampling=self._sampling_for("layout"),
+            on_delta=on_delta,
+            cancel_event=cancel_event,
+        )
+        return self.adapter.parse_native_result(raw)
+
     def glmocr_native_page(self, image: Image.Image) -> list[dict]:
         """Run the vendor's self-hosted GLM-OCR layout+region OCR pipeline."""
         if self.adapter.adapter_id != "glm-ocr":

@@ -820,8 +820,10 @@ tabella dei fallimenti peggiori per guidare la nuova iterazione di annotazione.
   registro espone per ogni modello `local: {runnable, runtime, reason, mlx_repo}`, con **codici
   stabili** che la UI traduce (`cuda_required`, `no_nvidia_gpu`, `apple_silicon_required`,
   `no_local_runtime`, `model_unsupported_locally`, `insufficient_memory`). Conseguenza di
-  prodotto: su un Mac hanno un benchmark MLX verificato **due** modelli — PaddleOCR-VL e
-  Qwen3-VL. MinerU2.5 ha anche il percorso nativo `MinerUClient` `mlx-engine` documentato
+  prodotto: su un Mac PaddleOCR-VL ha un benchmark MLX verificato. Qwen3-VL ha avuto prove
+  MLX riuscite con il vecchio prompt, ma il suo prefill ora segue il parser nativo `qwenvl html`
+  e va ribenchmarkato su Metal (la vecchia richiesta OTSL generava Markdown invalido).
+  MinerU2.5 ha anche il percorso nativo `MinerUClient` `mlx-engine` documentato
   dal produttore, ma resta sperimentale finché non passa una prova live sul corpus. Gli altri
   modelli restano remoti, ognuno per una ragione **misurata** servendolo davvero su una pagina:
   **MonkeyOCRv2** perché `mlx-vlm` non ha quell'architettura (verificato sui moduli installati);

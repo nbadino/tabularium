@@ -57,7 +57,7 @@ e Qwen passano dall'endpoint OpenAI-compatibile `mlx-vlm`; MinerU usa il proprio
 | Modello | vLLM (CUDA) | MLX (Apple Silicon) | Perché no, quando no |
 |---|---|---|---|
 | PaddleOCR-VL-1.6 | ✅ | ✅ `mlx-community/PaddleOCR-VL-1.6-4bit` | — |
-| Qwen3-VL-8B | ✅ | ✅ `mlx-community/Qwen3-VL-8B-Instruct-4bit` | — |
+| Qwen3-VL-8B | ✅ | 🧪 `mlx-community/Qwen3-VL-8B-Instruct-4bit` | nuovo workflow Qwen HTML da ribenchmarkare |
 | MonkeyOCRv2-Parsing | ✅ | ❌ | nessun port MLX dell'architettura |
 | MinerU2.5 | ✅ | 🧪 `MinerUClient` `mlx-engine` | percorso nativo aggiunto con runtime isolato; manca ancora la prova live sul corpus |
 | DeepSeek-OCR-2 | ✅ | ❌ | la ricetta richiede il logits processor n-gram di vLLM |
@@ -67,8 +67,10 @@ e Qwen passano dall'endpoint OpenAI-compatibile `mlx-vlm`; MinerU usa il proprio
 
 **Come sono state decise le colonne MLX.** Un checkpoint o un backend dichiarato non bastano:
 la conferma richiede serving e riconoscimento di pagine reali. `paddleocr-vl` (35 blocchi) e
-`qwen3-vl-8b` (137) passano. MinerU ora ha il percorso MLX nativo del produttore, ma resta
-in prova finché non completa il benchmark live; gli altri no, per ragioni misurate. Due in
+`qwen3-vl-8b` (137) avevano superato prove precedenti con prompt/layout generici. Il flusso
+è stato ora allineato al parser HTML ufficiale Qwen e va ribenchmarkato prima di confermare
+quel risultato. MinerU ha il percorso MLX nativo del produttore, ma resta in prova finché
+non completa il benchmark live; gli altri no, per ragioni misurate. Due in
 particolare vale la pena ricordare, perché sono modi diversi di fallire:
 
 - **dots.mocr** fallisce in modo rumoroso: la generazione END2END si chiude a 682 caratteri
@@ -486,6 +488,13 @@ vllm serve <model_path> --port <porta> \
   AWQ 4-bit community (~7 GB) — nessuna lascia margine reale per KV cache +
   vision encoder su 8 GB, ma nulla è bloccato: resta provabile.
 - VLM generalista, nessuna integrazione OCR ancora implementata.
+- Il prefill usa il parser ufficiale QwenVL `qwenvl html`: i `data-bbox` nativi (0–1000)
+  diventano blocchi Tabularium e le tabelle HTML vengono convertite in OTSL dalla griglia
+  interna. **Settings → Models** parte dai limiti immagine ufficiali del cookbook HTML
+  (`min_pixels=512×32²`, `max_pixels=2048×32²`) e consente di modificarli.
+- Il benchmark MLX precedente ha validato layout e testo, ma la prova tabellare non è valida:
+  Qwen ha restituito Markdown quando gli veniva chiesto OTSL. Il nuovo percorso `qwenvl html`
+  è implementato e attende un benchmark live su Metal.
 
 ---
 

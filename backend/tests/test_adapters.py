@@ -30,6 +30,7 @@ def test_monkeyocr_adapter_contract():
         ("dots-ocr", "end2end"),
         ("paddleocr-vl", "official"),
         ("glm-ocr", "official"),
+        ("qwen3-vl-8b", "official"),
     ],
 )
 def test_native_prefill_selects_model_workflow(adapter_id, expected):
@@ -55,12 +56,26 @@ def test_glm_native_result_uses_vendor_normalized_boxes_and_labels():
     ]
 
 
-@pytest.mark.parametrize("adapter_id", ["qwen3-vl-8b"])
-def test_custom_layout_prompts_are_not_misrepresented_as_native(adapter_id):
-    adapter = get_adapter(adapter_id)
-    assert supported_prefill_modes(adapter)["supports_native"] is False
-    with pytest.raises(ValueError, match="workflow nativo"):
-        native_mode(adapter)
+def test_qwen_native_html_preserves_official_boxes_and_table_markup():
+    adapter = get_adapter("qwen3-vl-8b")
+    blocks = adapter.parse_native_result(
+        '<html><body><h1 data-bbox="50 10 300 30">Index</h1>'
+        '<table data-bbox="10 40 900 800"><tr><th>Ship</th><th>Port</th></tr>'
+        '<tr><td>ASTER</td><td>London</td></tr></table></body></html>'
+    )
+    assert blocks == [
+        {"bbox": [50, 10, 300, 30], "label": "Title", "content": "Index"},
+        {
+            "bbox": [10, 40, 900, 800], "label": "Table",
+            "content": '<table data-bbox="10 40 900 800"><tr><th>Ship</th><th>Port</th></tr><tr><td>ASTER</td><td>London</td></tr></table>',
+        },
+    ]
+
+
+def test_qwen_document_prompt_is_reported_as_native():
+    adapter = get_adapter("qwen3-vl-8b")
+    assert supported_prefill_modes(adapter)["supports_native"] is True
+    assert native_mode(adapter) == "official"
 
 
 def test_deepseek_native_workflow_parses_vendor_grounded_markdown():

@@ -315,8 +315,8 @@ def native_mode(adapter) -> str:
     """Restituisce il percorso predefinito dal produttore per questo adapter.
 
     Il numero di passaggi è una proprietà del modello, non una preferenza
-    globale: MonkeyOCRv2 e MinerU usano layout + crop; TeleOCR e Paddle
-    eseguono i rispettivi pipeline ufficiali; Unlimited e dots.mocr usano la
+    globale: MonkeyOCRv2 e MinerU usano layout + crop; Qwen, TeleOCR e Paddle
+    eseguono i rispettivi parser ufficiali; Unlimited e dots.mocr usano la
     generazione completa.
     Un prompt disponibile non basta a dichiarare supporto nativo: se il
     workflow del produttore non è integrato, il prefill deve fermarsi.
@@ -444,6 +444,14 @@ def model_prelabel_events(
                         # concurrent recognition, HTML table output and its
                         # post-processing; keep the full page in that runner.
                         items = client.mineru_native_page(image)
+                    elif client.adapter.adapter_id == "qwen3-vl-8b":
+                        # Qwen's document parser returns its native HTML with
+                        # normalized data-bbox coordinates in one generation.
+                        items = client.qwen_native_page(
+                            image,
+                            on_delta=lambda delta: emit(delta, "layout"),
+                            cancel_event=cancel_event,
+                        )
                     else:
                         paddle_backend = "vllm-server"
                         if client.provider == "local":

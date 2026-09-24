@@ -15,6 +15,8 @@ import json
 import re
 import shlex
 from dataclasses import asdict, dataclass, field, replace
+from html import escape
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Protocol
 
@@ -1038,6 +1040,46 @@ class PaddleOcrVlAdapter(_StubAdapter):
         ]
 
 
+class _QwenHtmlNode:
+    def __init__(self, tag: str, attrs: dict[str, str | None]):
+        self.tag = tag
+        self.attrs = attrs
+        self.children: list["_QwenHtmlNode | str"] = []
+
+
+class _QwenHtmlTree(HTMLParser):
+    """Small tolerant HTML tree for QwenVL's documented ``data-bbox`` output."""
+
+    _VOID = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+        "meta", "param", "source", "track", "wbr",
+    }
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.root = _QwenHtmlNode("document", {})
+        self.stack = [self.root]
+
+    def handle_starttag(self, tag, attrs):
+        node = _QwenHtmlNode(tag.lower(), dict(attrs))
+        self.stack[-1].children.append(node)
+        if tag.lower() not in self._VOID:
+            self.stack.append(node)
+
+    def handle_startendtag(self, tag, attrs):
+        self.stack[-1].children.append(_QwenHtmlNode(tag.lower(), dict(attrs)))
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        for index in range(len(self.stack) - 1, 0, -1):
+            if self.stack[index].tag == tag:
+                del self.stack[index:]
+                break
+
+    def handle_data(self, data):
+        self.stack[-1].children.append(data)
+
+
 class Qwen3VlAdapter(_StubAdapter):
     """Qwen/Qwen3-VL-8B-Instruct — VLM generalista, non specializzato
     documenti, ma con l'ecosistema di fine-tuning più maturo in assoluto
@@ -1062,6 +1104,8 @@ class Qwen3VlAdapter(_StubAdapter):
     il tetto nativo (256K, estendibile a 1M con YaRN)."""
 
     adapter_id = "qwen3-vl-8b"
+    native_prefill_mode = "official"
+    page_layout_fallback = "official-pipeline"
     # The official Qwen3-VL card's VL sampling preset, surfaced in Settings
     # and used by default so this adapter does not inherit Tabularium's generic
     # greedy OCR sampling.
@@ -1076,11 +1120,10 @@ class Qwen3VlAdapter(_StubAdapter):
         adapter_id=adapter_id,
         display_name="Qwen3-VL-8B",
         tasks=("layout", "text", "table", "formula"),
-        coordinate_system="unverified",
-        # The adapter's table prompt and grid parser require the same OTSL
-        # contract as Tabularium exports; do not treat arbitrary prose as a
-        # valid extraction merely because Qwen is a general-purpose VLM.
-        table_format="otsl",
+        coordinate_system="normalized-0-1000",
+        # Qwen's documented document parser emits QwenVL HTML; Tabularium
+        # converts its tables to the canonical OTSL grid after parsing.
+        table_format="html",
         training_types=("lora", "full"),
         inference_modes=("vllm",),
         hardware=("cuda",),
@@ -1097,11 +1140,89 @@ class Qwen3VlAdapter(_StubAdapter):
     )
 
     _PROMPTS = {
-        "layout": "Identify all document elements in reading order. Return only a JSON array; each item must contain bbox [x1,y1,x2,y2] normalized to 0-1000 and label.",
+        "layout": "qwenvl html",
         "text": "Transcribe the text in the image exactly. Return plain text only.",
-        "table": "Extract the table exactly in OTSL format. Preserve all rows, columns, empty cells, and merged cells.",
+        "table": "qwenvl html",
         "formula": "Transcribe the formula as LaTeX.",
     }
+
+    @staticmethod
+    def _node_text(node: _QwenHtmlNode) -> str:
+        return "".join(
+            child if isinstance(child, str) else Qwen3VlAdapter._node_text(child)
+            for child in node.children
+        ).strip()
+
+    @staticmethod
+    def _serialize_node(node: _QwenHtmlNode) -> str:
+        attrs = "".join(
+            f' {key}="{escape(str(value or ""), quote=True)}"'
+            for key, value in node.attrs.items()
+        )
+        if node.tag in _QwenHtmlTree._VOID:
+            return f"<{node.tag}{attrs}/>"
+        body = "".join(
+            escape(child, quote=False) if isinstance(child, str)
+            else Qwen3VlAdapter._serialize_node(child)
+            for child in node.children
+        )
+        return f"<{node.tag}{attrs}>{body}</{node.tag}>"
+
+    def parse_native_result(self, raw: object) -> list[dict]:
+        """Convert official QwenVL HTML blocks and 0–1000 ``data-bbox`` boxes."""
+        if not isinstance(raw, str) or not raw.strip():
+            return []
+        parser = _QwenHtmlTree()
+        try:
+            parser.feed(raw)
+            parser.close()
+        except Exception:  # noqa: BLE001 - tolerate model-generated malformed HTML
+            return []
+
+        label_map = {
+            "caption": "Caption", "footnote": "Footnote", "footer": "Page-footer",
+            "header": "Page-header", "list-item": "List-item", "formula": "Formula",
+            "image": "Picture", "chart": "Picture", "table": "Table",
+        }
+        items: list[dict] = []
+
+        def walk(node: _QwenHtmlNode) -> None:
+            raw_bbox = node.attrs.get("data-bbox")
+            if raw_bbox:
+                values = re.findall(r"-?\d+(?:\.\d+)?", raw_bbox)
+                if len(values) >= 4:
+                    try:
+                        bbox = [round(float(value)) for value in values[:4]]
+                    except ValueError:
+                        bbox = []
+                    if (
+                        len(bbox) == 4
+                        and 0 <= bbox[0] < bbox[2] <= 1000
+                        and 0 <= bbox[1] < bbox[3] <= 1000
+                    ):
+                        classes = str(node.attrs.get("class") or "").lower().replace("_", "-").split()
+                        semantic = next((label_map[value] for value in classes if value in label_map), None)
+                        if node.tag == "table" or "table" in classes:
+                            label = "Table"
+                            content = self._serialize_node(node)
+                        elif node.tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+                            label, content = "Title", self._node_text(node)
+                        elif node.tag in {"li"}:
+                            label, content = "List-item", self._node_text(node)
+                        else:
+                            label = semantic or "Text"
+                            content = self._node_text(node)
+                        items.append({"bbox": bbox, "label": label, "content": content})
+                        return
+            for child in node.children:
+                if isinstance(child, _QwenHtmlNode):
+                    walk(child)
+
+        walk(parser.root)
+        return items
+
+    def parse_layout(self, raw: str) -> list[dict]:
+        return self.parse_native_result(raw)
 
     def prompt_for(self, task: str, label: str | None = None) -> str | None:
         prompt = self._PROMPTS.get(task)

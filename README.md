@@ -192,10 +192,13 @@ models verified on the current machine. See [benchmarks.md](benchmarks.md) for
 the tested GPU profiles and the exact local serving status; a catalog entry is
 not by itself a promise that every checkpoint fits an 8 GB GPU.
 
-On Apple Silicon, `PaddleOCR-VL-1.6` and `Qwen3-VL-8B` have verified local MLX
-checkpoints. MinerU now has a separate local path through the producer's
-`MinerUClient` `mlx-engine`; its live corpus benchmark is still pending. The
-other catalog models, including TeleOCR, require a remote CUDA endpoint.
+On Apple Silicon, PaddleOCR-VL's native pipeline and the Qwen3-VL MLX checkpoint
+have completed local inference runs. Qwen has now been switched to the producer's
+full-page `qwenvl html` workflow after its old table prompt returned invalid
+Markdown; that new path needs a fresh benchmark on Metal. MinerU has a separate
+local path through the producer's `MinerUClient` `mlx-engine`; its live corpus
+benchmark is still pending. The other catalog models, including TeleOCR, require
+a remote CUDA endpoint.
 TeleOCR uses the upstream 1036×1036
 layout input, bbox parser, system prompt, task-specific sampling, and
 no-repeat-ngram logits processor; text/table/formula crops use upstream

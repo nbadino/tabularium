@@ -134,6 +134,8 @@ def _run_native(
             return client.glmocr_native_page(image)
         if adapter.adapter_id == "mineru2.5":
             return client.mineru_native_page(image)
+        if adapter.adapter_id == "qwen3-vl-8b":
+            return client.qwen_native_page(image)
         if adapter.adapter_id == "paddleocr-vl":
             backend = "vllm-server"
             if client.provider == "local":

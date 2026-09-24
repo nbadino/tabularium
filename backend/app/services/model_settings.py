@@ -105,12 +105,14 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
         # without a documented cap receive no app-imposed resize; their native
         # processor and model config choose the supported resolution.
         "image": {
-            "min_pixels": None,
+            "min_pixels": 512 * 32 * 32 if adapter_id == "qwen3-vl-8b" else None,
             "max_pixels": (
                 1_003_520 if adapter_id == "monkeyocrv2-parsing"
                 else 64_000_000 if adapter_id == "teleocr"
                 else 71_372_800 if adapter_id == "glm-ocr"
                 else 11_289_600 if adapter_id == "dots-ocr"
+                # Official QwenVL document-parsing cookbook's HTML preset.
+                else 2_048 * 32 * 32 if adapter_id == "qwen3-vl-8b"
                 else None
             ),
         },
