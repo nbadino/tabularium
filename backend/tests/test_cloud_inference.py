@@ -1432,17 +1432,21 @@ def test_teleocr_cloud_provision_installs_official_architecture_plugin():
 
     recipe = cm.build_provision_recipe("teleocr")
     assert recipe["hf_repo"] == "StarDoc-AI/TeleOCR"
+    assert recipe["runtime"] == "teleocr-native"
+    assert recipe["settings"]["serving"]["max_model_len"] == 16384
     assert recipe["vllm_version"] == "0.11.0"
     assert recipe["transformers_version"] == "4.57.1"
     assert recipe["pip_extra"] == [
         "git+https://github.com/caipeng328/TeleOCR.git@main",
     ]
-    assert "--trust-remote-code" in recipe["argv"]
+    # TeleOCR is launched by its native async-engine gateway, not `vllm serve`.
+    assert recipe["argv"] == []
     assert recipe["served_model_name"] == "StarDoc-AI/TeleOCR"
     assert recipe["native_remote_port"] == 8889
     assert recipe["native_gateway_b64"]
     import base64
     assert b"aio_batch_two_step_extract" in base64.b64decode(recipe["native_gateway_b64"])
+    assert b"vllm-async-engine" in base64.b64decode(recipe["native_gateway_b64"])
 
     glm = cm.build_provision_recipe("glm-ocr")
     assert glm["vllm_version"] == "0.19.0"
@@ -1590,20 +1594,25 @@ def test_setup_checks_the_driver_cuda_before_downloading():
     """La compute capability non basta: conta anche la CUDA del driver.
 
     Una 3060 ha capability 8.6 e supera il controllo esistente, ma con un
-    driver fermo alla 12.x il PyTorch dell'indice cu130 muore con «The NVIDIA
-    driver on your system is too old (found version 12060)» — dopo aver
-    scaricato i wheel e consumato minuti di noleggio a pagamento. Il controllo
-    deve stare *prima* dell'installazione.
+    driver sotto CUDA 12.8 non può eseguire le wheel PyTorch richieste da
+    Blackwell — dopo aver scaricato i wheel e consumato minuti di noleggio a
+    pagamento. Il controllo deve stare *prima* dell'installazione.
     """
     script = (Path(__file__).resolve().parents[2] / "scripts" / "cloud" / "setup_cloud_vllm.sh").read_text()
 
     assert "MIN_CUDA_DRIVER" in script
-    # La soglia segue la CUDA con cui e' compilato il torch installato, non un
-    # numero scritto a mano che invecchierebbe da solo.
-    assert 'MIN_CUDA_DRIVER="${MIN_CUDA_DRIVER:-$CUDA_TOOLKIT_VERSION}"' in script
+    # CUDA 12.8 e' il minimo per Blackwell; il toolkit locale (13.0 per nvcc)
+    # non deve alzare la soglia richiesta al driver del provider.
+    assert 'TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cu128}"' in script
+    assert 'MIN_CUDA_DRIVER="${MIN_CUDA_DRIVER:-12.8}"' in script
     # Deve precedere l'installazione, altrimenti non risparmia nulla: il
     # messaggio d'errore compare prima del primo pip install pesante.
     assert script.index("Max CUDA") < script.index("Installazione dipendenze Python")
+
+
+def test_native_gateway_setup_has_a_default_log_path():
+    script = (Path(__file__).resolve().parents[2] / "scripts" / "cloud" / "setup_cloud_vllm.sh").read_text()
+    assert 'REMOTE_LOG_PATH="${REMOTE_LOG_PATH:-/var/log/tabularium_setup.log}"' in script
 
 
 def test_setup_preflights_recipe_disk_budget_before_mutating_the_instance():

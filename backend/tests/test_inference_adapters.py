@@ -46,6 +46,31 @@ def test_prompt_for_uses_verified_dots_ocr_end2end_prompt():
     assert resolved != "FALLBACK-PROMPT"
 
 
+def test_teleocr_native_gateway_posts_binary_image_with_requests_data(monkeypatch):
+    adapter = model_adapters.get_adapter("teleocr")
+    client = infmod.VllmClient(
+        url="http://127.0.0.1:18888/v1", adapter=adapter,
+        native_url="http://127.0.0.1:18889", provider="vast",
+    )
+    captured = {}
+
+    class Response:
+        def raise_for_status(self): pass
+        def json(self):
+            return {"blocks": [{"type": "text", "bbox": [0.1, 0.2, 0.9, 0.8], "content": "native"}]}
+
+    def post(url, **kwargs):
+        captured.update({"url": url, **kwargs})
+        return Response()
+
+    monkeypatch.setattr(infmod.requests, "post", post)
+    blocks = client.teleocr_native_page(Image.new("RGB", (32, 24), "white"))
+    assert captured["url"] == "http://127.0.0.1:18889/parse"
+    assert captured["data"].startswith(b"\x89PNG\r\n\x1a\n")
+    assert "content" not in captured
+    assert blocks == [{"bbox": [100, 200, 900, 800], "label": "Text", "content": "native"}]
+
+
 def test_unlimited_ocr_uses_official_vllm_recipe_and_parses_grounding():
     adapter = model_adapters.get_adapter("unlimited-ocr")
     assert adapter.prompt_for("end2end").startswith("<image>")
@@ -115,6 +140,37 @@ def test_mineru_ngram_override_reaches_vllm_xargs(tmp_path, monkeypatch):
     assert "extra_args" not in captured
 
 
+def test_adapter_without_sampling_keeps_native_vllm_generation_defaults(monkeypatch, tmp_path):
+    from app import config
+    from app.db import init_db
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "native-sampling.db")
+    init_db()
+    captured = {}
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def raise_for_status(self): return None
+        def iter_lines(self, decode_unicode=True):
+            del decode_unicode
+            yield 'data: ' + json.dumps({"choices": [{"delta": {"content": "ok"}}]})
+            yield "data: [DONE]"
+
+    def post(_url, **kwargs):
+        captured.update(kwargs["json"])
+        return Response()
+
+    monkeypatch.setattr(infmod.requests, "post", post)
+    adapter = model_adapters.get_adapter("paddleocr-vl")
+    client = infmod.VllmClient(url="http://127.0.0.1:8888/v1", adapter=adapter)
+    assert client._chat(
+        Image.new("RGB", (12, 12), "white"), adapter.prompt_for("text"),
+        sampling=client._sampling_for("text"), task="text",
+    ) == "ok"
+    assert "temperature" not in captured
+
+
 def test_dots_serve_uses_required_chat_template_content_format():
     # Verificato sul README ufficiale: il flag è obbligatorio e non interferisce
     # con l'invio di contenuto multimodale in stile OpenAI (image_url + text) —
@@ -145,7 +201,7 @@ def test_glm_native_gateway_forwards_official_page_and_sampling(monkeypatch):
     adapter = model_adapters.get_adapter("glm-ocr")
     client = infmod.VllmClient(
         url="http://127.0.0.1:8888/v1", adapter=adapter,
-        native_url="http://127.0.0.1:18890/glmocr", provider="vast",
+        native_url="http://127.0.0.1:18890", provider="vast",
     )
     captured = {}
 
@@ -163,7 +219,7 @@ def test_glm_native_gateway_forwards_official_page_and_sampling(monkeypatch):
 
     monkeypatch.setattr(infmod.requests, "post", post)
     blocks = client.glmocr_native_page(Image.new("RGB", (32, 24), "white"))
-    assert captured["url"] == "http://127.0.0.1:18890/glmocr/parse"
+    assert captured["url"] == "http://127.0.0.1:18890/parse"
     assert captured["headers"]["x-glmocr-generation"] == json.dumps(
         model_adapters.get_adapter("glm-ocr").recommended_generation, separators=(",", ":")
     )

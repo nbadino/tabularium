@@ -241,7 +241,8 @@ def main() -> int:
                     entry["error"] = "risposta ricevuta ma output non conforme al protocollo del task"
                 raw_dir = report_path.parent / "outputs" / adapter_id
                 raw_dir.mkdir(parents=True, exist_ok=True)
-                raw_path = raw_dir / f"{args.task}-{iteration + 1:03d}.json"
+                image_stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", args.image.stem).strip("-_") or "image"
+                raw_path = raw_dir / f"{image_stem}-{args.task}-{iteration + 1:03d}.json"
                 raw_path.write_text(json.dumps({"adapter_id": adapter_id, "model": model,
                                                  "task": args.task, "summary": summary,
                                                  "trace": trace, "output": output},
@@ -255,7 +256,8 @@ def main() -> int:
                     entry["raw_text"] = client.last_text
                 raw_dir = report_path.parent / "outputs" / adapter_id
                 raw_dir.mkdir(parents=True, exist_ok=True)
-                error_path = raw_dir / f"{args.task}-{iteration + 1:03d}-error.json"
+                image_stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", args.image.stem).strip("-_") or "image"
+                error_path = raw_dir / f"{image_stem}-{args.task}-{iteration + 1:03d}-error.json"
                 error_path.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n",
                                       encoding="utf-8")
                 entry["output_file"] = str(error_path)

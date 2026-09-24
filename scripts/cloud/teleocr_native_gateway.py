@@ -23,17 +23,39 @@ _client = None
 
 async def _startup() -> None:
     global _client
+    import json
+    import TeleOCR.config as CONFIG
+    from vllm.engine.arg_utils import AsyncEngineArgs
+    from vllm.v1.engine.async_llm import AsyncLLM
     from TeleOCR.vlm_utils.TeleOCR_client import TeleOCRClient
 
-    headers = {}
-    api_key = os.environ.get("TABULARIUM_SERVER_API_KEY", "")
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        settings = json.loads(os.environ.get("TABULARIUM_TELEOCR_SETTINGS", "{}"))
+    except ValueError as exc:
+        raise RuntimeError("invalid TeleOCR runner settings") from exc
+    serving = settings.get("serving") or {}
+    image = settings.get("image") or {}
+    engine_args = {
+        "dtype": "bfloat16",
+        "gpu_memory_utilization": serving.get("gpu_memory_utilization", 0.95),
+        "max_model_len": serving.get("max_model_len", 16384),
+    }
+    for key in ("max_num_seqs", "max_num_batched_tokens"):
+        if serving.get(key) is not None:
+            engine_args[key] = serving[key]
+    model_path = os.environ.get("TABULARIUM_TELEOCR_MODEL_PATH")
+    if not model_path:
+        raise RuntimeError("TABULARIUM_TELEOCR_MODEL_PATH is required")
+    CONFIG.MAX_PIXELS = int(image.get("max_pixels") or 64_000_000)
+    async_llm = AsyncLLM.from_engine_args(AsyncEngineArgs(model_path, **engine_args))
     _client = TeleOCRClient(
-        backend="http-client",
+        # This is the producer's documented inference path (README `infer.py`),
+        # not a second OpenAI server plus an HTTP client shim.
+        backend="vllm-async-engine",
         model_name=os.environ.get("TABULARIUM_TELEOCR_MODEL", "StarDoc-AI/TeleOCR"),
-        server_url=os.environ.get("TABULARIUM_TELEOCR_VLLM_URL", "http://127.0.0.1:8888/v1"),
-        server_headers=headers,
+        model_path=model_path,
+        vllm_async_llm=async_llm,
+        max_concurrency=int(serving.get("max_num_seqs") or 100),
         use_tqdm=False,
     )
 

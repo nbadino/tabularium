@@ -19,24 +19,26 @@ MODEL_DIR="${MODEL_DIR:-}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.90}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-24576}"
 API_KEY="${API_KEY:-${TABULARIUM_SERVER_API_KEY:-}}"
+REMOTE_LOG_PATH="${REMOTE_LOG_PATH:-/var/log/tabularium_setup.log}"
 REPLACE_RUNNING_SERVER=0
 # La versione di Transformers resta non fissata globalmente: ogni release
 # vLLM dichiara il proprio intervallo compatibile e i plugin (TeleOCR) possono
 # imporre un pin più stretto nella propria ricetta.
 VLLM_VERSION="${VLLM_VERSION:-0.28.0}"
 TRANSFORMERS_VERSION="${TRANSFORMERS_VERSION:-}"
-# PyTorch viene risolto dal vLLM della ricetta. Su Blackwell viene poi
-# ricompilato per CUDA 13 mantenendo la versione effettivamente installata.
-TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cu130}"
+# PyTorch viene risolto dal vLLM della ricetta. CUDA 12.8 è il minimo
+# supportato da Blackwell; non imporre CUDA 13 a versioni vLLM più vecchie,
+# le cui versioni Torch pinnate non hanno wheel cu130.
+TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cu128}"
 CUDA_TOOLKIT_VERSION="${CUDA_TOOLKIT_VERSION:-13.0}"
 CUDA_TOOLKIT_PKG="${CUDA_TOOLKIT_PKG:-13-0}"
 MONKEYOCR_REF="${MONKEYOCR_REF:-}"
 MIN_DISK_GB="${MIN_DISK_GB:-20}"
 MIN_COMPUTE_CAP="${MIN_COMPUTE_CAP:-8.0}"
 # Il driver deve saper eseguire la CUDA con cui e' compilato il PyTorch che
-# installiamo (indice cu130): un driver piu' vecchio fa fallire vLLM molto
+# installiamo (indice cu128): un driver piu' vecchio fa fallire vLLM molto
 # dopo, con "The NVIDIA driver on your system is too old".
-MIN_CUDA_DRIVER="${MIN_CUDA_DRIVER:-$CUDA_TOOLKIT_VERSION}"
+MIN_CUDA_DRIVER="${MIN_CUDA_DRIVER:-12.8}"
 # Ambiente Python isolato: le immagini recenti (Ubuntu 24.04) hanno pip gestito
 # dalla distro, che rifiuta sia l'auto-aggiornamento sia gli install di sistema
 # (PEP 668). Un venv rende il setup indipendente dall'immagine scelta.
@@ -88,6 +90,7 @@ RECIPE_NATIVE_GATEWAY_B64=""
 RECIPE_NATIVE_REMOTE_PORT=""
 RECIPE_DRAFT_HF_REPO=""
 RECIPE_DRAFT_MODEL_DIR=""
+RECIPE_TELEOCR_SETTINGS="{}"
 SERVE_ARGV=()
 if [ -n "$RECIPE_B64" ]; then
   RECIPE_JSON=$(printf '%s' "$RECIPE_B64" | base64 -d)
@@ -104,6 +107,7 @@ EOF
   RECIPE_NATIVE_REMOTE_PORT=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('native_remote_port') or '')")
   RECIPE_DRAFT_HF_REPO=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('draft_hf_repo') or '')")
   RECIPE_DRAFT_MODEL_DIR=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('draft_model_dir') or '')")
+  RECIPE_TELEOCR_SETTINGS=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('settings') or {},separators=(',',':'))) ")
   RECIPE_TRANSFORMERS_VERSION=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('transformers_version') or '')")
   if [ -n "$RECIPE_TRANSFORMERS_VERSION" ]; then TRANSFORMERS_VERSION="$RECIPE_TRANSFORMERS_VERSION"; fi
   # The recipe owns the minimum: an external environment override may make
@@ -285,7 +289,7 @@ if command -v nvidia-smi &>/dev/null; then
 
   # La compute capability dice cosa sa fare la GPU, non cosa sa eseguire il
   # driver. Sono due cose diverse: una 3060 ha capability 8.6 e passa il
-  # controllo sopra, ma con un driver fermo alla 12.x il PyTorch cu130 muore
+  # controllo sopra, ma con un driver fermo sotto la 12.8 il PyTorch cu128 muore
   # con "The NVIDIA driver on your system is too old (found version 12060)" —
   # dopo aver scaricato qualche gigabyte di wheel e diversi minuti di
   # noleggio. Meglio saperlo adesso.
@@ -364,7 +368,7 @@ else
 fi
 PY_BIN="$VENV_DIR/bin/python"
 echo ">> Installazione dipendenze Python (vLLM, PyTorch, Transformers)..."
-"$PY_BIN" -m pip install --quiet --upgrade pip setuptools wheel
+"$PY_BIN" -m pip install --quiet --upgrade pip 'setuptools>=77,<80' wheel
 PYTHON_PACKAGES=(
   "vllm==${VLLM_VERSION}" \
   "huggingface_hub"
@@ -394,16 +398,16 @@ fi
 # di vLLM ha appena risolto* — imporne altre prima dell'install le contraddice
 # (vLLM 0.21 vuole torchvision 0.26, non 0.28).
 if [ "$RECIPE_INSTALL_VLLM" = "1" ]; then
-  TORCH_CUDA_MAJOR=$("$PY_BIN" -c "import torch; print((torch.version.cuda or '0').split('.')[0])" 2>/dev/null || echo 0)
-  if awk -v cap="$COMPUTE_CAP" -v cuda="$TORCH_CUDA_MAJOR" 'BEGIN { exit !(cap + 0 >= 12.0 && cuda + 0 < 13) }'; then
+  TORCH_CUDA_RUNTIME=$("$PY_BIN" -c "import torch; print(torch.version.cuda or '0')" 2>/dev/null || echo 0)
+  if awk -v cap="$COMPUTE_CAP" -v cuda="$TORCH_CUDA_RUNTIME" 'BEGIN { split(cuda, v, "."); exit !(cap + 0 >= 12.0 && (v[1] + 0 < 12 || (v[1] + 0 == 12 && v[2] + 0 < 8))) }'; then
     TORCH_PINNED=$("$PY_BIN" -c "import torch; print(torch.__version__.split('+')[0])")
     TORCH_TRIO=("torch==${TORCH_PINNED}")
     for extra in torchvision torchaudio; do
       version=$("$PY_BIN" -c "import ${extra}; print(${extra}.__version__.split('+')[0])" 2>/dev/null || true)
       [ -n "$version" ] && TORCH_TRIO+=("${extra}==${version}")
     done
-    echo ">> PyTorch ${TORCH_PINNED} ricompilato per CUDA 13 (sm_120): ${TORCH_TRIO[*]}"
-    # Un pacchetto alla volta: se torchaudio non esiste sull'indice cu130 (l'
+    echo ">> PyTorch ${TORCH_PINNED} reinstallato con wheel CUDA 12.8+ per Blackwell: ${TORCH_TRIO[*]}"
+    # Un pacchetto alla volta: se torchaudio non esiste sull'indice cu128 (l'
     # indice parte da 2.9.0), torch — l'unico davvero critico per sm_120 — deve
     # comunque essere ricompilato. Un install unico fallirebbe in blocco.
     "$PY_BIN" -m pip install --quiet --no-deps --force-reinstall \
@@ -529,7 +533,7 @@ print(f">> Manifest scritto in {target}")
 PY
 
 # 6. Prepare serving flags
-if [ ${#SERVE_ARGV[@]} -eq 0 ]; then
+if [ ${#SERVE_ARGV[@]} -eq 0 ] && [ "$RECIPE_RUNTIME" != "teleocr-native" ]; then
   # Percorso storico senza ricetta: wrapper MonkeyOCRv2 con i flag verificati.
   SERVE_ARGV=(
     serve.py
@@ -555,30 +559,45 @@ fi
 rm -rf "$HOME/.cache/vllm/torch_compile_cache" 2>/dev/null || true
 
 echo "=========================================================="
-echo ">> [Tabularium Cloud Server] Avvio vLLM su $HOST:$PORT..."
-echo ">> Endpoint: http://$HOST:$PORT/v1"
+if [ "$RECIPE_RUNTIME" = "teleocr-native" ]; then
+  echo ">> [Tabularium Cloud Runner] Preparazione runner TeleOCR nativo..."
+else
+  echo ">> [Tabularium Cloud Server] Avvio vLLM su $HOST:$PORT..."
+  echo ">> Endpoint: http://$HOST:$PORT/v1"
+fi
 echo "=========================================================="
 
-if [ "$RECIPE_ADAPTER" = "teleocr" ] || [ "$RECIPE_ADAPTER" = "glm-ocr" ]; then
+if [ "$RECIPE_ADAPTER" = "teleocr" ]; then
+  if [ -z "$RECIPE_NATIVE_GATEWAY_B64" ] || [ -z "$RECIPE_NATIVE_REMOTE_PORT" ]; then
+    echo "!! Runner nativo non incluso nella ricetta TeleOCR; rifiuto un avvio parziale." >&2
+    exit 2
+  fi
+  NATIVE_GATEWAY="$VENV_DIR/tabularium_teleocr_gateway.py"
+  printf '%s' "$RECIPE_NATIVE_GATEWAY_B64" | base64 -d > "$NATIVE_GATEWAY"
+  export TABULARIUM_TELEOCR_MODEL="$MODEL_NAME"
+  export TABULARIUM_TELEOCR_MODEL_PATH="$MODEL_DIR"
+  export TABULARIUM_TELEOCR_SETTINGS="$RECIPE_TELEOCR_SETTINGS"
+  echo ">> Avvio runner nativo TeleOCR (TeleOCRClient + vllm-async-engine) su 127.0.0.1:$RECIPE_NATIVE_REMOTE_PORT..."
+  "$PY_BIN" -m uvicorn tabularium_teleocr_gateway:app \
+    --app-dir "$VENV_DIR" --host 127.0.0.1 \
+    --port "$RECIPE_NATIVE_REMOTE_PORT" --no-access-log \
+    >> "$REMOTE_LOG_PATH" 2>&1 < /dev/null &
+  GATEWAY_PID=$!
+  trap 'kill "$GATEWAY_PID" 2>/dev/null || true; wait 2>/dev/null || true' EXIT TERM INT
+  wait "$GATEWAY_PID"
+  exit "$?"
+fi
+
+if [ "$RECIPE_ADAPTER" = "glm-ocr" ]; then
   if [ -z "$RECIPE_NATIVE_GATEWAY_B64" ] || [ -z "$RECIPE_NATIVE_REMOTE_PORT" ]; then
     echo "!! Gateway del pipeline nativo non incluso nella ricetta ${RECIPE_ADAPTER}; rifiuto un avvio parziale." >&2
     exit 2
   fi
-  if [ "$RECIPE_ADAPTER" = "teleocr" ]; then
-    NATIVE_GATEWAY="$VENV_DIR/tabularium_teleocr_gateway.py"
-    NATIVE_MODULE="tabularium_teleocr_gateway"
-  else
-    NATIVE_GATEWAY="$VENV_DIR/tabularium_glmocr_gateway.py"
-    NATIVE_MODULE="tabularium_glmocr_gateway"
-  fi
+  NATIVE_GATEWAY="$VENV_DIR/tabularium_glmocr_gateway.py"
+  NATIVE_MODULE="tabularium_glmocr_gateway"
   printf '%s' "$RECIPE_NATIVE_GATEWAY_B64" | base64 -d > "$NATIVE_GATEWAY"
   export TABULARIUM_SERVER_API_KEY="$API_KEY"
-  if [ "$RECIPE_ADAPTER" = "teleocr" ]; then
-    export TABULARIUM_TELEOCR_MODEL="$MODEL_NAME"
-    export TABULARIUM_TELEOCR_VLLM_URL="http://127.0.0.1:$PORT/v1"
-  else
-    export TABULARIUM_GLMOCR_VLLM_PORT="$PORT"
-  fi
+  export TABULARIUM_GLMOCR_VLLM_PORT="$PORT"
   "$PY_BIN" -m uvicorn "$NATIVE_MODULE:app" \
     --app-dir "$VENV_DIR" --host 127.0.0.1 \
     --port "$RECIPE_NATIVE_REMOTE_PORT" --no-access-log \

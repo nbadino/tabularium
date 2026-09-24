@@ -43,6 +43,7 @@ class ModelCapabilities:
     # "community" | "none" (nessun training ancora supportato).
     train_toolchain: str = "none"
     # "vllm-openai" (endpoint OpenAI-compatibile via `vllm serve` diretto) |
+    # "teleocr-native" (runner ufficiale TeleOCR con `vllm-async-engine`) |
     # "docker-vllm-openai" (stesso endpoint, ma lanciato dentro un'immagine
     # Docker dedicata perché l'architettura non è nella wheel pip stabile) |
     # "custom" | "none".
@@ -282,7 +283,7 @@ class MinerU2_5Adapter(_StubAdapter):
         approx_size_gb=2.5,
         license_note="",
         train_toolchain="none",
-        serve_backend="vllm-openai",
+        serve_backend="teleocr-native",
         served_model_name="mineru2.5",
         # Il checkpoint corrente dichiara max_position_embeddings=8192 nella
         # text_config; vLLM 0.28 rifiuta correttamente 16384 senza il flag

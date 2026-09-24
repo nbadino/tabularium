@@ -321,7 +321,7 @@ class VllmClient:
         try:
             response = requests.post(
                 f"{self.native_url}/parse",
-                content=buffer.getvalue(),
+                data=buffer.getvalue(),
                 headers=headers,
                 timeout=max(self.timeout, 600),
             )
@@ -361,7 +361,7 @@ class VllmClient:
         try:
             response = requests.post(
                 f"{self.native_url}/parse",
-                content=buffer.getvalue(),
+                data=buffer.getvalue(),
                 headers=headers,
                 timeout=max(self.timeout, 600),
             )
@@ -448,7 +448,6 @@ class VllmClient:
             content.reverse()
         payload = {
             "model": self.model,
-            "temperature": 0,
             "max_tokens": max_tokens,
             "stream": stream_response,
             "messages": [
@@ -1224,9 +1223,7 @@ def get_inference_config() -> dict:
             from . import cloud_manager
             tunnel = cloud_manager.get_tunnel_status()
             if tunnel.running and getattr(tunnel, "native_local_port", None):
-                native_url = f"http://127.0.0.1:{tunnel.native_local_port}/" + (
-                    "teleocr" if adapter_id == "teleocr" else "glmocr"
-                )
+                native_url = f"http://127.0.0.1:{tunnel.native_local_port}"
         except Exception:  # noqa: BLE001 - legacy/non-Vast profiles have no sidecar
             native_url = None
 

@@ -100,14 +100,19 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
 
 def test_serve_recipe_applies_only_explicit_supported_overrides():
     argv = serve_recipes.serve_argv(
-        serve_recipes.recipe_for("teleocr"),
-        model_path="StarDoc-AI/TeleOCR", port=8000,
+        serve_recipes.recipe_for("mineru2.5"),
+        model_path="opendatalab/MinerU2.5-Pro-2605-1.2B", port=8000,
         settings={"serving": {"max_num_seqs": 2, "max_model_len": 8192}},
     )
     assert argv[argv.index("--max-num-seqs") + 1] == "2"
     assert argv[argv.index("--max-model-len") + 1] == "8192"
-    assert "--trust-remote-code" in argv
-    assert "--dtype" in argv and "bfloat16" in argv
+    assert "--logits-processors" in argv
+
+    # TeleOCR owns AsyncLLM inside its official runner; never construct a
+    # generic OpenAI-server command for that recipe.
+    assert serve_recipes.serve_argv(
+        serve_recipes.recipe_for("teleocr"), model_path="/models/TeleOCR", port=8000,
+    ) == []
 
     monkey_recipe = serve_recipes.recipe_for("monkeyocrv2-parsing")
     monkey_argv = serve_recipes.serve_argv(

@@ -6,6 +6,7 @@ import sys
 import types
 from pathlib import Path
 from types import SimpleNamespace
+import asyncio
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -95,3 +96,88 @@ def test_gateway_delegates_to_official_batch_runner_and_forwards_settings(monkey
         "max_pixels": 2_000_000,
         "sampling": 0.2,
     }
+
+
+def test_startup_uses_official_async_engine_and_effective_serving_settings(monkeypatch):
+    gateway = _load_gateway()
+    gateway._client = None
+    calls = {}
+
+    package = types.ModuleType("TeleOCR")
+    package.__path__ = []
+    config = types.ModuleType("TeleOCR.config")
+    config.MAX_PIXELS = 0
+    subpackage = types.ModuleType("TeleOCR.vlm_utils")
+    subpackage.__path__ = []
+    client_module = types.ModuleType("TeleOCR.vlm_utils.TeleOCR_client")
+
+    class FakeTeleOCRClient:
+        def __init__(self, **kwargs):
+            calls["client"] = kwargs
+
+    client_module.TeleOCRClient = FakeTeleOCRClient
+    for name, module in {
+        "TeleOCR": package,
+        "TeleOCR.config": config,
+        "TeleOCR.vlm_utils": subpackage,
+        "TeleOCR.vlm_utils.TeleOCR_client": client_module,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    class FakeAsyncEngineArgs:
+        def __init__(self, model_path, **kwargs):
+            calls["engine_args"] = (model_path, kwargs)
+
+    class FakeAsyncLLM:
+        @classmethod
+        def from_engine_args(cls, args):
+            calls["async_llm_args"] = args
+            return "vendor-async-engine"
+
+    vllm = types.ModuleType("vllm")
+    vllm.__path__ = []
+    engine = types.ModuleType("vllm.engine")
+    engine.__path__ = []
+    arg_utils = types.ModuleType("vllm.engine.arg_utils")
+    arg_utils.AsyncEngineArgs = FakeAsyncEngineArgs
+    v1 = types.ModuleType("vllm.v1")
+    v1.__path__ = []
+    v1_engine = types.ModuleType("vllm.v1.engine")
+    v1_engine.__path__ = []
+    async_llm_module = types.ModuleType("vllm.v1.engine.async_llm")
+    async_llm_module.AsyncLLM = FakeAsyncLLM
+    for name, module in {
+        "vllm": vllm,
+        "vllm.engine": engine,
+        "vllm.engine.arg_utils": arg_utils,
+        "vllm.v1": v1,
+        "vllm.v1.engine": v1_engine,
+        "vllm.v1.engine.async_llm": async_llm_module,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    monkeypatch.setenv("TABULARIUM_TELEOCR_MODEL_PATH", "/root/models/TeleOCR")
+    monkeypatch.setenv(
+        "TABULARIUM_TELEOCR_SETTINGS",
+        '{"serving":{"gpu_memory_utilization":0.9,"max_model_len":8192,'
+        '"max_num_seqs":2,"max_num_batched_tokens":4096},'
+        '"image":{"max_pixels":2000000}}',
+    )
+
+    asyncio.run(gateway._startup())
+
+    assert calls["engine_args"] == (
+        "/root/models/TeleOCR",
+        {
+            "dtype": "bfloat16",
+            "gpu_memory_utilization": 0.9,
+            "max_model_len": 8192,
+            "max_num_seqs": 2,
+            "max_num_batched_tokens": 4096,
+        },
+    )
+    assert config.MAX_PIXELS == 2_000_000
+    assert calls["client"]["backend"] == "vllm-async-engine"
+    assert calls["client"]["vllm_async_llm"] == "vendor-async-engine"
+    assert calls["client"]["model_path"] == "/root/models/TeleOCR"
+    assert calls["client"]["max_concurrency"] == 2

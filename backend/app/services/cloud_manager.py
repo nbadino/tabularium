@@ -1496,7 +1496,8 @@ def build_provision_recipe(
 
     recipe = serve_recipes.recipe_for(adapter_id)
     from . import model_settings
-    user_settings = model_settings.get_settings(adapter_id)["overrides"]
+    settings_payload = model_settings.get_settings(adapter_id)
+    user_settings = settings_payload["overrides"]
     hf_repo = str(model or "").strip() or recipe.hf_repo
     if not _MODEL.fullmatch(hf_repo):
         raise ValueError("Nome modello non valido.")
@@ -1542,6 +1543,10 @@ def build_provision_recipe(
         "docker_image": recipe.docker_image,
         "native_gateway_b64": native_gateway_b64,
         "native_remote_port": recipe.native_remote_port,
+        # The TeleOCR gateway constructs the vendor's AsyncLLM directly, so it
+        # consumes the same effective per-model settings as the UI instead of
+        # trying to mirror them in an unrelated `vllm serve` process.
+        "settings": settings_payload["effective"] if adapter_id == "teleocr" else {},
         "pip_extra": list(recipe.pip_extra),
         **budget,
         "needs_monkeyocr_repo": recipe.runtime == "monkeyocr",
@@ -1609,9 +1614,20 @@ def provision_vast_server(
     # `attach ssh` Vast.ai impiega qualche secondo a propagare la chiave al
     # container già acceso.
     ensure_ssh_access(host, port, user=user)
-    existing = probe_vast_server(host, port, user=user, remote_port=remote_port)
+    if adapter_id == "teleocr":
+        native_ready = probe_vast_native_gateway(
+            host, port, user=user, remote_port=int(recipe["native_remote_port"])
+        )
+        legacy_server = probe_vast_server(host, port, user=user, remote_port=remote_port)
+        existing = (
+            {"ready": True, "model": recipe["served_model_name"]}
+            if native_ready
+            else legacy_server
+        )
+    else:
+        existing = probe_vast_server(host, port, user=user, remote_port=remote_port)
     if existing["ready"] and existing["model"] == recipe["served_model_name"]:
-        native_ready = (
+        native_ready = native_ready if adapter_id == "teleocr" else (
             not recipe.get("native_remote_port")
             or probe_vast_native_gateway(
                 host, port, user=user, remote_port=recipe["native_remote_port"]
@@ -1809,6 +1825,7 @@ def publish_vast_checkpoint(
 # servono alla UI per dire a che punto è, invece di mostrare solo righe che
 # scorrono. L'ordine conta: si prende la fase più avanzata già raggiunta.
 _PROVISION_PHASES = (
+    ("Avvio runner nativo TeleOCR", "serving"),
     ("Avvio vLLM su", "serving"),
     ("Download pesi modello", "weights"),
     ("Installazione dipendenze Python", "python"),

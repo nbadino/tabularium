@@ -25,9 +25,9 @@ class ServeRecipe:
     adapter_id: str
     hf_repo: str
     served_model_name: str
-    # "vllm": `vllm serve <pesi> <args>` — "monkeyocr": il wrapper ufficiale
-    # `parsing/serve.py` del repo MonkeyOCRv2 — "docker": immagine dedicata,
-    # non installabile via pip.
+    # "vllm": `vllm serve <pesi> <args>` — "teleocr-native": TeleOCRClient
+    # ufficiale con vllm-async-engine — "monkeyocr": il wrapper ufficiale
+    # `parsing/serve.py` — "docker": immagine dedicata, non installabile via pip.
     runtime: str
     vllm_version: str = ""
     # Empty means let the pinned vLLM release resolve its supported range.
@@ -63,10 +63,10 @@ RECIPES: dict[str, ServeRecipe] = {
         adapter_id="teleocr",
         hf_repo="StarDoc-AI/TeleOCR",
         served_model_name="StarDoc-AI/TeleOCR",
-        runtime="vllm",
-        # Plugin ufficiale out-of-tree: pyproject.toml pinna vLLM e Transformers
-        # e registra Qwen2_5_VLForConditionalGeneration in vLLM. Senza di esso
-        # l'architettura personalizzata del checkpoint non viene caricata.
+        runtime="teleocr-native",
+        # Il runner ufficiale usa TeleOCRClient con backend vllm-async-engine;
+        # l'engine e il pipeline layout+OCR vivono nello stesso processo. La
+        # dipendenza upstream installa il modello vLLM e il logits processor.
         vllm_version="0.11.0",
         transformers_version="4.57.1",
         native_remote_port=8889,
@@ -85,7 +85,7 @@ RECIPES: dict[str, ServeRecipe] = {
             "--gpu-memory-utilization", "0.95",
             "--max-model-len", "16384",
         ),
-        source="Repository ufficiale TeleOCR + model card StarDoc-AI/TeleOCR",
+        source="README e config ufficiali TeleOCR: infer.py / vllm-async-engine",
     ),
     "monkeyocrv2-parsing": ServeRecipe(
         adapter_id="monkeyocrv2-parsing",
@@ -244,6 +244,10 @@ def serve_argv(
     settings: dict | None = None,
 ) -> list[str]:
     """Comando di serving completo, ricetta più infrastruttura."""
+    if recipe.runtime == "teleocr-native":
+        # The producer's pipeline owns AsyncLLM in its TeleOCRClient sidecar;
+        # there is no separate OpenAI-compatible `vllm serve` process.
+        return []
     if recipe.runtime == "monkeyocr":
         argv = ["serve.py", "--model-path", model_path]
     else:
