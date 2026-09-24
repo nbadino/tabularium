@@ -104,10 +104,13 @@ RECIPES: dict[str, ServeRecipe] = {
         # asynchronous OCR fan-out, and post-processing. vLLM remains the
         # model server; a small sidecar invokes that upstream client.
         runtime="mineru-native",
-        # L'extra `[vllm]` di mineru-vl-utils dichiara vLLM < 0.22.
+        # MinerU 2.0.x è la linea upstream corrente; il suo extra [vllm]
+        # dichiara vLLM >=0.19.1,<0.29.0. Manteniamo il pin 0.21.0 già
+        # verificato con questo checkpoint, evitando l'installazione del
+        # vecchio client 1.x che non include gli aggiornamenti del pipeline.
         vllm_version="0.21.0",
         native_remote_port=8891,
-        pip_extra=("mineru-vl-utils==1.0.5",),
+        pip_extra=("mineru-vl-utils[vllm]==2.0.5",),
         serve_args=(
             "--logits-processors", "mineru_vl_utils:MinerULogitsProcessor",
         ),

@@ -266,7 +266,7 @@ class MinerU2_5Adapter(_StubAdapter):
         # text_config; vLLM 0.28 rifiuta correttamente 16384 senza il flag
         # pericoloso VLLM_ALLOW_LONG_MAX_MODEL_LEN.
         max_model_len=8192,
-        # The upstream MinerUClient 1.0.5 has a native `mlx-engine` backend.
+        # The upstream MinerUClient 2.x has a native `mlx-engine` backend.
         # Tabularium runs it in its own pinned environment; it must not be
         # routed through the generic mlx-vlm OpenAI server.
         local_runtimes=("vllm", "mlx-vlm"),
