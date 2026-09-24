@@ -529,3 +529,31 @@ pipeline layout + riconoscimento). I test backend degli override e quelli
 della UI passano. Questo non sostituisce i benchmark GPU: in questa verifica il
 tunnel Vast risulta spento e il profilo attivo locale è PaddleOCR-VL su MLX.
 Perciò l'obiettivo di testare tutti e nove i modelli sulla RTX resta aperto.
+
+### MonkeyOCRv2 — benchmark Vast su RTX 4060 Ti (2026-09-24)
+
+Il setup è stato completato sull'istanza Vast 4060 Ti scelta per il test,
+senza volumi preesistenti. Hardware rilevato: 16.380 MiB VRAM, compute
+capability 8.9, driver 595.84 (CUDA dichiarata 13.2), 19 GiB RAM e disco
+container da 50 GiB. Il server usa il runner ufficiale MonkeyOCRv2 al commit
+`6cc0c0bb4864f2541fa6bc3a8f976cffaac8f359`, vLLM 0.25.1, BF16,
+`--gpu-memory-utilization 0.90`, contesto 16.384 e DFlash ufficiale attivo.
+Caricati il checkpoint base (1,64 GiB) e il draft (0,16 GiB). Dopo il warmup
+vLLM ha riportato 5,31 GiB disponibili per KV cache; non è una misura di
+throughput concorrente.
+
+Workflow nativo `two_stage`, impostazioni raccomandate senza override. Tutte
+le pagine hanno rispettato il protocollo; questi conteggi non sono una misura
+di accuratezza gold.
+
+| Pagina | Blocchi validi | Caratteri | Wall | TTFT | Report |
+|---|---:|---:|---:|---:|---|
+| `LSI_17186_015` | 7/7 | 6.700 | 16,596 s | 0,619 s | `data/benchmarks/vast-rtx-4060-ti-20260924/monkeyocrv2/LSI_17186_015.json` |
+| `LSI_17187_008` | 7/7 | 6.481 | 7,231 s | 0,527 s | `data/benchmarks/vast-rtx-4060-ti-20260924/monkeyocrv2/LSI_17187_008.json` |
+| `LSIVS_17186_004` | 34/34 | 1.275 | 21,239 s | 0,474 s | `data/benchmarks/vast-rtx-4060-ti-20260924/monkeyocrv2/LSIVS_17186_004.json` |
+
+Questi report schema v3 registrano provider esplicito, ricetta, workflow e
+override effettivi. Il primo errore di benchmark (`Operation not permitted`)
+era il sandbox locale che bloccava il collegamento al tunnel; la prova è stata
+ripetuta con rete locale autorizzata e il risultato riportato sopra è valido.
+Il server è rimasto attivo sull'istanza al termine delle tre prove.
