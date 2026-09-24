@@ -352,7 +352,13 @@ class VllmClient:
             on_delta=on_delta,
             cancel_event=cancel_event,
         )
-        return self.adapter.parse_native_result(raw)
+        items = self.adapter.parse_native_result(raw)
+        if not items:
+            raise RuntimeError(
+                "QwenVL HTML non contiene blocchi con data-bbox valido; "
+                "il modello ha restituito contenuto senza coordinate di layout"
+            )
+        return items
 
     def glmocr_native_page(self, image: Image.Image) -> list[dict]:
         """Run the vendor's self-hosted GLM-OCR layout+region OCR pipeline."""

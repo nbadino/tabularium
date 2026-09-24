@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 from PIL import Image
+import pytest
 
 from app.services import inference as infmod
 from app.services import model_adapters
@@ -284,6 +285,17 @@ def test_qwen_native_page_uses_official_qwenvl_html_prompt_and_parser():
         "bbox": [10, 20, 300, 80], "label": "Text",
         "content": "Historic Shipping Index",
     }]
+
+
+def test_qwen_native_page_reports_html_without_layout_coordinates():
+    adapter = model_adapters.get_adapter("qwen3-vl-8b")
+    client = infmod.VllmClient(url="http://127.0.0.1:8888/v1", adapter=adapter)
+    client._chat = lambda image, prompt, **kwargs: (
+        "<html><body><p>```html</p><table><tr><td>Ship</td></tr></table></body></html>"
+    )
+
+    with pytest.raises(RuntimeError, match="senza coordinate di layout"):
+        client.qwen_native_page(Image.new("RGB", (400, 200), "white"))
 
 
 def test_glm_native_gateway_forwards_official_page_and_sampling(monkeypatch):
