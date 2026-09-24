@@ -20,10 +20,11 @@ from starlette.concurrency import run_in_threadpool
 
 _lock = asyncio.Lock()
 _client = None
+_default_sampling_params = None
 
 
 async def _startup() -> None:
-    global _client
+    global _client, _default_sampling_params
     from mineru_vl_utils import MinerUClient
 
     settings = json.loads(os.environ.get("TABULARIUM_MINERU_SETTINGS", "{}"))
@@ -48,26 +49,12 @@ async def _startup() -> None:
     if serving.get("max_num_seqs") is not None:
         options["max_concurrency"] = int(serving["max_num_seqs"])
     _client = MinerUClient(**options)
-    generation = settings.get("generation") or {}
-    if generation:
-        from mineru_vl_utils.mineru_client import MinerUSamplingParams
-
-        for task, current in list(_client.sampling_params.items()):
-            params = {
-                key: getattr(current, key, None)
-                for key in (
-                    "temperature", "top_p", "top_k", "presence_penalty",
-                    "frequency_penalty", "repetition_penalty", "no_repeat_ngram_size",
-                    "max_new_tokens",
-                )
-            }
-            for key, value in generation.items():
-                params["max_new_tokens" if key == "max_tokens" else key] = value
-            _client.sampling_params[task] = MinerUSamplingParams(**params)
+    _default_sampling_params = dict(_client.sampling_params)
 
 
 def _apply_generation(overrides: dict) -> None:
     if not overrides:
+        _client.sampling_params = dict(_default_sampling_params)
         return
     allowed = {
         "temperature", "top_p", "top_k", "max_tokens", "repetition_penalty",
@@ -77,7 +64,7 @@ def _apply_generation(overrides: dict) -> None:
         raise ValueError("unsupported generation setting")
     from mineru_vl_utils.mineru_client import MinerUSamplingParams
 
-    for task, current in list(_client.sampling_params.items()):
+    for task, current in _default_sampling_params.items():
         params = {
             key: getattr(current, key, None)
             for key in (

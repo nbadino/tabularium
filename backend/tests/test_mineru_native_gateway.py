@@ -35,6 +35,7 @@ def test_gateway_delegates_page_to_official_client_and_returns_blocks(monkeypatc
             return [{"type": "table", "bbox": [0.1, 0.2, 0.9, 0.8], "content": "<table/>"}]
 
     gateway._client = FakeMinerUClient()
+    gateway._default_sampling_params = {}
     payload = io.BytesIO()
     Image.new("RGB", (12, 8), "white").save(payload, format="PNG")
     with TestClient(gateway.app) as client:
@@ -82,6 +83,11 @@ def test_gateway_applies_upstream_workflow_and_generation_settings(monkeypatch):
     assert calls["options"]["max_concurrency"] == 3
     assert calls["options"]["layout_image_size"] == (1200, 1200)
     assert calls["options"]["image_analysis"] is True
+    gateway._apply_generation({"temperature": 0.2, "max_tokens": 1000})
     sampling = gateway._client.sampling_params["table"]
     assert sampling.temperature == 0.2
     assert sampling.max_new_tokens == 1000
+    gateway._apply_generation({})
+    reset_sampling = gateway._client.sampling_params["table"]
+    assert reset_sampling.temperature == 0.0
+    assert reset_sampling.max_new_tokens is None
