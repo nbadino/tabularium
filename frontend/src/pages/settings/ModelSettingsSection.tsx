@@ -58,7 +58,10 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
     try {
       const res = await apiGet<{ items: ModelSettingsItem[] }>('/system/model-settings')
       setItems(res.items)
-      setSelectedId((current) => current || res.items[0]?.adapter_id || '')
+      const nextId = selectedId || res.items[0]?.adapter_id || ''
+      setSelectedId(nextId)
+      const next = res.items.find((item) => item.adapter_id === nextId)
+      setDraft(next ? JSON.parse(JSON.stringify(next.effective)) : {})
     } catch (e) {
       setError(e)
     } finally {
@@ -68,9 +71,6 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
 
   useEffect(() => { void load() }, [])
   const selected = useMemo(() => items.find((item) => item.adapter_id === selectedId) ?? null, [items, selectedId])
-  useEffect(() => {
-    if (selected) setDraft(JSON.parse(JSON.stringify(selected.effective)))
-  }, [selected])
 
   const update = (section: string, key: string, raw: string) => {
     const value = raw === '' ? null : Number(raw)
@@ -140,7 +140,13 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
         <p className="mb-3 max-w-[75ch] text-[12px] text-[color:var(--color-ink-2)]">{t('settings.modelTuningIntro')}</p>
         <label className="mb-3 block max-w-xl">
           <span className="lbl">{t('settings.modelChoose')}</span>
-          <select className="fld mt-1 w-full" value={selectedId} onChange={(event) => { setSelectedId(event.target.value); setSaved(false) }} disabled={loading}>
+          <select className="fld mt-1 w-full" value={selectedId} onChange={(event) => {
+            const nextId = event.target.value
+            setSelectedId(nextId)
+            const next = items.find((item) => item.adapter_id === nextId)
+            setDraft(next ? JSON.parse(JSON.stringify(next.effective)) : {})
+            setSaved(false)
+          }} disabled={loading}>
             {items.map((item) => <option key={item.adapter_id} value={item.adapter_id}>{item.display_name}</option>)}
           </select>
         </label>
