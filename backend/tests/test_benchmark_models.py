@@ -21,6 +21,30 @@ def test_target_accepts_provider_and_model_owned_gateway():
     )
 
 
+def test_benchmark_report_redacts_endpoint_credentials_and_records_provider():
+    config = benchmark_models._configuration(
+        "mineru2.5", "vast",
+        url="https://user:secret@127.0.0.1:8888/v1?api_key=private",
+        native_url="http://token:private@127.0.0.1:8891/parse?key=private",
+    )
+
+    assert config["target"] == {
+        "provider": "vast",
+        "provider_source": "explicit target",
+        "api_endpoint": "https://127.0.0.1:8888/v1",
+        "native_endpoint": "http://127.0.0.1:8891/parse",
+    }
+    assert "secret" not in str(config)
+    assert "private" not in str(config)
+
+
+def test_benchmark_report_marks_missing_provider_instead_of_guessing():
+    config = benchmark_models._configuration("dots-ocr")
+
+    assert config["target"]["provider"] == "unspecified"
+    assert config["target"]["provider_source"] == "not supplied"
+
+
 def test_benchmark_configuration_records_effective_model_recipe():
     config = benchmark_models._configuration("mineru2.5")
 

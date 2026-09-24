@@ -332,8 +332,9 @@ Accetta più endpoint già avviati e registra, per ogni run:
 Il campo `output_file` nel report collega ogni misura al raw output esatto che
 l’ha prodotta.
 Ogni run conserva anche il proprio snapshot di configurazione nel report
-(`tabularium-vlm-benchmark-v2`), così due misure con override diversi non
-vengono scambiate per un confronto a parità di ricetta.
+(`tabularium-vlm-benchmark-v3`), inclusi provider dichiarato ed endpoint
+redatti. Così due misure con override diversi non vengono scambiate per un
+confronto a parità di ricetta, e i token nelle URL non finiscono nei report.
 
 Il parametro `--timeout` è ora propagato a tutti i task (`layout`, `text`,
 `table` ed `end2end`), non soltanto a END2END: una generazione non delimitata
@@ -507,6 +508,12 @@ MLX locali, ma il workflow HTML nativo ha restituito zero bbox validi; non va
 conteggiato come test riuscito. I report schema v2 creati separatamente il
 24 settembre registrano configurazione e override per Dots, Paddle e Qwen, ma
 non persistono provider/hardware e quindi non li attribuisco alla RTX Vast.
+
+Il runner corrente emette schema v3: registra provider esplicito e endpoint
+redatti (senza credenziali/query), oltre alla ricetta e agli override. Non
+deduce il provider dall'URL locale del tunnel; chi lancia il benchmark deve
+indicare `vast` nel target. Il report non interroga la GPU remota per dedurre
+modello o VRAM.
 
 La ricetta di provisioning cloud MinerU è stata aggiornata a
 `mineru-vl-utils[vllm]==2.0.5`, mantenendo vLLM 0.21.0. L'extra upstream 2.0.x

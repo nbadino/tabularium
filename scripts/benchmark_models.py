@@ -29,13 +29,37 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from html.parser import HTMLParser
+from urllib.parse import urlsplit, urlunsplit
 
 from PIL import Image
 
 from app.services import inference, model_adapters, model_settings, otsl, paddle_official, serve_recipes
 
 
-def _configuration(adapter_id: str, provider: str | None = None) -> dict:
+def _safe_endpoint(value: str | None) -> str | None:
+    """Keep endpoint identity while dropping credentials and query secrets."""
+    if not value:
+        return None
+    try:
+        parsed = urlsplit(value)
+        if not parsed.scheme or not parsed.hostname:
+            return "<configured-endpoint>"
+        hostname = parsed.hostname
+        if ":" in hostname:
+            hostname = f"[{hostname}]"
+        netloc = hostname + (f":{parsed.port}" if parsed.port is not None else "")
+        return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
+    except ValueError:
+        return "<configured-endpoint>"
+
+
+def _configuration(
+    adapter_id: str,
+    provider: str | None = None,
+    *,
+    url: str | None = None,
+    native_url: str | None = None,
+) -> dict:
     """Capture the exact selected model recipe and effective user settings.
 
     Latency/output without this snapshot is not enough to compare runs: two
@@ -57,6 +81,12 @@ def _configuration(adapter_id: str, provider: str | None = None) -> dict:
     except ValueError:
         workflow = None
     return {
+        "target": {
+            "provider": provider or "unspecified",
+            "provider_source": "explicit target" if provider else "not supplied",
+            "api_endpoint": _safe_endpoint(url),
+            "native_endpoint": _safe_endpoint(native_url),
+        },
         "hf_repo": adapter.capabilities.hf_repo,
         "native_workflow": workflow,
         "recommended_settings": settings["recommended"],
@@ -249,7 +279,7 @@ def main() -> int:
     ) / "report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report = {
-        "schema": "tabularium-vlm-benchmark-v2",
+        "schema": "tabularium-vlm-benchmark-v3",
         "image": str(args.image),
         "image_size": [image.width, image.height],
         "task": args.task,
@@ -275,9 +305,11 @@ def main() -> int:
         target_results = []
         for iteration in range(args.repeat):
             started = time.perf_counter()
-            entry = {"adapter_id": adapter_id, "url": url, "model": model,
+            entry = {"adapter_id": adapter_id, "url": _safe_endpoint(url), "model": model,
                      "iteration": iteration + 1,
-                     "configuration": _configuration(adapter_id, provider)}
+                     "configuration": _configuration(
+                         adapter_id, provider, url=url, native_url=native_url,
+                     )}
             try:
                 summary, trace, wall_s, output = _run(client, image, args.task, args.timeout, args.max_pixels)
                 protocol_valid = bool(summary.get("protocol_valid", True))
@@ -314,7 +346,7 @@ def main() -> int:
         successful = [r for r in target_results if r["ok"]]
         elapsed = [r["wall_s"] for r in successful]
         report["results"].append({
-            "adapter_id": adapter_id, "url": url, "model": model,
+            "adapter_id": adapter_id, "url": _safe_endpoint(url), "model": model,
             "runs": target_results,
             "aggregate": {
                 "ok": len(successful), "failed": len(target_results) - len(successful),
