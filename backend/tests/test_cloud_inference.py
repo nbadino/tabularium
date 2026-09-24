@@ -1462,11 +1462,16 @@ def test_vast_configuration_signature_changes_when_serving_settings_change(tmp_p
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "dots-recipe.db")
     init_db()
     default = cm.build_provision_recipe("dots-ocr")
-    model_settings.save_settings("dots-ocr", {"serving": {"gpu_memory_utilization": 0.8}})
+    model_settings.save_settings("dots-ocr", {"serving": {
+        "gpu_memory_utilization": 0.8,
+        "dtype": "half",
+    }})
     tuned = cm.build_provision_recipe("dots-ocr")
 
     assert default["configuration_signature"] != tuned["configuration_signature"]
     assert tuned["argv"][tuned["argv"].index("--gpu-memory-utilization") + 1] == "0.8"
+    assert tuned["argv"][tuned["argv"].index("--dtype") + 1] == "half"
+    assert tuned["serving_overrides"]["dtype"] == "half"
 
 
 def test_teleocr_cloud_provision_installs_official_architecture_plugin():

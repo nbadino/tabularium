@@ -179,7 +179,11 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
               <section>
                 <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelGeneration')}</h3>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-                  {GENERATION_FIELDS.filter((field) => field.key !== 'no_repeat_ngram_size' || ['teleocr', 'mineru2.5'].includes(selected.adapter_id)).map((field) => numberField('generation', field.key, t(`settings.modelField.${field.key}`), field.min, field.max, field.step, true))}
+                  {GENERATION_FIELDS.filter((field) => {
+                    if (field.key === 'no_repeat_ngram_size') return ['teleocr', 'mineru2.5'].includes(selected.adapter_id)
+                    if (selected.adapter_id === 'glm-ocr' && ['presence_penalty', 'frequency_penalty'].includes(field.key)) return false
+                    return true
+                  }).map((field) => numberField('generation', field.key, t(`settings.modelField.${field.key}`), field.min, field.max, field.step, true))}
                 </div>
               </section>
               <section>

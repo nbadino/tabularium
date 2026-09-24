@@ -75,6 +75,11 @@ _PADDLE_WORKFLOW_FIELDS = (
     | set(_PADDLE_WORKFLOW_ENUMS)
 )
 _NO_REPEAT_ADAPTERS = {"teleocr", "mineru2.5"}
+_UNSUPPORTED_GENERATION_FIELDS = {
+    # glmocr's official PageLoader sampling surface does not expose these;
+    # its cloud gateway rejects them instead of silently dropping them.
+    "glm-ocr": {"presence_penalty", "frequency_penalty"},
+}
 
 
 def _defaults(adapter_id: str) -> dict[str, Any]:
@@ -285,6 +290,16 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
             if section == "image" and adapter_id == "mineru2.5" and values:
                 raise HTTPException(status_code=422, detail="MinerU usa la propria preparazione immagini; regola layout_image_size nelle opzioni del workflow ufficiale")
             overrides[section] = _validated_section(section, values)
+            unsupported_generation = (
+                set(overrides[section]) & _UNSUPPORTED_GENERATION_FIELDS.get(adapter_id, set())
+                if section == "generation" else set()
+            )
+            if unsupported_generation:
+                fields = ", ".join(sorted(unsupported_generation))
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"generation non supportato dal workflow ufficiale {adapter_id}: {fields}",
+                )
             if (
                 section == "image" and adapter_id == "teleocr"
                 and overrides[section].get("max_pixels", 0) > 64_000_000

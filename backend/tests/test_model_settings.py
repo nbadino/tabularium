@@ -238,6 +238,9 @@ def test_glm_uses_upstream_scheduler_default_and_allows_manual_batch_budget(tmp_
     })
     assert saved["effective"]["serving"]["max_num_batched_tokens"] == 32768
     assert saved["effective"]["generation"]["top_p"] == 0.00001
+    for field in ("presence_penalty", "frequency_penalty"):
+        with pytest.raises(HTTPException, match="workflow ufficiale glm-ocr"):
+            model_settings.save_settings("glm-ocr", {"generation": {field: 0.2}})
 
 
 def test_model_settings_use_official_qwen_generation_and_deepseek_n_gram_defaults(tmp_path, monkeypatch):

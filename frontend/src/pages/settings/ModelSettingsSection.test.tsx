@@ -85,6 +85,20 @@ describe('ModelSettingsSection', () => {
     ))
   })
 
+  it('nasconde a GLM-OCR le penalità non accettate dal suo SDK ufficiale', async () => {
+    vi.mocked(apiGet).mockResolvedValueOnce({ items: [{
+      adapter_id: 'glm-ocr', display_name: 'GLM-OCR',
+      recommended: { serving: {}, generation: {}, image: { max_pixels: null }, workflow: { speculative_tokens: 1 } },
+      overrides: {},
+      effective: { serving: {}, generation: {}, image: { max_pixels: null }, workflow: { speculative_tokens: 1 } },
+      restart_required: false,
+    }] } as never)
+    render(<ModelSettingsSection isAdmin />)
+    expect(await screen.findByLabelText(/Temperature/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/Presence penalty/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Frequency penalty/i)).not.toBeInTheDocument()
+  })
+
   it('inoltra i controlli del workflow ufficiale PaddleOCR-VL', async () => {
     const workflow = Object.fromEntries([
       'use_layout_detection', 'use_doc_orientation_classify', 'use_doc_unwarping',
