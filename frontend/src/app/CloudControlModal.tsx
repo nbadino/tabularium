@@ -323,8 +323,9 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   const [vastDiskGb, setVastDiskGb] = useState('80')
   const [vastVram, setVastVram] = useState('24')
   const [vastNet, setVastNet] = useState('')
-  // 12.9 è il minimo per compilare i kernel delle GPU sm_120 (Blackwell).
-  const [vastCuda, setVastCuda] = useState('12.8')
+  // Le recipe vLLM fissate richiedono il driver CUDA 12.9; il filtro viene
+  // riallineato automaticamente al modello quando cambia la selezione.
+  const [vastCuda, setVastCuda] = useState('12.9')
   const [vastVerified, setVastVerified] = useState(true)
   const [vastAccount, setVastAccount] = useState<VastAccount | null>(null)
   const [vastSshKey, setVastSshKey] = useState<VastSshKey | null>(null)
@@ -368,9 +369,12 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
     ? Math.ceil((recipeFreeDiskGb + 28) / 10) * 10
     : 80
   const recommendedVastVramGb = selectedVastRecipe
-    ? Math.ceil((selectedVastRecipe.min_free_vram_gb + 2) / 4) * 4
+    // Vast reports installed VRAM, whereas setup measures free VRAM. Keep a
+    // small 2 GB host/runtime allowance without rounding to broad 4 GB tiers;
+    // those tiers unnecessarily hide otherwise usable budget GPUs.
+    ? Math.ceil(selectedVastRecipe.min_free_vram_gb + 2)
     : 24
-  const recommendedVastCuda = selectedVastRecipe?.min_cuda_driver ?? 12.8
+  const recommendedVastCuda = selectedVastRecipe?.min_cuda_driver ?? 12.9
   // Vast reports total host RAM, while the setup preflight checks MemAvailable.
   // Reserve room for the OS and host-side pipeline workers when searching.
   const recommendedVastHostRamGb = (selectedVastRecipe?.min_free_ram_gb ?? 8) + 4

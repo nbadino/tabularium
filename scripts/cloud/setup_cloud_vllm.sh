@@ -41,11 +41,15 @@ MIN_COMPUTE_CAP="${MIN_COMPUTE_CAP:-7.5}"
 # Il driver deve saper eseguire la CUDA con cui e' compilato il PyTorch che
 # installiamo (indice cu128): un driver piu' vecchio fa fallire vLLM molto
 # dopo, con "The NVIDIA driver on your system is too old".
-MIN_CUDA_DRIVER="${MIN_CUDA_DRIVER:-12.8}"
+MIN_CUDA_DRIVER="${MIN_CUDA_DRIVER:-12.9}"
 # Ambiente Python isolato: le immagini recenti (Ubuntu 24.04) hanno pip gestito
 # dalla distro, che rifiuta sia l'auto-aggiornamento sia gli install di sistema
 # (PEP 668). Un venv rende il setup indipendente dall'immagine scelta.
 VENV_DIR="${VENV_DIR:-$HOME/tabularium-venv}"
+# Vast/shared hosts can have brief PyPI stalls; pip's short default timeout
+# turned a transient slow wheel into a false "no matching distribution" error.
+export PIP_DEFAULT_TIMEOUT="${PIP_DEFAULT_TIMEOUT:-120}"
+export PIP_RETRIES="${PIP_RETRIES:-10}"
 
 # Parse flags
 while [[ $# -gt 0 ]]; do

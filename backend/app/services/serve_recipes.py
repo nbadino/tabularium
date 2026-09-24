@@ -34,7 +34,8 @@ class ServeRecipe:
     # 750 = sm_75). This is the runtime floor, distinct from a model's
     # preferred dtype; BF16 recipes can use FP16 on older supported cards.
     min_compute_capability: float = 7.5
-    min_cuda_driver: float = 12.8
+    # The pinned vLLM wheels used by the cloud recipes target CUDA 12.9.
+    min_cuda_driver: float = 12.9
     # Empty means let the pinned vLLM release resolve its supported range.
     # Model plugins may constrain Transformers themselves (TeleOCR does).
     transformers_version: str = ""
