@@ -601,3 +601,20 @@ impostazioni effettive. Durante il serving il modello ha occupato quasi tutta
 la VRAM disponibile (887 MiB liberi osservati dopo il warmup), quindi questa
 configurazione è verificata su 16 GB ma lascia poco margine per altri processi
 GPU concorrenti.
+
+### Stato risorse delle ricette non ancora provate — 2026-09-24
+
+Dopo il benchmark Paddle, il filesystem overlay del container Vast mostra circa
+11 GB liberi su 50 GB; non sono stati rimossi pesi o ambienti. Applicando i
+budget `resource_budget()` del catalogo, il provisioning da ambiente pulito
+richiede 21–28 GB per le ricette pip. Dots.mocr richiede 12 GB anche quando il
+suo runtime esiste già, quindi il preflight deve fermarlo prima di scaricare.
+GLM-OCR (23 GB), TeleOCR (23 GB) e DeepSeek-OCR-2 (27 GB) richiedono ciascuno
+un nuovo ambiente con versioni incompatibili: non li installo sopra l'ambiente
+Paddle condiviso né aggiro il controllo. Unlimited-OCR richiede la propria
+immagine Docker (budget iniziale 19 GB), che non è quella di questa istanza.
+Qwen3-VL-8B richiede 23 GB di VRAM secondo il budget della ricetta, oltre ai
+16 GB totali della RTX 4060 Ti. Questi sono blocker di risorse/configurazione,
+non esiti negativi d’inferenza; per completare la matrice servono più disco e,
+per Qwen, una GPU con più VRAM o una ricetta quantizzata ufficialmente
+supportata.
