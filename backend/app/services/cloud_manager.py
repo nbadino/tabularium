@@ -2020,7 +2020,11 @@ def provision_log(host: str, port: int, *, user: str = "root", lines: int = 80) 
             -1,
         )
         if successful_vram >= 0:
-            failure_log = log[successful_vram + 1:]
+            # Both positions above are indexes into `markers_seen`. Slicing
+            # `log` here mixes two differently filtered arrays and can retain
+            # the old server's EngineDeadError, falsely marking a successful
+            # model replacement as failed while the new engine is loading.
+            failure_log = markers_seen[successful_vram + 1:]
     # Prima le diagnostiche dello script ("!!"), poi l'ultimo errore del server.
     failure = next((line for line in reversed(failure_log) if line.startswith("!!")), "")
     if not failure:

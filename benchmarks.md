@@ -581,6 +581,27 @@ Esito 3/3 valido a livello di protocollo; il numero di blocchi e i caratteri
 non certificano accuratezza senza annotazioni gold. I report schema v3
 registrano endpoint nativo, recipe e impostazioni effettive.
 
+#### MinerU2.5 — riprovisioning sulla stessa RTX e regressione dei log
+
+Il 24 settembre il controllo in sola lettura dell’account ha ritrovato la RTX
+4060 Ti attiva con Dots in servizio. Il checkpoint MinerU e l’ambiente
+`mineru-vl-utils 2.0.5` / vLLM 0.21.0 erano già presenti; il setup ha quindi
+riusato entrambi, superato il preflight con 15 GB liberi di VRAM e 13 GB su
+disco, e sostituito solo il server Tabularium sulla porta 8888. Il primo stato
+UI appariva fallito perché il parser attribuiva al nuovo avvio l’`EngineDeadError`
+registrato durante lo shutdown intenzionale di Dots. Corretti il filtro del log
+e aggiunto un test di regressione.
+
+| Pagina | Blocchi validi | Caratteri | Wall | Report |
+|---|---:|---:|---:|---|
+| `LSI_17186_015` | 8/8 | 8.560 | 17,828 s | `data/benchmarks/vast-rtx-4060-ti-20260924/mineru2.5-reprovisioned/LSI_17186_015.json` |
+| `LSI_17187_008` | 8/8 | 8.425 | 15,455 s | `data/benchmarks/vast-rtx-4060-ti-20260924/mineru2.5-reprovisioned/LSI_17187_008.json` |
+| `LSIVS_17186_004` | 80/80 | 1.236 | 12,661 s | `data/benchmarks/vast-rtx-4060-ti-20260924/mineru2.5-reprovisioned/LSIVS_17186_004.json` |
+
+I report schema v3 confermano provider Vast, endpoint nativo, ricetta e
+impostazioni effettive senza override. Il risultato resta una verifica del
+protocollo, non dell’accuratezza rispetto al gold.
+
 ### PaddleOCR-VL 1.6 — benchmark Vast con workflow nativo (2026-09-24)
 
 Sulla stessa RTX 4060 Ti, PaddleOCR-VL è stato servito con vLLM 0.28.0 e la

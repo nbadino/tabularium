@@ -1275,6 +1275,30 @@ def test_provision_log_keeps_a_live_setup_in_progress(monkeypatch, tmp_path):
     assert out["failed"] is False and out["phase"] == "weights"
 
 
+def test_provision_log_ignores_old_engine_failure_after_controlled_replacement(monkeypatch, tmp_path):
+    monkeypatch.setattr(cloud_manager.config, "SSH_KNOWN_HOSTS", tmp_path / "known_hosts")
+
+    class Result:
+        returncode = 0
+        stderr = ""
+        stdout = "\n".join([
+            cloud_manager._ALIVE_MARKER,
+            cloud_manager._PHASE_SECTION,
+            "(APIServer pid=5390) RuntimeError: EngineDeadError from the previous model",
+            "Arresto controllato del server Tabularium sulla porta 8888",
+            ">> Preflight VRAM: 15 GB liberi; budget ricetta 9 GB — OK.",
+            ">> [Tabularium Cloud Server] Avvio vLLM su 0.0.0.0:8888...",
+            cloud_manager._TAIL_SECTION,
+            "(EngineCore pid=7090) Initializing a V1 LLM engine",
+        ])
+
+    monkeypatch.setattr(cloud_manager.subprocess, "run", lambda *a, **k: Result())
+    out = cloud_manager.provision_log("ssh5.vast.ai", 34567)
+    assert out["failed"] is False
+    assert out["alive"] is True
+    assert out["phase"] == "serving"
+
+
 def test_liveness_probe_cannot_match_itself(monkeypatch, tmp_path):
     """`pgrep -f` confronta le righe di comando: senza le parentesi quadre la
     sonda troverebbe sé stessa e ogni processo risulterebbe vivo."""
