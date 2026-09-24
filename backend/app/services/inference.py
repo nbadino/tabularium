@@ -498,14 +498,14 @@ class VllmClient:
         prepared = _fit_pixels(image, min_pixels=min_pixels, max_pixels=cap)
         prepared.convert("RGB").save(buf, format="PNG")
         data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
-        # Tutti gli endpoint OpenAI-compatible, incluso Modal, usano lo
-        # streaming: la UI può mostrare i delta durante il decoding. La
-        # compatibilità Modal è garantita drenando la risposta fino a [DONE]
-        # anche quando `_OuterListScanner` ha già trovato la lista completa.
-        stream_response = True
+        # Alcuni client upstream usano risposte OpenAI non-streaming. Manteniamo
+        # il loro protocollo; gli adapter senza preferenza dichiarata conservano
+        # lo streaming usato dalla UI.
+        stream_response = bool(getattr(self.adapter, "stream_response", True))
+        prompt_prefix = str(getattr(self.adapter, "image_prompt_prefix", "") or "")
         content = [
             {"type": "image_url", "image_url": {"url": data_uri}},
-            {"type": "text", "text": prompt},
+            {"type": "text", "text": f"{prompt_prefix}{prompt}"},
         ]
         if getattr(self.adapter, "multimodal_content_order", "image-text") == "text-image":
             content.reverse()
@@ -578,7 +578,6 @@ class VllmClient:
                             message = choice.get("message") or {}
                             delta = message.get("content") or ""
                             if delta:
-                                first_token_at = time.perf_counter()
                                 chunks.append(delta)
                                 if on_delta:
                                     on_delta(delta)

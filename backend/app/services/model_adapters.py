@@ -610,16 +610,20 @@ class DotsOcrAdapter(_StubAdapter):
     intero servito da vLLM (~3B totali). `--chat-template-content-format
     string` e `--gpu-memory-utilization 0.9` sono prescritti dal README
     ufficiale. Il parser ufficiale usa temperature 0.1, top_p 1.0, massimo
-    16384 token e tetto immagine 11289600 pixel. `string` governa il template
-    testuale e non interferisce con l'invio multimodale OpenAI di
-    `VllmClient._chat`."""
+    32768 token e tetto immagine 11289600 pixel. Il client upstream invia una
+    risposta OpenAI non-streaming e antepone
+    `<|img|><|imgpad|><|endofimg|>` al testo del prompt perché vLLM v1 altrimenti
+    inserisce una newline nel punto sbagliato. L'adapter dichiara questi
+    dettagli wire invece di ereditare le convenzioni generiche di Tabularium."""
 
     adapter_id = "dots-ocr"
     native_prefill_mode = "end2end"
+    image_prompt_prefix = "<|img|><|imgpad|><|endofimg|>"
+    stream_response = False
     recommended_generation = {
         "temperature": 0.1,
         "top_p": 1.0,
-        "max_tokens": 16384,
+        "max_tokens": 32768,
     }
     capabilities = ModelCapabilities(
         adapter_id=adapter_id,

@@ -602,19 +602,45 @@ la VRAM disponibile (887 MiB liberi osservati dopo il warmup), quindi questa
 configurazione è verificata su 16 GB ma lascia poco margine per altri processi
 GPU concorrenti.
 
-### Stato risorse delle ricette non ancora provate — 2026-09-24
+### dots.mocr — benchmark Vast con chiamata upstream (2026-09-24)
 
-Dopo il benchmark Paddle, il filesystem overlay del container Vast mostra circa
-11 GB liberi su 50 GB; non sono stati rimossi pesi o ambienti. Applicando i
-budget `resource_budget()` del catalogo, il provisioning da ambiente pulito
-richiede 21–28 GB per le ricette pip. Dots.mocr richiede 12 GB anche quando il
-suo runtime esiste già, quindi il preflight deve fermarlo prima di scaricare.
-GLM-OCR (23 GB), TeleOCR (23 GB) e DeepSeek-OCR-2 (27 GB) richiedono ciascuno
-un nuovo ambiente con versioni incompatibili: non li installo sopra l'ambiente
-Paddle condiviso né aggiro il controllo. Unlimited-OCR richiede la propria
-immagine Docker (budget iniziale 19 GB), che non è quella di questa istanza.
-Qwen3-VL-8B richiede 23 GB di VRAM secondo il budget della ricetta, oltre ai
-16 GB totali della RTX 4060 Ti. Questi sono blocker di risorse/configurazione,
-non esiti negativi d’inferenza; per completare la matrice servono più disco e,
-per Qwen, una GPU con più VRAM o una ricetta quantizzata ufficialmente
-supportata.
+Il checkpoint da 5,7 GiB è stato servito sulla RTX 4060 Ti con vLLM 0.28.0,
+BF16, `--gpu-memory-utilization 0.9`, `--trust-remote-code` e
+`--chat-template-content-format string`. vLLM ha usato il contesto del
+checkpoint (131.072 token), FlashAttention 2 e 4,35 GiB di KV cache. La prova
+usa la chiamata del parser upstream: prompt `prompt_layout_all_en`, temperatura
+0.1, `top_p=1.0`, `max_completion_tokens=32768`, massimo immagine 11.289.600
+pixel, token immagine `<|img|><|imgpad|><|endofimg|>` e risposta OpenAI
+non-streaming.
+
+| Pagina | Blocchi validi | Caratteri | Wall | Report |
+|---|---:|---:|---:|---|
+| `LSI_17186_015` | 8/8 | 8.522 | 60,455 s | `data/benchmarks/vast-rtx-4060-ti-20260924/dots-ocr/LSI_17186_015-official.json` |
+| `LSI_17187_008` | 8/8 | 8.303 | 65,635 s | `data/benchmarks/vast-rtx-4060-ti-20260924/dots-ocr/LSI_17187_008-official.json` |
+| `LSIVS_17186_004` | 35/35 | 1.281 | 31,647 s | `data/benchmarks/vast-rtx-4060-ti-20260924/dots-ocr/LSIVS_17186_004-official.json` |
+
+Esito 3/3 valido a livello di protocollo, non di accuratezza gold. Non-streaming
+non espone TTFT o token/s: entrambi restano `null`. Un primo tentativo sul
+vecchio tunnel SSH si è interrotto; con un tunnel keepalive il protocollo
+upstream ha completato le tre richieste. La VRAM libera dopo il warmup è circa
+430 MiB: il modello è utilizzabile sulla 4060 Ti, senza margine per carichi GPU
+concorrenti. Fonte primaria: [repository ufficiale dots.mocr](https://github.com/studio-dots-ai/dots.mocr),
+sezioni “vLLM inference” e “Document Parse”.
+
+### Stato risorse dei modelli ancora da provare su questa RTX — 2026-09-24
+
+Prima di scaricare Dots, il filesystem overlay da 50 GB aveva 11 GB liberi e
+7,6 GB erano cache pip rigenerabile degli ambienti già installati. È stata
+svuotata solo quella cache; checkpoint ed ambienti verificati sono stati
+preservati. Dopo aver scaricato Dots e aver completato i test, il controllo
+remoto mostra circa 13 GB liberi.
+
+GLM-OCR (23 GB), TeleOCR (23 GB) e DeepSeek-OCR-2 (27 GB) richiedono più spazio
+per installare i rispettivi ambienti con pin incompatibili; i valori sono i
+preflight `resource_budget()` e non verranno aggirati. Unlimited-OCR richiede
+la propria immagine Docker (budget iniziale 19 GB), che non è quella di questa
+istanza. Qwen3-VL-8B richiede 23 GB di VRAM secondo il budget della ricetta,
+oltre ai 16 GB totali della RTX 4060 Ti. Sono limiti di provisioning/hardware,
+non esiti negativi d’inferenza: completare la matrice su questa istanza richiede
+più disco e, per Qwen, una GPU con più VRAM o una ricetta quantizzata
+ufficialmente supportata.

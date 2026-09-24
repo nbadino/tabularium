@@ -223,6 +223,8 @@ def test_trace_reports_effective_adapter_max_tokens(monkeypatch):
         def __enter__(self): return self
         def __exit__(self, *_args): return False
         def raise_for_status(self): return None
+        def json(self):
+            return {"choices": [{"finish_reason": "stop", "message": {"content": "ok"}}]}
         def iter_lines(self, decode_unicode=True):
             del decode_unicode
             yield 'data: ' + json.dumps({"choices": [{"delta": {"content": "ok"}}]})
@@ -240,8 +242,14 @@ def test_trace_reports_effective_adapter_max_tokens(monkeypatch):
         Image.new("RGB", (12, 12), "white"), adapter.prompt_for("end2end"),
         max_tokens=20480, sampling=client._sampling_for("end2end"), task="end2end",
     ) == "ok"
-    assert captured["max_tokens"] == 16384
-    assert client.last_trace["max_tokens"] == 16384
+    assert captured["max_tokens"] == 32768
+    assert client.last_trace["max_tokens"] == 32768
+    assert captured["stream"] is False
+    assert captured["messages"][0]["content"][1]["text"].startswith(
+        "<|img|><|imgpad|><|endofimg|>"
+    )
+    assert client.last_trace["ttft_s"] is None
+    assert client.last_trace["tokens_per_s"] is None
 
 
 def test_dots_serve_uses_required_chat_template_content_format():
