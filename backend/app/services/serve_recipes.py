@@ -30,6 +30,11 @@ class ServeRecipe:
     # `parsing/serve.py` — "docker": immagine dedicata, non installabile via pip.
     runtime: str
     vllm_version: str = ""
+    # Vast offer filters use Vast's documented `compute_cap` scale (e.g.
+    # 750 = sm_75). This is the runtime floor, distinct from a model's
+    # preferred dtype; BF16 recipes can use FP16 on older supported cards.
+    min_compute_capability: float = 7.5
+    min_cuda_driver: float = 12.8
     # Empty means let the pinned vLLM release resolve its supported range.
     # Model plugins may constrain Transformers themselves (TeleOCR does).
     transformers_version: str = ""
@@ -68,6 +73,7 @@ RECIPES: dict[str, ServeRecipe] = {
         # l'engine e il pipeline layout+OCR vivono nello stesso processo. La
         # dipendenza upstream installa il modello vLLM e il logits processor.
         vllm_version="0.11.0",
+        min_compute_capability=7.0,
         transformers_version="4.57.1",
         native_remote_port=8889,
         pip_extra=(
@@ -244,6 +250,8 @@ def resource_budget(recipe: ServeRecipe) -> dict[str, int]:
         # Host RAM backs tokenizer workers, weight staging and multimodal
         # preprocessing in addition to the GPU-resident model.
         "min_free_ram_gb": max(8, math.ceil(size_gb * 1.25 + 6)),
+        "min_compute_capability": recipe.min_compute_capability,
+        "min_cuda_driver": recipe.min_cuda_driver,
     }
 
 

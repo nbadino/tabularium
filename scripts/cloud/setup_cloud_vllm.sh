@@ -37,7 +37,7 @@ MIN_DISK_GB_WAS_SET=0
 if [ -n "${MIN_DISK_GB+x}" ]; then MIN_DISK_GB_WAS_SET=1; fi
 MIN_DISK_GB_REQUESTED="${MIN_DISK_GB:-20}"
 MIN_DISK_GB="$MIN_DISK_GB_REQUESTED"
-MIN_COMPUTE_CAP="${MIN_COMPUTE_CAP:-8.0}"
+MIN_COMPUTE_CAP="${MIN_COMPUTE_CAP:-7.5}"
 # Il driver deve saper eseguire la CUDA con cui e' compilato il PyTorch che
 # installiamo (indice cu128): un driver piu' vecchio fa fallire vLLM molto
 # dopo, con "The NVIDIA driver on your system is too old".
@@ -110,6 +110,8 @@ EOF
   RECIPE_MIN_DISK_GB_CACHED=$(printf '%s' "$RECIPE_B64" | base64 -d | python3 -c "import json,sys; r=json.load(sys.stdin); print(int(r.get('min_free_disk_gb_cached',r.get('min_free_disk_gb_reuse',r.get('min_free_disk_gb',20)))))")
   RECIPE_MIN_VRAM_GB=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('min_free_vram_gb', 10)))")
   RECIPE_MIN_RAM_GB=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('min_free_ram_gb', 12)))")
+  MIN_COMPUTE_CAP=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(float(json.load(sys.stdin).get('min_compute_capability', 7.5)))")
+  MIN_CUDA_DRIVER=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(float(json.load(sys.stdin).get('min_cuda_driver', 12.8)))")
   RECIPE_NATIVE_GATEWAY_B64=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('native_gateway_b64') or '')")
   RECIPE_NATIVE_REMOTE_PORT=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('native_remote_port') or '')")
   RECIPE_DRAFT_HF_REPO=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('draft_hf_repo') or '')")
@@ -303,10 +305,29 @@ if command -v nvidia-smi &>/dev/null; then
   GPU_QUERY=$(nvidia-smi --query-gpu=name,memory.total,driver_version,compute_cap --format=csv,noheader)
   COMPUTE_CAP=$(printf '%s\n' "$GPU_QUERY" | awk -F',' 'NR==1 {gsub(/[[:space:]]/, "", $4); print $4}')
   if ! awk -v actual="$COMPUTE_CAP" -v minimum="$MIN_COMPUTE_CAP" 'BEGIN { exit !(actual + 0 >= minimum + 0) }'; then
-    echo "!! GPU con compute capability ${COMPUTE_CAP:-sconosciuta}: servono almeno ${MIN_COMPUTE_CAP} per la recipe bf16." >&2
+    echo "!! GPU con compute capability ${COMPUTE_CAP:-sconosciuta}: la ricetta richiede almeno ${MIN_COMPUTE_CAP}." >&2
     exit 1
   fi
   echo ">> Compute capability verificata: $COMPUTE_CAP (minima $MIN_COMPUTE_CAP)"
+  # vLLM supports Turing (sm_75), but those cards do not execute BF16. Keep
+  # producer-recommended BF16 on Ampere+ and select the equivalent supported
+  # FP16 engine dtype on older cards instead of excluding them from search.
+  if awk -v cap="$COMPUTE_CAP" 'BEGIN { exit !(cap + 0 < 8.0) }'; then
+    if [ "$RECIPE_RUNTIME" = "teleocr-native" ]; then
+      RECIPE_TELEOCR_SETTINGS=$(printf '%s' "$RECIPE_TELEOCR_SETTINGS" | python3 -c 'import json,sys; x=json.load(sys.stdin); x.setdefault("serving", {})["dtype"]="half"; print(json.dumps(x,separators=(",",":")))')
+    elif [ "$RECIPE_INSTALL_VLLM" = "1" ]; then
+      has_dtype=0
+      for ((i=0; i<${#SERVE_ARGV[@]}; i++)); do
+        if [ "${SERVE_ARGV[$i]}" = "--dtype" ] && [ $((i+1)) -lt ${#SERVE_ARGV[@]} ]; then
+          SERVE_ARGV[$((i+1))]="half"
+          has_dtype=1
+          break
+        fi
+      done
+      if [ "$has_dtype" = "0" ]; then SERVE_ARGV+=(--dtype half); fi
+    fi
+    echo ">> Precisione adattata alla GPU sm_${COMPUTE_CAP}: FP16 (BF16 richiede sm_80+)."
+  fi
 
   # La compute capability dice cosa sa fare la GPU, non cosa sa eseguire il
   # driver. Sono due cose diverse: una 3060 ha capability 8.6 e passa il

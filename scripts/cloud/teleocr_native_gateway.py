@@ -36,7 +36,7 @@ async def _startup() -> None:
     serving = settings.get("serving") or {}
     image = settings.get("image") or {}
     engine_args = {
-        "dtype": "bfloat16",
+        "dtype": serving.get("dtype", "bfloat16"),
         "gpu_memory_utilization": serving.get("gpu_memory_utilization", 0.95),
         "max_model_len": serving.get("max_model_len", 16384),
     }

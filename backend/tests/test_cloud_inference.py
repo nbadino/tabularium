@@ -1074,10 +1074,13 @@ def test_vast_search_translates_hardware_filters(monkeypatch):
     _fake_vast_client(monkeypatch, {("PUT", "/search/asks/"): {"offers": []}}, calls)
     cloud_manager.search_vast_offers(
         "token", gpu_name="RTX 4090", max_dph=0.5, disk_gb=60,
-        min_gpu_ram_gb=24, min_inet_down=200, min_cuda=12.4, verified_only=True,
+        min_gpu_ram_gb=24, min_cpu_ram_gb=32, min_compute_capability=7.5,
+        min_inet_down=200, min_cuda=12.4, verified_only=True,
     )
     q = calls[0]["json"]["q"]
     assert q["gpu_ram"] == {"gte": 24 * 1024.0}
+    assert q["cpu_ram"] == {"gte": 32_000.0}
+    assert q["compute_cap"] == {"gte": 750}
     assert q["disk_space"] == {"gte": 60.0}
     assert q["allocated_storage"] == 60.0
     assert q["inet_down"] == {"gte": 200.0}
@@ -1092,8 +1095,22 @@ def test_vast_search_omits_unset_filters(monkeypatch):
     _fake_vast_client(monkeypatch, {("PUT", "/search/asks/"): {"offers": []}}, calls)
     cloud_manager.search_vast_offers("token")
     q = calls[0]["json"]["q"]
-    for absent in ("gpu_ram", "inet_down", "cuda_max_good", "verified", "gpu_name", "dph_total"):
+    for absent in ("gpu_ram", "cpu_ram", "compute_cap", "inet_down", "cuda_max_good", "verified", "gpu_name", "dph_total"):
         assert absent not in q, absent
+
+
+def test_vast_search_applies_per_architecture_cuda_floor(monkeypatch):
+    calls: list = []
+    _fake_vast_client(monkeypatch, {("PUT", "/search/asks/"): {"offers": [
+        {"id": 1, "compute_cap": 1200, "cuda_max_good": 12.8},
+        {"id": 2, "compute_cap": 1200, "cuda_max_good": 12.9},
+        {"id": 3, "compute_cap": 750, "cuda_max_good": 12.8},
+        {"id": 4, "compute_cap": 700, "cuda_max_good": 13.0},
+    ]}}, calls)
+    result = cloud_manager.search_vast_offers(
+        "token", min_compute_capability=7.5, min_cuda=12.8,
+    )
+    assert [item["id"] for item in result] == [2, 3]
 
 
 def test_provision_rejects_a_truncated_transfer(monkeypatch, tmp_path):

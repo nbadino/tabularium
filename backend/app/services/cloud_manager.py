@@ -575,6 +575,8 @@ def search_vast_offers(
     limit: int = 12,
     disk_gb: int = 40,
     min_gpu_ram_gb: float | None = None,
+    min_cpu_ram_gb: float | None = None,
+    min_compute_capability: float | None = None,
     min_inet_down: float | None = None,
     min_cuda: float | None = None,
     verified_only: bool = False,
@@ -606,6 +608,11 @@ def search_vast_offers(
     if min_gpu_ram_gb:
         # `gpu_ram` è in MB nel catalogo del provider.
         query["gpu_ram"] = {"gte": float(min_gpu_ram_gb) * 1024.0}
+    if min_cpu_ram_gb:
+        query["cpu_ram"] = {"gte": float(min_cpu_ram_gb) * 1000.0}
+    if min_compute_capability:
+        # Vast's API/CLI encode 7.5 as 750 (not 7.5).
+        query["compute_cap"] = {"gte": round(float(min_compute_capability) * 100)}
     if disk_gb:
         query["disk_space"] = {"gte": float(disk_gb)}
     if min_inet_down:
@@ -642,6 +649,8 @@ def search_vast_offers(
             "gpu_name": offer.get("gpu_name") or offer.get("gpu_name_display"),
             "num_gpus": offer.get("num_gpus", 1),
             "gpu_ram": offer.get("gpu_ram") or offer.get("gpu_ram_mb"),
+            "cpu_ram": offer.get("cpu_ram"),
+            "compute_cap": offer.get("compute_cap"),
             "dph_total": offer.get("dph_total") or offer.get("dph"),
             "reliability": offer.get("reliability"),
             "location": offer.get("geolocation") or offer.get("location") or offer.get("country"),
@@ -651,7 +660,27 @@ def search_vast_offers(
             "inet_down": offer.get("inet_down"),
             "cuda_max_good": offer.get("cuda_max_good"),
         })
-    return _with_cost("vast", [item for item in result if item["id"] is not None])
+    # Vast's search API cannot express a conditional rule such as
+    # "Blackwell needs CUDA 12.9, other supported cards need 12.8". Apply that
+    # last compatibility check locally before offers reach the rent button.
+    compatible = []
+    for item in result:
+        if item["id"] is None:
+            continue
+        cap = item.get("compute_cap")
+        cuda = item.get("cuda_max_good")
+        required_cuda = float(min_cuda or 0)
+        try:
+            if cap is not None and float(cap) >= 1200:
+                required_cuda = max(required_cuda, 12.9)
+            if cuda is not None and float(cuda) < required_cuda:
+                continue
+            if min_compute_capability and cap is not None and float(cap) < float(min_compute_capability) * 100:
+                continue
+        except (TypeError, ValueError):
+            continue
+        compatible.append(item)
+    return _with_cost("vast", compatible)
 
 
 def rent_vast_instance(

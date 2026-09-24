@@ -91,6 +91,9 @@ interface VastOffer {
   num_gpus: number
   /** VRAM per GPU, in MB come la espone il provider. */
   gpu_ram: number | null
+  cpu_ram?: number | null
+  /** Vast encodes compute capability as 750 for sm_75. */
+  compute_cap?: number | null
   dph_total: number | null
   reliability: number | null
   location: string | null
@@ -132,6 +135,9 @@ interface VastModel {
   min_free_disk_gb: number
   /** VRAM libera minima consigliata dal preset del modello. */
   min_free_vram_gb: number
+  min_free_ram_gb?: number
+  min_compute_capability?: number
+  min_cuda_driver?: number
 }
 
 /**
@@ -318,7 +324,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   const [vastVram, setVastVram] = useState('24')
   const [vastNet, setVastNet] = useState('')
   // 12.9 è il minimo per compilare i kernel delle GPU sm_120 (Blackwell).
-  const [vastCuda, setVastCuda] = useState('12.9')
+  const [vastCuda, setVastCuda] = useState('12.8')
   const [vastVerified, setVastVerified] = useState(true)
   const [vastAccount, setVastAccount] = useState<VastAccount | null>(null)
   const [vastSshKey, setVastSshKey] = useState<VastSshKey | null>(null)
@@ -364,6 +370,10 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   const recommendedVastVramGb = selectedVastRecipe
     ? Math.ceil((selectedVastRecipe.min_free_vram_gb + 2) / 4) * 4
     : 24
+  const recommendedVastCuda = selectedVastRecipe?.min_cuda_driver ?? 12.8
+  // Vast reports total host RAM, while the setup preflight checks MemAvailable.
+  // Reserve room for the OS and host-side pipeline workers when searching.
+  const recommendedVastHostRamGb = (selectedVastRecipe?.min_free_ram_gb ?? 8) + 4
 
   useEffect(() => {
     setVastDiskGb(String(recommendedVastDiskGb))
@@ -371,6 +381,9 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   useEffect(() => {
     setVastVram(String(recommendedVastVramGb))
   }, [recommendedVastVramGb])
+  useEffect(() => {
+    setVastCuda(String(recommendedVastCuda))
+  }, [recommendedVastCuda])
   const [vastMonkeyRef, setVastMonkeyRef] = useState('')
   const [sshHost, setSshHost] = useState('')
   const [sshPort, setSshPort] = useState('')
@@ -1081,8 +1094,10 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
         ...credential, gpu_name: vastGpu.trim(), max_dph: vastMaxDph ? Number(vastMaxDph) : null,
         disk_gb: Math.max(Number(vastDiskGb) || 40, recommendedVastDiskGb),
         min_gpu_ram_gb: vastVram ? Math.max(Number(vastVram), recommendedVastVramGb) : recommendedVastVramGb,
+        min_cpu_ram_gb: recommendedVastHostRamGb,
+        min_compute_capability: selectedVastRecipe?.min_compute_capability ?? 7.5,
         min_inet_down: vastNet ? Number(vastNet) : null,
-        min_cuda: vastCuda ? Number(vastCuda) : null,
+        min_cuda: vastCuda ? Math.max(Number(vastCuda), recommendedVastCuda) : recommendedVastCuda,
         verified_only: vastVerified,
         num_gpus: 1, min_reliability: 0.95, instance_type: 'on-demand',
       })
@@ -1732,6 +1747,16 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
                     </label>
                   </div>
                 </details>
+                <p className="mt-2 text-[11px] text-[color:var(--color-ink-2)]">
+                  {t('cloud.control.compatibilityFilter', {
+                    model: selectedVastRecipe?.adapter_id ?? wantedAdapter,
+                    vram: recommendedVastVramGb,
+                    ram: recommendedVastHostRamGb,
+                    disk: recommendedVastDiskGb,
+                    compute: (selectedVastRecipe?.min_compute_capability ?? 7.5).toFixed(1),
+                    cuda: recommendedVastCuda.toFixed(1),
+                  })}
+                </p>
                 <button type="button" onClick={() => void handleSearchVast()} disabled={vastBusy} className="btn btn-primary mt-3">
                   {vastBusy ? t('cloud.control.loading') : t('cloud.control.findOffers')}
                 </button>
@@ -1754,6 +1779,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
                               net: offer.inet_down == null ? '—' : String(Math.round(offer.inet_down)),
                             })}
                             {offer.cuda_max_good != null && ` · CUDA ${offer.cuda_max_good}`}
+                            {offer.compute_cap != null && ` · sm_${(offer.compute_cap / 100).toFixed(1)}`}
                             {' · '}{offer.reliability == null ? '—' : `${(offer.reliability * 100).toFixed(1)}%`} · {offer.location || t('cloud.control.locationUnknown')}
                           </div>
                         </div>
