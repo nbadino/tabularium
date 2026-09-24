@@ -23,7 +23,7 @@ def test_monkeyocr_adapter_contract():
     ("adapter_id", "expected"),
     [
         ("monkeyocrv2-parsing", "two_stage"),
-        ("mineru2.5", "two_stage"),
+        ("mineru2.5", "official"),
         ("teleocr", "official"),
         ("unlimited-ocr", "end2end"),
         ("deepseek-ocr", "end2end"),
@@ -77,6 +77,16 @@ def test_deepseek_native_workflow_parses_vendor_grounded_markdown():
     ]
 
 
+def test_mineru_native_result_converts_official_fractional_boxes():
+    adapter = get_adapter("mineru2.5")
+    result = adapter.parse_native_result([
+        {"type": "table", "bbox": [0.1, 0.2, 0.9, 0.8], "content": "<table></table>"},
+        {"type": "equation", "bbox": [0.0, 0.0, 1.0, 1.0], "content": "x^2"},
+    ])
+    assert result == [
+        {"bbox": [100, 200, 900, 800], "label": "Table", "content": "<table></table>"},
+        {"bbox": [0, 0, 1000, 1000], "label": "Formula", "content": "x^2"},
+    ]
 def test_teleocr_native_result_maps_vendor_content_blocks():
     adapter = get_adapter("teleocr")
     items = adapter.parse_native_result([

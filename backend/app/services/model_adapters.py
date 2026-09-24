@@ -206,50 +206,17 @@ class _StubAdapter:
 
 
 class MinerU2_5Adapter(_StubAdapter):
-    """opendatalab/MinerU2.5 — due stadi (layout su downscale + contenuto su
-    crop nativo), OTSL nativo per le tabelle: l'architettura più vicina a
-    quella già in uso per MonkeyOCRv2, al punto che il suo protocollo si
-    incastra nel nostro `layout()` + `recognize()`/`table_grid()` esistenti.
+    """MinerU2.5 adapter using the released MinerUClient on Vast.
 
-    `serve_command` verificato sul runtime MinerU 3.4.5 e
-    github.com/opendatalab/mineru-vl-utils (agosto 2026): richiede
-    `--logits-processors
-    mineru_vl_utils:MinerULogitsProcessor` per il `no_repeat_ngram_size` che
-    evita generazioni ripetute — attivato lato server dal flag, lato client
-    dalle penalità in `sampling_for`. Il pacchetto Python va installato
-    **senza** l'extra `[vllm]`: la matrice di compatibilità pubblicata dichiara
-    vLLM <0.22.0; la template Modal usa 0.21.0 — il logits
-    processor sta nel pacchetto base, non nell'extra (v.
-    `scripts/cloud/modal_mineru.py`). L'extra `[vllm]` dichiara vLLM
-    `<0.22.0`; la template usa quindi 0.21.0. Nota anche per chi volesse
-    installare `mineru-vl-utils` nell'ambiente di Tabularium stesso (non
-    fatto: nessuna release supporta ancora Python 3.14, la versione qui in
-    uso) — è il motivo per cui il protocollo è reimplementato sotto invece di
-    dipendere dal client ufficiale.
-
-    `hf_repo` aggiornato all'ultimo checkpoint "Pro" della stessa famiglia
-    1.2B (stesso comando di serve, solo repo diverso); l'esempio verificato
-    dalla guida usa `opendatalab/MinerU2.5-2509-1.2B`.
-
-    `prompt_for`/`parse_layout`/`sampling_for` reimplementano (non wrappano)
-    il protocollo di `mineru_vl_utils.MinerUClient.two_step_extract()`,
-    verificato leggendo `mineru_client.py`/`structs.py` sul repo ufficiale:
-      - prompt "Layout Detection:" → blocchi `<|box_start|>x1 y1 x2 y2
-        <|box_end|><|ref_start|>tipo<|ref_end|>[rotazione]testo`, coordinate
-        già in scala 0–1000 (lo stesso schema di MonkeyOCRv2: il client
-        ufficiale le normalizza a [0,1] dividendo per 1000, qui si tengono
-        grezze). Il testo di coda è quasi sempre vuoto per blocchi non-testo:
-        la ricognizione vera arriva dal secondo giro.
-      - prompt "Table Recognition:"/"Text Recognition:"/"Formula Recognition:"
-        per il secondo giro, con penalità anti-ripetizione dedicate.
-      - il client ufficiale salta il secondo giro per liste/formule/immagini
-        (resta il testo di coda del layout, spesso vuoto); qui non serve
-        replicarlo: il prefill di Tabularium chiama `recognize()` solo su
-        richiesta esplicita (tabelle), il resto lo trascrive l'utente.
+    The default native workflow delegates page resize, layout, crop
+    preparation, concurrent recognition and post-processing to OpenDataLab's
+    ``MinerUClient``. Prompt/parser methods remain available only for an
+    explicitly selected direct OpenAI-compatible workflow and diagnostics.
     """
 
     adapter_id = "mineru2.5"
-    native_prefill_mode = "two_stage"
+    native_prefill_mode = "official"
+    page_layout_fallback = "official-pipeline"
     # Il client ufficiale MinerUClient prepara il layout a 1036x1036
     # esattamente (non a un tetto di pixel con aspect ratio conservato). Il
     # checkpoint si aspetta questa rappresentazione; lasciarla cambiare in
@@ -274,7 +241,7 @@ class MinerU2_5Adapter(_StubAdapter):
         display_name="MinerU2.5",
         tasks=("layout", "text", "table", "formula"),
         coordinate_system="normalized-0-1000",
-        table_format="otsl",
+        table_format="html",
         training_types=(),
         inference_modes=("vllm",),
         hardware=("cuda",),
@@ -283,7 +250,7 @@ class MinerU2_5Adapter(_StubAdapter):
         approx_size_gb=2.5,
         license_note="",
         train_toolchain="none",
-        serve_backend="teleocr-native",
+        serve_backend="vllm-openai-native-client",
         served_model_name="mineru2.5",
         # Il checkpoint corrente dichiara max_position_embeddings=8192 nella
         # text_config; vLLM 0.28 rifiuta correttamente 16384 senza il flag
@@ -397,24 +364,53 @@ class MinerU2_5Adapter(_StubAdapter):
             return {**base, "presence_penalty": 1.0, "frequency_penalty": 0.005, "max_tokens": 2048}
         return {**base, "presence_penalty": 1.0, "frequency_penalty": 0.05}
 
+    def parse_native_result(self, blocks: object) -> list[dict]:
+        """Map MinerUClient's normalized ContentBlock list to app coordinates."""
+        if not isinstance(blocks, list):
+            return []
+        labels = {
+            "text": "Text", "title": "Title", "table": "Table",
+            "equation": "Formula", "formula_number": "Formula",
+            "equation_block": "Formula", "image": "Picture", "chart": "Picture",
+            "image_block": "Picture", "header": "Page-header",
+            "footer": "Page-footer", "page_number": "Page-footer",
+            "page_footnote": "Footnote", "table_footnote": "Footnote",
+            "image_footnote": "Footnote", "list": "List-item",
+            "list_item": "List-item", "ref_text": "List-item",
+            "table_caption": "Caption", "image_caption": "Caption",
+            "code_caption": "Caption", "code": "Text", "algorithm": "Text",
+            "aside_text": "Note", "index": "Text", "phonetic": "Text",
+        }
+        items = []
+        for block in blocks:
+            if isinstance(block, dict):
+                kind, bbox, content = block.get("type"), block.get("bbox"), block.get("content")
+            else:
+                kind = getattr(block, "type", None)
+                bbox = getattr(block, "bbox", None)
+                content = getattr(block, "content", None)
+            if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                continue
+            try:
+                coords = [round(float(value) * 1000) for value in bbox]
+            except (TypeError, ValueError):
+                continue
+            if not (0 <= coords[0] < coords[2] <= 1000 and 0 <= coords[1] < coords[3] <= 1000):
+                continue
+            items.append({
+                "bbox": coords,
+                "label": labels.get(str(kind or "text").lower(), "Text"),
+                "content": str(content or ""),
+            })
+        return items
+
     def serve_command(self, model_path: str, port: int) -> list[str] | None:
-        # `--dtype`/`--gpu-memory-utilization`/`--max-model-len`/
-        # `--max-num-seqs`/`--max-num-batched-tokens` non sono raccomandati da
-        # nessuna guida ufficiale OpenDataLab (nessuna VRAM minima dichiarata,
-        # solo benchmark su A100): valori scelti qui per una GPU consumer da
-        # 8 GB, non vendor-verificati. Nota: il `config.json` del checkpoint
-        # dichiara `max_position_embeddings=32768` a livello top-level ma
-        # `8192` nella sotto-struct `text_config` — discrepanza non spiegata
-        # da OpenDataLab; il limite 8192 del text_config è quello applicabile.
+        # Match OpenDataLab's documented vLLM command. Hardware/context
+        # limits are model/server settings and can be overridden explicitly.
         return [
             "vllm", "serve", model_path,
             "--port", str(port),
             "--logits-processors", "mineru_vl_utils:MinerULogitsProcessor",
-            "--dtype", "bfloat16",
-            "--gpu-memory-utilization", "0.75",
-            "--max-model-len", "8192",
-            "--max-num-seqs", "4",
-            "--max-num-batched-tokens", "8192",
             "--served-model-name", self.capabilities.served_model_name,
         ]
 

@@ -94,6 +94,7 @@ RECIPE_NATIVE_REMOTE_PORT=""
 RECIPE_DRAFT_HF_REPO=""
 RECIPE_DRAFT_MODEL_DIR=""
 RECIPE_TELEOCR_SETTINGS="{}"
+RECIPE_MINERU_SETTINGS="{}"
 RECIPE_CONFIG_SIGNATURE=""
 SERVE_ARGV=()
 if [ -n "$RECIPE_B64" ]; then
@@ -115,6 +116,7 @@ EOF
   RECIPE_DRAFT_MODEL_DIR=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('draft_model_dir') or '')")
   RECIPE_CONFIG_SIGNATURE=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('configuration_signature') or '')")
   RECIPE_TELEOCR_SETTINGS=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('settings') or {},separators=(',',':'))) ")
+  RECIPE_MINERU_SETTINGS=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('settings') or {},separators=(',',':'))) ")
   RECIPE_TRANSFORMERS_VERSION=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('transformers_version') or '')")
   if [ -n "$RECIPE_TRANSFORMERS_VERSION" ]; then TRANSFORMERS_VERSION="$RECIPE_TRANSFORMERS_VERSION"; fi
   # Un ambiente per combinazione compatibile di framework/pin/extra: i modelli
@@ -644,6 +646,32 @@ if [ "$RECIPE_ADAPTER" = "glm-ocr" ]; then
   export TABULARIUM_SERVER_API_KEY="$API_KEY"
   export TABULARIUM_GLMOCR_VLLM_PORT="$PORT"
   "$PY_BIN" -m uvicorn "$NATIVE_MODULE:app" \
+    --app-dir "$VENV_DIR" --host 127.0.0.1 \
+    --port "$RECIPE_NATIVE_REMOTE_PORT" --no-access-log \
+    >> "$REMOTE_LOG_PATH" 2>&1 < /dev/null &
+  GATEWAY_PID=$!
+  "$PY_BIN" "${SERVE_ARGV[@]}" >> "$REMOTE_LOG_PATH" 2>&1 < /dev/null &
+  MODEL_PID=$!
+  trap 'kill "$GATEWAY_PID" "$MODEL_PID" 2>/dev/null || true; wait 2>/dev/null || true' EXIT TERM INT
+  set +e
+  wait -n "$GATEWAY_PID" "$MODEL_PID"
+  RESULT=$?
+  set -e
+  exit "$RESULT"
+fi
+
+if [ "$RECIPE_ADAPTER" = "mineru2.5" ]; then
+  if [ -z "$RECIPE_NATIVE_GATEWAY_B64" ] || [ -z "$RECIPE_NATIVE_REMOTE_PORT" ]; then
+    echo "!! Gateway MinerUClient non incluso nella ricetta MinerU2.5; rifiuto un avvio parziale." >&2
+    exit 2
+  fi
+  NATIVE_GATEWAY="$VENV_DIR/tabularium_mineru_gateway.py"
+  printf '%s' "$RECIPE_NATIVE_GATEWAY_B64" | base64 -d > "$NATIVE_GATEWAY"
+  export TABULARIUM_SERVER_API_KEY="$API_KEY"
+  export TABULARIUM_MINERU_MODEL="$MODEL_NAME"
+  export TABULARIUM_MINERU_SETTINGS="$RECIPE_MINERU_SETTINGS"
+  export TABULARIUM_MINERU_VLLM_URL="http://127.0.0.1:$PORT"
+  "$PY_BIN" -m uvicorn tabularium_mineru_gateway:app \
     --app-dir "$VENV_DIR" --host 127.0.0.1 \
     --port "$RECIPE_NATIVE_REMOTE_PORT" --no-access-log \
     >> "$REMOTE_LOG_PATH" 2>&1 < /dev/null &

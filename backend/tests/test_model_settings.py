@@ -30,6 +30,21 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
     }
     assert dots_defaults["image"]["max_pixels"] == 11_289_600
 
+    mineru_defaults = model_settings.get_settings("mineru2.5")
+    assert mineru_defaults["recommended"]["workflow"]["layout_image_size"] == [1036, 1036]
+    mineru = model_settings.save_settings("mineru2.5", {
+        "generation": {"temperature": 0.15},
+        "workflow": {"layout_image_size": [1200, 1200], "image_analysis": True},
+    })
+    assert mineru["effective"]["generation"]["temperature"] == 0.15
+    assert mineru["effective"]["workflow"]["layout_image_size"] == [1200, 1200]
+    assert mineru["effective"]["workflow"]["image_analysis"] is True
+    assert mineru["restart_required"] is True
+    with pytest.raises(HTTPException, match="preparazione immagini"):
+        model_settings.save_settings("mineru2.5", {"image": {"max_pixels": 2_000_000}})
+    with pytest.raises(HTTPException, match="layout_image_size deve contenere"):
+        model_settings.save_settings("mineru2.5", {"workflow": {"layout_image_size": [100, 100]}})
+
     saved = model_settings.save_settings("teleocr", {
         "serving": {"max_num_seqs": 2},
         "generation": {"temperature": 0.1},

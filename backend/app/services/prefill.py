@@ -439,6 +439,11 @@ def model_prelabel_events(
                         # GLM-OCR's official SDK owns PP-DocLayout, region OCR,
                         # and document-order formatting for self-hosted vLLM.
                         items = client.glmocr_native_page(image)
+                    elif client.adapter.adapter_id == "mineru2.5":
+                        # MinerUClient owns layout resize, crop preparation,
+                        # concurrent recognition, HTML table output and its
+                        # post-processing; keep the full page in that runner.
+                        items = client.mineru_native_page(image)
                     else:
                         paddle_backend = "vllm-server"
                         if client.provider == "local":
@@ -629,12 +634,12 @@ def model_prelabel_events(
                             grid = None
                     try:
                         if grid is None:
-                            if mm == "official" and client.adapter.adapter_id == "teleocr":
-                                # The official TeleOCR runner has already
+                            if mm == "official" and client.adapter.adapter_id in {"teleocr", "mineru2.5"}:
+                                # These producer-owned runners have already
                                 # recognized and post-processed the table.
-                                # Do not replace it with Tabularium's separate
-                                # crop workflow when its result is malformed.
-                                k["error"] = "output OTSL TeleOCR non valido: tabella lasciata da revisionare"
+                                # Do not substitute a separate crop workflow
+                                # when their native result cannot be parsed.
+                                k["error"] = f"output tabella nativo {client.adapter.adapter_id} non valido: tabella lasciata da revisionare"
                             else:
                                 grid = _recognize_table(
                                     client, image, k["bbox"],

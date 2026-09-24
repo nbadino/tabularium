@@ -373,6 +373,42 @@ class VllmClient:
             raise RuntimeError("risposta non JSON dal pipeline ufficiale GLM-OCR") from exc
         return self.adapter.parse_native_result(payload.get("json_result"))
 
+    def mineru_native_page(self, image: Image.Image) -> list[dict]:
+        """Run OpenDataLab's MinerUClient pipeline through the cloud gateway."""
+        if self.adapter.adapter_id != "mineru2.5":
+            raise RuntimeError("il runner nativo MinerU richiede l'adapter MinerU2.5")
+        if not self.native_url:
+            raise RuntimeError(
+                "pipeline ufficiale MinerU non raggiungibile: collega il tunnel Vast "
+                "dell'istanza preparata con la ricetta MinerU2.5"
+            )
+        buffer = io.BytesIO()
+        image.convert("RGB").save(buffer, format="PNG")
+        headers = self._headers()
+        headers.pop("Content-Type", None)
+        try:
+            from . import model_settings
+
+            generation = model_settings.get_settings("mineru2.5")["effective"].get("generation", {})
+            if generation:
+                headers["x-mineru-generation"] = json.dumps(generation, separators=(",", ":"))
+        except (ImportError, KeyError, ValueError):
+            pass
+        try:
+            response = requests.post(
+                f"{self.native_url}/parse",
+                data=buffer.getvalue(),
+                headers=headers,
+                timeout=max(self.timeout, 600),
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except requests.RequestException as exc:
+            raise RuntimeError(f"pipeline ufficiale MinerU non disponibile: {exc}") from exc
+        except ValueError as exc:
+            raise RuntimeError("risposta non JSON dal pipeline ufficiale MinerU") from exc
+        return self.adapter.parse_native_result(payload.get("blocks"))
+
     @property
     def is_cloud(self) -> bool:
         """Indica se l'endpoint punta a un server remoto/cloud o alla macchina locale.
@@ -1234,7 +1270,7 @@ def get_inference_config() -> dict:
         profile = None
 
     native_url = None
-    if adapter_id in {"teleocr", "glm-ocr"} and provider == "vast":
+    if adapter_id in {"teleocr", "glm-ocr", "mineru2.5"} and provider == "vast":
         try:
             from . import cloud_manager
             tunnel = cloud_manager.get_tunnel_status()

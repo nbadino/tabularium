@@ -130,6 +130,14 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
             if adapter_id == "paddleocr-vl"
             else {"ngram_size": 35, "window_size": 128, "image_mode": "gundam"}
             if adapter_id == "unlimited-ocr"
+            else {
+                "layout_image_size": [1036, 1036], "min_image_edge": 28,
+                "max_image_edge_ratio": 50.0, "simple_post_process": False,
+                "handle_equation_block": True, "abandon_list": False,
+                "abandon_paratext": False, "image_analysis": False,
+                "enable_table_formula_eq_wrap": False,
+            }
+            if adapter_id == "mineru2.5"
             else {}
         ),
         # None preserves the mlx-vlm version's own default. These only apply
@@ -172,7 +180,7 @@ def get_settings(adapter_id: str) -> dict[str, Any]:
         "restart_required": bool(
             overrides.get("serving")
             or overrides.get("mlx")
-            or (adapter_id in {"glm-ocr", "monkeyocrv2-parsing"} and overrides.get("workflow"))
+            or (adapter_id in {"glm-ocr", "monkeyocrv2-parsing", "mineru2.5"} and overrides.get("workflow"))
         ),
     }
 
@@ -239,6 +247,8 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
                 raise HTTPException(status_code=422, detail="impostazioni MLX non disponibili per questo modello")
             if section == "image" and adapter_id not in {"paddleocr-vl", "qwen3-vl-8b"} and "min_pixels" in values:
                 raise HTTPException(status_code=422, detail="image.min_pixels è disponibile solo nei workflow PaddleOCR-VL e Qwen3-VL")
+            if section == "image" and adapter_id == "mineru2.5" and values:
+                raise HTTPException(status_code=422, detail="MinerU usa la propria preparazione immagini; regola layout_image_size nelle opzioni del workflow ufficiale")
             overrides[section] = _validated_section(section, values)
             if (
                 section == "image" and adapter_id == "teleocr"
@@ -342,6 +352,36 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
                 if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
                     raise HTTPException(status_code=422, detail=f"workflow.{key} deve essere un intero tra {lo} e {hi}")
                 result[key] = value
+            overrides[section] = result
+        elif adapter_id == "mineru2.5":
+            fields = {
+                "layout_image_size", "min_image_edge", "max_image_edge_ratio",
+                "simple_post_process", "handle_equation_block", "abandon_list",
+                "abandon_paratext", "image_analysis", "enable_table_formula_eq_wrap",
+            }
+            if set(values) - fields:
+                raise HTTPException(status_code=422, detail="parametro workflow MinerU2.5 non riconosciuto")
+            result = {}
+            if values.get("layout_image_size") is not None:
+                size = values["layout_image_size"]
+                if (not isinstance(size, (list, tuple)) or len(size) != 2
+                        or any(isinstance(v, bool) or not isinstance(v, int) or not 256 <= v <= 4096 for v in size)):
+                    raise HTTPException(status_code=422, detail="workflow.layout_image_size deve contenere due interi tra 256 e 4096")
+                result["layout_image_size"] = list(size)
+            for key, bounds in {"min_image_edge": (1, 4096), "max_image_edge_ratio": (1, 200)}.items():
+                value = values.get(key)
+                if value is None:
+                    continue
+                lo, hi = bounds
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not lo <= value <= hi:
+                    raise HTTPException(status_code=422, detail=f"workflow.{key} deve essere tra {lo} e {hi}")
+                result[key] = float(value) if key == "max_image_edge_ratio" else int(value)
+            for key in fields - {"layout_image_size", "min_image_edge", "max_image_edge_ratio"}:
+                value = values.get(key)
+                if value is not None:
+                    if not isinstance(value, bool):
+                        raise HTTPException(status_code=422, detail=f"workflow.{key} deve essere booleano")
+                    result[key] = value
             overrides[section] = result
         elif values:
             raise HTTPException(status_code=422, detail="workflow personalizzato non disponibile per questo modello")

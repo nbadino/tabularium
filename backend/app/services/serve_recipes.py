@@ -100,14 +100,18 @@ RECIPES: dict[str, ServeRecipe] = {
         adapter_id="mineru2.5",
         hf_repo="opendatalab/MinerU2.5-Pro-2605-1.2B",
         served_model_name="mineru2.5",
-        runtime="vllm",
+        # The official MinerUClient owns layout preparation, block extraction,
+        # asynchronous OCR fan-out, and post-processing. vLLM remains the
+        # model server; a small sidecar invokes that upstream client.
+        runtime="mineru-native",
         # L'extra `[vllm]` di mineru-vl-utils dichiara vLLM < 0.22.
         vllm_version="0.21.0",
-        pip_extra=("mineru-vl-utils",),
+        native_remote_port=8891,
+        pip_extra=("mineru-vl-utils==1.0.5",),
         serve_args=(
             "--logits-processors", "mineru_vl_utils:MinerULogitsProcessor",
         ),
-        source="README MinerU2.5: il logits processor è parte della ricetta, non un'opzione",
+        source="README MinerU2.5: MinerUClient http-client + logits processor ufficiale",
     ),
     "dots-ocr": ServeRecipe(
         adapter_id="dots-ocr",
@@ -255,8 +259,8 @@ def serve_argv(
 ) -> list[str]:
     """Comando di serving completo, ricetta più infrastruttura."""
     if recipe.runtime == "teleocr-native":
-        # The producer's pipeline owns AsyncLLM in its TeleOCRClient sidecar;
-        # there is no separate OpenAI-compatible `vllm serve` process.
+        # The producer's pipeline owns the full document workflow in its
+        # sidecar and constructs AsyncLLM directly.
         return []
     if recipe.runtime == "monkeyocr":
         argv = ["serve.py", "--model-path", model_path]

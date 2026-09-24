@@ -1489,7 +1489,10 @@ def test_teleocr_cloud_provision_installs_official_architecture_plugin():
     assert monkey["argv"][monkey["argv"].index("-d") + 1] == monkey["draft_model_dir"]
 
     mineru = cm.build_provision_recipe("mineru2.5")
-    assert mineru["pip_extra"] == ["mineru-vl-utils"]
+    assert mineru["pip_extra"] == ["mineru-vl-utils==1.0.5"]
+    assert mineru["runtime"] == "mineru-native"
+    assert mineru["native_remote_port"] == 8891
+    assert b"MinerUClient" in base64.b64decode(mineru["native_gateway_b64"])
 
 
 def test_monkey_dflash_is_skipped_for_custom_or_lora_checkpoints_when_disabled(tmp_path, monkeypatch):

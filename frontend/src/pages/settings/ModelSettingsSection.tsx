@@ -5,7 +5,7 @@ import { useI18n } from '../../i18n'
 import { Badge, ErrorNotice, Module, Notice } from '../../app/ui'
 import type { SectionProps } from './SettingsPage'
 
-type SettingValue = number | string | boolean | null
+type SettingValue = number | string | boolean | number[] | null
 type Values = Record<string, Record<string, SettingValue>>
 interface ModelSettingsItem {
   adapter_id: string
@@ -51,6 +51,9 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [saved, setSaved] = useState(false)
+  const mineruLayoutSize = Array.isArray(draft.workflow?.layout_image_size)
+    ? draft.workflow.layout_image_size as number[]
+    : [1036, 1036]
 
   const load = async () => {
     setLoading(true)
@@ -87,7 +90,7 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
       const values = draft[section] ?? {}
       const defaults = selected?.recommended[section] ?? {}
       const changed = Object.fromEntries(
-        Object.entries(values).filter(([key, value]) => value !== null && value !== defaults[key]),
+        Object.entries(values).filter(([key, value]) => value !== null && JSON.stringify(value) !== JSON.stringify(defaults[key])),
       ) as Record<string, SettingValue>
       if (Object.keys(changed).length) result[section] = changed
     }
@@ -118,7 +121,7 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
         <span className="lbl">{label}</span>
         <input
           type="number" min={min} max={max} step={step}
-          value={typeof value === 'boolean' ? '' : value ?? ''}
+          value={typeof value === 'boolean' || Array.isArray(value) ? '' : value ?? ''}
           placeholder={automatic ? t('settings.modelAuto') : recommended == null ? t('settings.modelAuto') : String(recommended)}
           disabled={!isAdmin || loading || saving}
           onChange={(event) => update(section, key, event.target.value)}
@@ -170,7 +173,7 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
               <section>
                 <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelImage')}</h3>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-                  {numberField('image', 'max_pixels', t('settings.modelField.max_pixels'), 0, 128000000, 1000, true)}
+                  {selected.adapter_id !== 'mineru2.5' && numberField('image', 'max_pixels', t('settings.modelField.max_pixels'), 0, 128000000, 1000, true)}
                   {['paddleocr-vl', 'qwen3-vl-8b'].includes(selected.adapter_id) && numberField('image', 'min_pixels', t('settings.modelField.min_pixels'), 1, 64000000, 1000, true)}
                 </div>
                 <p className="mt-2 text-[10px] text-[color:var(--color-ink-3)]">{t('settings.modelPixelsHint')}</p>
@@ -220,6 +223,39 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
                   </select>
                 </label>
                 <p className="mt-1 text-[10px] text-[color:var(--color-ink-3)]">{t('settings.teleocrLayoutOfficial')}</p>
+              </section>
+            )}
+            {selected.adapter_id === 'mineru2.5' && (
+              <section className="mt-4 max-w-3xl border-t border-[color:var(--color-rule)] pt-3">
+                <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelWorkflow')}</h3>
+                <p className="mb-3 max-w-[75ch] text-[11px] text-[color:var(--color-ink-2)]">MinerUClient ufficiale: dimensione del layout, preparazione dei ritagli, post-processing e riconoscimento di formule/immagini.</p>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {numberField('workflow', 'min_image_edge', 'min_image_edge', 1, 4096, 1)}
+                  {numberField('workflow', 'max_image_edge_ratio', 'max_image_edge_ratio', 1, 200, 1)}
+                  {(['simple_post_process', 'handle_equation_block', 'abandon_list', 'abandon_paratext', 'image_analysis', 'enable_table_formula_eq_wrap'] as const).map((key) => (
+                    <label key={key} className="block border-t border-[color:var(--color-rule)] pt-2">
+                      <span className="lbl">{key}</span>
+                      <select className="fld mt-1 w-full" value={String(draft.workflow?.[key] ?? (key === 'handle_equation_block'))} disabled={!isAdmin || loading || saving}
+                        onChange={(event) => { setDraft((current) => ({ ...current, workflow: { ...(current.workflow ?? {}), [key]: event.target.value === 'true' } })); setSaved(false) }}>
+                        <option value="true">{t('settings.paddleEnabled')}</option>
+                        <option value="false">{t('settings.paddleDisabled')}</option>
+                      </select>
+                    </label>
+                  ))}
+                  {(['width', 'height'] as const).map((axis, index) => (
+                    <label key={axis} className="block border-t border-[color:var(--color-rule)] pt-2">
+                      <span className="lbl">layout_image_size {axis}</span>
+                      <input className="fld mt-1 w-full" type="number" min={256} max={4096} step={1}
+                        value={Number(mineruLayoutSize[index] ?? 1036)} disabled={!isAdmin || loading || saving}
+                        onChange={(event) => {
+                          const size = [...mineruLayoutSize]
+                          size[index] = Number(event.target.value)
+                          setDraft((current) => ({ ...current, workflow: { ...(current.workflow ?? {}), layout_image_size: size } }))
+                          setSaved(false)
+                        }} />
+                    </label>
+                  ))}
+                </div>
               </section>
             )}
             {selected.adapter_id === 'monkeyocrv2-parsing' && (

@@ -1563,10 +1563,11 @@ def build_provision_recipe(
     native_gateway = config.REPO_DIR / "scripts" / "cloud" / {
         "teleocr": "teleocr_native_gateway.py",
         "glm-ocr": "glmocr_native_gateway.py",
+        "mineru2.5": "mineru_native_gateway.py",
     }.get(adapter_id, "__no_native_gateway__.py")
     native_gateway_b64 = (
         base64.b64encode(native_gateway.read_bytes()).decode("ascii")
-        if adapter_id in {"teleocr", "glm-ocr"} and native_gateway.is_file()
+        if adapter_id in {"teleocr", "glm-ocr", "mineru2.5"} and native_gateway.is_file()
         else ""
     )
     argv = serve_recipes.serve_argv(
@@ -1594,7 +1595,7 @@ def build_provision_recipe(
         "pip_extra": list(recipe.pip_extra),
         "argv": signature_argv,
         "api_key_sha256": hashlib.sha256(str(server_api_key or "").encode("utf-8")).hexdigest(),
-        "native_settings": settings_payload["effective"] if adapter_id == "teleocr" else {},
+        "native_settings": settings_payload["effective"] if adapter_id in {"teleocr", "mineru2.5"} else {},
     }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
     return {
         "adapter_id": recipe.adapter_id,
@@ -1613,7 +1614,7 @@ def build_provision_recipe(
         # The TeleOCR gateway constructs the vendor's AsyncLLM directly, so it
         # consumes the same effective per-model settings as the UI instead of
         # trying to mirror them in an unrelated `vllm serve` process.
-        "settings": settings_payload["effective"] if adapter_id == "teleocr" else {},
+        "settings": settings_payload["effective"] if adapter_id in {"teleocr", "mineru2.5"} else {},
         "pip_extra": list(recipe.pip_extra),
         **budget,
         "needs_monkeyocr_repo": recipe.runtime == "monkeyocr",
@@ -1672,7 +1673,7 @@ def provision_vast_server(
     # `attach ssh` Vast.ai impiega qualche secondo a propagare la chiave al
     # container già acceso.
     ensure_ssh_access(host, port, user=user)
-    if adapter_id == "teleocr":
+    if adapter_id in {"teleocr", "mineru2.5"}:
         native_ready = probe_vast_native_gateway(
             host, port, user=user, remote_port=int(recipe["native_remote_port"])
         )

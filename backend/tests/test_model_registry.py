@@ -154,11 +154,6 @@ def test_mineru_serves_and_layout_table_prompts_are_implemented():
     assert cmd == [
         "vllm", "serve", "/tmp/whatever", "--port", "8888",
         "--logits-processors", "mineru_vl_utils:MinerULogitsProcessor",
-        "--dtype", "bfloat16",
-        "--gpu-memory-utilization", "0.75",
-        "--max-model-len", "8192",
-        "--max-num-seqs", "4",
-        "--max-num-batched-tokens", "8192",
         "--served-model-name", "mineru2.5",
     ]
     # Protocollo reimplementato (v. docstring dell'adapter): layout/text/
