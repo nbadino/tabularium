@@ -121,7 +121,10 @@ export function useAnnotationState(
 ): UseAnnotationStateReturn {
   const hist = useHistory<DisplayBlock[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [tool, setTool] = useState<Tool>('select')
+  // Si parte con la mano: una pagina la si esplora prima di modificarla, e un
+  // trascinamento non sposta un blocco per sbaglio. Un clic su un blocco lo
+  // seleziona comunque; per spostarlo o ridimensionarlo si passa a V.
+  const [tool, setTool] = useState<Tool>('pan')
   const [activeLabel, setActiveLabel] = useState('Text')
   const [save, setSave] = useState<SaveStatus>({ state: 'idle' })
   const dirtyRef = useRef(false)
