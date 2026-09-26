@@ -415,7 +415,10 @@ export default function RecognizePage() {
         </Module>
 
         <div className="space-y-3">
-          <Module tab={t('recognition.newRun')}>
+          {/* Il pannello resta in vista mentre si scorre l'elenco: chi sceglie
+              pagine in fondo ha modello e «Avvia» a portata senza risalire.
+              Le esecuzioni recenti gli scorrono sotto. */}
+          <Module tab={t('recognition.newRun')} className="xl:sticky xl:top-0 xl:z-10">
             <Field label={t('recognition.engine')}>
               <select
                 value={engine}
