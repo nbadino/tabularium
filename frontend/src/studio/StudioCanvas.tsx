@@ -26,6 +26,8 @@ interface StudioCanvasProps {
 }
 
 const MIN_SIZE = 3
+// Oltre questo spostamento (px sullo schermo) una pressione è un trascinamento.
+const CLICK_SLOP = 4
 
 export default function StudioCanvas({
   imageUrl,
@@ -60,8 +62,26 @@ export default function StudioCanvas({
     }
   }, [imageNatural.h, imageNatural.w, viewport, stageRef])
 
+  // Konva chiude ogni pressione con un `click` sulla forma dove finisce, anche
+  // dopo aver trascinato la pagina: senza questo controllo spostare la vista
+  // con la mano selezionerebbe il blocco d'arrivo, e col poligono vi
+  // aggiungerebbe un vertice.
+  const pressAt = useRef<{ x: number; y: number } | null>(null)
+  const markPress = () => {
+    pressAt.current = stageRef.current?.getPointerPosition() ?? null
+  }
+  const wasDrag = () => {
+    const from = pressAt.current
+    const to = stageRef.current?.getPointerPosition()
+    return !!from && !!to && Math.hypot(to.x - from.x, to.y - from.y) > CLICK_SLOP
+  }
+  const selectOnClick = (id: string | null) => {
+    if (!wasDrag()) onSelect(id)
+  }
+
   // --- mouse handlers (compongono pan + disegno) ----------------------------
   const onMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
+    markPress()
     const wantsPan = tool === 'pan' || spacePan || e.evt.button === 1
     if (wantsPan) {
       vp.startPan(e)
@@ -133,7 +153,7 @@ export default function StudioCanvas({
   }, [tool]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const onStageClick = () => {
-    if (tool === 'polygon') {
+    if (tool === 'polygon' && !wasDrag()) {
       const sp = scenePoint()
       if (sp) setPolyVerts((v) => [...v, sp])
     }
@@ -315,6 +335,7 @@ export default function StudioCanvas({
         onClick={onStageClick}
         onDblClick={onStageDblClick}
         onTouchStart={(e) => {
+          markPress()
           vp.onTouchStart(e)
           if (e.evt.touches.length === 1 && interactionTool === 'pan') vp.startPan(e)
         }}
@@ -343,7 +364,7 @@ export default function StudioCanvas({
             viewportK={viewport.k}
             showFlow={showFlow}
             colorFor={colorFor}
-            onSelect={onSelect}
+            onSelect={selectOnClick}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
             onDragEnd={onDragEnd}
