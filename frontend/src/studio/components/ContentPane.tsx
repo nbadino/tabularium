@@ -153,6 +153,7 @@ function TableBlockEditor({
 const TABLE_SURFACE: 'univer' | 'ce' = 'univer'
 
 const FRACTIONS_KEY = 'tabularium.table.autoFractions'
+const OTSL_KEY = 'tabularium.table.otslPreview'
 
 /** Il corpo della vista di lavoro: carica la griglia dal server, possiede i
  *  confini sull'inchiostro e monta la superficie scelta. */
@@ -187,6 +188,22 @@ export function TableWorkspacePanel({
       return true
     }
   })
+  const [otslOpen, setOtslOpen] = useState(() => {
+    try {
+      return localStorage.getItem(OTSL_KEY) !== 'closed'
+    } catch {
+      return true
+    }
+  })
+  const toggleOtsl = (open: boolean) => {
+    if (open === otslOpen) return
+    setOtslOpen(open)
+    try {
+      localStorage.setItem(OTSL_KEY, open ? 'open' : 'closed')
+    } catch {
+      /* storage non disponibile: la scelta vale per questa sessione */
+    }
+  }
   const toggleFractions = (on: boolean) => {
     setAutoFractions(on)
     try {
@@ -477,19 +494,28 @@ export function TableWorkspacePanel({
       </div>
 
       {otsl !== null && (
-        <div className="border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-2">
-          <div className="flex items-center justify-between">
+        // Ripiegabile: serve a controllare, non a lavorare, e ruba altezza al
+        // foglio. La scelta si ricorda.
+        <details
+          open={otslOpen}
+          onToggle={(e) => toggleOtsl(e.currentTarget.open)}
+          className="border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-2"
+        >
+          <summary className="flex cursor-pointer items-center justify-between">
             <span className="lbl !mb-0">{t('table.otslNote')}</span>
             <button
               type="button"
-              onClick={() => void navigator.clipboard?.writeText(otsl)}
+              onClick={(e) => {
+                e.preventDefault()
+                void navigator.clipboard?.writeText(otsl)
+              }}
               className="btn btn-sm"
             >
               {t('common.copy')}
             </button>
-          </div>
+          </summary>
           <pre className="mono mt-1 max-h-32 overflow-auto text-[11px] whitespace-pre-wrap">{otsl}</pre>
-        </div>
+        </details>
       )}
 
       {splitAt !== null && (
