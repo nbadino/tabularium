@@ -152,6 +152,8 @@ function TableBlockEditor({
 /** Univer è la superficie principale dell'editor tabellare. */
 const TABLE_SURFACE: 'univer' | 'ce' = 'univer'
 
+const FRACTIONS_KEY = 'tabularium.table.autoFractions'
+
 /** Il corpo della vista di lavoro: carica la griglia dal server, possiede i
  *  confini sull'inchiostro e monta la superficie scelta. */
 export function TableWorkspacePanel({
@@ -177,6 +179,22 @@ export function TableWorkspacePanel({
   const [notice, setNotice] = useState<string | null>(null)
   const [otsl, setOtsl] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  // Preferenza dell'annotatore, spenta quando serve tenere «1/8» com'è scritto.
+  const [autoFractions, setAutoFractions] = useState(() => {
+    try {
+      return localStorage.getItem(FRACTIONS_KEY) !== 'off'
+    } catch {
+      return true
+    }
+  })
+  const toggleFractions = (on: boolean) => {
+    setAutoFractions(on)
+    try {
+      localStorage.setItem(FRACTIONS_KEY, on ? 'on' : 'off')
+    } catch {
+      /* storage non disponibile: la scelta vale per questa sessione */
+    }
+  }
   const [sheetRevision, setSheetRevision] = useState(0)
   const [splitAt, setSplitAt] = useState<number | null>(null)
   /** Il modello di prima dell'ultima separazione: una separazione riscrive una
@@ -369,11 +387,15 @@ export function TableWorkspacePanel({
               {t('table.phantomColumns', { n: grid.phantom_cols.length })}
             </span>
           )}
+          <label className="ml-auto flex items-center gap-1 text-[11px] text-[color:var(--color-ink-2)]" title={t('table.autoFractionsHint')}>
+            <input type="checkbox" checked={autoFractions} onChange={(e) => toggleFractions(e.target.checked)} />
+            {t('table.autoFractions')}
+          </label>
           <button
             type="button"
             onClick={() => void doSave(gridRef.current ?? grid)}
             disabled={saving}
-            className="btn btn-sm btn-primary ml-auto"
+            className="btn btn-sm btn-primary"
           >
             <IconSave size={11} />
             {saving ? t('table.saving') : t('table.saveGrid')}
@@ -434,6 +456,7 @@ export function TableWorkspacePanel({
                 grid={grid}
                 onGridChange={applyModel}
                 onColumnOp={runColumnOp}
+                autoFractions={autoFractions}
                 suspects={checks?.suspects}
                 onSelectionChange={(sel) => {
                   setActive({ r: sel.startRow, c: sel.startColumn })

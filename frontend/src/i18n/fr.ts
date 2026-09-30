@@ -885,6 +885,8 @@ export const fr: Dict = {
     hintSelect:
       'Cliquez sur une cellule fusionnée, puis «Séparer» pour la ramener aux cellules d’origine.',
     saving: 'Enregistrement…',
+    autoFractions: 'Fractions 1/8 → ⅛',
+    autoFractionsHint: 'À la validation de la cellule, « 8 1/8 » devient « 8⅛ ». Ctrl+Z annule une conversion ; désactivez pour garder les fractions telles que saisies.',
     saveGrid: 'Enregistrer la grille',
     rows: 'Lignes',
     cols: 'Colonnes',

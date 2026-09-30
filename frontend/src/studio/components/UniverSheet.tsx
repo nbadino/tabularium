@@ -40,6 +40,7 @@ import '@univerjs/preset-sheets-core/lib/index.css'
 import type { TableGrid } from '../../lib/types'
 import { gridToUniver, univerGridSignature, univerToGrid } from '../../lib/univerGrid'
 import { useI18n } from '../../i18n'
+import { toFractionGlyphs } from '../../lib/fractions'
 
 /** I comandi nostri: ognuno esegue un'operazione sulla selezione.
  *
@@ -172,9 +173,11 @@ interface UniverSheetProps {
   suspects?: [number, number][]
   /** La cella attiva, per dire accanto al foglio perché è evidenziata. */
   onSelectionChange?: (selection: SheetSelection) => void
+  /** «8 1/8» → «8⅛» alla conferma della cella (v. `lib/fractions.ts`). */
+  autoFractions?: boolean
 }
 
-export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, onSelectionChange }: UniverSheetProps) {
+export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, onSelectionChange, autoFractions = false }: UniverSheetProps) {
   const { t, locale } = useI18n()
   const host = useRef<HTMLDivElement | null>(null)
   const [failed, setFailed] = useState(false)
@@ -185,6 +188,8 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
   opRef.current = onColumnOp
   const selectRef = useRef(onSelectionChange)
   selectRef.current = onSelectionChange
+  const fractionsRef = useRef(autoFractions)
+  fractionsRef.current = autoFractions
   /** Ridipinge le celle sospette; `null` finché il foglio non è montato. */
   const paintRef = useRef<((cells: [number, number][]) => void) | null>(null)
   const suspectsRef = useRef(suspects ?? [])
@@ -196,6 +201,7 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
     let univer: Univer | null = null
     let unsubscribe: { dispose?: () => void } | null = null
     let selectionListener: { dispose: () => void } | null = null
+    let editListener: { dispose: () => void } | null = null
     let cancelled = false
     const language = univerLanguage(locale)
 
@@ -285,6 +291,17 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
           if (range) selectRef.current?.(range)
         })
 
+        // La conversione è un comando a sé, dopo quello della cella: Ctrl+Z la
+        // annulla da sola e restituisce la frazione come l'hai digitata.
+        editListener = api.addEvent(api.Event.SheetEditEnded, ({ worksheet, row, column, isConfirm }) => {
+          if (!isConfirm || !fractionsRef.current) return
+          const range = worksheet.getRange(row, column)
+          const text = range.getValue()
+          if (typeof text !== 'string') return
+          const converted = toFractionGlyphs(text)
+          if (converted !== text) void range.setValue(converted)
+        })
+
         for (const entry of COLUMN_COMMANDS) {
           commands.registerCommand({
             id: entry.id,
@@ -326,6 +343,7 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
       cancelled = true
       paintRef.current = null
       selectionListener?.dispose()
+      editListener?.dispose()
       cancelAnimationFrame(frame)
       unsubscribe?.dispose?.()
       // Univer monta una **sua** radice React dentro il contenitore: chiuderla

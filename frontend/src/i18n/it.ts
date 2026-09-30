@@ -886,6 +886,8 @@ export const it = {
     hintSelect:
       'Clicca una cella unita, poi «Separa» per riportarla alle celle originali.',
     saving: 'Salvataggio…',
+    autoFractions: 'Frazioni 1/8 → ⅛',
+    autoFractionsHint: 'Alla conferma della cella «8 1/8» diventa «8⅛». Ctrl+Z annulla una conversione; spegnilo per tenere le frazioni come le scrivi.',
     saveGrid: 'Salva griglia',
     rows: 'Righe',
     cols: 'Colonne',
