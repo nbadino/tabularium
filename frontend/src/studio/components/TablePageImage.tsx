@@ -27,9 +27,10 @@ export default function TablePageImage({
   const [tileView, setTileView] = useState(view)
   const [dragging, setDragging] = useState(false)
 
+  // Il chiamante passa spesso un oggetto nuovo a ogni render: conta il valore.
   useEffect(() => {
-    if (imageSize?.w && imageSize.h) setNatural(imageSize)
-  }, [imageSize])
+    if (imageSize?.w && imageSize.h) setNatural({ w: imageSize.w, h: imageSize.h })
+  }, [imageSize?.w, imageSize?.h])
 
   useEffect(() => {
     const timer = window.setTimeout(() => setTileView(view), 120)
@@ -56,7 +57,16 @@ export default function TablePageImage({
     })
   }, [natural, size])
 
-  useEffect(() => { fit() }, [fit])
+  // Si adatta una volta per immagine, come il canvas (v. useViewport): i
+  // re-render dello Studio (polling della sessione ogni 1,2 s) e i resize non
+  // devono buttare via lo zoom dell'annotatore.
+  const fittedFor = useRef('')
+  useEffect(() => {
+    const key = `${src}:${natural.w}x${natural.h}`
+    if (!natural.w || !natural.h || !size.w || !size.h || fittedFor.current === key) return
+    fittedFor.current = key
+    fit()
+  }, [fit, natural.w, natural.h, size.w, size.h, src])
 
   // Le tessere multi-risoluzione del viewer: a ogni zoom si scarica solo il
   // livello e la porzione visibile, così i caratteri restano leggibili anche
