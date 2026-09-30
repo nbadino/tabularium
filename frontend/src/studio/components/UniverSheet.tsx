@@ -4,9 +4,9 @@
  * Univer è un SDK, non un widget: monta un runtime su un contenitore e si
  * guida per comandi. Qui si compone il preset «sheets core» — griglia, merge,
  * selezione, copia/incolla, fill handle, menù contestuale — **senza** la sua
- * intestazione né la sua barra degli strumenti: dentro la nostra vista di
- * lavoro il telaio è nostro, e due barre sopra la stessa griglia sarebbero due
- * prodotti in uno.
+ * barra degli strumenti: dentro la nostra vista di lavoro il telaio è nostro,
+ * e due barre sopra la stessa griglia sarebbero due prodotti in uno. Della sua
+ * intestazione resta la sola barra della formula.
  *
  * Il nostro `TableGrid` resta la fonte di verità. `lib/univerGrid.ts` traduce
  * nei due sensi: Univer possiede testo, stile e merge, non la geometria sul
@@ -213,8 +213,12 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
           presets: [
             UniverSheetsCorePreset({
               container,
-              header: false,
+              // L'header resta solo per la barra della formula: mostra il
+              // contenuto intero della cella attiva, come in Excel, dove la
+              // colonna stretta lo tronca. Niente barra degli strumenti.
+              header: true,
               toolbar: false,
+              formulaBar: true,
               footer: false,
             }),
           ],
