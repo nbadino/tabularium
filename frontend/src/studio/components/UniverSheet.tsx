@@ -226,6 +226,11 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
               toolbar: false,
               formulaBar: true,
               footer: false,
+              // Le celle sono testo per scelta («1,837» resta com'è stampato):
+              // l'avviso «numero memorizzato come testo» e il suo triangolino
+              // verde comparirebbero su ogni cifra. In 0.25.1 il messaggio
+              // non ha nemmeno la traduzione e mostra la chiave grezza.
+              sheets: { disableForceStringAlert: true, disableForceStringMark: true },
             }),
           ],
         })
