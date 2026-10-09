@@ -17,12 +17,13 @@
  * perché Univer emette un comando anche per la sola selezione, e perché il
  * salvataggio non deve ri-innescarsi da solo.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets'
 import {
   ContextMenuPosition,
   ContextMenuGroup,
   IMenuManagerService,
+  IUIPartsService,
   MenuItemType,
   MenuManagerPosition,
   SheetExtension,
@@ -39,6 +40,7 @@ import '@univerjs/preset-sheets-core/lib/index.css'
 
 import type { TableGrid } from '../../lib/types'
 import { gridToUniver, univerGridSignature, univerToGrid } from '../../lib/univerGrid'
+import { setVerified } from '../../lib/grid'
 import { useI18n } from '../../i18n'
 import { toFractionGlyphs } from '../../lib/fractions'
 
@@ -80,6 +82,8 @@ const COLUMN_COMMANDS: { op: ColumnOp; id: string; title: string; order: number 
 /** Le etichette che Univer disegna nel suo menù: si registrano nella sua
  *  lingua, altrimenti al posto della voce comparirebbe la chiave. */
 const LABELS_IT = {
+  verify: 'Segna come verificata',
+  unverify: 'Segna come non verificata',
   splitColumn: 'Separa per separatore…',
   joinColumn: 'Unisci con la colonna a destra',
   normalizeSpaces: 'Normalizza gli spazi',
@@ -91,6 +95,8 @@ const LABELS_IT = {
   unmerge: 'Separa la cella unita',
 }
 const LABELS_EN = {
+  verify: 'Mark as verified',
+  unverify: 'Mark as not verified',
   splitColumn: 'Split by separator…',
   joinColumn: 'Merge with the column to the right',
   normalizeSpaces: 'Normalize spaces',
@@ -102,6 +108,8 @@ const LABELS_EN = {
   unmerge: 'Unmerge the cell',
 }
 const LABELS_FR = {
+  verify: 'Marquer comme vérifiée',
+  unverify: 'Marquer comme non vérifiée',
   splitColumn: 'Séparer par séparateur…',
   joinColumn: 'Fusionner avec la colonne à droite',
   normalizeSpaces: 'Normaliser les espaces',
@@ -134,33 +142,44 @@ export interface SheetSelection {
   endColumn: number
 }
 
-/** Le celle sospette dei controlli aritmetici, dipinte **sul canvas** e non
+/** Una tinta su un insieme di celle — le sospette dei controlli aritmetici,
+ *  le verificate dall'annotatore — dipinta **sul canvas** e non
  *  nel documento: uno stile scritto con i comandi di Univer entrerebbe nella
  *  sua storia (Ctrl+Z toglierebbe l'evidenziazione) e nel modello salvato.
  *  Il livello sta sopra lo sfondo delle celle (21) e sotto il testo (45): la
  *  cifra da controllare resta leggibile. */
-class SuspectShading extends SheetExtension {
-  override uKey = 'tabularium-suspects'
+class CellShading extends SheetExtension {
   protected override Z_INDEX = 30
-  constructor(private cells: [number, number][]) {
+  constructor(
+    override uKey: string,
+    private cells: [number, number][],
+    private fill: string,
+    private stroke: string | null,
+  ) {
     super()
   }
   override draw(ctx: UniverRenderingContext, _scale: IScale, skeleton: SpreadsheetSkeleton) {
     ctx.save()
-    ctx.fillStyle = 'rgba(232, 161, 0, 0.16)'
-    ctx.strokeStyle = '#e8a100'
+    ctx.fillStyle = this.fill
     ctx.lineWidth = 2
+    if (this.stroke) ctx.strokeStyle = this.stroke
     for (const [r, c] of this.cells) {
       const cell = skeleton.getCellWithCoordByIndex(r, c, false)
       const box = cell.isMerged || cell.isMergedMainCell ? cell.mergeInfo : cell
       const w = box.endX - box.startX
       const h = box.endY - box.startY
       ctx.fillRect(box.startX, box.startY, w, h)
-      ctx.strokeRect(box.startX + 1, box.startY + 1, w - 2, h - 2)
+      if (this.stroke) ctx.strokeRect(box.startX + 1, box.startY + 1, w - 2, h - 2)
     }
     ctx.restore()
   }
 }
+
+/** Le celle confermate dall'annotatore, per la tinta verde. */
+function verifiedCells(grid: TableGrid): [number, number][] {
+  return grid.cells.filter((cell) => cell.verified && (cell.text ?? '').trim() !== '').map((cell) => [cell.r, cell.c])
+}
+
 
 interface UniverSheetProps {
   /** Il modello di partenza: si carica una volta, poi comanda Univer. */
@@ -238,10 +257,40 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
         const api: FUniver = created.univerAPI
         api.createWorkbook(gridToUniver(gridRef.current))
 
+        // Un'estensione per tinta: cambiate le celle, si toglie la vecchia
+        // (che rende il foglio «sporco») e si registra la nuova. Appena creato
+        // il documento l'unità di rendering non esiste ancora: si riprova ai
+        // frame successivi. L'evidenziazione è un aiuto e non deve mai
+        // impedire al foglio di montarsi.
+        const painter = (uKey: string, fill: string, stroke: string | null, latest: () => [number, number][]) => {
+          let shading: { dispose: () => void } | null = null
+          const paint = (cells: [number, number][], attempt = 0) => {
+            const unitId = api.getActiveWorkbook()?.getId()
+            if (!unitId || cancelled) return
+            try {
+              shading?.dispose()
+              shading = api.registerSheetMainExtension(unitId, new CellShading(uKey, cells, fill, stroke))
+            } catch {
+              shading = null
+              if (attempt < 30) requestAnimationFrame(() => paint(latest(), attempt + 1))
+            }
+          }
+          return paint
+        }
+        const paintSuspects = painter('tabularium-suspects', 'rgba(232, 161, 0, 0.16)', '#e8a100', () => suspectsRef.current)
+        const paintVerified = painter('tabularium-verified', 'rgba(46, 125, 50, 0.12)', null, () => verifiedCells(gridRef.current))
+        paintRef.current = (cells) => paintSuspects(cells)
+        paintSuspects(suspectsRef.current)
+        paintVerified(verifiedCells(gridRef.current))
+
         // Impronta di ciò che è già noto: riconosce i comandi che non hanno
         // cambiato niente (selezione, scroll, un click su una cella).
         let known = univerGridSignature(gridRef.current)
+        // Si assegna più sotto, quando esiste lo stato della cella attiva: ogni
+        // comando — anche solo di selezione — lo riallinea.
+        let afterCommand = () => {}
         unsubscribe = api.onCommandExecuted(() => {
+          afterCommand()
           const data = api.getActiveWorkbook()?.save()
           if (!data) return
           const next = univerToGrid(data, gridRef.current)
@@ -250,6 +299,9 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
           known = signature
           gridRef.current = next
           changeRef.current(next)
+          // Una cella riscritta perde la verifica: la tinta la segue.
+          paintVerified(verifiedCells(next))
+          refreshActive()
         })
 
         // Il telaio di Univer non ha l'unisci nel menù contestuale (sta nella
@@ -271,29 +323,79 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
           }
         }
 
-        // Un'estensione per volta: cambiate le sospette, si toglie la vecchia
-        // (che rende il foglio «sporco») e si registra la nuova. Appena creato
-        // il documento l'unità di rendering non esiste ancora: si riprova ai
-        // frame successivi. L'evidenziazione è un aiuto e non deve mai
-        // impedire al foglio di montarsi.
-        let shading: { dispose: () => void } | null = null
-        const paint = (cells: [number, number][], attempt = 0) => {
-          const unitId = api.getActiveWorkbook()?.getId()
-          if (!unitId || cancelled) return
-          try {
-            shading?.dispose()
-            shading = api.registerSheetMainExtension(unitId, new SuspectShading(cells))
-          } catch {
-            shading = null
-            if (attempt < 30) requestAnimationFrame(() => paint(suspectsRef.current, attempt + 1))
-          }
+        // ✓ / ✕: la verifica è un metadato nostro, non un comando di Univer.
+        // Si aggiorna qui, dove vive la copia del modello che il foglio usa
+        // per i confronti; altrimenti la prossima modifica la cancellerebbe.
+        // Lo stato della cella attiva (verificata, no, vuota = null) accende
+        // il ✓ nella barra della formula.
+        const active = { value: null as boolean | null, listeners: new Set<() => void>() }
+        // L'evento di selezione porta la cella nuova: la selezione «attiva»
+        // del foglio in quel momento è ancora quella di prima.
+        const refreshActive = (range: { startRow: number; startColumn: number } = selection()) => {
+          const { startRow, startColumn } = range
+          const cell = gridRef.current.cells.find((c) => c.r === startRow && c.c === startColumn)
+          const value = cell && (cell.text ?? '').trim() !== '' ? Boolean(cell.verified) : null
+          if (value === active.value) return
+          active.value = value
+          active.listeners.forEach((listener) => listener())
         }
-        paintRef.current = (cells) => paint(cells)
-        paint(suspectsRef.current)
+        const verify = (verified: boolean) => {
+          const next = setVerified(gridRef.current, selection(), verified)
+          const signature = univerGridSignature(next)
+          if (signature !== known) {
+            known = signature
+            gridRef.current = next
+            changeRef.current(next)
+            paintVerified(verifiedCells(next))
+          }
+          refreshActive()
+        }
+        const labels = language.labels
+        const subscribe = (listener: () => void) => {
+          active.listeners.add(listener)
+          return () => active.listeners.delete(listener)
+        }
+        // In fondo alla barra della formula (lo slot «formula-aux» di Univer):
+        // colorati, per non confondersi con ✕ / ✓ della modifica accanto a fx.
+        function VerifyButtons() {
+          const value = useSyncExternalStore(subscribe, () => active.value)
+          const base = 'flex h-6 w-6 items-center justify-center border text-[13px] leading-none disabled:opacity-40'
+          return (
+            <div className="flex shrink-0 items-center gap-1 border-l border-[color:var(--color-rule)] px-2">
+              <button
+                type="button"
+                title={labels.verify}
+                aria-label={labels.verify}
+                aria-pressed={value === true}
+                disabled={value === null}
+                onClick={() => verify(true)}
+                className={`${base} ${value ? 'border-[color:var(--color-ok)] bg-[color:var(--color-ok)] text-white' : 'border-[color:var(--color-ok)] text-[color:var(--color-ok)]'}`}
+              >
+                ✓
+              </button>
+              <button
+                type="button"
+                title={labels.unverify}
+                aria-label={labels.unverify}
+                disabled={value === null}
+                onClick={() => verify(false)}
+                className={`${base} border-[color:var(--color-rule-strong)] text-[color:var(--color-ink-2)]`}
+              >
+                ✕
+              </button>
+            </div>
+          )
+        }
+        injector.get(IUIPartsService).registerComponent('formula-aux', () => VerifyButtons)
+        afterCommand = () => refreshActive()
+        refreshActive()
 
         selectionListener = api.addEvent(api.Event.SelectionChanged, ({ selections }) => {
           const range = selections[0]
-          if (range) selectRef.current?.(range)
+          if (range) {
+            selectRef.current?.(range)
+            refreshActive(range)
+          }
         })
 
         // La conversione è un comando a sé, dopo quello della cella: Ctrl+Z la

@@ -793,3 +793,25 @@ export function fillDown(
   )
   return { ...grid, cells }
 }
+
+/**
+ * Segna come verificate (o no) le celle con testo dentro l'intervallo.
+ *
+ * È la conferma dell'annotatore che la cella corrisponde alla scansione: il
+ * testo non cambia. Una cella unita conta se la sua origine sta
+ * nell'intervallo; le celle vuote non hanno niente da confermare.
+ */
+export function setVerified(
+  grid: TableGrid,
+  range: { startRow: number; startColumn: number; endRow: number; endColumn: number },
+  verified: boolean,
+): TableGrid {
+  const cells = grid.cells.map((cell) =>
+    cell.r >= range.startRow && cell.r <= range.endRow &&
+    cell.c >= range.startColumn && cell.c <= range.endColumn &&
+    (cell.text ?? '').trim() !== ''
+      ? { ...cell, verified }
+      : cell,
+  )
+  return { ...grid, cells }
+}

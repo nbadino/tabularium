@@ -10,6 +10,7 @@ import {
   mergeKeepsEveryText,
   mergeRange,
   normalizeColumn,
+  setVerified,
   splitColumn,
   transformColumnCase,
   resizeGrid,
@@ -493,5 +494,16 @@ describe('unire celle senza perdere testo', () => {
 
   it('un intervallo di sole celle vuote passa', () => {
     expect(mergeKeepsEveryText(g(), 0, 1, 0, 2)).toBe(true)
+  })
+})
+
+describe('setVerified', () => {
+  it('marks only the cells with text inside the range', () => {
+    const grid = emptyGrid(2, 3)
+    grid.cells = grid.cells.map((c) => (c.c < 2 ? { ...c, text: `${c.r}${c.c}` } : c))
+    const out = setVerified(grid, { startRow: 0, startColumn: 1, endRow: 1, endColumn: 2 }, true)
+    const v = (r: number, c: number) => out.cells.find((x) => x.r === r && x.c === c)?.verified
+    expect([v(0, 0), v(0, 1), v(1, 1), v(0, 2)]).toEqual([undefined, true, true, undefined])
+    expect(setVerified(out, { startRow: 0, startColumn: 0, endRow: 1, endColumn: 2 }, false).cells.some((x) => x.verified)).toBe(false)
   })
 })
