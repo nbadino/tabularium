@@ -61,6 +61,49 @@ def test_a_long_failing_column_flags_its_total_not_every_row():
     assert out["suspects"] == [[13, 2]]
 
 
+def test_a_confirmed_misprint_stops_counting_until_its_numbers_change():
+    """La stampa del 1913 sbaglia una somma (Jeddah: 62,031 stampato, 62,081
+    nei totali). Confermato il refuso sulla scansione, la trascrizione resta
+    quella stampata e la somma non conta più come errore; se poi qualcuno
+    tocca uno dei suoi numeri, torna da controllare."""
+    rows = [r[:] for r in COUNTRIES]
+    rows[2][3] = "258,493"
+    grid = _grid(rows)
+    first = check_grid(grid)
+    row_check = next(c for c in first["checks"] if not c["ok"] and c["kind"] == "row")
+    assert row_check["key"] == "row:258,493=250,123+8,280"
+
+    acknowledged = check_grid({**grid, "misprints": [row_check["key"]]})
+    assert (acknowledged["failed"], acknowledged["misprints"]) == (1, 1)
+    assert next(c for c in acknowledged["checks"] if c["key"] == row_check["key"])["misprint"] is True
+
+    rows[2][1] = "250,124"
+    edited = check_grid({**_grid(rows), "misprints": [row_check["key"]]})
+    assert edited["misprints"] == 0
+
+
+def test_quantities_in_another_unit_are_converted_into_the_total():
+    """Calcutta p. 6: la farina è in libbre dentro un totale in hundredweight
+    (112 lbs = 1 cwt), e la virgoletta di «Other sorts» sotto la farina torna
+    ai Cwt. — lo dicono i totali. Senza conversione cinque somme giuste
+    risultavano sbagliate."""
+    rows = [
+        ["ARTICLES.", "", "5—QUANTITIES.", "", "", "", "", "5a—VALUE."],
+        ["", "", "1908-09", "1909-10", "1910-11", "1911-12", "1912-13", "1908-09"],
+        ["C.—GRAIN—", "", "", "", "", "", "", ""],
+        ["1. Barley", "Cwt.", "1,348", "2,026½", "4,050¼", "3,651", "17,468", "421"],
+        ["2. Wheat", "„", "13,801", "11,510½", "11,237", "14,934½", "13,376", "7,929"],
+        ["3. „ flour", "Lbs.", "13,045,690", "12,405,344", "11,252,067", "14,783,524", "25,588,640", "72,939"],
+        ["4. Other sorts", "„", "5,422½", "4,576", "5,296½", "15,981", "10,083", "2,219"],
+        ["Total, Grain", "Cwt.", "137,051", "128,875", "121,049", "166,562", "269,397", "83,508"],
+    ]
+    out = check_grid(_grid(rows))
+    assert (out["passed"], out["failed"]) == (6, 0)
+    # il valore in sterline non si converte: lì la farina conta com'è
+    value = next(c for c in out["checks"] if c["total"] == [7, 7])
+    assert value["cells"] == [[3, 7], [4, 7], [5, 7], [6, 7]]
+
+
 def test_endpoint_checks_a_grid_without_saving_it():
     rows = [r[:] for r in COUNTRIES]
     rows[2][3] = "258,493"
@@ -96,6 +139,15 @@ def test_page_list_counts_failing_sums_and_follows_the_fix(tmp_path):
         # tre somme lungo le righe (Merchandise + Treasure = Total) e tre
         # lungo le colonne (le voci che sommano alla riga «Total»)
         assert sums == {str(page): {"checks": 6, "failed": 2, "rows": 3, "cols": 3}}
+
+        # Refusi della stampa confermati: salvati con la griglia, escono dal conto.
+        keys = [c["key"] for c in check_grid(_grid(rows))["checks"] if not c["ok"]]
+        assert client.put(
+            f"/api/blocks/{block}/table", json={**_grid(rows), "phantom_cols": [], "misprints": keys},
+        ).status_code == 200
+        assert client.get(f"/api/blocks/{block}/table").json()["grid"]["misprints"] == keys
+        sums = client.get(f"/api/projects/{pid}/sum-failures").json()["pages"]
+        assert sums[str(page)]["failed"] == 0
 
         rows[2][3] = "258,403"
         client.put(f"/api/blocks/{block}/table", json={**_grid(rows), "phantom_cols": []})

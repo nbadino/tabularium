@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from fractions import Fraction
+from itertools import product
 
 _NIL = re.compile(r"^[\s.·…‥\-–—:]*$")
 _FRACTIONS = {"½": Fraction(1, 2), "¼": Fraction(1, 4), "¾": Fraction(3, 4), "⅕": Fraction(1, 5),
@@ -96,19 +97,56 @@ _GRAND = re.compile(r"\bgrand\s+total\b", re.I)
 _LETTER_HEAD = re.compile(r"^\s*[IVX]*\.?\s*[A-J]\.\s*[—-]|^\s*[IVX]+\.\s*[—-]")
 
 
-def _units(m, lab: int) -> list[str]:
+# Pesi in libbre: le quantità di una sezione si sommano nell'unità del suo
+# totale, e una riga in un'altra unità vi entra convertita (la farina in
+# «Lbs.» dentro «Total, Grain, Pulse and Flour» in «Cwt.»: 112 lbs = 1 cwt).
+_IN_LBS = {"lb": Fraction(1), "cwt": Fraction(112), "ton": Fraction(2240)}
+_UNIT_NAMES = {"lb": "lb", "lbs": "lb", "cwt": "cwt", "cwts": "cwt", "ton": "ton", "tons": "ton"}
+
+
+def _factor(src: str, dst: str) -> Fraction | None:
+    """Fattore che porta una quantità da ``src`` a ``dst``; None se non si sa."""
+    a = _UNIT_NAMES.get(src.lower().strip(" .")) or src.lower().strip(" .")
+    b = _UNIT_NAMES.get(dst.lower().strip(" .")) or dst.lower().strip(" .")
+    if a == b:
+        return Fraction(1)
+    if a in _IN_LBS and b in _IN_LBS:
+        return _IN_LBS[a] / _IN_LBS[b]
+    return None
+
+
+def _units(m, lab: int) -> tuple[list[str], list[str | None]]:
     """Unità di misura per riga (colonna subito dopo i nomi nelle tabelle
-    ARTICLES), con le virgolette di ripetizione risolte."""
-    out, last = [], ""
+    ARTICLES), con le virgolette di ripetizione risolte.
+
+    Una virgoletta subito dopo un cambio d'unità è ambigua: nel 1913 «„» sotto
+    un «Lbs.» d'eccezione può tornare all'unità della sezione (p. 6: «11. Other
+    sorts „» sotto la farina in libbre è in Cwt., lo dicono i totali). Per
+    quelle righe si restituisce anche l'unità di prima, e decide la somma.
+    """
+    out: list[str] = []
+    alts: list[str | None] = []
+    last, run_alt = "", None
     unit_col = lab + 1 if m and lab + 1 < len(m[0]) else None
     for row in m:
         u = (row[unit_col] or "").strip() if unit_col is not None else ""
+        alt = None
         if u in _DITTO or u.startswith("„"):
-            u = last
-        if u and number(u) is None:
+            u, alt = last, run_alt
+        elif u and number(u) is None:
+            # solo un cambio d'unità rende ambigue le virgolette che seguono;
+            # un'unità ripetuta per esteso le riporta a sé
+            run_alt = last if last and u != last else None
             last = u
         out.append(u)
-    return out
+        alts.append(alt)
+    return out, alts
+
+
+def _close(total: Fraction, parts: Fraction, converted: bool) -> bool:
+    """Senza conversioni la somma è esatta; con una conversione il totale
+    stampato è arrotondato all'unità."""
+    return abs(total - parts) < 1 if converted else total == parts
 
 
 def _numeric_row(m, r, cols) -> bool:
@@ -164,7 +202,7 @@ def find_checks(grid: dict) -> list[dict]:
     # 3) somme di colonna e subtotali: per ogni riga «Total…» si prova una
     #    serie di candidati e si tiene quello che la chiave soddisfa sul maggior
     #    numero di colonne.
-    units = _units(m, lab)
+    units, alts = _units(m, lab)
     articles = any(t and "quantit" in t.lower() for row in m[: max(hr, 2)] for t in row if t)
     qty_cols = set(range(lab + 2, lab + 7)) if articles else set()
     total_rows = [r for r in range(hr, rows) if _TOTAL.match(labels[r] or "") and _numeric_row(m, r, num_cols)]
@@ -185,25 +223,45 @@ def find_checks(grid: dict) -> list[dict]:
             "since_section": items(prev_letter + 1, t),
             "totals_above": [q for q in total_rows if prev_grand < q < t],
         }
+        def weights(members: list[int], k: int, unit_of: dict[int, str]) -> dict[int, Fraction]:
+            """Gli addendi della colonna con il fattore che li porta
+            nell'unità del totale; fuori chi non si sa convertire."""
+            if k not in qty_cols:
+                return {q: Fraction(1) for q in members}
+            out = {}
+            for q in members:
+                f = _factor(unit_of.get(q, units[q]), units[t])
+                if f is not None:
+                    out[q] = f
+            return out
+
         best = None
         for name, members in options.items():
             if len(members) < (1 if name == "totals_above" else 2):
                 continue
-            held = 0
-            for k in num_cols:
-                ms = [q for q in members if not (k in qty_cols and units[q] != units[t])]
-                tv = value(m[t][k])
-                vs = [value(m[q][k]) for q in ms if m[q][k] is not None]
-                if tv and None not in vs and sum(vs) == tv:
-                    held += 1
-            if held and (best is None or held > best[1]):
-                best = (members, held)
+            ambiguous = [q for q in members if alts[q]][:4]
+            for choice in product(*[(units[q], alts[q]) for q in ambiguous]):
+                unit_of = dict(zip(ambiguous, choice))
+                held = 0
+                for k in num_cols:
+                    w = weights(members, k, unit_of)
+                    tv = value(m[t][k])
+                    pairs = [(value(m[q][k]), f) for q, f in w.items() if m[q][k] is not None]
+                    if tv and all(v is not None for v, _ in pairs) and _close(
+                        tv, sum(v * f for v, f in pairs), any(f != 1 for f in w.values()),
+                    ):
+                        held += 1
+                if held and (best is None or held > best[1]):
+                    best = (members, held, unit_of)
         if best is None:
             continue
         for k in num_cols:
-            ms = [q for q in best[0] if not (k in qty_cols and units[q] != units[t])]
-            if ms and number(m[t][k]) is not None:
-                candidates.append({"kind": "col", "cells": [[q, k] for q in ms], "total": [t, k]})
+            w = weights(best[0], k, best[2])
+            if w and number(m[t][k]) is not None:
+                check = {"kind": "col", "cells": [[q, k] for q in w], "total": [t, k]}
+                if any(f != 1 for f in w.values()):
+                    check["factors"] = {(q, k): f for q, f in w.items()}
+                candidates.append(check)
 
     out, seen = [], set()
     for c in candidates:
@@ -216,7 +274,7 @@ def find_checks(grid: dict) -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
-        vs = [value(m[r][k]) for r, k in c["cells"]]
+        vs = _weighted(m, c)
         tv = value(m[c["total"][0]][c["total"][1]])
         if tv == 0 and all(v == 0 for v in vs):
             continue  # tutto vuoto: niente da verificare
@@ -226,10 +284,22 @@ def find_checks(grid: dict) -> list[dict]:
     return out
 
 
+def _weighted(m, check: dict) -> list[Fraction | None]:
+    """I valori degli addendi, convertiti nell'unità del totale se serve."""
+    factors = check.get("factors") or {}
+    out = []
+    for r, k in check["cells"]:
+        if m[r][k] is None:
+            continue
+        v = value(m[r][k])
+        out.append(None if v is None else v * factors.get((r, k), 1))
+    return out
+
+
 def _holds(m, check: dict) -> bool:
-    vs = [value(m[r][k]) for r, k in check["cells"] if m[r][k] is not None]
+    vs = _weighted(m, check)
     tv = value(m[check["total"][0]][check["total"][1]])
-    return tv is not None and None not in vs and sum(vs) == tv
+    return tv is not None and None not in vs and _close(tv, sum(vs), bool(check.get("factors")))
 
 
 def _one_digit(a: Fraction, b: Fraction) -> bool:
@@ -265,26 +335,46 @@ def _culprits(m, check: dict, vouched: set) -> set[tuple[int, int]]:
     return loose if 0 < len(loose) <= 3 else {total}
 
 
+def check_key(m: list[list[str | None]], check: dict) -> str:
+    """Identità di una somma per i valori che contiene, non per la posizione.
+
+    Un refuso confermato resta tale finché nessuno tocca i suoi numeri: se
+    una cella cambia, la chiave cambia e la somma torna da controllare. Le
+    righe inserite sopra non la spostano.
+    """
+    text = lambda rc: (m[rc[0]][rc[1]] or "").strip()  # noqa: E731
+    return f"{check['kind']}:{text(check['total'])}=" + "+".join(text(rc) for rc in check["cells"])
+
+
 def check_grid(grid: dict) -> dict:
     """Esito per l'editor: le somme, quante tornano, e le celle sospette.
 
     Una somma che torna fa da garante per le sue celle; per ogni somma che
     non torna `_culprits` sceglie le poche celle da guardare. Una cella
     sospetta resta un suggerimento: l'ultima parola è dell'immagine.
+
+    Le somme che l'annotatore ha confrontato con la scansione e dichiarato
+    refusi della stampa (`grid["misprints"]`) restano false ma non contano
+    più come errori: la trascrizione segue la stampa, non l'aritmetica.
     """
     checks = find_checks(grid)
     m = dense(grid)
+    acknowledged = set(grid.get("misprints") or [])
+    for c in checks:
+        c["key"] = check_key(m, c)
+        c["misprint"] = not c["ok"] and c["key"] in acknowledged
     vouched = {tuple(x) for c in checks if c["ok"] for x in [*c["cells"], c["total"]]}
     suspects: set[tuple[int, int]] = set()
     for c in checks:
-        if not c["ok"]:
+        if not c["ok"] and not c["misprint"]:
             suspects |= _culprits(m, c, vouched)
     return {
         "checks": [
-            {"kind": c["kind"], "cells": c["cells"], "total": c["total"], "ok": c["ok"]} for c in checks
+            {k: c[k] for k in ("kind", "cells", "total", "ok", "key", "misprint")} for c in checks
         ],
         "passed": sum(c["ok"] for c in checks),
-        "failed": sum(not c["ok"] for c in checks),
+        "failed": sum(not c["ok"] and not c["misprint"] for c in checks),
+        "misprints": sum(c["misprint"] for c in checks),
         "suspects": sorted([r, k] for r, k in suspects),
     }
 

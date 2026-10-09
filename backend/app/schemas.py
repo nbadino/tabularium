@@ -348,6 +348,9 @@ class TableGrid(BaseModel):
     # griglie inserite manualmente e quelle prodotte dal modello non li hanno.
     row_columns: list[list[float]] = []
     row_columns_proven: list[list[bool]] = []
+    # Somme confrontate con la scansione e dichiarate refusi della stampa
+    # (`table_checks.check_key`): non contano più come errori.
+    misprints: list[str] = []
 
 
 class TableGridOut(BaseModel):
@@ -361,6 +364,8 @@ class TableCheck(BaseModel):
     cells: list[list[int]]
     total: list[int]
     ok: bool
+    key: str = ""
+    misprint: bool = False
 
 
 class TableChecksOut(BaseModel):
@@ -368,6 +373,7 @@ class TableChecksOut(BaseModel):
     checks: list[TableCheck]
     passed: int
     failed: int
+    misprints: int = 0
     suspects: list[list[int]]
 
 

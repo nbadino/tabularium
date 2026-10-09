@@ -260,6 +260,7 @@ def block_table_put(
         "hlines": payload.hlines,
         "row_columns": payload.row_columns,
         "row_columns_proven": payload.row_columns_proven,
+        "misprints": payload.misprints,
     }
     try:
         otsl_str = otsl.grid_to_otsl(grid)
