@@ -184,6 +184,17 @@ def create_run(
                     status_code=409,
                     detail=f"il modello sta già elaborando la sessione #{active['id']}",
                 )
+        # Due sessioni sulla stessa pagina si pestano: ognuna toglie le bozze
+        # all'inizio e scrive le sue, quindi entrambe sopravvivono doppie
+        # (successo con due run OCR partite a 2 s di distanza). Il blocco del
+        # modello qui sopra è globale; questo vale per ogni motore.
+        busy = conn.execute(
+            "SELECT r.id FROM recognition_runs r JOIN recognition_run_items i ON i.run_id = r.id "
+            f"WHERE r.state IN ('queued','running') AND i.page_id IN ({placeholders}) LIMIT 1",
+            unique_ids,
+        ).fetchone()
+        if busy is not None:
+            raise HTTPException(status_code=409, detail=msg("pages_in_active_run", lang, run=busy["id"]))
         rows = conn.execute(
             f"SELECT id FROM pages WHERE project_id=? AND id IN ({placeholders})",
             (project_id, *unique_ids),

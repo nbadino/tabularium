@@ -40,6 +40,10 @@ END2END_PROMPT = (
 )
 
 
+class OutputTruncated(RuntimeError):
+    """La generazione ha esaurito i token prima di chiudere l'output."""
+
+
 def _prompt_for(adapter: ModelAdapter, task: str, label: str | None, fallback: str) -> str:
     """`adapter.prompt_for` con ripiego sulla costante storica SOLO quando è
     lo stesso adapter a scegliere di non prompare per quel task+label (torna
@@ -644,7 +648,7 @@ class VllmClient:
                     "complete_list": scanner.complete if stop_when_complete_list else None,
                 }
                 if stop_when_complete_list and not scanner.complete:
-                    raise RuntimeError(
+                    raise OutputTruncated(
                         "output END2END incompleto "
                         f"(finish={finish_reason}, chars={len(text)}, max_tokens={effective_max_tokens})"
                     )
@@ -656,7 +660,14 @@ class VllmClient:
                 # di connessione avvenuti prima del primo token.
                 if chunks or isinstance(exc, TimeoutError):
                     break
-        raise RuntimeError(f"vLLM non raggiungibile ({self.url}): {last}")
+        # «Non raggiungibile» solo quando lo è davvero: un'uscita troncata o
+        # un 400 arrivano da un server che ha risposto, e chiamarli guasti di
+        # rete mandava a cercare il problema nel tunnel.
+        if isinstance(last, OutputTruncated):
+            raise last
+        if isinstance(last, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+            raise RuntimeError(f"vLLM non raggiungibile ({self.url}): {last}")
+        raise RuntimeError(f"vLLM ({self.url}): {last}")
 
     def _parse_items(self, raw: str) -> list[dict]:
         """Delega il parsing all'adapter se ne dichiara uno proprio (es.
@@ -778,7 +789,7 @@ class VllmClient:
         end2end_tokens = max_tokens
         # Vendor-native grounded parsers may publish a task-specific output
         # ceiling in addition to the generic endpoint budget.
-        if getattr(self.adapter, "adapter_id", None) in {"unlimited-ocr", "deepseek-ocr"}:
+        if getattr(self.adapter, "end2end_output_format", "list") == "grounded-markdown":
             native_budget = getattr(self.adapter, "end2end_max_tokens", None)
             if native_budget is not None:
                 end2end_tokens = min(end2end_tokens, int(native_budget))

@@ -73,6 +73,10 @@ _IT: dict[str, str] = {
         "riquadri, quindi serve un modello che li sappia restituire (MonkeyOCRv2, "
         "MinerU2.5, Qwen3-VL). Per una pagina intera usa Riconosci."
     ),
+    "pages_in_active_run": (
+        "la sessione #{run} sta già riconoscendo queste pagine: attendi che "
+        "finisca, o annullala, prima di avviarne un'altra."
+    ),
     "model_endpoint_unreachable": (
         "l'endpoint di inferenza {url} non risponde: controlla modello e "
         "provider nella pagina Modelli prima di avviare una sessione."
@@ -227,6 +231,10 @@ _EN: dict[str, str] = {
         "so it needs a model that returns them (MonkeyOCRv2, MinerU2.5, Qwen3-VL). "
         "For a whole page use Recognize."
     ),
+    "pages_in_active_run": (
+        "session #{run} is already recognizing these pages: wait for it to "
+        "finish, or cancel it, before starting another."
+    ),
     "model_endpoint_unreachable": (
         "the inference endpoint {url} is not responding: check model and "
         "provider on the Models page before starting a session."
@@ -372,6 +380,10 @@ _FR: dict[str, str] = {
         "le modèle {model} ne produit pas de layout de page : le playground dessine des "
         "cadres, il faut donc un modèle qui les renvoie (MonkeyOCRv2, MinerU2.5, Qwen3-VL). "
         "Pour une page entière, utilisez Reconnaître."
+    ),
+    "pages_in_active_run": (
+        "la session n°{run} reconnaît déjà ces pages : attendez qu'elle se "
+        "termine, ou annulez-la, avant d'en lancer une autre."
     ),
     "model_endpoint_unreachable": (
         "le point d'accès d'inférence {url} ne répond pas : vérifiez le modèle "

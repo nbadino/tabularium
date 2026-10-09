@@ -201,6 +201,23 @@ def test_second_model_run_is_rejected_while_first_is_active(tmp_path):
         assert "sessione #" in str(caught.value.detail)
 
 
+def test_second_ocr_run_on_the_same_page_is_rejected(tmp_path, monkeypatch):
+    """Due run OCR a 2 s di distanza sulla stessa pagina lasciavano ogni bozza
+    doppia (pagina 4 del Calcutta_demo): ognuna toglie le bozze all'inizio e
+    scrive le sue. Sulle altre pagine si può lavorare in parallelo."""
+    from app.services import recognition
+
+    monkeypatch.setattr(recognition, "_start_worker", lambda _run_id: None)
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        first = recognition.create_run(project_id, [page_ids[0]], engine="ocr", stop_policy="none")
+        with pytest.raises(HTTPException) as caught:
+            recognition.create_run(project_id, page_ids, engine="ocr", stop_policy="none")
+        assert caught.value.status_code == 409
+        assert f"#{first['id']}" in str(caught.value.detail)
+        recognition.create_run(project_id, [page_ids[1]], engine="ocr", stop_policy="none")
+
+
 def test_retry_creates_a_run_with_only_failed_pages(tmp_path, monkeypatch):
     from app.db import connect
     from app.services import recognition

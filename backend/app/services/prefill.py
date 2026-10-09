@@ -16,6 +16,8 @@ from fastapi import HTTPException
 from ..db import connect
 from . import labeling, ocr as ocrmod, otsl, table_detect, table_headers
 from . import paddle_official
+from .inference import OutputTruncated
+from .model_adapters import supported_prefill_modes
 from . import pages as pagesvc
 from .i18n import msg
 
@@ -395,6 +397,7 @@ def model_prelabel_events(
                 }
                 continue
 
+            page_mode = mm
             try:
                 output_phases: dict[int, str] = {}
 
@@ -472,14 +475,25 @@ def model_prelabel_events(
                                     round(float(bbox[3]) / image.height * 1000),
                                 ]
                 elif mm == "end2end":
-                    items = call_live(
-                        client.end2end,
-                        image,
-                        phase="end2end",
-                        on_retry=lambda: on_output and on_output({
-                            "type": "output_reset", "page_id": pid, "phase": "end2end"
-                        }),
-                    )
+                    try:
+                        items = call_live(
+                            client.end2end,
+                            image,
+                            phase="end2end",
+                            on_retry=lambda: on_output and on_output({
+                                "type": "output_reset", "page_id": pid, "phase": "end2end"
+                            }),
+                        )
+                    except OutputTruncated:
+                        # Una pagina densa non sta nel budget di uscita (2 su 11
+                        # nel benchmark Calcutta): il due-stadi la recupera. Il
+                        # riepilogo della pagina dichiara il percorso usato.
+                        if not supported_prefill_modes(client.adapter)["supports_two_stage"]:
+                            raise
+                        if on_output:
+                            on_output({"type": "output_reset", "page_id": pid, "phase": "end2end"})
+                        page_mode = "two_stage"
+                        items = call_live(client.layout, image, phase="layout")
                 elif getattr(client.adapter, "page_layout_fallback", None) == "ocr":
                     detector = ocrmod.OcrEngine()
                     if not detector.available:
@@ -576,7 +590,7 @@ def model_prelabel_events(
                 # questo passaggio la UI mostrava bbox corretti ma textarea
                 # vuote, dando l'impressione che l'inferenza fosse fallita.
                 if (
-                    mm == "two_stage"
+                    page_mode == "two_stage"
                     and k["label"] not in {"Column", "Picture"}
                     and not k.get("content")
                     and not (
@@ -610,7 +624,7 @@ def model_prelabel_events(
                         json.dumps([[k["bbox"][0], k["bbox"][1]], [k["bbox"][2], k["bbox"][3]]]),
                         k.get("content", ""),
                         i,
-                        f"model:{client.model}:{mm}",
+                        f"model:{client.model}:{page_mode}",
                         opts.recognition_run_id,
                     ),
                 )
@@ -622,7 +636,7 @@ def model_prelabel_events(
                     # nel risultato, non una sostituzione silenziosa.
                     grid = None
                     used_end2end_content = False
-                    if mm in {"end2end", "official"} and k.get("content"):
+                    if page_mode in {"end2end", "official"} and k.get("content"):
                         try:
                             raw_content = k["content"]
                             # END2END segue il formato ufficiale di parsing: per
@@ -642,7 +656,7 @@ def model_prelabel_events(
                             grid = None
                     try:
                         if grid is None:
-                            if mm == "official" and client.adapter.adapter_id in {"teleocr", "mineru2.5"}:
+                            if page_mode == "official" and client.adapter.adapter_id in {"teleocr", "mineru2.5"}:
                                 # These producer-owned runners have already
                                 # recognized and post-processed the table.
                                 # Do not substitute a separate crop workflow
@@ -686,7 +700,7 @@ def model_prelabel_events(
                         "points": [[k["bbox"][0], k["bbox"][1]], [k["bbox"][2], k["bbox"][3]]],
                         "content": k.get("content", ""),
                         "order_idx": i,
-                        "prefill_source": f"model:{client.model}:{mm}",
+                        "prefill_source": f"model:{client.model}:{page_mode}",
                         "grid": grid_json,
                         "error": k.get("error"),
                     },
@@ -704,7 +718,7 @@ def model_prelabel_events(
                     "mode": opts.mode,
                     "replaced_blocks": replaced["blocks"],
                     "replaced_grids": replaced["grids"],
-                    "model_mode": mm,
+                    "model_mode": page_mode,
                     "table_sources": table_sources,
                     "deskew_angle": applied_angle,
                 },

@@ -640,3 +640,30 @@ def test_streaming_complete_list_drains_until_done_for_non_modal(monkeypatch):
 
     assert raw == "[{'bbox': [1, 2, 3, 4], 'label': 'Text'}]"
     assert consumed == ["event", "event", "done"]
+
+
+def test_chat_errors_name_the_real_cause(monkeypatch):
+    """«Non raggiungibile» solo per guasti di rete: un 400 viene da un server
+    che ha risposto."""
+    import pytest
+    import requests
+
+    from app.services.inference import VllmClient
+
+    client = VllmClient(url="http://127.0.0.1:9/v1", max_retries=0)
+
+    def refuse(*args, **kwargs):
+        raise requests.exceptions.ConnectionError("refused")
+
+    monkeypatch.setattr(requests, "post", refuse)
+    with pytest.raises(RuntimeError, match="non raggiungibile"):
+        client._chat(Image.new("RGB", (10, 10)), "x")
+
+    def bad_request(*args, **kwargs):
+        raise requests.exceptions.HTTPError("400 Client Error: max_tokens too large")
+
+    monkeypatch.setattr(requests, "post", bad_request)
+    with pytest.raises(RuntimeError) as info:
+        client._chat(Image.new("RGB", (10, 10)), "x")
+    assert "non raggiungibile" not in str(info.value)
+    assert "max_tokens too large" in str(info.value)

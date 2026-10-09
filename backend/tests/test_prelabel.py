@@ -341,6 +341,47 @@ def test_model_end2end_persists_table_without_second_call(tmp_path: Path, monkey
         assert grid["rows"] == 2 and grid["cols"] == 2
 
 
+def test_model_end2end_truncated_page_falls_back_to_two_stage(tmp_path: Path, monkeypatch):
+    """Pagina densa oltre il budget END2END: il due-stadi la recupera invece
+    di lasciarla senza blocchi, e il riepilogo dice quale percorso è servito."""
+    from app.api import prelabel as prelabelmod
+    from app.services import prefill as prefillsvc
+    from app.services.inference import OutputTruncated
+    from app.services.model_adapters import MonkeyOCRv2ParsingAdapter
+
+    class FakeModel:
+        model = "fake-monkey"
+        adapter = MonkeyOCRv2ParsingAdapter()
+
+        def ping(self):
+            return True
+
+        def end2end(self, image):
+            raise OutputTruncated("output END2END incompleto (finish=length)")
+
+        def layout(self, image):
+            return [{"bbox": [10, 20, 900, 200], "label": "Text"}]
+
+        def recognize(self, image, label):
+            return "Maritime intelligence."
+
+    monkeypatch.setattr(prelabelmod.inference, "VllmClient", FakeModel)
+    monkeypatch.setattr(prefillsvc, "_looks_like_table", lambda *_args: False)
+
+    with TestClient(app) as client:
+        pid, page_id = _get_page(client, tmp_path / "truncated")
+        response = client.post(
+            f"/api/projects/{pid}/prelabel",
+            json={"page_ids": [page_id], "mode": "replace", "engine": "model", "model_mode": "end2end"},
+        )
+        assert response.status_code == 200, response.text
+        result = response.json()["results"][0]
+        assert result["model_mode"] == "two_stage"
+        block = client.get(f"/api/pages/{page_id}/annotations").json()["items"][0]
+        assert block["content"] == "Maritime intelligence."
+        assert block["prefill_source"].endswith(":two_stage")
+
+
 def test_prelabel_stream_emits_block_events(tmp_path: Path, monkeypatch):
     """Lo stream SSE emette start → page → block… → page_done → end, e i
     blocchi emessi esistono già nel DB: ciò che la UI mostra progressivamente
