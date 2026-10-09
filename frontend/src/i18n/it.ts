@@ -8,7 +8,6 @@
 export const it = {
   app: {
     title: 'Tabularium — Riconoscimento documenti',
-    tagline: 'Riconoscimento, revisione e training su documenti storici',
     skipToContent: 'Salta al contenuto',
     navSections: 'Sezioni',
     backendDown: 'Backend non raggiungibile',
@@ -561,6 +560,7 @@ export const it = {
     polygon: 'Poligono',
     pan: 'Panoramica',
     toolsAria: 'Strumenti del canvas',
+    more: 'Altro',
     viewModeAria: 'Modalità dello studio',
     viewMode: 'Vista',
     viewAll: 'Tutto',
@@ -646,11 +646,6 @@ export const it = {
     resetConfirm:
       'Tornare alla scansione originale? Le trasformazioni verranno rimosse e i blocchi annotati saranno eliminati per evitare coordinate sbagliate.',
     resetApplied: 'Trasformazioni rimosse: pagina riportata alla scansione originale.',
-    guideLabel: 'Cosa fare ora:',
-    guideStart: 'Pagina vuota: premi Prefill OCR per generare le bozze, poi correggile.',
-    guideFix:
-      '{n} bozze OCR da correggere: assegna le classi (palette) e l\u2019ordine di lettura (frecce nei Livelli).',
-    guideReady: 'Struttura pronta: imposta l\u2019ordine di lettura e le trascrizioni; poi vai su Dataset.',
     save: 'Salva',
     stageStructure: 'Struttura',
     stageContent: 'Contenuto',
@@ -886,6 +881,8 @@ export const it = {
     hintSelect:
       'Clicca una cella unita, poi «Separa» per riportarla alle celle originali.',
     saving: 'Salvataggio…',
+    verifyHint: 'Seleziona una cella (o un intervallo) e premi ✓ in fondo alla barra della formula se corrisponde alla scansione.',
+    verifiedCount: '{n}/{total} verificate',
     autoFractions: 'Frazioni 1/8 → ⅛',
     autoFractionsHint: 'Alla conferma della cella «8 1/8» diventa «8⅛». Ctrl+Z annulla una conversione; spegnilo per tenere le frazioni come le scrivi.',
     saveGrid: 'Salva griglia',
@@ -991,6 +988,10 @@ export const it = {
       'Somme: {passed} su {total} tornano · {failed} no — confronta con l’immagine le celle evidenziate.',
     checkSumErrorColumn: 'Summation Error in column ({total}) ≠ column {parts}',
     checkSumErrorRow: 'Summation Error in row ({total}) ≠ row {parts}',
+    misprintsCount: '· refusi della stampa confermati: {n}',
+    misprintMark: 'Refuso della stampa',
+    misprintUndo: 'Annulla refuso',
+    misprintHint: 'La scansione riporta proprio questi numeri e la somma non torna nemmeno lì: la cella resta com’è stampata e la somma smette di contare come errore. Se cambi uno dei suoi numeri torna da controllare.',
     loadFailed: 'Griglia non caricata dal server.',
     saveFailed: 'Salvataggio non riuscito.',
     saveFailedWith:
@@ -1324,6 +1325,14 @@ export const it = {
     textCerMeaning: 'Errore per carattere: 0 è trascrizione identica.',
     iou: 'IoU medio',
     iouMeaning: 'Quanto si sovrappongono i riquadri riconosciuti: 1 è coincidenza.',
+    strictF1: 'F1 layout · IoU ≥ 0,75',
+    strictF1Sub: '{matched}/{gt} trovati · {pred} predetti',
+    strictF1Meaning: 'Un riquadro conta solo con la label giusta e sovrapposto almeno al 75%; mancati e inventati abbassano il punteggio.',
+    perLabel: 'Layout per label · IoU ≥ 0,75',
+    perLabelLabel: 'Label',
+    perLabelFound: 'trovati',
+    perLabelInvented: 'inventati',
+    perLabelMeaning: 'Trovati = tuoi blocchi riconosciuti bene. Inventati = riquadri del modello che non corrispondono a nessun tuo blocco.',
     tablesStruct: 'Tabelle: struttura',
     tablesStructMeaning:
       'Quante tabelle hanno righe, colonne e celle unite giuste.',
@@ -1891,6 +1900,7 @@ export const it = {
   },
 
   layout: {
+    menu: 'Menu',
     logout: 'Esci',
     changePassword: 'Cambia password',
   },

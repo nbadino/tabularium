@@ -9,7 +9,6 @@ import type { Dict } from './it'
 export const en: Dict = {
   app: {
     title: 'Tabularium — Document recognition',
-    tagline: 'Recognition, review, and training for historical documents',
     skipToContent: 'Skip to content',
     navSections: 'Sections',
     backendDown: 'Backend unreachable',
@@ -561,6 +560,7 @@ export const en: Dict = {
     polygon: 'Polygon',
     pan: 'Pan',
     toolsAria: 'Canvas tools',
+    more: 'More',
     viewModeAria: 'Studio modes',
     viewMode: 'View',
     viewAll: 'All',
@@ -646,11 +646,6 @@ export const en: Dict = {
     resetConfirm:
       'Return to the original scan? Transformations will be removed and annotated blocks deleted to prevent incorrect coordinates.',
     resetApplied: 'Transformations removed: page restored to the original scan.',
-    guideLabel: 'What to do next:',
-    guideStart: 'Empty page: press Prefill OCR to generate drafts, then fix them.',
-    guideFix:
-      '{n} OCR drafts to fix: assign classes (palette) and reading order (arrows in Layers).',
-    guideReady: 'Structure ready: set reading order and transcripts, then go to Dataset.',
     save: 'Save',
     stageStructure: 'Structure',
     stageContent: 'Content',
@@ -885,6 +880,8 @@ export const en: Dict = {
     hintSelect:
       'Click a merged cell, then “Separate” to restore the original cells.',
     saving: 'Saving…',
+    verifyHint: 'Select a cell (or a range) and press ✓ at the end of the formula bar if it matches the scan.',
+    verifiedCount: '{n}/{total} verified',
     autoFractions: 'Fractions 1/8 → ⅛',
     autoFractionsHint: 'When you confirm a cell, “8 1/8” becomes “8⅛”. Ctrl+Z undoes one conversion; turn this off to keep fractions exactly as typed.',
     saveGrid: 'Save grid',
@@ -990,6 +987,10 @@ export const en: Dict = {
       'Sums: {passed} of {total} add up · {failed} don’t — check the highlighted cells against the image.',
     checkSumErrorColumn: 'Summation Error in column ({total}) ≠ column {parts}',
     checkSumErrorRow: 'Summation Error in row ({total}) ≠ row {parts}',
+    misprintsCount: '· printing errors confirmed: {n}',
+    misprintMark: 'Printing error',
+    misprintUndo: 'Undo printing error',
+    misprintHint: 'The scan shows exactly these numbers and the sum is wrong there too: the cell stays as printed and the sum no longer counts as an error. Change any of its numbers and it needs checking again.',
     loadFailed: 'Grid could not be loaded from the server.',
     saveFailed: 'Save failed.',
     saveFailedWith:
@@ -1323,6 +1324,14 @@ export const en: Dict = {
     textCerMeaning: 'Error per character: 0 is identical transcription.',
     iou: 'Mean IoU',
     iouMeaning: 'How much the recognized boxes overlap: 1 is a perfect match.',
+    strictF1: 'Layout F1 · IoU ≥ 0.75',
+    strictF1Sub: '{matched}/{gt} found · {pred} predicted',
+    strictF1Meaning: 'A box counts only with the right label and at least 75% overlap; missed and invented blocks lower the score.',
+    perLabel: 'Layout per label · IoU ≥ 0.75',
+    perLabelLabel: 'Label',
+    perLabelFound: 'found',
+    perLabelInvented: 'invented',
+    perLabelMeaning: 'Found = your blocks recognized correctly. Invented = model boxes that match none of your blocks.',
     tablesStruct: 'Tables: structure',
     tablesStructMeaning:
       'How many tables have correct rows, columns and merged cells.',
@@ -1889,6 +1898,7 @@ export const en: Dict = {
   },
 
   layout: {
+    menu: 'Menu',
     logout: 'Sign out',
     changePassword: 'Change password',
   },

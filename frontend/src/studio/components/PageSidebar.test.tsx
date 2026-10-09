@@ -33,7 +33,8 @@ describe('PageSidebar', () => {
     // p. 5 ha solo somme di colonna, p. 4 dei due tipi: l'etichetta lo dice.
     expect(screen.getByText('6 somme di colonna ≠')).toHaveAttribute('class', expect.stringContaining('warn'))
     expect(screen.getByTitle('6 somme su 114 non tornano in questa pagina')).toBeTruthy()
-    expect(screen.getByText('Row and column sums ok')).toBeTruthy()
-    expect(screen.getAllByText(/≠|sums? ok/)).toHaveLength(2) // la terza pagina non ha tabelle
+    // Le somme giuste non sono un allarme: un segno quieto, non un badge.
+    expect(screen.getByLabelText('Row and column sums ok')).toHaveTextContent('✓')
+    expect(screen.getAllByText(/≠|✓/)).toHaveLength(2) // la terza pagina non ha tabelle
   })
 })

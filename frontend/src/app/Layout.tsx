@@ -10,7 +10,7 @@
  * hanno bisogno resta libera per il contesto (le pagine, i progetti).
  */
 import { Link, NavLink, Outlet, useLocation } from 'react-router'
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { apiGet } from '../lib/api'
 import { syncInferenceFromBackend, useInference } from './inference'
 import { useModelNames } from './models/names'
@@ -18,6 +18,7 @@ import type { HealthResponse } from '../lib/types'
 import { LOCALES, LOCALE_LABELS, useI18n } from '../i18n'
 import type { Locale } from '../i18n'
 import { useAuth } from './auth'
+import { Menu, PageSkeleton } from './ui'
 import {
   IconArchive,
   IconAnnotate,
@@ -59,7 +60,7 @@ function LocaleSwitch() {
       value={locale}
       onChange={(e) => setLocale(e.target.value as Locale)}
       aria-label={LOCALE_LABELS[locale]}
-      className="border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)] px-1 py-0.5 text-[11px] font-medium text-[color:var(--color-ink)] focus:outline-none focus-visible:outline-2 focus-visible:outline-[color:var(--color-sig)]"
+      className="rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] px-1.5 py-0.5 text-[11px] font-medium text-[color:var(--color-ink)] focus:outline-none focus-visible:outline-2 focus-visible:outline-[color:var(--color-sig)]"
     >
       {LOCALES.map((l) => (
         <option key={l} value={l}>
@@ -70,69 +71,70 @@ function LocaleSwitch() {
   )
 }
 
-function BackendState() {
+/**
+ * Chi è connesso e i comandi dell'istanza in un menu solo: Utenti e
+ * Impostazioni (per l'admin), lingua, uscita. Servono di rado e
+ * stavano tutti in testata. L'unica cosa che resta fuori è l'allarme
+ * «backend non raggiungibile», che non può aspettare un clic.
+ */
+function AccountMenu() {
   const { t } = useI18n()
-  const [version, setVersion] = useState<string | null>(null)
+  const { user, logout } = useAuth()
   const [down, setDown] = useState(false)
 
+  // Solo l'allarme: la versione sta in Impostazioni.
   useEffect(() => {
-    apiGet<HealthResponse>('/health')
-      .then((h) => setVersion(h.version))
-      .catch(() => setDown(true))
+    apiGet<HealthResponse>('/health').catch(() => setDown(true))
   }, [])
 
-  if (down) {
-    return (
-      <span className="badge border-[color:var(--color-sig-plate)] bg-[color:var(--color-sig-plate)] text-white">
-        {t('app.backendDown')}
-      </span>
-    )
-  }
+  const roleKey = user ? `users.role${user.role.charAt(0).toUpperCase()}${user.role.slice(1)}` : null
   return (
-    <span className="mono text-[11px] text-[color:var(--color-ink-3)]">
-      v{version ?? '…'}
-    </span>
+    <>
+      {down && (
+        <span className="badge border-[color:var(--color-sig-plate)] bg-[color:var(--color-sig-plate)] text-white">
+          {t('app.backendDown')}
+        </span>
+      )}
+      <Menu label={<span className="max-w-[14ch] truncate">{user?.username ?? t('layout.menu')}</span>}>
+        {user && roleKey && (
+          <span className="flex items-baseline gap-1.5 border-b border-[color:var(--color-rule)] pb-1.5">
+            <b className="truncate font-semibold">{user.username}</b>
+            <span className="badge">{t(roleKey)}</span>
+          </span>
+        )}
+        {user?.role === 'admin' && (
+          <NavLink to="/utenti" className="btn btn-sm justify-start">
+            {t('nav.users')}
+          </NavLink>
+        )}
+        <NavLink to="/impostazioni" className="btn btn-sm justify-start">
+          {t('nav.settings')}
+        </NavLink>
+        <LocaleSwitch />
+        {user && (
+          <button type="button" onClick={() => void logout()} className="btn btn-sm justify-start">
+            {t('layout.logout')}
+          </button>
+        )}
+      </Menu>
+    </>
   )
 }
 
 /**
- * Chi è connesso: nome, ruolo, e i comandi dell'istanza. Le pagine
- * Impostazioni e Utenti esistono solo per l'amministratore; il logout valido
- * per tutti. Nascosto finché non c'è un utente (modalità locale).
+ * Ultimo indirizzo visto per ogni sezione. Lo Studio e Risultati tengono la
+ * pagina aperta e i filtri nella query (`?project=&page=`): una linguetta che
+ * puntasse alla sezione nuda li buttava via a ogni ritorno. Vive per la sessione
+ * del documento; dopo un ricaricamento è l'URL stesso a riportarli.
  */
-function UserMenu() {
-  const { t } = useI18n()
-  const { user, logout } = useAuth()
-  if (!user) return null
-  const roleKey = `users.role${user.role.charAt(0).toUpperCase()}${user.role.slice(1)}`
-  return (
-    <div className="flex items-center gap-1.5">
-      {user.role === 'admin' && (
-        <NavLink to="/utenti" className="btn btn-sm">
-          {t('nav.users')}
-        </NavLink>
-      )}
-      <NavLink to="/impostazioni" className="btn btn-sm">
-        {t('nav.settings')}
-      </NavLink>
-      <span className="flex min-w-0 items-baseline gap-1.5">
-        <span className="max-w-[14ch] truncate text-[12px] font-semibold text-[color:var(--color-ink)]">
-          {user.username}
-        </span>
-        <span className="badge">{t(roleKey)}</span>
-      </span>
-      <button type="button" onClick={() => void logout()} className="btn btn-sm">
-        {t('layout.logout')}
-      </button>
-    </div>
-  )
-}
+const lastSearch = new Map<string, string>()
 
 export default function Layout() {
   const { t } = useI18n()
   const inference = useInference()
   const nameOf = useModelNames()
   const location = useLocation()
+  if (NAV.some(({ to }) => to === location.pathname)) lastSearch.set(location.pathname, location.search)
   // Ogni pagina legge lo stato inferenza (chip GPU, banner, motori prefill):
   // il sync all'avvio evita di mostrare disponibilità/latenza stantie da
   // localStorage, che prima si aggiornavano solo aprendo la Home.
@@ -156,9 +158,6 @@ export default function Layout() {
           <span className="text-[13px] font-bold tracking-[-0.02em]">
             Tabularium<span className="text-[color:var(--color-sig-text)]">Lab</span>
           </span>
-          <span className="hidden min-w-0 truncate text-[11px] text-[color:var(--color-ink-3)] sm:block">
-            {t('app.tagline')}
-          </span>
           <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2">
             {location.pathname !== '/modelli' && (() => {
               const providerKey = inference.provider && ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom'].includes(inference.provider)
@@ -179,7 +178,7 @@ export default function Layout() {
               return (
             <Link
               to="/modelli"
-              className="flex min-w-0 items-center gap-1.5 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)] px-2 py-1 text-[11px] no-underline hover:bg-[color:var(--color-fill)]"
+              className="flex min-w-0 items-center gap-1.5 rounded-full border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] px-3 py-1 text-[11px] no-underline hover:bg-[color:var(--color-fill)]"
               title={t('recognition.changeModel')}
             >
               <span className="max-w-[24ch] truncate font-semibold" title={inference.model || undefined}>{nameOf(inference.adapterId) ?? (inference.model || t('recognition.activeModel'))}</span>
@@ -190,9 +189,7 @@ export default function Layout() {
             </Link>
               )
             })()}
-            <UserMenu />
-            <LocaleSwitch />
-            <BackendState />
+            <AccountMenu />
           </div>
         </div>
 
@@ -200,7 +197,7 @@ export default function Layout() {
         <nav aria-label={t('app.navSections')} className="flex min-w-0 max-w-full overflow-x-auto">
           <span className="w-px shrink-0 bg-[color:var(--color-rule)]" />
           {NAV.map(({ to, labelKey, Icon, end }) => (
-            <NavLink key={to} to={to} end={end} className="shrink-0">
+            <NavLink key={to} to={{ pathname: to, search: lastSearch.get(to) ?? '' }} end={end} className="shrink-0">
               {({ isActive }) => (
                 <span className="navtab" data-active={isActive}>
                   <Icon size={13} />
@@ -213,7 +210,14 @@ export default function Layout() {
       </header>
 
       <main id="contenuto" className="min-h-0 flex-1 overflow-y-auto">
-        <Outlet />
+        {/* Cambiando sezione il contenuto entra (non compare di colpo), e
+            mentre il suo codice arriva resta la sua forma — la testata e le
+            linguette restano dove sono. */}
+        <Suspense fallback={<PageSkeleton label={t('app.loadingModule')} />}>
+          <div key={location.pathname} className="enter h-full">
+            <Outlet />
+          </div>
+        </Suspense>
       </main>
     </div>
   )

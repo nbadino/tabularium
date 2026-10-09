@@ -19,9 +19,12 @@ interface PageSidebarProps {
   reviewScope?: { label: string; backTo: string; backLabel: string } | null
   /** Controlli aritmetici per pagina: dove le somme non tornano. */
   sums?: PageSums
+  /** Le pagine stanno arrivando: si mostra la loro forma, non «nessuna pagina». */
+  loading?: boolean
 }
 
 const INITIAL_PAGE_LIMIT = 100
+const SEARCH_FROM = 20
 
 /** L'etichetta dice **di che somme** si parla: una tavola per paese ha somme
  *  lungo le righe (Merchandise + Treasure = Total) e lungo le colonne (le voci
@@ -41,6 +44,7 @@ export default function PageSidebar({
   width,
   reviewScope,
   sums,
+  loading,
 }: PageSidebarProps) {
   const { t } = useI18n()
   const [pageQuery, setPageQuery] = useState('')
@@ -86,15 +90,22 @@ export default function PageSidebar({
     >
       <div className="border-b border-[color:var(--color-rule)] p-2">
         {reviewScope && (
-          <div className="mb-2 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] p-2">
+          <div className="mb-2 rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-2">
             <div className="text-[12px] font-semibold">{reviewScope.label}</div>
             <Link to={reviewScope.backTo} className="mt-1 inline-block text-[11px] font-semibold no-underline">
               {reviewScope.backLabel}
             </Link>
           </div>
         )}
-        <Field label={t('sidebar.project')}>
-          <select
+        <div className="flex items-baseline justify-between">
+          <span className="lbl">{t('sidebar.project')}</span>
+          {!reviewScope && (
+            <Link to="/progetti" className="text-[11px] text-[color:var(--color-ink-2)]">
+              {t('sidebar.manageProjects')}
+            </Link>
+          )}
+        </div>
+        <select
             value={projectId}
             onChange={(e) => onProjectChange(e.target.value === '' ? '' : Number(e.target.value))}
             disabled={Boolean(reviewScope)}
@@ -107,16 +118,9 @@ export default function PageSidebar({
               </option>
             ))}
           </select>
-        </Field>
-        {!reviewScope && (
-          <Link
-            to="/progetti"
-            className="mt-1.5 inline-block text-[11px] font-semibold uppercase tracking-[0.04em] no-underline"
-          >
-            {t('sidebar.manageProjects')}
-          </Link>
-        )}
-        {pages.length > 0 && (
+        {/* Su poche pagine la lista si scorre a occhio: la ricerca serve
+            quando l'archivio cresce. */}
+        {pages.length > SEARCH_FROM && (
           <Field label={t('sidebar.pageSearch')}>
             <input
               value={pageQuery}
@@ -164,13 +168,23 @@ export default function PageSidebar({
         </div>
       )}
 
-      <ul ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
+      <ul ref={listRef} className="cascade min-h-0 flex-1 overflow-y-auto">
         {projectId === '' && (
           <li className="p-2 text-[12px] text-[color:var(--color-ink-2)]">
             {t('sidebar.noProject')}
           </li>
         )}
-        {projectId !== '' && pages.length === 0 && (
+        {projectId !== '' && pages.length === 0 && loading &&
+          Array.from({ length: 6 }, (_, i) => (
+            <li key={`skeleton-${i}`} aria-hidden className="flex gap-2 border-b border-[color:var(--color-rule)] p-1.5">
+              <span className="load-cell block h-14 w-11 shrink-0 rounded-sm" style={{ ['--load-delay' as string]: `${i * 80}ms` }} />
+              <span className="flex flex-1 flex-col gap-1.5 pt-1">
+                <span className="load-cell block h-2.5 w-10 rounded-sm" />
+                <span className="load-cell block h-3.5 w-20 rounded-full" />
+              </span>
+            </li>
+          ))}
+        {projectId !== '' && pages.length === 0 && !loading && (
           <li className="p-2 text-[12px] text-[color:var(--color-ink-2)]">
             {t('sidebar.noPages')}
           </li>
@@ -190,17 +204,17 @@ export default function PageSidebar({
                 aria-current={on ? 'true' : undefined}
                 className={`flex w-full gap-2 border-b border-[color:var(--color-rule)] p-1.5 text-left ${
                   on
-                    ? 'bg-[color:var(--color-sig-wash)] outline outline-2 -outline-offset-2 outline-[color:var(--color-sig)]'
+                    ? 'rounded-md bg-[color:var(--color-sig-wash)] outline outline-2 -outline-offset-2 outline-[color:var(--color-sig)]'
                     : 'hover:bg-[color:var(--color-fill)]'
                 }`}
               >
-                <img
+                <img data-fade
                   src={`/api/pages/${p.id}/thumbnail`}
                   alt=""
                   loading="lazy"
-                  className="h-14 w-11 shrink-0 border border-[color:var(--color-rule)] bg-white object-cover object-top"
+                  className="h-14 w-11 shrink-0 rounded-sm border border-[color:var(--color-rule)] bg-white object-cover object-top"
                 />
-                <span className="flex min-w-0 flex-1 flex-col gap-1">
+                <span className="flex min-w-0 flex-1 flex-col items-start gap-1">
                   <span className="mono truncate text-[11px]" title={pageLabel(p)}>
                     {pageShortLabel(p)}
                   </span>
@@ -209,15 +223,21 @@ export default function PageSidebar({
                   ) : (
                     <Badge tone={STATUS_TONE[p.status] ?? 'neutral'}>{statusLabel(p.status)}</Badge>
                   )}
-                  {sums?.[p.id] && (
-                    <span
-                      title={sums[p.id].failed > 0
-                        ? t('sidebar.sumsFailedTitle', sums[p.id])
-                        : t('sidebar.sumsOkTitle', sums[p.id])}
-                    >
-                      <Badge tone={sums[p.id].failed > 0 ? 'warn' : 'ok'}>{sumsLabel(sums[p.id])}</Badge>
+                  {/* Le somme si segnalano quando non tornano; quando tornano
+                      basta un segno quieto, con il conto nel titolo. */}
+                  {sums?.[p.id] && (sums[p.id].failed > 0 ? (
+                    <span title={t('sidebar.sumsFailedTitle', sums[p.id])}>
+                      <Badge tone="warn">{sumsLabel(sums[p.id])}</Badge>
                     </span>
-                  )}
+                  ) : (
+                    <span
+                      className="text-[11px] text-[color:var(--color-ok)]"
+                      title={t('sidebar.sumsOkTitle', sums[p.id])}
+                      aria-label={sumsLabel(sums[p.id])}
+                    >
+                      ✓
+                    </span>
+                  ))}
                 </span>
               </button>
             </li>

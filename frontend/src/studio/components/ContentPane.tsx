@@ -153,6 +153,12 @@ function TableBlockEditor({
 const TABLE_SURFACE: 'univer' | 'ce' = 'univer'
 
 const FRACTIONS_KEY = 'tabularium.table.autoFractions'
+
+/** Celle con testo confermate, sul totale di quelle che si possono confermare. */
+function verifiedCount(grid: TableGrid): { n: number; total: number } {
+  const filled = grid.cells.filter((cell) => (cell.text ?? '').trim() !== '')
+  return { n: filled.filter((cell) => cell.verified).length, total: filled.length }
+}
 const OTSL_KEY = 'tabularium.table.otslPreview'
 
 /** Il corpo della vista di lavoro: carica la griglia dal server, possiede i
@@ -188,11 +194,12 @@ export function TableWorkspacePanel({
       return true
     }
   })
+  // Ripiegata finché l'annotatore non la apre: è un controllo, non il lavoro.
   const [otslOpen, setOtslOpen] = useState(() => {
     try {
-      return localStorage.getItem(OTSL_KEY) !== 'closed'
+      return localStorage.getItem(OTSL_KEY) === 'open'
     } catch {
-      return true
+      return false
     }
   })
   const toggleOtsl = (open: boolean) => {
@@ -242,6 +249,14 @@ export function TableWorkspacePanel({
         (k) => !k.ok && [...k.cells, k.total].some(([r, c]) => r === active.r && c === active.c),
       )
     : []
+  /** Somma confrontata con la scansione: la stampa sbaglia, la trascrizione
+   *  resta com'è e la somma smette di contare come errore. */
+  const toggleMisprint = (key: string, on: boolean) => {
+    const current = gridRef.current
+    if (!current) return
+    const rest = (current.misprints ?? []).filter((k) => k !== key)
+    applyModel({ ...current, misprints: on ? [...rest, key] : rest })
+  }
 
   useEffect(() => {
     setError(null)
@@ -404,6 +419,10 @@ export function TableWorkspacePanel({
               {t('table.phantomColumns', { n: grid.phantom_cols.length })}
             </span>
           )}
+          {/* ✓ / ✕ stanno nella barra della formula; qui il conto. */}
+          <span className="mono text-[11px] text-[color:var(--color-ink-2)]" title={t('table.verifyHint')}>
+            {t('table.verifiedCount', verifiedCount(grid))}
+          </span>
           <label className="ml-auto flex items-center gap-1 text-[11px] text-[color:var(--color-ink-2)]" title={t('table.autoFractionsHint')}>
             <input type="checkbox" checked={autoFractions} onChange={(e) => toggleFractions(e.target.checked)} />
             {t('table.autoFractions')}
@@ -425,9 +444,24 @@ export function TableWorkspacePanel({
           {checks.failed > 0
             ? t('table.checksSummary', { passed: checks.passed, total: checks.checks.length, failed: checks.failed })
             : t('table.checksBalanced', { n: checks.passed })}
+          {(checks.misprints ?? 0) > 0 && (
+            <span className="ml-1 text-[color:var(--color-ink-2)]">{t('table.misprintsCount', { n: checks.misprints ?? 0 })}</span>
+          )}
           {activeProblems.map((k, i) => (
-            <span key={i} className="mono ml-2 text-[color:var(--color-ink)]">
-              {sumErrorMessage(k, t)}
+            <span key={i} className="ml-2 inline-flex items-center gap-1">
+              <span className={`mono ${k.misprint ? 'text-[color:var(--color-ink-2)] line-through' : 'text-[color:var(--color-ink)]'}`}>
+                {sumErrorMessage(k, t)}
+              </span>
+              {k.key && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  title={t('table.misprintHint')}
+                  onClick={() => toggleMisprint(k.key!, !k.misprint)}
+                >
+                  {k.misprint ? t('table.misprintUndo') : t('table.misprintMark')}
+                </button>
+              )}
             </span>
           ))}
         </p>
@@ -599,6 +633,10 @@ interface RowShellProps {
   cropAlt: string
   cropUnsavedHint: string
   wide?: boolean
+  /** Una riga sola: blocco già verificato e non selezionato. Il lavoro
+   *  finito si riduce a numero, classe, anteprima e ✓; si riapre col clic. */
+  collapsed?: boolean
+  preview?: string
   children: React.ReactNode
 }
 
@@ -629,9 +667,61 @@ function RowShell({
   cropAlt,
   cropUnsavedHint,
   wide,
+  collapsed,
+  preview,
   children,
 }: RowShellProps) {
   const { t } = useI18n()
+  const orderButton = (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      aria-label={rowAria}
+      onKeyDown={(e) => {
+        if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+          e.preventDefault()
+          onMove?.(e.key === 'ArrowUp' ? -1 : 1)
+          return
+        }
+        if (e.key === 'Delete') {
+          e.preventDefault()
+          onDelete?.()
+        }
+      }}
+      className="mono flex shrink-0 items-center gap-1.5 text-[11px] text-[color:var(--color-ink-3)]"
+    >
+      <span className="w-5 text-right">{order ?? '—'}</span>
+      {color && (
+        <span
+          aria-hidden
+          className="h-3 w-3 rounded-sm border border-[color:var(--color-rule-strong)]"
+          style={{ background: color }}
+        />
+      )}
+    </button>
+  )
+  if (collapsed) {
+    return (
+      <li
+        id={`content-row-${id}`}
+        data-block={id}
+        className="stream-in flex cursor-pointer items-center gap-2 border-b border-[color:var(--color-rule)] px-2.5 py-1.5 last:border-b-0 hover:bg-[color:var(--color-fill)]"
+        onClick={(e) => {
+          if (!(e.target as HTMLElement).closest('button')) onSelect?.()
+        }}
+      >
+        {orderButton}
+        <span className="shrink-0 text-[12px] font-semibold">{label}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-[color:var(--color-ink-2)]">
+          {preview}
+        </span>
+        <span className="shrink-0 text-[11px] text-[color:var(--color-ok)]" title={t('content.confirmDraft')}>
+          ✓ {t('content.confirmDraft')}
+        </span>
+      </li>
+    )
+  }
   return (
     <li
       id={`content-row-${id}`}
@@ -641,33 +731,7 @@ function RowShell({
       }`}
     >
       <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1.5">
-        <button
-          type="button"
-          onClick={onSelect}
-          aria-pressed={selected}
-          aria-label={rowAria}
-          onKeyDown={(e) => {
-            if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-              e.preventDefault()
-              onMove?.(e.key === 'ArrowUp' ? -1 : 1)
-              return
-            }
-            if (e.key === 'Delete') {
-              e.preventDefault()
-              onDelete?.()
-            }
-          }}
-          className="mono flex shrink-0 items-center gap-1.5 text-[11px] text-[color:var(--color-ink-3)]"
-        >
-          <span className="w-5 text-right">{order ?? '—'}</span>
-          {color && (
-            <span
-              aria-hidden
-              className="h-3 w-3 border border-[color:var(--color-rule-strong)]"
-              style={{ background: color }}
-            />
-          )}
-        </button>
+        {orderButton}
 
         {onLabel && labels ? (
           <select
@@ -745,11 +809,11 @@ function RowShell({
           className={`m-0 shrink-0 ${wide ? 'max-h-32 w-full overflow-hidden' : 'w-1/4'} ${onSelect ? 'cursor-pointer' : ''}`}
         >
           {cropUrl ? (
-            <img
+            <img data-fade
               src={cropUrl}
               alt={cropAlt}
               loading="lazy"
-              className={`w-full border border-[color:var(--color-rule-strong)] bg-[color:var(--color-table)] object-contain ${wide ? 'max-h-32 object-top' : ''}`}
+              className={`w-full rounded-sm border border-[color:var(--color-rule)] bg-[color:var(--color-table)] object-contain ${wide ? 'max-h-32 object-top' : ''}`}
             />
           ) : (
             <p className="border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-2 text-[11px] text-[color:var(--color-ink-2)]">
@@ -853,7 +917,7 @@ export default function ContentPane({
   // Segue la selezione fatta sul canvas: la riga corrispondente entra in vista.
   useEffect(() => {
     if (!selectedId) return
-    document.getElementById(`content-row-${selectedId}`)?.scrollIntoView({ block: 'nearest' })
+    document.getElementById(`content-row-${selectedId}`)?.scrollIntoView?.({ block: 'nearest' })
   }, [selectedId])
 
   const total = sortedBlocks.length + pendingDrafts.length
@@ -866,7 +930,7 @@ export default function ContentPane({
       flush
       aux={
         <>
-          <span className="mono text-[11px] text-[color:var(--color-ink-3)]">
+          <span className="mono text-[11px] text-[color:var(--color-ink-3)]" title={onMove ? t('layers.keys') : undefined}>
             {tn('content.blocksCount', total)}
           </span>
           {onReorderReset && !empty && (
@@ -899,12 +963,7 @@ export default function ContentPane({
         <p className="p-3 text-[12px] text-[color:var(--color-ink-2)]">{t('content.emptyPageBody')}</p>
       ) : (
         <>
-          {onMove && (
-            <p className="border-b border-[color:var(--color-rule)] px-2.5 py-1 text-[11px] text-[color:var(--color-ink-3)]">
-              {t('layers.keys')}
-            </p>
-          )}
-          <ul className="flex flex-col">
+          <ul className="cascade flex flex-col">
             {sortedBlocks.map((block, i) => {
               const isTable = block.label === 'Table'
               const noContent = NO_CONTENT_LABELS.has(block.label)
@@ -918,10 +977,12 @@ export default function ContentPane({
                   labels={labels}
                   onLabel={(label) => onLabel(block.id, label)}
                   badge={
-                    block.prefill
+                    block.prefill && !block.confirmed
                       ? { text: 'OCR', title: t('layers.prefillTitle', { source: block.prefill }) }
                       : undefined
                   }
+                  collapsed={block.confirmed && selectedId !== block.id && !isTable}
+                  preview={noContent ? '' : block.content.replace(/\s+/g, ' ')}
                   confirmed={block.confirmed}
                   onConfirmed={(v) => onConfirmed(block.id, v)}
                   onDelete={() => onDelete(block.id)}

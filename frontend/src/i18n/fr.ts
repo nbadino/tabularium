@@ -9,7 +9,6 @@ import type { Dict } from './it'
 export const fr: Dict = {
   app: {
     title: 'Tabularium — Reconnaissance de documents',
-    tagline: 'Reconnaissance, révision et entraînement de documents historiques',
     skipToContent: 'Aller au contenu',
     navSections: 'Sections',
     backendDown: 'Backend injoignable',
@@ -561,6 +560,7 @@ export const fr: Dict = {
     polygon: 'Polygone',
     pan: 'Panoramique',
     toolsAria: 'Outils du canevas',
+    more: 'Plus',
     viewModeAria: 'Modes du studio',
     viewMode: 'Vue',
     viewAll: 'Tout',
@@ -646,11 +646,6 @@ export const fr: Dict = {
     resetConfirm:
       'Revenir au scan original ? Les transformations seront supprimées et les blocs annotés effacés pour éviter des coordonnées incorrectes.',
     resetApplied: 'Transformations supprimées : page restaurée au scan original.',
-    guideLabel: 'Que faire ensuite :',
-    guideStart: 'Page vide : appuyez sur Prefill OCR pour générer les brouillons, puis corrigez-les.',
-    guideFix:
-      '{n} brouillons OCR à corriger : attribuez les classes (palette) et l\u2019ordre de lecture (flèches dans Calques).',
-    guideReady: 'Structure prête : définissez l\u2019ordre de lecture et les transcriptions, puis allez dans Jeu de données.',
     save: 'Enregistrer',
     stageStructure: 'Structure',
     stageContent: 'Contenu',
@@ -885,6 +880,8 @@ export const fr: Dict = {
     hintSelect:
       'Cliquez sur une cellule fusionnée, puis «Séparer» pour la ramener aux cellules d’origine.',
     saving: 'Enregistrement…',
+    verifyHint: 'Sélectionnez une cellule (ou une plage) et appuyez sur ✓ au bout de la barre de formule si elle correspond au scan.',
+    verifiedCount: '{n}/{total} vérifiées',
     autoFractions: 'Fractions 1/8 → ⅛',
     autoFractionsHint: 'À la validation de la cellule, « 8 1/8 » devient « 8⅛ ». Ctrl+Z annule une conversion ; désactivez pour garder les fractions telles que saisies.',
     saveGrid: 'Enregistrer la grille',
@@ -990,6 +987,10 @@ export const fr: Dict = {
       'Sommes : {passed} sur {total} justes · {failed} fausses — vérifiez sur l’image les cellules surlignées.',
     checkSumErrorColumn: 'Summation Error in column ({total}) ≠ column {parts}',
     checkSumErrorRow: 'Summation Error in row ({total}) ≠ row {parts}',
+    misprintsCount: '· erreurs d’impression confirmées : {n}',
+    misprintMark: 'Erreur d’impression',
+    misprintUndo: 'Annuler l’erreur d’impression',
+    misprintHint: 'Le scan porte exactement ces nombres et la somme y est fausse aussi : la cellule reste telle qu’imprimée et la somme ne compte plus comme une erreur. Si vous modifiez l’un de ses nombres, elle est à revérifier.',
     loadFailed: 'La grille n’a pas pu être chargée depuis le serveur.',
     saveFailed: 'Échec de l’enregistrement.',
     saveFailedWith:
@@ -1323,6 +1324,14 @@ export const fr: Dict = {
     textCerMeaning: 'Erreur par caractère : 0 est une transcription identique.',
     iou: 'IoU moyen',
     iouMeaning: 'Dans quelle mesure les cadres reconnus se chevauchent : 1 est une coïncidence.',
+    strictF1: 'F1 mise en page · IoU ≥ 0,75',
+    strictF1Sub: '{matched}/{gt} trouvés · {pred} prédits',
+    strictF1Meaning: 'Un cadre ne compte qu’avec la bonne étiquette et un recouvrement d’au moins 75 % ; les blocs manqués et inventés font baisser le score.',
+    perLabel: 'Mise en page par étiquette · IoU ≥ 0,75',
+    perLabelLabel: 'Étiquette',
+    perLabelFound: 'trouvés',
+    perLabelInvented: 'inventés',
+    perLabelMeaning: 'Trouvés = vos blocs bien reconnus. Inventés = cadres du modèle qui ne correspondent à aucun de vos blocs.',
     tablesStruct: 'Tableaux : structure',
     tablesStructMeaning:
       'Combien de tableaux ont des lignes, colonnes et cellules fusionnées correctes.',
@@ -1890,6 +1899,7 @@ export const fr: Dict = {
   },
 
   layout: {
+    menu: 'Menu',
     logout: 'Se déconnecter',
     changePassword: 'Changer le mot de passe',
   },

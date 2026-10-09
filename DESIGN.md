@@ -19,21 +19,35 @@ nessun pulsante affidato alla sola icona, nessuna azione che appare solo al pass
 ## Superficie
 
 Chiaro, per una ragione materiale: il contenuto è inchiostro su carta (scansioni di giornali
-in scala di grigi) e si legge su fondo carta. Non c'è tema scuro — è una scelta, non un'omissione.
+e di volumi statistici, spesso ingialliti) e si legge su fondo carta. Non c'è tema scuro — è
+una scelta, non un'omissione. I neutri sono **caldi**: il bianco e il rosso del marchio stanno
+con grigi tendenti al bruno, non con grigi freddi, e accanto alle scansioni ingiallite non
+stonano.
 
 | Ruolo | Token | Valore |
 |---|---|---|
 | Foglio | `--color-sheet` | `#ffffff` |
-| Riempimento (testate, log) | `--color-fill` | `#f4f5f7` |
-| Filetto | `--color-rule` | `#c9ccd1` |
+| Riempimento (testate, log) | `--color-fill` | `#f6f4f2` |
+| Filetto | `--color-rule` | `#d6d0cc` |
 | Filetto forte (divisioni maggiori, modali) | `--color-rule-strong` | `#111111` |
 | Inchiostro | `--color-ink` | `#111111` |
-| Inchiostro secondario | `--color-ink-2` | `#4c5259` |
-| Inchiostro terziario | `--color-ink-3` | `#6b7178` |
-| Tavolo luminoso (fondo di una scansione) | `--color-table` | `#dfe2e6` |
+| Inchiostro secondario | `--color-ink-2` | `#55504c` |
+| Inchiostro terziario | `--color-ink-3` | `#736d69` |
+| Tavolo luminoso (fondo di una scansione) | `--color-table` | `#e4e0da` |
 
-Niente ombre. Niente gradienti. Niente angoli arrotondati. Filetti da 1px: la pagina è un
-foglio stampato, non una superficie con oggetti sopra.
+Niente gradienti. Filetti da 1px: la pagina è un foglio stampato, non una superficie con
+oggetti sopra.
+
+**Angoli misurati, dati ad angolo vivo.** Gli angoli vivi ovunque davano un'aria meccanica;
+ora i comandi e i contenitori sono arrotondati con una scala sola (`--radius-sm` 4px per i
+pulsanti piccoli, `--radius-md` 6px per pulsanti e campi, `--radius-lg` 10px per moduli,
+menu e dialoghi), i distintivi di stato sono pillole e la linguetta del modulo segue l'angolo
+del modulo. Restano ad angolo vivo i **dati**: la scansione, le celle delle tabelle, il foglio
+di calcolo, le righe rigate — lì l'angolo è precisione.
+
+**Un'ombra sola, per i piani sospesi.** `.float-layer` (menu «Altro», dialoghi, barra dello
+zoom e avvisi sopra il canvas) ha un'ombra morbida: dice che il piano sta sopra la pagina e si
+chiude. Nient'altro ha ombra.
 
 ## Il segnale ha un ruolo solo
 
@@ -54,6 +68,23 @@ conferma `--color-ok` `#0a6c3d` su `--color-ok-wash`.
 **Regola di accessibilità:** nessuno stato è comunicato dal solo colore. Ogni stato è una
 parola in un `.badge`; il colore rinforza, non informa (`app/ui.tsx` → `Badge`, `lib/vocab.ts`
 → `STATUS_TONE`).
+
+## Le classi sulla scansione
+
+I riquadri delle classi (`services/labeling.py`) sono **inchiostri d'epoca**: terre, bruni,
+verdi — umber `#5c4033` per Title, muschio `#4b5d16` per Text, verderame `#1f6b5e` per Table,
+ocra scura `#7a5a12` per Section-header e così via. Appartengono alla stessa famiglia calda
+della carta e ci si posano sopra come annotazioni a penna; i blu e i viola, provati sulle
+scansioni reali, la contrastavano e stonavano. I gialli, il bianco e il rosa di prima
+scendevano a 1,1–2,0:1 sulla carta ingiallita: ora ogni classe sta fra 4,3 e 7,3:1 (misurati
+su `#e9dcb0`), sopra il 3:1 richiesto ai contorni.
+
+Nessuna classe è rossa o rosa: sul canvas il rosso è solo della **selezione** (contorno,
+cornice di ridimensionamento, linguetta) e delle frecce del flusso di lettura, così il riquadro
+selezionato si vede subito. Il contorno è pieno, il riempimento appena accennato (~8%, ~5% per
+le bozze) perché la stampa sotto resti leggibile. Gli inchiostri sono vicini fra loro, quindi
+ogni riquadro porta il **nome della classe** in una linguetta: la classe non si affida al
+solo colore.
 
 ## Tipografia
 
@@ -92,7 +123,14 @@ studio sono lo stesso oggetto a densità diverse.
   iperparametri avanzati del training vivono qui, non nel form principale.
 
 Componenti in `frontend/src/app/ui.tsx`: `Module`, `Collapsible`, `ErrorNotice`, `WarnNotice`,
-`Notice`, `Badge`, `Progress`, `Modal`, `Field`.
+`Notice`, `Badge`, `Progress`, `Modal`, `Field`, `Menu`.
+
+`Menu` è la forma delle azioni **rare**: un pulsante con nome («Altro ▾», il nome utente) che
+si apre al clic — mai al passaggio del mouse — e tiene i comandi scritti per esteso. In vista
+resta ciò che serve a ogni pagina; vista, flusso di lettura, prefill, salvataggio manuale e
+«riparti da zero» dello Studio, e lingua, impostazioni, utenti e uscita della testata, stanno
+lì. Lo stesso principio vale per gli stati: un problema è un badge, ciò che va bene è un segno
+quieto (✓) con il dettaglio nel titolo, e un blocco già verificato si riduce a una riga.
 
 `Notice` è l'esito di un'azione detto in una riga dentro una piastra — un solo canale di ritorno
 per zona, invece di cinque avvisi resi ognuno a modo suo. Per ciò che si rompe resta `ErrorNotice`,
@@ -204,6 +242,15 @@ Il secondo è lo streaming: `.stream-in` (220ms) fa entrare ogni pezzo di output
 produce senza far saltare quello che stai leggendo, e `.caret` è l'unico segnale che lampeggia —
 solo mentre lo stream è aperto, perché dice «la riga non è finita». Sotto `prefers-reduced-motion`
 il testo compare e basta, e il cursore resta fermo e visibile.
+
+**Ingressi, sottili.** Ciò che arriva entra invece di comparire di colpo, sempre sotto i
+200 ms con la stessa curva: la sezione nuova (`.enter`, dissolvenza con 4px di salita), le
+righe delle liste una dopo l'altra (`.cascade`, 18 ms di scarto, tutte insieme dalla
+decima), le immagini con `data-fade` quando sono davvero arrivate (e anche se falliscono,
+così nessuna resta invisibile), la scansione dello Studio sul canvas. Mentre i dati arrivano
+si vede la loro **forma** (`SkeletonLines`, `PageSkeleton`, le righe della lista pagine, il
+riquadro della scansione), non la parola «Caricamento…»; la testata e le linguette restano
+ferme. Sotto `prefers-reduced-motion` niente entra: tutto compare quando è pronto.
 
 ## Superfici del browser
 

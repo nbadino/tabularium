@@ -144,7 +144,7 @@ export function ErrorNotice({
           <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.04em] text-[color:var(--color-ink-3)]">
             {t('errors.technicalDetail')}
           </summary>
-          <pre className="mono mt-1.5 max-h-32 overflow-auto border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-2 text-[11px] leading-relaxed whitespace-pre-wrap">
+          <pre className="mono mt-1.5 max-h-32 overflow-auto rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-2 text-[11px] leading-relaxed whitespace-pre-wrap">
             {e.dettaglio}
           </pre>
         </details>
@@ -171,6 +171,58 @@ export function WarnNotice({
       </div>
       <div className="mod-body text-[12px] text-[color:var(--color-ink-2)]">{children}</div>
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------- Menu -- */
+
+/**
+ * Le azioni rare dietro un pulsante con nome («Altro ▾»): restano a un clic,
+ * scritte per esteso, ma non occupano la barra. Si apre col clic, mai al
+ * passaggio del mouse; si chiude con un clic fuori, Esc o scegliendo.
+ */
+export function Menu({
+  label,
+  children,
+  align = 'right',
+  className = '',
+}: {
+  label: ReactNode
+  children: ReactNode
+  align?: 'left' | 'right'
+  className?: string
+}) {
+  const ref = useRef<HTMLDetailsElement>(null)
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (ref.current?.open && !ref.current.contains(e.target as Node)) ref.current.open = false
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && ref.current?.open) ref.current.open = false
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [])
+  return (
+    <details ref={ref} className={`relative ${className}`}>
+      <summary className="btn btn-sm cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+        {label}
+        <IconChevron size={11} />
+      </summary>
+      <div
+        className={`float-layer absolute top-full z-30 mt-1 flex min-w-[19rem] flex-col gap-1.5 p-2 text-[12px] ${align === 'right' ? 'right-0' : 'left-0'}`}
+        onClick={(e) => {
+          // Un pulsante scelto chiude il menu; i campi (select, radio) no.
+          if ((e.target as HTMLElement).closest('button, a') && ref.current) ref.current.open = false
+        }}
+      >
+        {children}
+      </div>
+    </details>
   )
 }
 
@@ -226,7 +278,7 @@ export function Notice({
   return (
     <p
       role="status"
-      className={`mt-3 border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-2 py-1.5 text-[12px] ${NOTICE_TONE[tone]}`}
+      className={`mt-3 rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-2.5 py-1.5 text-[12px] ${NOTICE_TONE[tone]}`}
     >
       {children}
     </p>
@@ -261,7 +313,7 @@ export function Progress({
       aria-valuemin={0}
       aria-valuemax={100}
       {...(indeterminate ? {} : { 'aria-valuenow': Math.round(pct) })}
-      className="h-1.5 w-full overflow-hidden border border-[color:var(--color-rule)] bg-[color:var(--color-fill)]"
+      className="h-1.5 w-full overflow-hidden rounded-full border border-[color:var(--color-rule)] bg-[color:var(--color-fill)]"
     >
       <div
         className={`h-full bg-[color:var(--color-sig)] ${indeterminate ? 'prog-idle' : ''}`}
@@ -309,6 +361,44 @@ export function LoadingGrid({ label, rows = 6 }: { label: string; rows?: number 
           style={{ '--load-delay': `${(i % cols) * 80}ms` } as CSSProperties}
         />
       ))}
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------- Skeleton -- */
+
+/**
+ * La forma di ciò che sta arrivando, al posto di «Caricamento…»: righe grigie
+ * che il contenuto vero sostituisce senza far saltare la pagina. La frase
+ * resta per gli screen reader.
+ */
+export function SkeletonLines({ lines = 3, label }: { lines?: number; label: string }) {
+  return (
+    <div role="status" aria-label={label} className="flex flex-col gap-2 py-1">
+      <span className="sr-only">{label}</span>
+      {Array.from({ length: lines }, (_, i) => (
+        <span
+          key={i}
+          aria-hidden
+          className="load-cell block h-3 rounded-sm"
+          style={{ width: `${[92, 78, 64, 85, 70][i % 5]}%`, ['--load-delay' as string]: `${i * 90}ms` }}
+        />
+      ))}
+    </div>
+  )
+}
+
+/** Una sezione che sta caricando: titolo e due moduli, nella loro forma. */
+export function PageSkeleton({ label }: { label: string }) {
+  return (
+    <div role="status" aria-label={label} className="flex flex-col gap-3 p-3">
+      <span className="sr-only">{label}</span>
+      <span aria-hidden className="load-cell block h-7 w-56 rounded-md" />
+      <span aria-hidden className="load-cell block h-3 w-[min(36rem,80%)] rounded-sm" />
+      <div aria-hidden className="mt-2 grid gap-3 md:grid-cols-2">
+        <span className="load-cell block h-40 rounded-[var(--radius-lg)]" />
+        <span className="load-cell block h-40 rounded-[var(--radius-lg)]" style={{ ['--load-delay' as string]: '150ms' }} />
+      </div>
     </div>
   )
 }
@@ -398,7 +488,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`flex w-full flex-col border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)] ${
+        className={`float-layer flex w-full flex-col overflow-hidden ${
           extraWide
             ? 'h-[96vh] max-h-[96vh] max-w-[96vw]'
             : `max-h-[92vh] ${wide ? 'max-w-[1150px]' : 'max-w-md'}`

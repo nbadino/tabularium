@@ -197,5 +197,6 @@ export function univerGridSignature(grid: TableGrid): string {
       cell.source ?? '',
       cell.verified ?? false,
     ]),
+    grid.misprints ?? [],
   ])
 }

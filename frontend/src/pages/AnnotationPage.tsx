@@ -36,6 +36,7 @@ import {
 } from '../app/icons'
 
 import { useInference } from '../app/inference'
+import { Menu } from '../app/ui'
 import { pageLabel } from '../lib/pageLabel'
 
 // --- larghezze dei pannelli dello studio (splitter, persistite) --------------
@@ -94,6 +95,7 @@ export default function AnnotationPage() {
       .catch(() => { if (sumsFor.current === pid) setSums({}) })
   }
   const [pages, setPages] = useState<PageItem[]>([])
+  const [pagesLoading, setPagesLoading] = useState(false)
   const [reviewRun, setReviewRun] = useState<RecognitionRun | null>(null)
   const [page, setPage] = useState<PageItem | null>(null)
   const [labels, setLabels] = useState<LabelDef[]>([])
@@ -477,6 +479,7 @@ export default function AnnotationPage() {
     setPreviewUrl(null)
     ann.reset()
     if (pid === '') return
+    setPagesLoading(true)
     try {
       const runPromise = requestedRun && (requestedProject == null || requestedProject === pid)
         ? apiGet<RecognitionRun>(`/projects/${pid}/recognition-runs/${requestedRun}${requestedPage ? `?result_page=${requestedPage}` : ''}`)
@@ -503,6 +506,8 @@ export default function AnnotationPage() {
       ann.setActiveLabel(pg.labels.some((l) => l.name === 'Text') ? 'Text' : pg.labels[0]?.name ?? 'Text')
     } catch (e) {
       setError(String(e))
+    } finally {
+      setPagesLoading(false)
     }
   }
 
@@ -838,43 +843,18 @@ export default function AnnotationPage() {
     else if (nextTask) void onPageSelect(nextTask.id)
   }
 
-  // --- guida contestuale --------------------------------------------------------
-  const prefillCount = prefillDrafts.length + ann.blocks.filter((b) => b.prefill).length
   const contentCount = prefillDrafts.length + ann.blocks.length
-  const guideHint = !page
-    ? projectId === ''
-      ? t('annotate.selectHint')
-      : t('annotate.pickPageHint')
-    : contentCount === 0
-      ? t('annotate.guideStart')
-      : prefillCount > 0
-        ? t('annotate.guideFix', { n: prefillCount })
-        : t('annotate.guideReady')
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-2 py-1" role="toolbar" aria-label={t('annotate.viewModeAria')}>
-        <span className="mr-1 text-[11px] font-semibold uppercase tracking-[0.05em] text-[color:var(--color-ink-3)]">{t('annotate.viewMode')}</span>
-        {(['all', 'canvas', 'transcription'] as const).map((mode) => (
-          <button
-            key={mode}
-            type="button"
-            onClick={() => setMode(mode)}
-            aria-pressed={studioMode === mode}
-            className={studioMode === mode ? 'btn btn-sm bg-[color:var(--color-sig-wash)]' : 'btn btn-sm'}
-          >
-            {t(`annotate.view${mode[0].toUpperCase()}${mode.slice(1)}` as 'annotate.viewAll' | 'annotate.viewCanvas' | 'annotate.viewTranscription')}
-          </button>
-        ))}
-        {reviewRun && (
-          <span className="ml-auto flex items-center gap-2 text-[11px]">
-            <b>{t('annotate.reviewRun', { id: reviewRun.id, count: pages.length })}</b>
-            <Link to={`/risultati?project=${reviewRun.project_id}&run=${reviewRun.id}`} className="btn btn-sm no-underline">
-              {t('annotate.backToResults')}
-            </Link>
-          </span>
-        )}
-      </div>
+      {reviewRun && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-2 py-1 text-[11px]">
+          <b>{t('annotate.reviewRun', { id: reviewRun.id, count: pages.length })}</b>
+          <Link to={`/risultati?project=${reviewRun.project_id}&run=${reviewRun.id}`} className="btn btn-sm no-underline">
+            {t('annotate.backToResults')}
+          </Link>
+        </div>
+      )}
       <div className="flex min-h-0 flex-1 overflow-hidden">
       {studioMode === 'all' && <PageSidebar
         projects={projects}
@@ -884,6 +864,7 @@ export default function AnnotationPage() {
         onProjectChange={onProjectChange}
         onPageSelect={onPageSelect}
         sums={sums}
+        loading={pagesLoading}
         width={split.sidebar}
         reviewScope={reviewRun ? {
           label: t('annotate.reviewRun', { id: reviewRun.id, count: pages.length }),
@@ -904,8 +885,12 @@ export default function AnnotationPage() {
 
       {/* Centro: toolbar + canvas */}
       <main className={studioMode === 'transcription' ? 'hidden' : 'flex min-w-0 flex-1 flex-col'}>
+        {/* Una riga sola: ciò che serve a ogni pagina sta in vista (strumenti,
+            Annulla, stato del salvataggio, Prossimo compito); il resto — vista,
+            flusso di lettura, prefill, salvataggio manuale, «riparti da zero» —
+            sta in «Altro», scritto per esteso e a un clic. */}
         <div className="flex flex-wrap items-center gap-2 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-2 py-1.5">
-          <div className="flex border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)]" role="toolbar" aria-label={t('annotate.toolsAria')}>
+          <div className="flex overflow-hidden rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)]" role="toolbar" aria-label={t('annotate.toolsAria')}>
             {tools.map((tool) => (
               <button
                 key={tool.id}
@@ -915,8 +900,8 @@ export default function AnnotationPage() {
                 title={t('annotate.toolTitle', { tool: t(tool.labelKey), key: tool.key })}
                 className={
                   ann.tool === tool.id
-                    ? 'btn border-y-0 border-l-0 border-r-[color:var(--color-rule)] bg-[color:var(--color-sig-plate)] text-white last:border-r-0'
-                    : 'btn border-y-0 border-l-0 border-r-[color:var(--color-rule)] last:border-r-0'
+                    ? 'btn rounded-none border-y-0 border-l-0 border-r-[color:var(--color-rule)] bg-[color:var(--color-sig-plate)] text-white last:border-r-0'
+                    : 'btn rounded-none border-y-0 border-l-0 border-r-[color:var(--color-rule)] last:border-r-0'
                 }
               >
                 <tool.Icon size={13} />
@@ -927,41 +912,8 @@ export default function AnnotationPage() {
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={ann.undo}
-              disabled={!ann.canUndo}
-              title={t('annotate.undoTitle')}
-              className="btn btn-sm"
-            >
-              <IconUndo size={12} />
-              {t('annotate.undo')}
-            </button>
-            <button
-              type="button"
-              onClick={ann.redo}
-              disabled={!ann.canRedo}
-              title={t('annotate.redoTitle')}
-              className="btn btn-sm"
-            >
-              <IconRedo size={12} />
-              {t('annotate.redo')}
-            </button>
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowFlow((value) => !value)}
-            aria-pressed={showFlow}
-            title={showFlow ? t('annotate.showFlow') : t('annotate.viewFlow')}
-            className={showFlow ? 'btn btn-sm bg-[color:var(--color-sig-wash)]' : 'btn btn-sm'}
-          >
-            <IconFlow size={12} />
-            {showFlow ? t('annotate.showFlow') : t('annotate.viewFlow')}
-          </button>
-          <div className="flex items-center gap-1.5">
-            {/* La palette è ridotta a menu: serve solo per scegliere la classe
-                con cui disegnare un blocco nuovo. */}
+          {(ann.tool === 'rect' || ann.tool === 'polygon') && (
+            // La classe serve solo quando si disegna un blocco nuovo.
             <select
               value={ann.activeLabel}
               onChange={(e) => ann.setActiveLabel(e.target.value)}
@@ -974,26 +926,115 @@ export default function AnnotationPage() {
                 </option>
               ))}
             </select>
-            <div className="flex items-center">
+          )}
+          <button
+            type="button"
+            onClick={ann.undo}
+            disabled={!ann.canUndo}
+            title={t('annotate.undoTitle')}
+            className="btn btn-sm"
+          >
+            <IconUndo size={12} />
+            {t('annotate.undo')}
+          </button>
+          <div className="flex items-center gap-2 text-xs">
+            {ann.save.state === 'saving' && (
+              <span className="text-[color:var(--color-ink-2)]">{t('annotate.saving')}</span>
+            )}
+            {ann.save.state !== 'saving' && ann.dirty && (
+              <span className="text-[color:var(--color-warn)]">{t('annotate.unsaved')}</span>
+            )}
+            {ann.save.state === 'saved' && !ann.dirty && (
+              <span className="text-[color:var(--color-ok)]">{t('annotate.saved')}</span>
+            )}
+            {ann.save.state === 'error' && (
+              <span className="flex items-center gap-1.5 text-[color:var(--color-sig-text)]">
+                {t('annotate.saveFailed')}
+                <button onClick={() => void ann.saveNow()} className="btn btn-sm">
+                  {t('annotate.retry')}
+                </button>
+              </span>
+            )}
+            {ann.save.state === 'conflict' && (
+              <span className="flex items-center gap-1.5 text-[color:var(--color-sig-text)]">
+                {t('annotate.conflictRemote')}
+                <button onClick={() => page && void applyBlocks(page, ratio)} className="btn btn-sm">
+                  {t('annotate.conflictReload')}
+                </button>
+              </span>
+            )}
+                    </div>
+          <div className="ml-auto flex items-center gap-1.5">
+            {page && (
+              <span className="mono text-[11px] text-[color:var(--color-ink-3)]" title={`${page.width}×${page.height}`}>
+                {pageLabel(page)}
+              </span>
+            )}
+            {prefillBusy && (
               <button
-                onClick={onPrefillClick}
-                disabled={prefillBusy || !page || prefillEngine === 'off'}
-                className="btn btn-sm !border-r-0"
-                title={
-                  prefillEngine === 'off'
-                    ? t('annotate.prefillOff')
-                    : prefillEngine !== 'ocr'
-                      ? t('annotate.prefillTitleModel')
-                      : t('annotate.prefillTitleOcr')
-                }
+                type="button"
+                onClick={stopPrelabel}
+                className="btn btn-danger btn-sm"
+                aria-label={t('annotate.stopInference')}
               >
-                <IconPrefill size={12} />
-                {prefillBusy ? t('annotate.ocrBusy') : t('annotate.prefill')}
+                {t('annotate.stopInference')}
               </button>
+            )}
+            <Menu label={t('annotate.more')}>
+              <span className="lbl !mb-0">{t('annotate.viewMode')}</span>
+              <div className="flex gap-1" role="group" aria-label={t('annotate.viewModeAria')}>
+                {(['all', 'canvas', 'transcription'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setMode(mode)}
+                    aria-pressed={studioMode === mode}
+                    className={studioMode === mode ? 'btn btn-sm bg-[color:var(--color-sig-wash)]' : 'btn btn-sm'}
+                  >
+                    {t(`annotate.view${mode[0].toUpperCase()}${mode.slice(1)}` as 'annotate.viewAll' | 'annotate.viewCanvas' | 'annotate.viewTranscription')}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowFlow((value) => !value)}
+                aria-pressed={showFlow}
+                className={showFlow ? 'btn btn-sm justify-start bg-[color:var(--color-sig-wash)]' : 'btn btn-sm justify-start'}
+              >
+                <IconFlow size={12} />
+                {showFlow ? t('annotate.showFlow') : t('annotate.viewFlow')}
+              </button>
+              <button
+                type="button"
+                onClick={ann.redo}
+                disabled={!ann.canRedo}
+                title={t('annotate.redoTitle')}
+                className="btn btn-sm justify-start"
+              >
+                <IconRedo size={12} />
+                {t('annotate.redo')}
+              </button>
+              <span className="lbl !mb-0 mt-1">{t('annotate.prefill')}</span>
               {/* I due motori non sono intercambiabili: `ocr` trova righe di testo
                   e le etichetta tutte Text, `model` restituisce blocchi già
-                  classificati e riconosce le tabelle. Su una pagina indice la
-                  differenza è fra centinaia di blocchi Text e un blocco Table. */}
+                  classificati e riconosce le tabelle. */}
+              <div className="flex items-center">
+                <button
+                  type="button"
+                  onClick={onPrefillClick}
+                  disabled={prefillBusy || !page || prefillEngine === 'off'}
+                  className="btn btn-sm !border-r-0"
+                  title={
+                    prefillEngine === 'off'
+                      ? t('annotate.prefillOff')
+                      : prefillEngine !== 'ocr'
+                        ? t('annotate.prefillTitleModel')
+                        : t('annotate.prefillTitleOcr')
+                  }
+                >
+                  <IconPrefill size={12} />
+                  {prefillBusy ? t('annotate.ocrBusy') : t('annotate.prefill')}
+                </button>
               <select
                 value={prefillEngine}
                 onChange={(e) => setPrefillEngine(e.target.value as 'off' | 'ocr' | 'model-native')}
@@ -1023,95 +1064,39 @@ export default function AnnotationPage() {
                         : `${t('annotate.prefillEngineModelNative')} (${inf.isCloud ? 'Cloud' : 'GPU'})`}
                 </option>
               </select>
-            </div>
-          </div>
-          {/* Cluster azioni: salvataggio e navigazione della coda, separati
-              dagli strumenti con lo stesso filetto del foglio. L'a-capo avviene
-              tra cluster, mai dentro un gruppo di comandi affine. */}
-          <div className="mx-1 hidden h-5 w-px bg-[color:var(--color-rule)] sm:block" />
-          <div className="flex flex-wrap items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => void ann.saveNow()}
-              disabled={!page || prefillBusy}
-              // L'autosave salva da sé: «Salva» è l'azione primaria solo
-              // quando c'è davvero qualcosa da salvare. Altrimenti lo è
-              // passare alla prossima pagina.
-              className={`btn ${ann.dirty ? 'btn-primary' : ''}`}
-            >
-              <IconSave size={12} />
-              {t('annotate.save')}
-            </button>
-            {prefillBusy && (
+              </div>
               <button
                 type="button"
-                onClick={stopPrelabel}
-                className="btn btn-danger"
-                aria-label={t('annotate.stopInference')}
+                onClick={() => void ann.saveNow()}
+                disabled={!page || prefillBusy}
+                className="btn btn-sm mt-1 justify-start"
               >
-                {t('annotate.stopInference')}
+                <IconSave size={12} />
+                {t('annotate.save')}
               </button>
-            )}
+              {/* Distruttivo e raro: in fondo al menu, con la sua conferma. */}
+              <button
+                type="button"
+                onClick={() => void clearPageAnnotations()}
+                disabled={!page || prefillBusy || contentCount === 0}
+                className="btn btn-sm justify-start border-t text-[color:var(--color-sig-text)]"
+                title={t('annotate.clearAllTitle')}
+              >
+                <IconTrash size={12} />
+                {t('annotate.clearAll')}
+              </button>
+            </Menu>
             <button
+              type="button"
               onClick={openNextTask}
               disabled={reviewRun ? !nextReviewPage : !nextTask}
-              className={`btn ${page && !ann.dirty ? 'btn-primary' : ''}`}
+              className="btn btn-primary"
               title={reviewRun ? t('annotate.nextRunPage') : nextTask?.reason}
             >
               <IconNext size={12} />
               {t('annotate.nextTask')}
             </button>
-            {/* Distruttivo e raro: lontano da «Salva», con il peso di un
-                comando secondario e la conferma che dice quanto si perde. */}
-            <button
-              type="button"
-              onClick={() => void clearPageAnnotations()}
-              disabled={!page || prefillBusy || contentCount === 0}
-              className="btn btn-sm ml-auto text-[color:var(--color-sig-text)]"
-              title={t('annotate.clearAllTitle')}
-            >
-              <IconTrash size={12} />
-              {t('annotate.clearAll')}
-            </button>
           </div>
-          <div className="flex items-center gap-2 text-xs">
-            {ann.save.state === 'saving' && (
-              <span className="text-[color:var(--color-ink-2)]">{t('annotate.saving')}</span>
-            )}
-            {ann.save.state !== 'saving' && ann.dirty && (
-              <span className="text-[color:var(--color-warn)]">{t('annotate.unsaved')}</span>
-            )}
-            {ann.save.state === 'saved' && !ann.dirty && (
-              <span className="text-[color:var(--color-ok)]">{t('annotate.saved')}</span>
-            )}
-            {ann.save.state === 'error' && (
-              <span className="flex items-center gap-1.5 text-[color:var(--color-sig-text)]">
-                {t('annotate.saveFailed')}
-                <button onClick={() => void ann.saveNow()} className="btn btn-sm">
-                  {t('annotate.retry')}
-                </button>
-              </span>
-            )}
-            {ann.save.state === 'conflict' && (
-              <span className="flex items-center gap-1.5 text-[color:var(--color-sig-text)]">
-                {t('annotate.conflictRemote')}
-                <button onClick={() => page && void applyBlocks(page, ratio)} className="btn btn-sm">
-                  {t('annotate.conflictReload')}
-                </button>
-              </span>
-            )}
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            {page && (
-              <span className="mono text-[11px] text-[color:var(--color-ink-3)]">
-                {pageLabel(page)} · {page.width}×{page.height}
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="border-b border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-3 py-1.5 text-[11px] text-[color:var(--color-ink-2)]">
-          <b className="font-semibold text-[color:var(--color-ink)]">{t('annotate.guideLabel')}</b>{' '}
-          {guideHint}
         </div>
         <div className="relative flex-1">
           {error && (
@@ -1125,7 +1110,7 @@ export default function AnnotationPage() {
             </div>
           )}
           {deleteToast && (
-            <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)] px-3 py-2 text-xs text-[color:var(--color-ink)]">
+            <div className="float-layer absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 px-3 py-2 text-xs text-[color:var(--color-ink)]">
               <span>
                 {t('annotate.deleteToast', { label: deleteToast.label })}
               </span>

@@ -132,7 +132,9 @@ def main() -> int:
         wait_for(driver, lambda d: len(d.find_elements(By.CSS_SELECTOR, "select")) >= 2)
         Select(driver.find_elements(By.CSS_SELECTOR, "select")[1]).select_by_value(str(project_id))
         wait_for(driver, EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'page.png')]"))).click()
-        wait_for(driver, EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-block]"))).click()
+        # Un blocco già verificato sta su una riga sola e si apre col clic:
+        # si apre quello di testo, come farebbe una persona.
+        wait_for(driver, EC.element_to_be_clickable((By.XPATH, "//li[@data-block][contains(., 'Riga di prova.')]"))).click()
         # Modifica controllata del contenuto: l'indicatore Salvato prova il
         # debounce autosave, non solo il salvataggio esplicito.
         # `aria-label` e non il primo `textarea` della pagina: le celle della
@@ -177,10 +179,15 @@ def main() -> int:
         time.sleep(3)
         before = requests.get(f"{BASE}/api/blocks/{block['id']}/table", timeout=10).json()["grid"]
         assert all(c.get("text") != "Voyage" for c in before["cells"]), before
-        box = host.rect
+        # La geometria vale dal foglio disegnato, non dal contenitore: sopra il
+        # foglio, nello stesso contenitore, c'è la barra della formula. Il
+        # foglio è la tela più grande dentro l'host.
+        canvases = host.find_elements(By.TAG_NAME, "canvas")
+        sheet = max(canvases, key=lambda c: c.rect["width"] * c.rect["height"]) if canvases else host
+        box = sheet.rect
         target_x = box["x"] + 46 + 1.5 * 96
         target_y = box["y"] + 22 + 1.5 * 24
-        ActionChains(driver).move_to_element(host).move_by_offset(
+        ActionChains(driver).move_to_element(sheet).move_by_offset(
             int(target_x - (box["x"] + box["width"] / 2)),
             int(target_y - (box["y"] + box["height"] / 2)),
         ).click().perform()

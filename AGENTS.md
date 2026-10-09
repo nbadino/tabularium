@@ -678,6 +678,14 @@ Su val split (pagine mai viste), serviti da vLLM con il checkpoint affinato:
 Output: report JSON + HTML, con overlay pagine GT vs predetto (risposta: `--draw-layout`) e
 tabella dei fallimenti peggiori per guidare la nuova iterazione di annotazione.
 
+Il layout si misura a due soglie: IoU 0.5 (`layout`) e **IoU 0.75** (`layout_strict`, la
+regola del reward di layout di LightOnOCR-3), con precision/recall/**F1** complessivi e per
+label. A 0.5 una `Table` che copre solo la colonna di sinistra passa ancora; a 0.75 no. I
+modelli **solo end2end** (LightOnOCR-3, Unlimited-OCR, DeepSeek-OCR, dots.mocr) non hanno un
+prompt di layout né di crop: si valutano sulla loro generazione nativa, e testo e tabelle
+sono il contenuto del blocco predetto abbinato a IoU 0.5 (i blocchi mancati restano fuori
+dal CER e li conta il recall).
+
 ---
 
 ## 12. Roadmap progressiva (milestone)
@@ -834,7 +842,8 @@ tabella dei fallimenti peggiori per guidare la nuova iterazione di annotazione.
   produce 12288 caratteri di `alpha.alpha.alpha…` fino al tetto dei token); **dots.mocr**
   perché la generazione END2END si chiude a 682 caratteri e la run fallisce; **GLM-OCR** perché
   la run «riesce» con **zero** blocchi inseriti — un successo vuoto, peggio di un errore.
-  La colonna MLX è quindi una misura, non una promessa: un checkpoint che si carica non è un
+  **LightOnOCR-3-1B** è remoto solo perché non è ancora stato provato: niente misura, niente
+  colonna MLX. La colonna MLX è quindi una misura, non una promessa: un checkpoint che si carica non è un
   percorso che funziona. Verifica ripetibile: `scripts/e2e_local_inference.py`.
   Il runtime Apple lo prepara Tabularium in `<root>/mlx-runtime`
   (`services/mlx_runtime.py`), come fa con `<root>/vllm-runtime`: il processo dashboard resta

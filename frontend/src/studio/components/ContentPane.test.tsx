@@ -173,6 +173,54 @@ describe('ContentPane', () => {
     expect(screen.getByText('Summation Error in column (4) ≠ column (2) + (3)')).toBeTruthy()
   })
 
+  it('una somma sbagliata dalla stampa si conferma come refuso e smette di contare', async () => {
+    const checks = {
+      checks: [{ kind: 'row', cells: [[2, 1], [2, 2]], total: [2, 3], ok: false, key: 'row:79,492=17,411+62,031', misprint: false }],
+      passed: 0,
+      failed: 1,
+      suspects: [[2, 3]],
+    }
+    const fetchMock = vi.fn().mockImplementation((url: string) =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(String(url).includes('/tables/checks') ? checks : { grid: emptyGrid(3, 4) }),
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    render(
+      <ContentPane
+        blocks={[makeBlock({ label: 'Table' })]}
+        drafts={[]}
+        labels={[]}
+        selectedId={null}
+        working={null}
+        {...noop}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Apri la tabella' }))
+    await waitFor(() => expect(screen.getByText(/Somme: 0 su 1 tornano · 1 no/)).toBeTruthy())
+    await userEvent.click(screen.getByRole('button', { name: 'seleziona D3' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Refuso della stampa' }))
+    // La conferma entra nella griglia: le somme si ricalcolano con lei.
+    await waitFor(() => {
+      const sent = fetchMock.mock.calls
+        .filter(([url]) => String(url).includes('/tables/checks'))
+        .map(([, init]) => JSON.parse((init as RequestInit).body as string))
+      expect(sent[sent.length - 1]?.misprints).toEqual(['row:79,492=17,411+62,031'])
+    }, { timeout: 2000 })
+  })
+
+  it('un blocco verificato e non selezionato sta su una riga; selezionato si riapre', () => {
+    const block = makeBlock({ confirmed: true, content: 'TRADE WITH COUNTRIES.' })
+    const { rerender } = render(
+      <ContentPane blocks={[block]} drafts={[]} labels={[]} selectedId={null} working={null} {...noop} />,
+    )
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.getByText('TRADE WITH COUNTRIES.')).toBeTruthy()
+    rerender(<ContentPane blocks={[block]} drafts={[]} labels={[]} selectedId="b1" working={null} {...noop} />)
+    expect(screen.getByRole('textbox')).toHaveValue('TRADE WITH COUNTRIES.')
+  })
+
   it('blocco non ancora salvato: il ritaglio lo dice, non scompare', () => {
     render(
       <ContentPane
