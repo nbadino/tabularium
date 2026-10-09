@@ -1,8 +1,21 @@
-import { useEffect, useRef } from 'react'
-import { Arrow, Line, Rect, Transformer } from 'react-konva'
+import { useEffect, useMemo, useRef } from 'react'
+import { Arrow, Label, Line, Rect, Tag, Text, Transformer } from 'react-konva'
 import Konva from 'konva'
 import { bboxPoints } from '../../lib/coords'
 import type { DisplayBlock, Tool } from '../types'
+
+/** Riempimento appena accennato: sulla scansione deve restare leggibile la
+ *  stampa sotto il riquadro. Il contorno invece è pieno. */
+const FILL_ALPHA = '14' // ~8%
+const DRAFT_FILL_ALPHA = '0d' // ~5%
+const tint = (hex: string, alpha: string) => (/^#[0-9a-f]{6}$/i.test(hex) ? hex + alpha : hex)
+
+/** Il segnale vive in `index.css`: Konva disegna su canvas e non legge le
+ *  variabili CSS, quindi si leggono una volta qui. */
+function cssColor(name: string, fallback: string): string {
+  if (typeof document === 'undefined') return fallback
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
 
 interface BlockLayerProps {
   blocks: DisplayBlock[]
@@ -37,6 +50,8 @@ export default function BlockLayer({
   const nodeRefs = useRef<Record<string, Konva.Node>>({})
 
   const sw = 2 / viewportK
+  const sig = useMemo(() => cssColor('--color-sig', '#e60012'), [])
+  const sigPlate = useMemo(() => cssColor('--color-sig-plate', '#d0000f'), [])
 
   // transformer collegato al blocco selezionato
   useEffect(() => {
@@ -103,9 +118,8 @@ export default function BlockLayer({
               y={bb.y}
               width={Math.max(bb.w, 1)}
               height={Math.max(bb.h, 1)}
-              fill={color}
-              opacity={draft ? 0.14 : 0.28}
-              stroke={color}
+              fill={tint(color, draft ? DRAFT_FILL_ALPHA : FILL_ALPHA)}
+              stroke={selected ? sig : color}
               strokeWidth={selected ? sw * 1.8 : sw}
               dash={dash}
               draggable={tool === 'select'}
@@ -131,7 +145,7 @@ export default function BlockLayer({
               }}
               onDragMove={() => onDragMove(b.id)}
               onDragEnd={(e) => {
-                e.target.opacity(draft ? 0.14 : 0.28)
+                e.target.opacity(1)
                 e.target.getStage()!.container().style.cursor = ''
                 onDragEnd(b.id, 'rect')
               }}
@@ -149,9 +163,8 @@ export default function BlockLayer({
             }}
             points={b.points.flatMap((p) => [p.x, p.y])}
             closed
-            fill={color}
-            opacity={draft ? 0.12 : 0.24}
-            stroke={color}
+            fill={tint(color, draft ? DRAFT_FILL_ALPHA : FILL_ALPHA)}
+            stroke={selected ? sig : color}
             strokeWidth={selected ? sw * 1.8 : sw}
             dash={dash}
             draggable={tool === 'select'}
@@ -177,12 +190,33 @@ export default function BlockLayer({
             }}
             onDragMove={() => onDragMove(b.id)}
             onDragEnd={(e) => {
-              e.target.opacity(draft ? 0.12 : 0.24)
+              e.target.opacity(1)
               e.target.getStage()!.container().style.cursor = ''
               onDragEnd(b.id, 'polygon')
             }}
             onTransformEnd={() => onLineTransformEnd(b.id)}
           />
+        )
+      })}
+
+      {/* Il nome della classe su ogni riquadro: i colori sono inchiostri della
+          stessa famiglia e da soli non bastano a distinguerla (DESIGN.md:
+          nessuno stato affidato al solo colore). */}
+      {blocks.map((b) => {
+        const bb = bboxPoints(b.points)
+        const selected = b.id === selectedId
+        const size = 11 / viewportK
+        return (
+          <Label key={`tag-${b.id}`} x={bb.x} y={bb.y - size - 4 / viewportK} listening={false}>
+            <Tag fill={selected ? sigPlate : colorFor(b.label) || '#64748b'} cornerRadius={3 / viewportK} />
+            <Text
+              text={b.label}
+              fontSize={size}
+              fontStyle="bold"
+              padding={2 / viewportK}
+              fill="#ffffff"
+            />
+          </Label>
         )
       })}
 
@@ -200,9 +234,9 @@ export default function BlockLayer({
               bb2.x + bb2.w / 2,
               bb2.y + bb2.h / 2,
             ]}
-            stroke="#f87171"
+            stroke={sig}
             strokeWidth={1.6 / viewportK}
-            fill="#f87171"
+            fill={sig}
             pointerLength={8 / viewportK}
             pointerWidth={6 / viewportK}
             listening={false}
@@ -216,6 +250,7 @@ export default function BlockLayer({
         flipEnabled={false}
         keepRatio={false}
         anchorSize={8 / viewportK}
+        borderStroke={sig}
         borderStrokeWidth={sw}
         anchorCornerRadius={0}
         anchorFill="#ffffff"

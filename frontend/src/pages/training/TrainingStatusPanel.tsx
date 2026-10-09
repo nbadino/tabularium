@@ -192,43 +192,43 @@ export default function TrainingStatusPanel({
                 <CartesianGrid stroke="#e6e8eb" strokeDasharray="2 2" />
                 <XAxis
                   dataKey="i"
-                  stroke="#6b7178"
+                  stroke="#736d69"
                   fontSize={11}
                   tickLine={false}
-                  axisLine={{ stroke: '#c9ccd1' }}
+                  axisLine={{ stroke: '#d6d0cc' }}
                 >
                   <Label
                     value={t('training.logSteps')}
                     position="insideBottom"
                     offset={-14}
-                    style={{ fill: '#6b7178', fontSize: 11 }}
+                    style={{ fill: '#736d69', fontSize: 11 }}
                   />
                 </XAxis>
                 <YAxis
                   yAxisId="loss"
-                  stroke="#6b7178"
+                  stroke="#736d69"
                   fontSize={11}
                   width={46}
                   tickLine={false}
-                  axisLine={{ stroke: '#c9ccd1' }}
+                  axisLine={{ stroke: '#d6d0cc' }}
                   domain={['auto', 'auto']}
                 >
                   <Label
                     value={t('training.loss')}
                     angle={-90}
                     position="insideLeft"
-                    style={{ fill: '#6b7178', fontSize: 11, textAnchor: 'middle' }}
+                    style={{ fill: '#736d69', fontSize: 11, textAnchor: 'middle' }}
                   />
                 </YAxis>
                 {hasLr && (
                   <YAxis
                     yAxisId="lr"
                     orientation="right"
-                    stroke="#6b7178"
+                    stroke="#736d69"
                     fontSize={11}
                     width={44}
                     tickLine={false}
-                    axisLine={{ stroke: '#c9ccd1' }}
+                    axisLine={{ stroke: '#d6d0cc' }}
                     domain={['auto', 'auto']}
                     tickFormatter={(v: number) => v.toExponential(0)}
                   >
@@ -236,7 +236,7 @@ export default function TrainingStatusPanel({
                       value={t('training.lrLabel')}
                       angle={90}
                       position="insideRight"
-                      style={{ fill: '#6b7178', fontSize: 11, textAnchor: 'middle' }}
+                      style={{ fill: '#736d69', fontSize: 11, textAnchor: 'middle' }}
                     />
                   </YAxis>
                 )}
@@ -247,7 +247,7 @@ export default function TrainingStatusPanel({
                     borderRadius: 0,
                     fontSize: 12,
                   }}
-                  labelStyle={{ color: '#4c5259' }}
+                  labelStyle={{ color: '#55504c' }}
                   labelFormatter={(v) => t('training.step', { v: String(v) })}
                   formatter={(v: number, n: string) => [
                     n === 'lr' ? v.toExponential(2) : v.toFixed(4),
