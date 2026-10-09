@@ -110,6 +110,7 @@ def test_new_adapters_are_registered_alongside_monkeyocrv2():
         "paddleocr-vl",
         "qwen3-vl-8b",
         "teleocr",
+        "lightonocr-3",
     ):
         assert expected in ids
 

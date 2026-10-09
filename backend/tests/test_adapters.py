@@ -31,6 +31,7 @@ def test_monkeyocr_adapter_contract():
         ("paddleocr-vl", "official"),
         ("glm-ocr", "official"),
         ("qwen3-vl-8b", "official"),
+        ("lightonocr-3", "end2end"),
     ],
 )
 def test_native_prefill_selects_model_workflow(adapter_id, expected):
@@ -112,4 +113,29 @@ def test_teleocr_native_result_maps_vendor_content_blocks():
     assert items == [
         {"bbox": [100, 200, 800, 900], "label": "Table", "content": "<fcel>x</fcel>"},
         {"bbox": [200, 300, 400, 500], "label": "Formula", "content": "$x$"},
+    ]
+
+
+def test_lightonocr_grounding_parses_markers_tables_and_continuations():
+    adapter = get_adapter("lightonocr-3")
+    assert adapter.prompt_for("end2end") == "grounding"
+    with pytest.raises(NotImplementedError):
+        adapter.prompt_for("table")
+    items = adapter.parse_layout(
+        "![title](80,70,920,140)\n# HISTORIC SHIPPING INDEX\n"
+        "![page_number](900,20,980,40)\n17,186\n"
+        "![table](25,150,980,950)\n<table>\n  <tr><td>Abidjan</td><td>Br</td></tr>\n</table>\n"
+        "![text+](510,960,980,990)\nContinued.\n"
+        "![image](10,10,60,60)\nAn anchor.\n"
+        "![text](900,900,100,950)\nbad box\n"
+    )
+    assert items == [
+        {"bbox": [80, 70, 920, 140], "label": "Title", "content": "HISTORIC SHIPPING INDEX"},
+        {"bbox": [900, 20, 980, 40], "label": "Issue-number", "content": "17,186"},
+        {
+            "bbox": [25, 150, 980, 950], "label": "Table",
+            "content": "<table>\n  <tr><td>Abidjan</td><td>Br</td></tr>\n</table>",
+        },
+        {"bbox": [510, 960, 980, 990], "label": "Text", "content": "Continued."},
+        {"bbox": [10, 10, 60, 60], "label": "Picture", "content": ""},
     ]

@@ -208,6 +208,20 @@ RECIPES: dict[str, ServeRecipe] = {
         ),
         source="recipes.vllm.ai/baidu/Unlimited-OCR",
     ),
+    "lightonocr-3": ServeRecipe(
+        adapter_id="lightonocr-3",
+        hf_repo="lightonai/LightOnOCR-3-1B",
+        served_model_name="lightonocr-3",
+        runtime="vllm",
+        # Versione usata dal produttore per i benchmark di throughput.
+        vllm_version="0.30.0",
+        serve_args=(
+            "--limit-mm-per-prompt", '{"image": 1}',
+            "--mm-processor-cache-gb", "0",
+            "--no-enable-prefix-caching",
+        ),
+        source="model card LightOnOCR-3-1B: un'immagine per prompt, cache multimodale e prefix caching spenti",
+    ),
 }
 
 

@@ -1451,6 +1451,111 @@ class TeleOcrAdapter(_StubAdapter):
         ]
 
 
+class LightOnOcr3Adapter(_StubAdapter):
+    """lightonai/LightOnOCR-3-1B — OCR end-to-end con layout ancorato
+    («grounding»), Apache-2.0.
+
+    Fatti verificati sulla model card e sui file del checkpoint (ottobre 2026):
+      - due soli prompt: immagine senza testo = trascrizione Markdown;
+        testo ``grounding`` dopo l'immagine = blocchi ``![label](x1,y1,x2,y2)``
+        seguiti dal contenuto. «Other instructions are out of distribution»:
+        niente prompt per crop di layout/tabella, quindi solo end2end;
+      - bbox normalizzati 0–1000 come §2.4; tabelle e grafici in HTML
+        ``<table>``, che `prefill` converte con ``otsl.html_to_otsl``; il
+        suffisso ``+`` marca un blocco che continua il precedente, non una
+        classe;
+      - il processore (Pixtral) riporta ogni pagina a 1540 px sul lato lungo:
+        nessun tetto client-side, la risoluzione la decide il checkpoint;
+      - contesto 16384 (``max_position_embeddings``), sampling del
+        ``generation_config``: temperature 0.2, top_p 0.9;
+      - la variante 1B tiene l'architettura LightOnOCR-2
+        (``LightOnOCRForConditionalGeneration``); 0.8B e 4B sono Qwen3.5 e
+        restano fuori finché non sono provate.
+    Nessun percorso MLX e nessun training: entrambi non verificati.
+    """
+
+    adapter_id = "lightonocr-3"
+    native_prefill_mode = "end2end"
+    end2end_output_format = "grounded-markdown"
+    # 16384 di contesto meno ~2,2k token d'immagine (1540 px, patch 14,
+    # merge 2) e margine. Un registro denso può superarlo: l'ultimo blocco
+    # arriva troncato, gli altri restano validi.
+    end2end_max_tokens = 12_288
+    recommended_generation = {"temperature": 0.2, "top_p": 0.9}
+    capabilities = ModelCapabilities(
+        adapter_id=adapter_id,
+        display_name="LightOnOCR-3-1B",
+        tasks=("layout", "text", "table"),
+        coordinate_system="normalized-0-1000",
+        table_format="html",
+        training_types=(),
+        inference_modes=("vllm",),
+        hardware=("cuda",),
+        languages=("en", "fr", "multilingual-partial"),
+        hf_repo="lightonai/LightOnOCR-3-1B",
+        approx_size_gb=2.0,
+        license_note="Apache-2.0.",
+        train_toolchain="none",
+        serve_backend="vllm-openai",
+        served_model_name="lightonocr-3",
+        max_model_len=16384,
+        local_runtimes=("vllm",),
+    )
+
+    _LABEL_MAP = {
+        "text": "Text", "title": "Title", "list": "List-item",
+        "header": "Page-header", "footer": "Page-footer",
+        # Sul corpus il numero in testata delle pagine `index` è il numero
+        # del fascicolo (come per TeleOCR). Sulle pagine voyage-supplement è
+        # un numero di pagina: va corretto in revisione.
+        "page_number": "Issue-number",
+        "footnote": "Footnote", "caption": "Caption", "formula": "Formula",
+        "code": "Text", "table": "Table", "aside_text": "Note",
+        "image": "Picture", "chart": "Picture",
+        "header_image": "Picture", "footer_image": "Picture",
+    }
+    _MARKER = re.compile(
+        r"^!\[([a-z_]+)\+?\]\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)[ \t]*\n?"
+        r"(.*?)(?=^!\[[a-z_]+\+?\]\(\s*\d|\Z)",
+        re.DOTALL | re.MULTILINE,
+    )
+
+    def prompt_for(self, task: str, label: str | None = None) -> str | None:
+        if task == "end2end":
+            return "grounding"
+        raise NotImplementedError(
+            f"adapter '{self.adapter_id}': solo il prompt ufficiale 'grounding' (end2end) è supportato"
+        )
+
+    def parse_layout(self, raw: str) -> list[dict]:
+        items = []
+        for match in self._MARKER.finditer(raw or ""):
+            kind = match.group(1)
+            bbox = [int(match.group(i)) for i in range(2, 6)]
+            if not (0 <= bbox[0] < bbox[2] <= 1000 and 0 <= bbox[1] < bbox[3] <= 1000):
+                continue
+            label = self._LABEL_MAP.get(kind, "Text")
+            content = match.group(6).strip()
+            if label == "Picture":
+                # Descrizione dell'immagine o dati del grafico: non sono una
+                # trascrizione e non devono diventare il contenuto del blocco.
+                content = ""
+            elif label != "Table":
+                content = re.sub(r"^#{1,6}[ \t]+", "", content, flags=re.MULTILINE)
+            items.append({"bbox": bbox, "label": label, "content": content})
+        return items
+
+    def serve_command(self, model_path: str, port: int) -> list[str] | None:
+        return [
+            "vllm", "serve", model_path,
+            "--port", str(port),
+            "--limit-mm-per-prompt", '{"image": 1}',
+            "--mm-processor-cache-gb", "0",
+            "--no-enable-prefix-caching",
+            "--served-model-name", self.capabilities.served_model_name,
+        ]
+
+
 class CustomVllmAdapter(_StubAdapter):
     """Un modello aggiunto liberamente dall'utente (repo Hugging Face
     qualsiasi), riga della tabella `custom_models` — stesso principio di LM
@@ -1557,6 +1662,7 @@ _ADAPTERS: dict[str, ModelAdapter] = {
         PaddleOcrVlAdapter(),
         Qwen3VlAdapter(),
         TeleOcrAdapter(),
+        LightOnOcr3Adapter(),
     )
 }
 
