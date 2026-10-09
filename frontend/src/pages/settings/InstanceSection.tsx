@@ -10,7 +10,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import { NavLink } from 'react-router'
 import { apiGet, apiPut } from '../../lib/api'
 import type { InstanceSettings } from '../../lib/types'
-import { ErrorNotice, Field, Module, Notice, WarnNotice } from '../../app/ui'
+import { ErrorNotice, Field, Module, Notice, SkeletonLines, WarnNotice } from '../../app/ui'
 import { useI18n } from '../../i18n'
 import { useAuth } from '../../app/auth'
 import type { SectionProps } from './SettingsPage'
@@ -70,7 +70,7 @@ export default function InstanceSection({ isAdmin }: SectionProps) {
 
       <Module tab={t('settings.instance')}>
         {settings == null ? (
-          <p className="text-[13px] text-[color:var(--color-ink-2)]">{t('common.loading')}</p>
+          <SkeletonLines lines={4} label={t('common.loading')} />
         ) : (
           <form onSubmit={save}>
             <div className="grid gap-3 sm:grid-cols-2">

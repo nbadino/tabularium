@@ -13,7 +13,7 @@ import type { Project, TrainConfigBody, TrainingPreflight } from '../../lib/type
 import { Link } from 'react-router'
 import { apiGet, apiPost } from '../../lib/api'
 import { trainTypeLabel } from '../../lib/vocab'
-import { Badge, Collapsible, Field, Module, Notice } from '../../app/ui'
+import { Badge, Collapsible, Field, Module, Notice, SkeletonLines } from '../../app/ui'
 import { IconPlayground } from '../../app/icons'
 import { BASE_CFG, matchPreset, PRESETS } from './presets'
 import { useI18n } from '../../i18n'
@@ -90,7 +90,7 @@ function VastInstancePicker({ host, onPick }: { host: string; onPick: (inst: Vas
     }
   }, [])
 
-  if (state === 'loading') return <p className="text-[12px] text-[color:var(--color-ink-3)]">{t('common.loading')}</p>
+  if (state === 'loading') return <SkeletonLines lines={4} label={t('common.loading')} />
   if (state === 'nokey' || state === 'error') {
     return (
       <p className="text-[12px] text-[color:var(--color-ink-2)]">

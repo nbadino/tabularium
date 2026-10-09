@@ -79,6 +79,8 @@ describe('SettingsPage', () => {
     expect(screen.queryByRole('region', { name: 'Identità e accesso' })).toBeNull()
     expect(screen.queryByRole('region', { name: 'In uso ora' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Modello e calcolo' })).toBeNull()
+    // La versione sta qui, non nel menu utente.
+    expect(await screen.findByText('Tabularium v0.1.0')).toBeInTheDocument()
   })
 
   it('manda i vecchi link del calcolo all’hub Modelli', async () => {

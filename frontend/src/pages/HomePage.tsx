@@ -30,7 +30,7 @@ function PageCell({ page }: { page: PageItem }) {
     <li className="relative border-b border-r border-[color:var(--color-rule)] bg-[color:var(--color-sheet)]">
       <Link to={`/annotazione?project=${page.project_id}&page=${page.id}`} className="block text-[color:var(--color-ink)] no-underline hover:bg-[color:var(--color-fill)]">
         <div className="lighttable aspect-[3/4] overflow-hidden">
-          <img
+          <img data-fade
             src={`/api/pages/${page.id}/thumbnail`}
             alt={t('home.thumbnailAlt', { path: page.rel_path })}
             loading="lazy"
@@ -259,7 +259,7 @@ export default function HomePage() {
         }
       >
         {shown.length > 0 ? (
-          <ul className="grid grid-cols-2 border-l border-t border-[color:var(--color-rule)] sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
+          <ul className="cascade grid grid-cols-2 border-l border-t border-[color:var(--color-rule)] sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
             {shown.map((p) => (
               <PageCell key={p.id} page={p} />
             ))}

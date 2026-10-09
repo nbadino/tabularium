@@ -379,13 +379,13 @@ export default function RecognizePage() {
             <div className="p-6 text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.noFilteredPages')}</div>
           ) : (
             <>
-              <ul className="grid grid-cols-2 border-l border-t border-[color:var(--color-rule)] sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-7">
+              <ul className="cascade grid grid-cols-2 border-l border-t border-[color:var(--color-rule)] sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-7">
                 {renderedPages.map((page) => {
                   const checked = selected.has(page.id)
                   return (
                     <li key={page.id} className="border-b border-r border-[color:var(--color-rule)]">
                       <label className={`block cursor-pointer ${checked ? 'bg-[color:var(--color-sig-wash)] outline outline-2 -outline-offset-2 outline-[color:var(--color-sig)]' : 'hover:bg-[color:var(--color-fill)]'}`}>
-                        <img src={`/api/pages/${page.id}/thumbnail`} alt="" loading="lazy" className="aspect-[3/4] w-full bg-white object-cover object-top" />
+                        <img data-fade src={`/api/pages/${page.id}/thumbnail`} alt="" loading="lazy" className="aspect-[3/4] w-full bg-white object-cover object-top" />
                         <span className="flex items-center gap-2 border-t border-[color:var(--color-rule)] p-1.5">
                           <input
                             type="checkbox"

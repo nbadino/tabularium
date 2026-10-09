@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { apiGet, apiPut } from '../../lib/api'
 import { useI18n } from '../../i18n'
-import { Badge, ErrorNotice, Module, Notice } from '../../app/ui'
+import { Badge, ErrorNotice, Module, Notice, SkeletonLines } from '../../app/ui'
 import type { SectionProps } from './SettingsPage'
 
 type SettingValue = number | string | boolean | number[] | null
@@ -154,7 +154,7 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
             {items.map((item) => <option key={item.adapter_id} value={item.adapter_id}>{item.display_name}</option>)}
           </select>
         </label>
-        {loading && <p className="text-[12px]">{t('common.loading')}</p>}
+        {loading && <SkeletonLines lines={5} label={t('common.loading')} />}
         {selected && (
           <>
             {selected.restart_required && <Notice tone="warn">{t('settings.modelRestartHint')}</Notice>}

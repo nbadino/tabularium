@@ -695,7 +695,7 @@ export default function ProjectDetailPage() {
                       />
                     </td>
                     <td className={td}>
-                      <img
+                      <img data-fade
                         src={`/api/pages/${p.id}/thumbnail`}
                         alt={t('project.thumbnailAlt', { path: pageLabel(p) })}
                         loading="lazy"

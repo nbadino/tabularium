@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { apiGet, apiPut } from '../../lib/api'
 import type { ConventionItem, ConventionsOut } from '../../lib/types'
-import { ErrorNotice, Module } from '../../app/ui'
+import { ErrorNotice, Module, SkeletonLines } from '../../app/ui'
 import { useI18n } from '../../i18n'
 
 /** Le convenzioni predefinite hanno id noti: li tradiamo via i18n, con
@@ -56,7 +56,7 @@ export default function ConventionsChecklist({ projectId }: { projectId: number 
         </div>
       )}
       {!items ? (
-        <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('common.loading')}</p>
+        <SkeletonLines lines={4} label={t('common.loading')} />
       ) : (
         <>
           <p className="mb-2 text-[11px] text-[color:var(--color-ink-3)]">

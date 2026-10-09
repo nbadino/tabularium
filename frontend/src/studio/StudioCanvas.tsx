@@ -45,6 +45,17 @@ export default function StudioCanvas({
 }: StudioCanvasProps) {
   const { t, tn } = useI18n()
   const [image] = useImage(imageUrl)
+  // La scansione affiora quando è arrivata, invece di comparire di colpo.
+  const imageLayerRef = useRef<Konva.Layer>(null)
+  useEffect(() => {
+    const layer = imageLayerRef.current
+    if (!image || !layer) return
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+    layer.opacity(0)
+    const tween = new Konva.Tween({ node: layer, opacity: 1, duration: 0.2, easing: Konva.Easings.EaseOut })
+    tween.play()
+    return () => tween.destroy()
+  }, [image])
   const vp = useViewport(imageNatural, imageUrl)
   const { viewport, containerSize, containerRef, stageRef } = vp
 
@@ -317,6 +328,19 @@ export default function StudioCanvas({
       aria-label={t('canvas.aria', { n: blocks.length })}
       style={{ touchAction: 'none' }}
     >
+      {!image && imageNatural.w > 0 && (
+        // Finché la scansione arriva, al suo posto c'è la sua forma.
+        <span
+          aria-hidden
+          className="load-cell pointer-events-none absolute rounded-sm"
+          style={{
+            left: viewport.x,
+            top: viewport.y,
+            width: imageNatural.w * viewport.k,
+            height: imageNatural.h * viewport.k,
+          }}
+        />
+      )}
       <Stage
         ref={stageRef}
         width={containerSize.w}
@@ -349,7 +373,7 @@ export default function StudioCanvas({
         }}
         className={canvasCursor}
       >
-        <Layer listening={false}>
+        <Layer ref={imageLayerRef} listening={false}>
           <KonvaImage
             image={image}
             width={imageNatural.w}
@@ -411,18 +435,18 @@ export default function StudioCanvas({
         </Layer>
       </Stage>
 
-      <p className="pointer-events-none absolute bottom-2 left-2 hidden max-w-[calc(100%-260px)] border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)] px-2 py-1 text-[11px] text-[color:var(--color-ink-2)] sm:block">
+      <p className="pointer-events-none absolute bottom-2 left-2 hidden max-w-[calc(100%-260px)] rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] px-2 py-1 text-[11px] text-[color:var(--color-ink-2)] sm:block">
         {interactionHint}
         {tool === 'polygon' && polyVerts.length >= 3 && ` — ${tn('canvas.vertices', polyVerts.length)}`}
       </p>
 
       {/* Il livello di zoom è un'informazione, non un mistero. */}
-      <div className="absolute bottom-2 right-2 flex items-stretch border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)]">
+      <div className="float-layer absolute bottom-2 right-2 flex items-stretch overflow-hidden">
         <button
           type="button"
           onClick={() => vp.zoomBy(1 / 1.25)}
           aria-label={t('canvas.zoomOut')}
-          className="btn btn-sm border-0"
+          className="btn btn-sm rounded-none border-0"
         >
           <IconMinus size={11} />
           <span>{t('canvas.zoomOutShort')}</span>
@@ -430,7 +454,7 @@ export default function StudioCanvas({
         <button
           type="button"
           onClick={vp.fit}
-          className="btn btn-sm mono border-y-0"
+          className="btn btn-sm mono rounded-none border-y-0"
           title={t('canvas.fitTitle')}
         >
           <IconFit size={11} />
@@ -440,7 +464,7 @@ export default function StudioCanvas({
           type="button"
           onClick={() => vp.zoomBy(1.25)}
           aria-label={t('canvas.zoomIn')}
-          className="btn btn-sm border-0"
+          className="btn btn-sm rounded-none border-0"
         >
           <IconPlus size={11} />
           <span>{t('canvas.zoomInShort')}</span>

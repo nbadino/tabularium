@@ -140,7 +140,7 @@ export default function ProjectsPage() {
         aux={<span>{projects(items.length)}</span>}
       >
         {items.length > 0 ? (
-          <ul className="ruled">
+          <ul className="cascade ruled">
             {items.map((p) => (
               <li key={p.id}>
                 <Link

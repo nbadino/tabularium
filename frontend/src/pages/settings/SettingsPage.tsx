@@ -10,7 +10,10 @@
  * Modello, provider ed endpoint vivono nell'hub Modelli; qui restano i parametri
  * avanzati per modello, così il preset attivo si può verificare e regolare.
  */
+import { useEffect, useState } from 'react'
 import { useI18n } from '../../i18n'
+import { apiGet } from '../../lib/api'
+import type { HealthResponse } from '../../lib/types'
 import { useCanAdminister } from '../../app/auth'
 import { Navigate, useSearchParams } from 'react-router'
 import AccountSection from './AccountSection'
@@ -39,21 +42,35 @@ const SECTIONS: Array<{
 export default function SettingsPage() {
   const { t } = useI18n()
   const [params, setParams] = useSearchParams()
+  // La versione vive qui, non nel menu utente: serve quando si segnala un
+  // problema, non a ogni pagina.
+  const [version, setVersion] = useState<string | null>(null)
+  useEffect(() => {
+    apiGet<HealthResponse>('/health').then((h) => setVersion(h.version)).catch(() => {})
+  }, [])
+
+  const isAdmin = useCanAdminister()
 
   // Compatibilità con i vecchi link: modello e provider ora hanno una sola
   // sede, l'hub Modelli, invece di essere duplicati nelle impostazioni.
   if (params.get('s') === 'calcolo') return <Navigate to="/modelli" replace />
 
   const current = SECTIONS.find((s) => s.id === params.get('s')) ?? SECTIONS[0]
-  const isAdmin = useCanAdminister()
   const Section = current.Section
 
   return (
     <div className="p-3">
       <div className="border-b border-[color:var(--color-rule-strong)] pb-3">
-        <h1 className="text-[26px] font-bold leading-tight tracking-[-0.03em]">
-          {t('settings.title')}
-        </h1>
+        <div className="flex flex-wrap items-baseline gap-x-3">
+          <h1 className="text-[26px] font-bold leading-tight tracking-[-0.03em]">
+            {t('settings.title')}
+          </h1>
+          {version && (
+            <span className="mono text-[12px] text-[color:var(--color-ink-3)]">
+              Tabularium v{version}
+            </span>
+          )}
+        </div>
         <p className="mt-1 max-w-[78ch] text-[13px] text-[color:var(--color-ink-2)]">
           {t('settings.intro')}
         </p>

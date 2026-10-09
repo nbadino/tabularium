@@ -258,10 +258,10 @@ export default function ResultsPage() {
                 </p>
               )}
               {shownItems.length === 0 && <p className="p-3 text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.noneInFilter')}</p>}
-              <ul className="divide-y divide-[color:var(--color-rule)]">
+              <ul className="cascade divide-y divide-[color:var(--color-rule)]">
                 {shownItems.map((item) => (
                   <li key={item.id} className="grid gap-2 p-2 sm:grid-cols-[56px_minmax(0,1fr)_auto] sm:items-center">
-                    <img src={`/api/pages/${item.page_id}/thumbnail`} alt="" className="h-16 w-12 border border-[color:var(--color-rule)] bg-white object-cover object-top" />
+                    <img data-fade src={`/api/pages/${item.page_id}/thumbnail`} alt="" className="h-16 w-12 border border-[color:var(--color-rule)] bg-white object-cover object-top" />
                     <div className="min-w-0">
                       <div className="mono truncate text-[12px] font-semibold" title={pageLabel(item)}>{pageLabel(item)}</div>
                       <div className="mt-1 flex flex-wrap gap-1.5">

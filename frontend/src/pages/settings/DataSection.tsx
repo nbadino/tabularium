@@ -7,7 +7,7 @@
  */
 import { useEffect, useState } from 'react'
 import { apiGet, apiPost } from '../../lib/api'
-import { Badge, ErrorNotice, Module, Notice, WarnNotice } from '../../app/ui'
+import { Badge, ErrorNotice, Module, Notice, SkeletonLines, WarnNotice } from '../../app/ui'
 import { useConfirm } from '../../app/confirm'
 import { describeError } from '../../lib/errors'
 import { useI18n } from '../../i18n'
@@ -123,7 +123,7 @@ export default function DataSection({ isAdmin }: SectionProps) {
 
         {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
         {state == null && loadError == null && (
-          <p className="mt-2 text-[12px] text-[color:var(--color-ink-3)]">{t('common.loading')}</p>
+          <SkeletonLines lines={3} label={t('common.loading')} />
         )}
 
         {isAdmin && (
