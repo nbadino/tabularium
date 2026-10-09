@@ -292,6 +292,9 @@ export interface TableGrid {
   /** Confini verticali piegati, persistiti riga per riga quando rilevati. */
   row_columns?: number[][]
   row_columns_proven?: boolean[][]
+  /** Somme confrontate con la scansione e dichiarate refusi della stampa
+   *  (chiave `TableCheck.key`): non contano più come errori. */
+  misprints?: string[]
 }
 
 export interface TableGridOut {
@@ -305,6 +308,10 @@ export interface TableCheck {
   cells: [number, number][]
   total: [number, number]
   ok: boolean
+  /** Identità per valori: cambia se uno dei suoi numeri viene modificato. */
+  key?: string
+  /** Falsa ma confermata come refuso della stampa. */
+  misprint?: boolean
 }
 
 /** Per pagina: somme riconosciute nelle sue tabelle e quante non tornano. */
@@ -314,6 +321,7 @@ export interface TableChecksOut {
   checks: TableCheck[]
   passed: number
   failed: number
+  misprints?: number
   /** Le celle da guardare per prime: stanno in una somma che non torna. */
   suspects: [number, number][]
 }
@@ -513,12 +521,24 @@ export interface TrainConfigBody {
 
 // --- Valutazione (M6) ------------------------------------------------------------
 
+export interface LabelLayoutMetrics {
+  n_gt: number
+  n_pred: number
+  matched: number
+  precision: number
+  recall: number
+  f1: number
+}
+
 export interface LayoutMetrics {
   n_gt: number
   n_pred: number
   matched: number
   precision: number
   recall: number
+  // Assenti nei report salvati prima dell'F1.
+  f1?: number
+  per_label?: Record<string, LabelLayoutMetrics>
   mean_iou_of_matched: number | null
 }
 
@@ -562,6 +582,8 @@ export interface EvalReport {
   val_pages: number
   aggregates: {
     layout: LayoutMetrics
+    /** Stessa misura a IoU ≥ 0.75. */
+    layout_strict?: LayoutMetrics
     order: OrderMetrics
     text: { n: number; mean_cer: number | null; mean_wer: number | null }
     tables: { n: number; structure_ok_pct: number | null; mean_cell_cer: number | null }

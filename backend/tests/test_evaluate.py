@@ -46,6 +46,75 @@ def test_layout_match():
     assert m["precision"] == 1.0 and m["recall"] == 1.0
 
 
+def test_strict_layout_counts_loose_boxes_missed_and_invented_per_label():
+    gt = [
+        {"bbox": [0, 0, 1000, 100], "label": "Title"},
+        {"bbox": [0, 150, 1000, 950], "label": "Table"},
+    ]
+    pred = [
+        {"bbox": [0, 0, 1000, 100], "label": "Title"},
+        # Solo la colonna di sinistra: IoU 0.6, passa a 0.5 ma non a 0.75.
+        {"bbox": [0, 150, 600, 950], "label": "Table"},
+        {"bbox": [0, 960, 100, 990], "label": "Page-footer"},
+    ]
+    loose = evmod.layout_match(gt, pred)
+    strict = evmod.layout_match(gt, pred, iou_thr=evmod.STRICT_IOU)
+    assert loose["matched"] == 2 and strict["matched"] == 1
+    assert abs(strict["f1"] - 2 * (1 / 3) * (1 / 2) / (1 / 3 + 1 / 2)) < 1e-9
+    assert strict["per_label"] == {
+        "Title": {"n_gt": 1, "n_pred": 1, "matched": 1},
+        "Table": {"n_gt": 1, "n_pred": 1, "matched": 0},
+        "Page-footer": {"n_gt": 0, "n_pred": 1, "matched": 0},
+    }
+    agg = evmod._agg_layout([{"layout_strict": strict}], key="layout_strict")
+    assert agg["per_label"]["Title"]["f1"] == 1.0
+    assert agg["per_label"]["Table"]["f1"] == 0.0
+
+
+def test_end2end_model_is_scored_on_its_own_blocks_and_content(monkeypatch):
+    """Un modello senza prompt di layout (LightOnOCR-3) non va interrogato
+    per crop: layout e contenuto vengono dalla sua generazione end2end."""
+    from app.services.otsl import html_to_otsl, otsl_to_grid
+
+    class Adapter:
+        native_prefill_mode = "end2end"
+
+    class EndToEndClient:
+        adapter = Adapter()
+
+        def end2end(self, image):
+            return [
+                {"bbox": [11.0, 8.0, 989.0, 69.0], "label": "Title", "content": "HISTORIC SHIPPING INDEX"},
+                {
+                    "bbox": [11.0, 77.0, 989.0, 692.0], "label": "Table",
+                    "content": "<table><tr><td>Abidjan</td><td>Br</td></tr></table>",
+                },
+            ]
+
+        def layout(self, image):
+            raise AssertionError("layout non deve essere chiamato")
+
+        def recognize(self, image, label):
+            raise AssertionError("niente crop per un modello end2end")
+
+    grid = otsl_to_grid(html_to_otsl("<table><tr><td>Abidjan</td><td>Br</td></tr></table>"))
+    data = {
+        "page": {"id": 1, "rel_path": "p.png", "pdf_page": None, "width": 900, "height": 1300},
+        "blocks": [
+            {"id": 1, "label": "Title", "points": json.dumps([[10, 10], [890, 90]]), "content": "HISTORIC SHIPPING INDEX"},
+            {"id": 2, "label": "Table", "points": json.dumps([[10, 100], [890, 900]]), "content": ""},
+        ],
+        "tables": {2: grid},
+    }
+    warnings: list[str] = []
+    monkeypatch.setattr(evmod.pagesvc, "load_source_image", lambda page: Image.new("RGB", (900, 1300)))
+    res = evmod._evaluate_page(EndToEndClient(), data, True, warnings)
+    assert warnings == []
+    assert res["layout"]["matched"] == 2
+    assert res["text"][0]["cer"] == 0.0
+    assert res["tables"][0]["structure_ok"] is True and res["tables"][0]["cell_cer"] == 0.0
+
+
 def test_table_metrics():
     grid = {
         "rows": 2,

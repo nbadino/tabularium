@@ -1,7 +1,8 @@
 """Valutazione del modello affinato sul val split (pagine mai viste).
 
 Metriche (AGENTS.md §11):
-- layout: precision/recall/IoU per blocco (match greedy su IoU+label)
+- layout: precision/recall/F1/IoU per blocco (match greedy su IoU+label),
+  a IoU 0.5 e alla soglia stretta 0.75, anche per label
 - ordine di lettura: Levenshtein normalizzato sulle sequenze di label
 - testo: CER/WER sui ritagli trascritti
 - tabelle: struttura (righe/colonne/span) + CER medio sulle celle
@@ -22,6 +23,7 @@ from .i18n import msg
 from .. import config
 
 _TEXT_LABELS = {l.name for l in labeling.DEFAULT_LABELS if l.prompt_kind == "text"}
+STRICT_IOU = 0.75
 
 # --- metriche di base ---------------------------------------------------------
 
@@ -70,14 +72,29 @@ def iou(b1: list[float], b2: list[float]) -> float:
 # --- match layout -------------------------------------------------------------
 
 
+def _f1(precision: float, recall: float) -> float:
+    return 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+
+
 def layout_match(
     gt: list[dict], pred: list[dict], iou_thr: float = 0.5
 ) -> dict:
-    """Match greedy: ogni GT cerca il pred con stessa label e IoU massimo."""
+    """Match greedy: ogni GT cerca il pred con stessa label e IoU massimo.
+
+    A soglia 0.75 è la regola del reward di layout di LightOnOCR-3: un
+    riquadro vale solo se ha la label giusta e combacia davvero; i blocchi
+    mancati e quelli inventati abbassano l'F1.
+    """
     used = [False] * len(pred)
     matched = 0
     ious = []
+    pairs = []
+    per_label: dict[str, dict] = {}
     for g in gt:
+        per_label.setdefault(g["label"], {"n_gt": 0, "n_pred": 0, "matched": 0})["n_gt"] += 1
+    for p in pred:
+        per_label.setdefault(p["label"], {"n_gt": 0, "n_pred": 0, "matched": 0})["n_pred"] += 1
+    for gi, g in enumerate(gt):
         best_i, best_iou = -1, iou_thr
         for i, p in enumerate(pred):
             if used[i] or p["label"] != g["label"]:
@@ -89,13 +106,21 @@ def layout_match(
             matched += 1
             ious.append(best_iou)
             used[best_i] = True
+            pairs.append([gi, best_i])
+            per_label[g["label"]]["matched"] += 1
+    precision = matched / len(pred) if pred else 0.0
+    recall = matched / len(gt) if gt else 0.0
     return {
         "n_gt": len(gt),
         "n_pred": len(pred),
         "matched": matched,
-        "precision": matched / len(pred) if pred else 0.0,
-        "recall": matched / len(gt) if gt else 0.0,
+        "precision": precision,
+        "recall": recall,
+        "f1": _f1(precision, recall),
         "mean_iou": (sum(ious) / len(ious)) if ious else 0.0,
+        "iou_thr": iou_thr,
+        "per_label": per_label,
+        "pairs": pairs,
     }
 
 
@@ -184,7 +209,17 @@ def _evaluate_page(
 
     try:
         image = pagesvc.load_source_image(page)
-        pred_items = client.layout(image) if image is not None else []
+        # I modelli solo end2end (LightOnOCR-3, Unlimited-OCR, DeepSeek-OCR…)
+        # non hanno un prompt di layout: si misurano sulla loro generazione
+        # nativa, che porta anche il contenuto di ogni blocco.
+        adapter = getattr(client, "adapter", None)
+        end2end = getattr(adapter, "native_prefill_mode", None) == "end2end"
+        if image is None:
+            pred_items = []
+        elif end2end:
+            pred_items = client.end2end(image)
+        else:
+            pred_items = client.layout(image)
     except Exception as exc:  # noqa: BLE001
         warnings.append(msg("inference_failed", lang, id=page["id"], exc=exc))
         return {
@@ -200,6 +235,7 @@ def _evaluate_page(
         "rel_path": page["rel_path"],
         "pdf_page": page["pdf_page"],
         "layout": layout_match(gt_items, pred_items),
+        "layout_strict": layout_match(gt_items, pred_items, iou_thr=STRICT_IOU),
         "order": order_metrics(
             [g["label"] for g in gt_items], [p["label"] for p in pred_items]
         ),
@@ -211,18 +247,32 @@ def _evaluate_page(
     }
 
     if with_text:
-        for g in gt_items:
+        # end2end: il contenuto è quello del blocco predetto abbinato (IoU 0.5).
+        # Un blocco non trovato non ha contenuto da misurare e resta fuori:
+        # lo conta già il recall del layout.
+        matched_content = {
+            gi: str(pred_items[pi].get("content") or "")
+            for gi, pi in page_result["layout"]["pairs"]
+        }
+
+        def hypothesis(gi: int, g: dict) -> str | None:
+            if end2end:
+                return matched_content.get(gi)
+            crop = pagesvc.crop_block_jpeg(page, [int(v) for v in g["source_bbox"]])
+            return client.recognize(_image_from_bytes(crop), g["label"])
+
+        for gi, g in enumerate(gt_items):
             label = g["label"]
             if label == "Table":
                 grid = data["tables"].get(g["id"])
                 if not grid or not grid.get("cells"):
                     continue
                 try:
-                    crop = pagesvc.crop_block_jpeg(
-                        page, [int(v) for v in g["source_bbox"]]
-                    )
-                    crop_img = _image_from_bytes(crop)
-                    otsl_out = client.recognize(crop_img, "Table")
+                    otsl_out = hypothesis(gi, g)
+                    if otsl_out is None:
+                        continue
+                    if "<table" in otsl_out.lower():
+                        otsl_out = otslmod.html_to_otsl(otsl_out)
                     page_result["tables"].append({**table_metrics(grid, otsl_out, lang=lang), "label": "Table"})
                 except Exception as exc:  # noqa: BLE001
                     warnings.append(msg("table_error_w", lang, id=g["id"], exc=exc))
@@ -231,11 +281,9 @@ def _evaluate_page(
                 if not content:
                     continue
                 try:
-                    crop = pagesvc.crop_block_jpeg(
-                        page, [int(v) for v in g["source_bbox"]]
-                    )
-                    crop_img = _image_from_bytes(crop)
-                    hyp = client.recognize(crop_img, label)
+                    hyp = hypothesis(gi, g)
+                    if hyp is None:
+                        continue
                     page_result["text"].append(
                         {"label": label, "cer": cer(content, hyp), "wer": wer(content, hyp), "gt": content, "hyp": hyp}
                     )
@@ -329,6 +377,7 @@ def evaluate_project(
         "val_pages": len(val_ids),
         "aggregates": {
             "layout": _agg_layout(ok_pages),
+            "layout_strict": _agg_layout(ok_pages, key="layout_strict"),
             "order": _agg_order(ok_pages),
             "text": {"n": n_text, "mean_cer": _mean([t["cer"] for t in texts]), "mean_wer": _mean([t["wer"] for t in texts])},
             "tables": {"n": n_tables, "structure_ok_pct": (_mean([1.0 if t["structure_ok"] else 0.0 for t in tables]) * 100) if tables else None, "mean_cell_cer": _mean([t["cell_cer"] for t in tables])},
@@ -343,18 +392,33 @@ def evaluate_project(
     return report
 
 
-def _agg_layout(pages: list[dict]) -> dict:
-    n_gt = sum(p["layout"]["n_gt"] for p in pages)
-    n_pred = sum(p["layout"]["n_pred"] for p in pages)
-    matched = sum(p["layout"]["matched"] for p in pages)
-    ious = [p["layout"]["mean_iou"] for p in pages if p["layout"]["matched"]]
+def _agg_layout(pages: list[dict], key: str = "layout") -> dict:
+    layouts = [p[key] for p in pages if key in p]
+    n_gt = sum(l["n_gt"] for l in layouts)
+    n_pred = sum(l["n_pred"] for l in layouts)
+    matched = sum(l["matched"] for l in layouts)
+    ious = [l["mean_iou"] for l in layouts if l["matched"]]
+    per_label: dict[str, dict] = {}
+    for layout in layouts:
+        for label, counts in layout.get("per_label", {}).items():
+            total = per_label.setdefault(label, {"n_gt": 0, "n_pred": 0, "matched": 0})
+            for field in total:
+                total[field] += counts[field]
+    for counts in per_label.values():
+        precision = counts["matched"] / counts["n_pred"] if counts["n_pred"] else 0.0
+        recall = counts["matched"] / counts["n_gt"] if counts["n_gt"] else 0.0
+        counts.update(precision=precision, recall=recall, f1=_f1(precision, recall))
+    precision = matched / n_pred if n_pred else 0.0
+    recall = matched / n_gt if n_gt else 0.0
     return {
         "n_gt": n_gt,
         "n_pred": n_pred,
         "matched": matched,
-        "precision": matched / n_pred if n_pred else 0.0,
-        "recall": matched / n_gt if n_gt else 0.0,
+        "precision": precision,
+        "recall": recall,
+        "f1": _f1(precision, recall),
         "mean_iou_of_matched": _mean(ious),
+        "per_label": per_label,
     }
 
 

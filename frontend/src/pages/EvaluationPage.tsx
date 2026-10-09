@@ -229,7 +229,19 @@ export default function EvaluationPage() {
             />
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {a.layout_strict?.f1 != null && (
+              <Metric
+                tab={t('evaluate.strictF1')}
+                value={pct(a.layout_strict.f1)}
+                sub={t('evaluate.strictF1Sub', {
+                  matched: a.layout_strict.matched,
+                  gt: a.layout_strict.n_gt,
+                  pred: a.layout_strict.n_pred,
+                })}
+                meaning={t('evaluate.strictF1Meaning')}
+              />
+            )}
             <Metric
               tab={t('evaluate.iou')}
               value={num(a.layout.mean_iou_of_matched)}
@@ -247,6 +259,34 @@ export default function EvaluationPage() {
               meaning={t('evaluate.tablesTextMeaning')}
             />
           </div>
+
+          {a.layout_strict?.per_label && Object.keys(a.layout_strict.per_label).length > 0 && (
+            <Module tab={t('evaluate.perLabel')} quiet flush>
+              <table className="w-full text-[12px]">
+                <thead>
+                  <tr className="text-left text-[color:var(--color-ink-3)]">
+                    <th className="px-2 py-1 font-normal">{t('evaluate.perLabelLabel')}</th>
+                    <th className="px-2 py-1 text-right font-normal">F1</th>
+                    <th className="px-2 py-1 text-right font-normal">{t('evaluate.perLabelFound')}</th>
+                    <th className="px-2 py-1 text-right font-normal">{t('evaluate.perLabelInvented')}</th>
+                  </tr>
+                </thead>
+                <tbody className="mono">
+                  {Object.entries(a.layout_strict.per_label)
+                    .sort(([, x], [, y]) => y.n_gt - x.n_gt)
+                    .map(([label, m]) => (
+                      <tr key={label} className="border-t border-[color:var(--color-rule)]">
+                        <td className="px-2 py-1">{label}</td>
+                        <td className="px-2 py-1 text-right">{pct(m.f1)}</td>
+                        <td className="px-2 py-1 text-right">{m.matched}/{m.n_gt}</td>
+                        <td className="px-2 py-1 text-right">{m.n_pred - m.matched}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+              <p className="px-2 py-1.5 text-[11px] text-[color:var(--color-ink-2)]">{t('evaluate.perLabelMeaning')}</p>
+            </Module>
+          )}
 
           {report.warnings.length > 0 && (
             <WarnNotice title={tn('common.warningsCount', report.warnings.length)}>
@@ -378,7 +418,9 @@ function PageOverlay({
       </div>
     )
   }
-  const k = (v: number) => (v / 1000) * img.w
+  // I bbox sono 0–1000 per asse: x sulla larghezza, y sull'altezza.
+  const kx = (v: number) => (v / 1000) * img.w
+  const ky = (v: number) => (v / 1000) * img.h
 
   return (
     <figure className="m-0">
@@ -396,10 +438,10 @@ function PageOverlay({
           {pred.map((it, i) => (
             <rect
               key={`p${i}`}
-              x={k(it.bbox[0])}
-              y={k(it.bbox[1])}
-              width={k(it.bbox[2] - it.bbox[0])}
-              height={k(it.bbox[3] - it.bbox[1])}
+              x={kx(it.bbox[0])}
+              y={ky(it.bbox[1])}
+              width={kx(it.bbox[2] - it.bbox[0])}
+              height={ky(it.bbox[3] - it.bbox[1])}
               fill="rgb(230 0 18 / 0.10)"
               stroke="#e60012"
               strokeWidth={1.4}
@@ -408,10 +450,10 @@ function PageOverlay({
           {gt.map((it, i) => (
             <rect
               key={`g${i}`}
-              x={k(it.bbox[0])}
-              y={k(it.bbox[1])}
-              width={k(it.bbox[2] - it.bbox[0])}
-              height={k(it.bbox[3] - it.bbox[1])}
+              x={kx(it.bbox[0])}
+              y={ky(it.bbox[1])}
+              width={kx(it.bbox[2] - it.bbox[0])}
+              height={ky(it.bbox[3] - it.bbox[1])}
               fill="none"
               stroke="#111111"
               strokeWidth={1.2}
