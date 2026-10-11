@@ -131,7 +131,8 @@ describe('ContentPane', () => {
 
     // La vista di lavoro monta la superficie e, accanto, i confini.
     await waitFor(() => expect(screen.getByTestId('univer-sheet')).toBeTruthy())
-    expect(screen.getByText(/righe ×/)).toBeTruthy()
+    // In vista «Griglia 3 × 4»; la frase intera sta nel titolo al passaggio.
+    expect(screen.getByTitle(/righe ×/)).toHaveTextContent(/Griglia\s*\d+ × \d+/)
     expect(screen.getByAltText(/Scansione della pagina/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Salva griglia' })).toBeTruthy()
   })
@@ -166,7 +167,7 @@ describe('ContentPane', () => {
       />,
     )
     await userEvent.click(screen.getByRole('button', { name: 'Apri la tabella' }))
-    await waitFor(() => expect(screen.getByText(/Somme: 1 su 2 tornano · 1 no/)).toBeTruthy())
+    await waitFor(() => expect(screen.getByTitle(/Somme: 1 su 2 tornano · 1 no/)).toHaveTextContent(/Somme\s*1\/2/))
     expect(screen.getByTestId('univer-sheet')).toHaveAttribute('data-suspects', '[[2,3]]')
     // Selezionata la cella, la riga dice quale somma non torna.
     await userEvent.click(screen.getByRole('button', { name: 'seleziona D3' }))
@@ -198,7 +199,7 @@ describe('ContentPane', () => {
       />,
     )
     await userEvent.click(screen.getByRole('button', { name: 'Apri la tabella' }))
-    await waitFor(() => expect(screen.getByText(/Somme: 0 su 1 tornano · 1 no/)).toBeTruthy())
+    await waitFor(() => expect(screen.getByTitle(/Somme: 0 su 1 tornano · 1 no/)).toHaveTextContent(/Somme\s*0\/1/))
     await userEvent.click(screen.getByRole('button', { name: 'seleziona D3' }))
     await userEvent.click(screen.getByRole('button', { name: 'Refuso della stampa' }))
     // La conferma entra nella griglia: le somme si ricalcolano con lei.

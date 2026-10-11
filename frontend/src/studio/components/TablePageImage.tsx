@@ -167,6 +167,7 @@ export default function TablePageImage({
         }}
       >
         <img
+            data-fade
             src={src}
             alt={t('table.pageImage')}
             draggable={false}
@@ -183,6 +184,7 @@ export default function TablePageImage({
         />
         {tiles.map((tile) => (
           <img
+            data-fade
             key={tile.key}
             src={tile.src}
             alt=""

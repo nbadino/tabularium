@@ -58,25 +58,24 @@ function LocaleSwitch() {
   const { t, locale, setLocale } = useI18n()
   return (
     <div className="flex items-center px-1 py-0.5" role="group" aria-label={t('layout.language')}>
-      {LOCALES.map((l, i) => (
-        <span key={l} className="flex items-center">
-          {i > 0 && (
-            <span aria-hidden="true" className="px-0.5 text-[color:var(--color-ink-3)]">
-              ·
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => setLocale(l)}
-            aria-pressed={l === locale}
-            aria-label={LOCALE_LABELS[l]}
-            title={LOCALE_LABELS[l]}
-            className="menu-choice"
-          >
-            {l.toUpperCase()}
-          </button>
-        </span>
-      ))}
+      {LOCALES.map((l, i) => [
+        i > 0 && (
+          <span key={`sep-${l}`} aria-hidden="true" className="px-0.5 text-[color:var(--color-ink-3)]">
+            ·
+          </span>
+        ),
+        <button
+          key={l}
+          type="button"
+          onClick={() => setLocale(l)}
+          aria-pressed={l === locale}
+          aria-label={LOCALE_LABELS[l]}
+          title={LOCALE_LABELS[l]}
+          className="menu-choice"
+        >
+          {l.toUpperCase()}
+        </button>,
+      ])}
     </div>
   )
 }
@@ -106,7 +105,6 @@ function AccountMenu() {
         </span>
       )}
       <Menu
-        unfold
         label={<span className="max-w-[14ch] truncate">{user?.username ?? t('layout.menu')}</span>}
       >
         {user && roleKey && (

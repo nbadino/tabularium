@@ -14,6 +14,7 @@ import { createPortal } from 'react-dom'
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react'
 import { IconAlert, IconChevron, IconClose, IconWarn } from './icons'
 import { describeError } from '../lib/errors'
+import { prefersReducedMotion } from '../lib/motion'
 import type { StatusTone } from '../lib/vocab'
 import { useI18n } from '../i18n'
 
@@ -210,10 +211,10 @@ export function WarnNotice({
 const FOLD_MS = 450
 let foldSeq = 0
 
-/** Chiude il menu; con `animate` prima lo ripiega, poi toglie `open`. */
-function closeMenu(d: HTMLDetailsElement | null, animate: boolean) {
+/** Chiude il menu: prima lo ripiega, poi toglie `open`. */
+function closeMenu(d: HTMLDetailsElement | null) {
   if (!d?.open || d.dataset.closing !== undefined) return
-  if (!animate || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+  if (prefersReducedMotion()) {
     d.open = false
     return
   }
@@ -228,14 +229,14 @@ function closeMenu(d: HTMLDetailsElement | null, animate: boolean) {
   }, FOLD_MS)
 }
 
-/** Clic fuori ed Escape chiudono il menu (con ripiegamento se `unfold`). */
-function useDismiss(ref: RefObject<HTMLDetailsElement | null>, unfold: boolean) {
+/** Clic fuori ed Escape chiudono il menu. */
+function useDismiss(ref: RefObject<HTMLDetailsElement | null>) {
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
-      if (ref.current?.open && !ref.current.contains(e.target as Node)) closeMenu(ref.current, unfold)
+      if (ref.current?.open && !ref.current.contains(e.target as Node)) closeMenu(ref.current)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeMenu(ref.current, unfold)
+      if (e.key === 'Escape') closeMenu(ref.current)
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
@@ -243,15 +244,15 @@ function useDismiss(ref: RefObject<HTMLDetailsElement | null>, unfold: boolean) 
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
     }
-  }, [ref, unfold])
+  }, [ref])
 }
 
-/** Il toggle nativo del `<summary>` chiuderebbe di colpo: con `unfold` lo sostituiamo. */
-function onSummaryClick(e: ReactMouseEvent, d: HTMLDetailsElement | null, unfold: boolean) {
-  if (!unfold || !d?.open) return
+/** Il toggle nativo del `<summary>` chiuderebbe di colpo: lo sostituiamo. */
+function onSummaryClick(e: ReactMouseEvent, d: HTMLDetailsElement | null) {
+  if (!d?.open) return
   e.preventDefault()
   if (d.dataset.closing !== undefined) delete d.dataset.closing // riaperto mentre si ripiegava
-  else closeMenu(d, true)
+  else closeMenu(d)
 }
 
 export function Menu({
@@ -259,22 +260,19 @@ export function Menu({
   children,
   align = 'right',
   className = '',
-  unfold = false,
 }: {
   label: ReactNode
   children: ReactNode
   align?: 'left' | 'right'
   className?: string
-  /** Apertura e chiusura al rallentatore (menu dell'account). */
-  unfold?: boolean
 }) {
   const ref = useRef<HTMLDetailsElement>(null)
-  useDismiss(ref, unfold)
+  useDismiss(ref)
   return (
-    <details ref={ref} className={`relative ${unfold ? 'menu-unfold' : ''} ${className}`}>
+    <details ref={ref} className={`menu-unfold relative ${className}`}>
       <summary
         className="btn btn-sm cursor-pointer list-none [&::-webkit-details-marker]:hidden"
-        onClick={(e) => onSummaryClick(e, ref.current, unfold)}
+        onClick={(e) => onSummaryClick(e, ref.current)}
       >
         {label}
         <IconChevron size={11} />
@@ -283,7 +281,7 @@ export function Menu({
         className={`float-layer absolute top-full z-30 mt-1 flex w-max min-w-44 max-w-[calc(100vw-1.5rem)] flex-col gap-px p-1 text-[12px] ${align === 'right' ? 'right-0' : 'left-0'}`}
         onClick={(e) => {
           // Un pulsante scelto chiude il menu; i campi (select, radio) no.
-          if ((e.target as HTMLElement).closest('button, a')) closeMenu(ref.current, unfold)
+          if ((e.target as HTMLElement).closest('button, a')) closeMenu(ref.current)
         }}
       >
         {children}
@@ -323,13 +321,13 @@ export function Select({
   // Per `aria-expanded`: il ruolo combobox lo richiede, e il <details> non lo
   // espone una volta che il <summary> ha un ruolo suo.
   const [expanded, setExpanded] = useState(false)
-  useDismiss(ref, true)
+  useDismiss(ref)
   const current = options.find((o) => o.value === value)
   const optionButtons = () => [...(ref.current?.querySelectorAll<HTMLButtonElement>('[role=option]') ?? [])]
   const summary = () => ref.current?.querySelector('summary')
 
   const pick = (v: string) => {
-    closeMenu(ref.current, true)
+    closeMenu(ref.current)
     summary()?.focus()
     if (v !== value) onChange(v)
   }
@@ -359,7 +357,7 @@ export function Select({
         className={`${className} flex cursor-pointer list-none items-center justify-between gap-2 [&::-webkit-details-marker]:hidden`}
         onClick={(e) => {
           if (disabled) e.preventDefault()
-          else onSummaryClick(e, ref.current, true)
+          else onSummaryClick(e, ref.current)
         }}
         onKeyDown={(e) => {
           if (disabled || ref.current?.open) return
@@ -402,7 +400,7 @@ export function Select({
           else if (e.key === 'Home') go(0)
           else if (e.key === 'End') go(btns.length - 1)
           else if (e.key === 'Escape') summary()?.focus()
-          else if (e.key === 'Tab') closeMenu(ref.current, true)
+          else if (e.key === 'Tab') closeMenu(ref.current)
         }}
       >
         {options.map((o) => (

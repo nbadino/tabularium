@@ -50,8 +50,8 @@ export default function BlockLayer({
   const nodeRefs = useRef<Record<string, Konva.Node>>({})
 
   const sw = 2 / viewportK
-  const sig = useMemo(() => cssColor('--color-sig', '#e60012'), [])
-  const sigPlate = useMemo(() => cssColor('--color-sig-plate', '#d0000f'), [])
+  const sig = useMemo(() => cssColor('--color-sig', '#a3000e'), [])
+  const sigPlate = useMemo(() => cssColor('--color-sig-plate', '#a3000e'), [])
 
   // transformer collegato al blocco selezionato
   useEffect(() => {

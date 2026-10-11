@@ -145,6 +145,17 @@ def main() -> int:
         # del blocco non è tradotta, quindi il selettore regge in ogni lingua.
         content_box = (By.XPATH, "//textarea[contains(@aria-label, 'Text')]")
         textarea = wait_for(driver, EC.presence_of_element_located(content_box))
+        # La riga si apre scorrendo (260 ms, `lib/motion.ts`) e finché cresce il
+        # contenuto è ritagliato: cliccarci subito dà «element not interactable».
+        # Si aspetta che le animazioni delle righe siano finite, come farebbe
+        # una persona. Le animazioni CSS (`stream-in`) hanno un nome e non contano.
+        wait_for(
+            driver,
+            lambda d: d.execute_script(
+                "return [...document.querySelectorAll('li[data-block]')].every("
+                "li => li.getAnimations().every(a => a.animationName || a.playState !== 'running'))"
+            ),
+        )
         textarea.click()
         textarea.clear()
         textarea.send_keys("Synthetic maritime record.")

@@ -51,7 +51,7 @@ chiude. Nient'altro ha ombra.
 
 ## Il segnale ha un ruolo solo
 
-`--color-sig` `#e60012` significa **«qui è vivo»** e nient'altro: linguetta del modulo attivo,
+`--color-sig` `#a3000e` significa **«qui è vivo»** e nient'altro: linguetta del modulo attivo,
 linguetta di navigazione corrente, azione primaria, selezione corrente, testo selezionato,
 cursore di testo, anello di messa a fuoco.
 
@@ -62,9 +62,13 @@ rossa), e il *tabularium* era l'archivio dei documenti di Roma. Lì il rosso non
 «vivo» ma «titolo», e resta lo stesso rosso della famiglia — mai un secondo rosso. Scelto fra
 quattro varianti (rubrica, bronzo, peperino, tutto bronzo) l'11 ottobre 2026.
 
-Due intensità della stessa famiglia, mai un secondo rosso:
-- `--color-sig-plate` `#d0000f` — piastre piene con testo bianco (contrasto AA).
-- `--color-sig-text` `#c4000e` — rosso su bianco a corpo piccolo (contrasto AA).
+**Un rosso solo, profondo** (dal 12 ottobre 2026; prima era il rosso vivo `#e60012`): segnale,
+piastre e testo rosso sono lo stesso `#a3000e`, 8,2:1 sul bianco e per il bianco sopra, quindi
+regge anche a corpo piccolo. I token restano tre perché i ruoli sono tre:
+- `--color-sig-plate` — piastre piene con testo bianco.
+- `--color-sig-text` — rosso su bianco a corpo piccolo.
+- `--color-sig-hover` `#86000b` — il pulsante primario al passaggio: si scurisce, perché
+  schiarire tornerebbe al rosso vivo.
 - `--color-sig-wash` `#fdecec` — fondo della riga o della cella viva.
 
 Gli **allarmi** non competono col segnale: usano la piastra piena rossa più il segno
@@ -289,6 +293,15 @@ soltanto che il contenuto le passa sotto.
 scorre dalla vecchia alla nuova altezza, e le righe che cambiano posto — una bozza confermata,
 un blocco tolto, un riordino con Alt+frecce — scivolano al posto nuovo (FLIP), 260 ms con la
 curva di sempre (`lib/motion.ts`). Niente sotto `prefers-reduced-motion`.
+
+**La vista della tabella si carica in un gesto solo** (dialogo o seconda finestra): finché i
+dati arrivano c'è uno scheletro con la forma della vista — barra, azioni, pagina, foglio —
+così nulla salta; Univer parte a dialogo già aperto (dopo 220 ms) per non far scattare
+l'ingresso; quando il foglio ha disegnato si **scopre dall'alto una riga alla volta**
+(25 ms a riga, al massimo 450 ms, solo le righe in vista) mentre il suo scheletro sfuma. È una
+maschera sul disegno già completo, non un riempimento progressivo: i dati ci sono tutti fin
+dall'inizio e l'autosave non vede mai una griglia a metà. Ai rimontaggi (una colonna in più)
+non si ripete.
 
 **Eccezione dichiarata: i menu al rallentatore.** Il menu dell'account, «Altro» dello Studio
 e le tendine `Select` (progetto, classe del blocco) si srotolano in ~0,7 s con le voci che

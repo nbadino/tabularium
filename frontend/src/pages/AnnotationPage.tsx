@@ -966,7 +966,7 @@ export default function AnnotationPage() {
                 {t('annotate.stopInference')}
               </button>
             )}
-            <Menu unfold label={t('annotate.more')}>
+            <Menu label={t('annotate.more')}>
               <span className="lbl !mb-0 px-2 pt-1">{t('annotate.viewMode')}</span>
               <div className="flex gap-0.5 px-1 pb-0.5" role="group" aria-label={t('annotate.viewModeAria')}>
                 {(['all', 'canvas', 'transcription'] as const).map((mode) => (

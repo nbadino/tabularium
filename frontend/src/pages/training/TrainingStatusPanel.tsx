@@ -258,7 +258,7 @@ export default function TrainingStatusPanel({
                   yAxisId="loss"
                   type="monotone"
                   dataKey="loss"
-                  stroke="#e60012"
+                  stroke="#a3000e"
                   dot={false}
                   strokeWidth={1.5}
                   isAnimationActive={false}

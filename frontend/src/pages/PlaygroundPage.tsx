@@ -236,7 +236,7 @@ export default function PlaygroundPage() {
                         width={kx(it.bbox_norm[2] - it.bbox_norm[0])}
                         height={ky(it.bbox_norm[3] - it.bbox_norm[1])}
                         fill={hovered === i ? 'rgb(230 0 18 / 0.24)' : 'rgb(230 0 18 / 0.09)'}
-                        stroke="#e60012"
+                        stroke="#a3000e"
                         strokeWidth={hovered === i ? 3 : 1.4}
                       />
                     ))}

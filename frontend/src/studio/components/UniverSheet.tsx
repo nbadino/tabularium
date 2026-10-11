@@ -18,6 +18,8 @@
  * salvataggio non deve ri-innescarsi da solo.
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { LoadingGrid } from '../../app/ui'
+import { prefersReducedMotion } from '../../lib/motion'
 import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets'
 import {
   ContextMenuPosition,
@@ -181,6 +183,44 @@ function verifiedCells(grid: TableGrid): [number, number][] {
 }
 
 
+// Geometria del foglio (v. `lib/univerGrid.ts`): intestazione di colonna e righe.
+const COLUMN_HEADER_PX = 22
+const ROW_PX = 24
+/** Un passo per riga, e mai più di questo in tutto: una tabella lunga non fa aspettare. */
+const REVEAL_STEP_MS = 25
+const REVEAL_MAX_MS = 450
+
+/** La tela delle celle: la più alta. Quella della barra della formula è una
+ *  striscia di ~27 px, e finché Univer non ha dimensionato il foglio è l'unica
+ *  ad avere un'altezza. */
+function sheetCanvas(host: HTMLElement): HTMLCanvasElement | null {
+  const tall = Array.from(host.querySelectorAll('canvas')).filter((c) => c.clientHeight > 60)
+  return tall.sort((a, b) => b.clientHeight - a.clientHeight)[0] ?? null
+}
+
+/**
+ * Alla prima apertura il foglio si scopre dall'alto, una riga alla volta,
+ * come un foglio che esce dalla stampa. È solo una maschera (`clip-path` a
+ * scatti) sul disegno già completo: i dati ci sono tutti fin dall'inizio, e
+ * l'autosave non vede mai una griglia a metà. Contano solo le righe in vista.
+ */
+function revealRows(host: HTMLElement, rows: number): void {
+  if (prefersReducedMotion() || !host.animate) return
+  const box = host.getBoundingClientRect()
+  if (box.height <= 0) return
+  // La tela del foglio comincia sotto quella della barra della formula: si misura.
+  const sheet = sheetCanvas(host)
+  const firstRow = (sheet ? sheet.getBoundingClientRect().top - box.top : 0) + COLUMN_HEADER_PX
+  const visible = Math.max(1, Math.min(rows, Math.ceil((box.height - firstRow) / ROW_PX)))
+  const frames: Keyframe[] = []
+  for (let k = 0; k <= visible; k++) {
+    const shown = Math.min(box.height, firstRow + k * ROW_PX)
+    frames.push({ clipPath: `inset(0 0 ${box.height - shown}px 0)`, offset: k / (visible + 1), easing: 'step-end' })
+  }
+  frames.push({ clipPath: 'inset(0 0 0 0)', offset: 1 })
+  host.animate(frames, { duration: Math.min(REVEAL_MAX_MS, (visible + 1) * REVEAL_STEP_MS) })
+}
+
 interface UniverSheetProps {
   /** Il modello di partenza: si carica una volta, poi comanda Univer. */
   grid: TableGrid
@@ -192,14 +232,22 @@ interface UniverSheetProps {
   suspects?: [number, number][]
   /** La cella attiva, per dire accanto al foglio perché è evidenziata. */
   onSelectionChange?: (selection: SheetSelection) => void
+  /** Prima apertura: lo scheletro resta finché il foglio non ha disegnato,
+   *  poi i due si scambiano in dissolvenza. Ai rimontaggi (una colonna
+   *  aggiunta) il foglio non ripassa dallo scheletro. */
+  intro?: boolean
   /** «8 1/8» → «8⅛» alla conferma della cella (v. `lib/fractions.ts`). */
   autoFractions?: boolean
 }
 
-export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, onSelectionChange, autoFractions = false }: UniverSheetProps) {
+export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, onSelectionChange, autoFractions = false, intro = false }: UniverSheetProps) {
   const { t, locale } = useI18n()
   const host = useRef<HTMLDivElement | null>(null)
   const [failed, setFailed] = useState(false)
+  const [ready, setReady] = useState(!intro)
+  // Lo scheletro sfuma insieme al foglio che compare, e si toglie a
+  // dissolvenza finita: toglierlo subito lascerebbe un attimo di vuoto.
+  const [skeletonGone, setSkeletonGone] = useState(!intro)
   const gridRef = useRef(grid)
   const changeRef = useRef(onGridChange)
   changeRef.current = onGridChange
@@ -222,6 +270,7 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
     let selectionListener: { dispose: () => void } | null = null
     let editListener: { dispose: () => void } | null = null
     let cancelled = false
+    let readyTimeout: number | undefined
     const language = univerLanguage(locale)
 
     // Univer legge la dimensione del contenitore quando monta: dentro una
@@ -256,6 +305,26 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
         univer = created.univer
         const api: FUniver = created.univerAPI
         api.createWorkbook(gridToUniver(gridRef.current))
+
+        // Pronto quando la tela del foglio (non quella della barra della
+        // formula, che arriva prima) ha preso le sue dimensioni, più un frame
+        // per disegnarla. Un tetto a 2 s: in una scheda in background i
+        // frame sono sospesi, e il foglio non deve restare invisibile.
+        let revealed = false
+        const markReady = () => {
+          if (cancelled || revealed) return
+          revealed = true
+          if (intro) revealRows(container, gridRef.current.rows)
+          setReady(true)
+          window.setTimeout(() => !cancelled && setSkeletonGone(true), 400)
+        }
+        const waitCanvas = (attempt = 0) => {
+          if (cancelled) return
+          if (sheetCanvas(container) || attempt > 90) requestAnimationFrame(markReady)
+          else requestAnimationFrame(() => waitCanvas(attempt + 1))
+        }
+        waitCanvas()
+        readyTimeout = window.setTimeout(markReady, 2000)
 
         // Un'estensione per tinta: cambiate le celle, si toglie la vecchia
         // (che rende il foglio «sporco») e si registra la nuova. Appena creato
@@ -448,6 +517,7 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
 
     return () => {
       cancelled = true
+      window.clearTimeout(readyTimeout)
       paintRef.current = null
       selectionListener?.dispose()
       editListener?.dispose()
@@ -475,5 +545,14 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
       </p>
     )
   }
-  return <div ref={host} data-testid="univer-host" className="h-full min-h-[320px] w-full" />
+  return (
+    <div className="relative h-full min-h-[320px] w-full">
+      <div ref={host} data-testid="univer-host" className="sheet-host h-full w-full" data-ready={ready || undefined} />
+      {!skeletonGone && (
+        <div className="sheet-skeleton pointer-events-none absolute inset-0">
+          <LoadingGrid label={t('content.tableLoading')} rows={10} />
+        </div>
+      )}
+    </div>
+  )
 }

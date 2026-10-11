@@ -403,7 +403,7 @@ export default function StudioCanvas({
               y={Math.min(tempRect[0].y, tempRect[1].y)}
               width={Math.abs(tempRect[1].x - tempRect[0].x)}
               height={Math.abs(tempRect[1].y - tempRect[0].y)}
-              stroke="#e60012"
+              stroke="#a3000e"
               strokeWidth={sw}
               dash={[6 / viewport.k, 4 / viewport.k]}
               listening={false}
@@ -415,7 +415,7 @@ export default function StudioCanvas({
             <Line
               points={polyVerts.flatMap((p) => [p.x, p.y])}
               closed={polyVerts.length >= 3}
-              stroke="#e60012"
+              stroke="#a3000e"
               strokeWidth={sw}
               dash={[4 / viewport.k, 3 / viewport.k]}
               listening={false}
@@ -428,7 +428,7 @@ export default function StudioCanvas({
               y={v.y - 2 / viewport.k}
               width={4 / viewport.k}
               height={4 / viewport.k}
-              fill="#e60012"
+              fill="#a3000e"
               listening={false}
             />
           ))}

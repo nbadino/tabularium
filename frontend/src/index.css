@@ -69,9 +69,13 @@
   --color-ink-3: #736d69;
 
   /* ---- segnale: un solo ruolo, «qui è vivo» ------------------------------ */
-  --color-sig: #e60012;
-  --color-sig-text: #c4000e;
-  --color-sig-plate: #d0000f;
+  /* Un rosso solo, profondo: segnale, piastre e testo rosso sono lo stesso
+     #a3000e (8,2:1 sul bianco, 8,2:1 per il bianco sopra). Al passaggio sui
+     pulsanti primari si scurisce ancora: schiarire tornerebbe al rosso vivo. */
+  --color-sig: #a3000e;
+  --color-sig-text: #a3000e;
+  --color-sig-plate: #a3000e;
+  --color-sig-hover: #86000b;
   --color-sig-wash: #fdecec;
 
   /* ---- avviso e conferma: canali distinti dal segnale -------------------- */
@@ -358,8 +362,8 @@
     color: #ffffff;
   }
   .btn-primary:hover:not(:disabled) {
-    background: var(--color-sig);
-    border-color: var(--color-sig);
+    background: var(--color-sig-hover);
+    border-color: var(--color-sig-hover);
   }
   .btn-primary:disabled {
     background: var(--color-rule);
@@ -510,6 +514,13 @@
   }
   .studio-bar .fld:not(.float-layer *) {
     padding-inline: 8px;
+  }
+
+  /* Il titolo di una finestra di lavoro aperta a parte: la linguetta dei
+     moduli, staccata dall'angolo perché non sta su un modulo. */
+  .title-plate {
+    padding: 3px 10px;
+    border-radius: var(--radius-md);
   }
 
   /* ---- voci di menu: righe semplici, non pulsanti incorniciati ----------
@@ -993,6 +1004,22 @@
       opacity: 0;
       transform: translateY(16px);
     }
+  }
+
+  /* Il foglio della tabella resta nascosto finché Univer non ha disegnato;
+     poi si scopre una riga alla volta dall'alto (`revealRows`, UniverSheet.tsx)
+     mentre lo scheletro sopra di lui sfuma in fretta. */
+  .sheet-host {
+    opacity: 0;
+  }
+  .sheet-host[data-ready] {
+    opacity: 1;
+  }
+  .sheet-skeleton {
+    transition: opacity 120ms ease;
+  }
+  .sheet-host[data-ready] + .sheet-skeleton {
+    opacity: 0;
   }
 
   /* Le immagini (miniature, ritagli) affiorano quando sono pronte invece di

@@ -700,7 +700,7 @@ export default function JspreadsheetSheet({ grid: initialGrid, onSave, onDetect,
         </div>
         {onColumnOp && (
           <div>
-            <span className="lbl">{t('table.quickActions')}</span>
+            <span className="lbl" title={t('table.quickActionsHint')}>{t('table.quickActions')}</span>
             <div className="flex flex-wrap items-center gap-1">
               <button type="button" onClick={() => runColumnOp('normalize')} className="btn btn-sm" title={t('table.normalizeSpaces')}>{t('table.normalizeShort')}</button>
               <button type="button" onClick={() => runColumnOp('fill')} className="btn btn-sm" title={t('table.fillDown')}>{t('table.fillShort')}</button>

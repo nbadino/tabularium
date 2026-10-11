@@ -15,6 +15,7 @@
  * l'elenco dei livelli. Le regole vivono dietro il loro pulsante.
  */
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import type { MutableRefObject } from 'react'
 import type {
   TableDetectOut,
   TableDetectRequest,
@@ -115,15 +116,22 @@ function TableBlockEditor({
           {t('content.tableInWorkspace')}
         </p>
         {pageId && (
-          <a
-            href={`/tabella/${serverId}?page=${pageId}&width=${pageImageSize?.w ?? ''}&height=${pageImageSize?.h ?? ''}`}
-            target="_blank"
-            rel="noreferrer"
-            className="btn btn-sm no-underline"
+          // Una finestra sua, aperta da script e con un nome per tabella: così
+          // sa da quale finestra viene (il suo «Chiudi e torna» la richiude e
+          // riporta qui), e un secondo clic la richiama invece di duplicarla.
+          <button
+            type="button"
+            onClick={() => {
+              const url = `/tabella/${serverId}?page=${pageId}&width=${pageImageSize?.w ?? ''}&height=${pageImageSize?.h ?? ''}`
+              const w = Math.round(window.screen.availWidth * 0.85)
+              const h = Math.round(window.screen.availHeight * 0.85)
+              window.open(url, `tabularium-table-${serverId}`, `popup,width=${w},height=${h}`)?.focus()
+            }}
+            className="btn btn-sm"
             title={t('table.openSecondScreen')}
           >
             {t('table.openSecondScreen')}
-          </a>
+          </button>
         )}
         <button type="button" onClick={() => setOpen(true)} className="btn btn-sm btn-primary">
           {t('table.openWorkspace')}
@@ -162,6 +170,17 @@ function verifiedCount(grid: TableGrid): { n: number; total: number } {
 }
 const OTSL_KEY = 'tabularium.table.otslPreview'
 
+/** Un dato con la sua parola davanti («Somme 9/9»); la frase intera sta nel
+ *  titolo al passaggio. Niente copia nascosta: finiva nel testo copiato. */
+function Compact({ label, full, className = '', children }: { label: string; full: string; className?: string; children: React.ReactNode }) {
+  return (
+    <span title={full} className="flex items-baseline gap-1">
+      <span>{label}</span>
+      <span className={`mono text-[color:var(--color-ink)] ${className}`}>{children}</span>
+    </span>
+  )
+}
+
 /** Il corpo della vista di lavoro: carica la griglia dal server, possiede i
  *  confini sull'inchiostro e monta la superficie scelta. */
 export function TableWorkspacePanel({
@@ -172,6 +191,7 @@ export function TableWorkspacePanel({
   pageImageSize,
   onSaveTable,
   onDetectTable,
+  flushRef,
 }: {
   id: string
   serverId: number
@@ -180,9 +200,25 @@ export function TableWorkspacePanel({
   pageImageSize: { w: number; h: number } | null
   onSaveTable: (serverId: number, grid: TableGrid) => Promise<string>
   onDetectTable?: (serverId: number, opts: TableDetectRequest) => Promise<TableDetectOut>
+  /** Riceve una funzione che salva subito ciò che l'autosave non ha ancora
+   *  salvato: chi chiude la vista (la seconda finestra) la chiama prima. */
+  flushRef?: MutableRefObject<(() => Promise<void>) | null>
 }) {
   const { t } = useI18n()
   const [grid, setGrid] = useState<TableGrid | null>(null)
+  // Il foglio parte a dialogo già aperto: montare Univer durante l'ingresso
+  // (200 ms) lo farebbe scattare. Nel frattempo resta lo scheletro.
+  const [settled, setSettled] = useState(false)
+  useEffect(() => {
+    const id = window.setTimeout(() => setSettled(true), 220)
+    return () => window.clearTimeout(id)
+  }, [])
+  // Lo scheletro del foglio si vede solo alla prima apertura; ai rimontaggi
+  // (una colonna in più) il foglio si ricostruisce senza ripassarci.
+  const sheetShown = useRef(false)
+  useEffect(() => {
+    if (settled) sheetShown.current = true
+  }, [settled])
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [otsl, setOtsl] = useState<string | null>(null)
@@ -300,6 +336,29 @@ export function TableWorkspacePanel({
     return () => clearTimeout(timer)
   }, [grid, doSave])
 
+  // L'autosave aspetta 900 ms: chi esce prima non deve perdere l'ultima
+  // modifica. `flush` la salva subito; si chiama uscendo dalla vista (dialogo
+  // chiuso, link, seconda finestra chiusa dal suo pulsante), e chiudere la
+  // finestra con modifiche ancora in volo chiede conferma.
+  const dirty = () =>
+    TABLE_SURFACE === 'univer' && !!gridRef.current && univerGridSignature(gridRef.current) !== savedRef.current
+  const flushLatest = useRef(async () => {})
+  flushLatest.current = async () => {
+    if (dirty()) await doSave(gridRef.current!)
+  }
+  useEffect(() => {
+    if (flushRef) flushRef.current = () => flushLatest.current()
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (dirty()) e.preventDefault()
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload)
+      if (flushRef) flushRef.current = null
+      void flushLatest.current()
+    }
+  }, [flushRef])
+
   const applyModel = (next: TableGrid) => {
     gridRef.current = next
     setGrid(next)
@@ -403,30 +462,68 @@ export function TableWorkspacePanel({
     commit(before, next)
   }
 
+  if (error && !grid) return <p className="text-[12px] text-[color:var(--color-ink-2)]">{error}</p>
   if (!grid) {
-    return error
-      ? <p className="text-[12px] text-[color:var(--color-ink-2)]">{error}</p>
-      : <LoadingGrid label={t('content.tableLoading')} />
+    // La forma della vista che sta arrivando — barra, azioni, pagina e foglio —
+    // così all'arrivo dei dati niente salta: ogni pezzo compare al suo posto.
+    return (
+      <div className="flex min-h-0 flex-1 flex-col gap-2" role="status" aria-label={t('content.tableLoading')}>
+        <span className="load-cell h-7 w-full rounded-[var(--radius-md)]" />
+        <span className="load-cell h-7 w-3/5 rounded-[var(--radius-md)]" />
+        <div className="flex min-h-0 flex-1 gap-3">
+          {pageImageUrl && <span className="load-cell min-h-[320px] flex-1 rounded-[var(--radius-md)]" />}
+          <div className="min-w-0 flex-1">
+            <LoadingGrid label={t('content.tableLoading')} rows={10} />
+          </div>
+        </div>
+      </div>
+    )
   }
+  const verified = verifiedCount(grid)
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2">
+    <div className="enter flex min-h-0 flex-1 flex-col gap-2">
       {TABLE_SURFACE === 'univer' && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="mono text-[11px] text-[color:var(--color-ink-2)]">
-            {t('table.workspaceSummary', { rows: grid.rows, cols: grid.cols })}
-          </span>
+        // Una riga sola di stato: dimensioni, celle verificate, somme. Le frasi
+        // intere stanno nel titolo al passaggio e restano ai lettori di schermo.
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[color:var(--color-rule)] pb-2 text-[11px] text-[color:var(--color-ink-2)]">
+          <Compact label={t('table.gridShort')} full={t('table.workspaceSummary', { rows: grid.rows, cols: grid.cols })}>
+            {grid.rows} × {grid.cols}
+          </Compact>
           {grid.phantom_cols.length > 0 && (
-            <span className="text-[11px] text-[color:var(--color-ink-2)]">
-              {t('table.phantomColumns', { n: grid.phantom_cols.length })}
-            </span>
+            <span>{t('table.phantomColumns', { n: grid.phantom_cols.length })}</span>
           )}
           {/* ✓ / ✕ stanno nella barra della formula; qui il conto. */}
-          <span className="mono text-[11px] text-[color:var(--color-ink-2)]" title={t('table.verifyHint')}>
-            {t('table.verifiedCount', verifiedCount(grid))}
-          </span>
-          <label className="ml-auto flex items-center gap-1 text-[11px] text-[color:var(--color-ink-2)]" title={t('table.autoFractionsHint')}>
+          <Compact
+            label={t('table.verifiedShort')}
+            full={`${t('table.verifiedCount', verified)} — ${t('table.verifyHint')}`}
+          >
+            {verified.n}/{verified.total}
+          </Compact>
+          {checks && checks.checks.length > 0 && (
+            <Compact
+              full={
+                (checks.failed > 0
+                  ? t('table.checksSummary', { passed: checks.passed, total: checks.checks.length, failed: checks.failed })
+                  : t('table.checksBalanced', { n: checks.passed })) +
+                ((checks.misprints ?? 0) > 0 ? ` ${t('table.misprintsCount', { n: checks.misprints ?? 0 })}` : '')
+              }
+              label={t('table.sumsShort')}
+              className={checks.failed > 0 ? '!text-[color:var(--color-warn)] font-semibold' : ''}
+            >
+              {checks.passed}/{checks.checks.length}
+            </Compact>
+          )}
+          {/* Le azioni sulla colonna stanno nella stessa riga dello stato: in
+              una finestra stretta vanno a capo da sole, intere. */}
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="lbl mb-0 mr-2" title={t('table.quickActionsHint')}>{t('table.quickActions')}</span>
+            {(['normalize', 'fill', 'join', 'upper', 'lower', 'split'] as const).map((op) => (
+              <button key={op} type="button" className="btn btn-sm" onClick={() => runColumnOp(op, selection)}>{t(`table.${op}Short` as const)}</button>
+            ))}
+          </div>
+          <label className="ml-auto flex items-center gap-1" title={`${t('table.autoFractions')} — ${t('table.autoFractionsHint')}`}>
             <input type="checkbox" checked={autoFractions} onChange={(e) => toggleFractions(e.target.checked)} />
-            {t('table.autoFractions')}
+            {t('table.fractionsShort')} ⅛
           </label>
           <button
             type="button"
@@ -440,16 +537,13 @@ export function TableWorkspacePanel({
         </div>
       )}
 
-      {TABLE_SURFACE === 'univer' && checks && checks.checks.length > 0 && (
-        <p className={`text-[11px] ${checks.failed > 0 ? 'text-[color:var(--color-warn)]' : 'text-[color:var(--color-ink-2)]'}`}>
-          {checks.failed > 0
-            ? t('table.checksSummary', { passed: checks.passed, total: checks.checks.length, failed: checks.failed })
-            : t('table.checksBalanced', { n: checks.passed })}
-          {(checks.misprints ?? 0) > 0 && (
-            <span className="ml-1 text-[color:var(--color-ink-2)]">{t('table.misprintsCount', { n: checks.misprints ?? 0 })}</span>
-          )}
+      {/* Le somme che non tornano e toccano la cella selezionata, con il loro
+          comando «refuso»: servono per agire, quindi restano in una riga. Il
+          resto dello stato delle somme è il Σ qui sopra. */}
+      {TABLE_SURFACE === 'univer' && activeProblems.length > 0 && (
+        <p className="text-[11px] text-[color:var(--color-warn)]">
           {activeProblems.map((k, i) => (
-            <span key={i} className="ml-2 inline-flex items-center gap-1">
+            <span key={i} className="mr-2 inline-flex items-center gap-1">
               <span className={`mono ${k.misprint ? 'text-[color:var(--color-ink-2)] line-through' : 'text-[color:var(--color-ink)]'}`}>
                 {sumErrorMessage(k, t)}
               </span>
@@ -481,17 +575,6 @@ export function TableWorkspacePanel({
         </WarnNotice>
       )}
 
-      {TABLE_SURFACE === 'univer' && (
-        <div className="flex flex-wrap items-center gap-1 border-b border-[color:var(--color-rule)] pb-2">
-          <span className="lbl mb-0 mr-2">{t('table.quickActions')}</span>
-          <button type="button" className="btn btn-sm" onClick={() => runColumnOp('normalize', selection)}>{t('table.normalizeShort')}</button>
-          <button type="button" className="btn btn-sm" onClick={() => runColumnOp('fill', selection)}>{t('table.fillShort')}</button>
-          <button type="button" className="btn btn-sm" onClick={() => runColumnOp('join', selection)}>{t('table.joinShort')}</button>
-          <button type="button" className="btn btn-sm" onClick={() => runColumnOp('upper', selection)}>{t('table.upperShort')}</button>
-          <button type="button" className="btn btn-sm" onClick={() => runColumnOp('lower', selection)}>{t('table.lowerShort')}</button>
-          <button type="button" className="btn btn-sm" onClick={() => runColumnOp('split', selection)}>{t('table.splitShort')}</button>
-        </div>
-      )}
 
       <div className="flex min-h-0 flex-1 gap-3">
         {pageImageUrl && <TablePageImage src={pageImageUrl} pageId={pageId} imageSize={pageImageSize} />}
@@ -501,8 +584,11 @@ export function TableWorkspacePanel({
             // cambia il numero di tracce, e il documento va ricostruito su
             // quello nuovo invece di restare indietro.
             <Suspense
-              fallback={<LoadingGrid label={t('content.tableLoading')} rows={8} />}
+              fallback={<LoadingGrid label={t('content.tableLoading')} rows={10} />}
             >
+              {!settled ? (
+                <LoadingGrid label={t('content.tableLoading')} rows={10} />
+              ) : (
               <UniverSheet
                 key={`${serverId}:${grid.rows}x${grid.cols}:${sheetRevision}`}
                 grid={grid}
@@ -514,7 +600,9 @@ export function TableWorkspacePanel({
                   setActive({ r: sel.startRow, c: sel.startColumn })
                   setSelection(sel)
                 }}
+                intro={!sheetShown.current}
               />
+              )}
             </Suspense>
           ) : (
             <JspreadsheetSheet

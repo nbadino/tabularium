@@ -443,7 +443,7 @@ function PageOverlay({
               width={kx(it.bbox[2] - it.bbox[0])}
               height={ky(it.bbox[3] - it.bbox[1])}
               fill="rgb(230 0 18 / 0.10)"
-              stroke="#e60012"
+              stroke="#a3000e"
               strokeWidth={1.4}
             />
           ))}
