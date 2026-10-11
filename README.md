@@ -1,27 +1,37 @@
 # Tabularium
 
-**A local-first studio for fine-tuning document-parsing models on archives of
-dense tables.**
+**A local-first studio that turns archives of dense, borderless tables into
+structured, reviewable data — and, when you need it, fine-tunes the parsing
+model on your own corpus.**
 
-Tabularium guides you through the complete path from a folder of page scans to
-a fine-tuned parsing checkpoint:
+You choose a model and where it runs once — this machine or a rented GPU — and
+then work the same way everywhere. Three independent paths, none of them
+mandatory:
 
 ```
-register pages → annotate → prefill (optional) → export dataset → fine-tune → evaluate → try it
+Recognize          select pages → recognize → review results → correct or export
+Annotate           blocks, tables, reading order, transcription — your gold pages
+Refine the model   dataset → fine-tune → evaluate → recognize again with it
 ```
 
-It was built for — and proven on — historical registers (shipping indexes,
-1900s–1970s): pages whose tables have **no ruling lines**, hand-set columns
-that drift down the page, and hundreds of cells per page. Nothing in it is
-specific to that corpus: any document archive with table-heavy pages works the
-same way.
+Many archives only ever need the first path. Annotation stands on its own, and
+fine-tuning is the optional branch for when the base model is not good enough
+on your pages.
+
+It was built for — and is in daily use on — historical registers (shipping
+indexes, 1900s–1970s): pages whose tables have **no ruling lines**, hand-set
+columns that drift down the page, and hundreds of cells per page. Nothing in it
+is specific to that corpus: any archive of table-heavy pages works the same way.
 
 > *Tabularium* — the public archive where ancient Rome kept its *tabulae*:
 > the records **and** the tables.
 
-| Home | Annotation studio | Project pages |
-|---|---|---|
-| ![Home](docs/screenshots/home.png) | ![Annotation studio](docs/screenshots/annotation-studio.png) | ![Project pages](docs/screenshots/project-pages.png) |
+![Table workspace: a borderless sea-borne trade table, scan on the left, its corrected grid on the right](docs/screenshots/table-workspace.jpg)
+
+*A page of the 1912–13 Annual Statement of Sea-borne Trade (no ruling lines) in
+the table workspace: the scan on the left, the grid Tabularium proposed and a
+person corrected on the right — 68 × 12 cells, 672 of 677 verified, 24 of 25
+column sums adding up.*
 
 ---
 
@@ -29,82 +39,100 @@ same way.
 
 ### 1. Register your archive
 
-Point Tabularium at a folder of scans (images or multi-page PDFs). It
-registers every page with the metadata your domain needs — issue date, issue
-number, page number, page type — and generates previews on demand, however
-large the scans are.
+Point a project at a folder of scans (images or multi-page PDFs). Every page is
+registered with the metadata your domain needs — issue date, issue number, page
+number, page type — and previews are generated on demand, however large the
+scans are. The source files are never modified.
 
-### 2. Annotate with a purpose-built studio
+![Archive: the three paths and the state of every page](docs/screenshots/archive.jpg)
 
-A zoom/pan canvas for high-resolution pages with:
+### 2. Choose a model and where it runs
 
-- **Blocks** — rectangles and polygons, a label palette, drag/resize, undo/redo,
-  keyboard shortcuts, autosave;
-- **Reading order** — explicit ordering of blocks with a "flow" preview that
-  walks the page the way a reader would;
-- **Transcription** — per-block text with a live conventions checklist, so the
-  dataset stays consistent across annotators;
-- **A table editor for borderless tables** — rows, columns, merged cells,
-  phantom columns where the ruling faded, cell-by-cell transcription, live
-  HTML/OTSL preview. The grid is drawn by you; the text can be pre-filled.
+The **Models** screen is a three-step path, in the order the decision is made:
+**model → where → configure**.
 
-### 3. Prefill instead of starting from zero
+- **Model** — MonkeyOCRv2-Parsing, MinerU2.5, PaddleOCR-VL, Qwen3-VL and other
+  document-parsing models, or any Hugging Face repo you add.
+- **Where** — this machine (NVIDIA/CUDA, or Apple Silicon for models with a
+  verified MLX port) or a remote GPU (SSH, Vast.ai, RunPod, Modal). Each option
+  says *before* you click whether it can host that model, and why not.
+- **Configure** — a checklist that follows what is actually true right now:
+  weights → server → check locally; account → GPU → server → connection on
+  Vast.ai. A refresh never loses a long preparation.
 
-Optional pseudo-labeling, with two engines you choose between explicitly:
+Runtimes (vLLM, MLX, the PaddleOCR-VL pipeline) are installed by Tabularium
+itself on first use — no manual virtualenvs, no environment variables.
 
-- **Local OCR** (RapidOCR / PaddleOCR, CPU): detects text lines and proposes
-  blocks. With table promotion on, the largest cluster of lines whose geometry
-  proves a grid becomes a `Table` block with the cells pre-filled **cell by
-  cell** — columns are never fused.
-- **The parsing model itself** (MonkeyOCRv2 via vLLM, GPU): returns blocks
-  already classified, in one official END2END pass or in two stages.
+![Models: each model says whether it runs on this computer or needs a remote GPU](docs/screenshots/models.jpg)
 
-Every prefilled block and cell is born `verified: false` and carries its
-provenance. The dataset export report tells you how much of your dataset is
-still draft — corrections are the training signal, not the raw model output.
+### 3. Recognize pages in bulk
 
-### 4. Export the dataset the training stack accepts
+Select a page, a range or a whole archive and start a recognition session. Each
+page's result is saved as it arrives, and sessions belong to the backend: they
+keep running if you close the browser. When the queue is done you can switch
+the model off — everything after that works without a GPU.
 
-One click builds the JSONL families the official ms-swift training expects:
+Two engines, chosen explicitly:
 
-- **layout** — full page + prompt, blocks with coordinates normalized 0–1000,
-  in reading order;
-- **text recognition** — block crops + transcriptions;
-- **table recognition** — table crops + **OTSL** (the encoding the official
-  pipeline speaks), always the full table, with optional verified-row bands as
-  an augmentation.
+- **Local OCR** (RapidOCR / PaddleOCR, CPU) — detects text lines; with table
+  promotion on, the largest cluster of lines whose geometry proves a grid
+  becomes a `Table` block with its cells filled **cell by cell**.
+- **The model** — returns blocks already classified, in its native mode.
 
-Splits are deterministic (ratio + seed) and split **by page**, never by crop,
-so no page leaks between train and validation. A health report lists counts
-per class, out-of-page boxes, missing transcriptions and unverified content.
+![Recognize: select pages, pick the engine, start; past sessions on the right](docs/screenshots/recognize.jpg)
 
-### 5. Train with the official scripts — safely
+### 4. Review, correct, export
 
-Tabularium generates and launches the *official* `swift sft` scripts (LoRA or
-full SFT) from templates, in a dedicated GPU environment, with:
+**Results** lists every page of a session — completed, empty, failed, still to
+check — and opens any of them in the studio. Generated content is a **draft**
+(`verified: false`) until someone confirms it. Export either the original model
+output or the current, corrected version, as JSON, CSV or plain text.
 
-- a **VRAM preflight** that refuses to start runs that cannot fit your GPU and
-  proposes the largest sequence length that will;
-- live log streaming, loss/learning-rate charts, GPU telemetry, stop and
-  resume from the last checkpoint;
-- immutable run recipe and SHA-256 artifact manifests, including remote
-  checkpoint download and verification. LoRA merge into a vLLM-servable
-  checkpoint is intentionally not advertised yet: it remains a tracked
-  follow-up until the official export command is integrated and tested.
+![Results: a seven-page session with completed, to-verify and failed pages](docs/screenshots/results.jpg)
 
-### 6. Evaluate, iterate, and try it live
+### 5. Annotate in a purpose-built studio
 
-Held-out pages are scored on layout (IoU per label), reading-order distance,
-per-cell CER/WER and table structure — with a GT-vs-prediction overlay and a
-"worst failures" list that sends you back to the editor. The playground runs
-the fine-tuned (or base) model on any page, without saving results.
+- **Blocks** — rectangles and polygons on a zoom/pan canvas, a label palette,
+  drag/resize, undo/redo, keyboard shortcuts, autosave.
+- **Reading order** — explicit ordering with a "flow" preview that walks the
+  page the way a reader would.
+- **Transcription** — per-block text with the project's transcription rules
+  always at hand, so annotators stay consistent.
+- **Borderless tables** — Tabularium **proposes the grid** of a table crop from
+  the baselines of the glyphs, with column boundaries that follow the drift of
+  hand-set columns instead of cutting through numbers. You correct it in a
+  spreadsheet-style workspace — merged cells, column actions (trim, fill down,
+  split, join…), cell-by-cell verification, arithmetic checks on column sums —
+  inside the studio or on a second screen.
 
-### Multi-user, self-hosted
+![Annotation studio: labelled blocks on the scan, verified tables in the content panel](docs/screenshots/annotation-studio.jpg)
 
-Optional but on by default: first-run setup creates the instance
-administrator; login via HttpOnly session cookies; global roles
-(admin / editor / viewer) plus per-project sharing; instance settings and user
-management. Passwords and session tokens are stored only as hashes.
+### 6. Refine the model (optional)
+
+- **Dataset** — one click builds the JSONL families the official ms-swift
+  training expects: layout (full page, coordinates normalized 0–1000, reading
+  order), text recognition (crops + transcriptions) and table recognition
+  (full table crops + **OTSL**). Splits are deterministic and **by page**, never
+  by crop, and a health report lists what is still unverified.
+- **Fine-tuning** — Tabularium generates and launches the *official*
+  `swift sft` scripts (LoRA or full SFT) with a **VRAM preflight** that refuses
+  runs your GPU cannot fit and proposes the largest sequence length that will;
+  live logs, loss and GPU charts, stop and resume; immutable run recipes and
+  SHA-256 artifact manifests. LoRA merge into a vLLM-servable checkpoint is a
+  tracked follow-up, not yet offered.
+- **Evaluation** — approved pages scored on layout (IoU per label), reading
+  order, per-cell CER/WER and table structure, with a GT-vs-prediction overlay
+  and the worst failures one click from the editor. Run it before training too:
+  the base model's score is the baseline to beat.
+- **Playground** — try any model on any page without saving anything.
+
+### Self-hosted, multi-user
+
+First launch creates the instance administrator; login uses HttpOnly session
+cookies; global roles (admin / editor / viewer) plus per-project sharing.
+Passwords and session tokens are stored only as hashes. The interface speaks
+English, Italian and French, and ⌘K (Ctrl+K) jumps to any section, project or
+page.
 
 ---
 
@@ -114,29 +142,28 @@ management. Passwords and session tokens are stored only as hashes.
 |---|---|
 | OS | Linux, macOS or Windows |
 | Python | 3.11–3.13 (backend; CI-verified) |
-| Node.js | 20–22 verified in CI (used by `run.sh`/`run.ps1` to build or refresh the frontend); newer versions work too |
+| Node.js | 22 (CI-verified; used by `run.sh`/`run.ps1` to build the frontend) |
 | Storage | SQLite (bundled), plus disk space for your scans |
-| GPU | NVIDIA, ≥ 8 GB VRAM — **only** for model prefill / inference / fine-tuning |
+| GPU | Only for model recognition, evaluation and fine-tuning: NVIDIA with ≥ 8 GB, Apple Silicon for MLX-ported models, or a remote GPU |
 
-Annotation and local-OCR prefill run entirely on CPU. The dashboard process
-never imports PyTorch: training and model inference run in separate
-environments it orchestrates.
+Annotation, review, export and local-OCR prefill run entirely on CPU. The
+dashboard process never imports PyTorch: model serving and training run in
+separate environments it orchestrates.
 
 ### Platform boundaries
 
 | Activity | Linux | macOS | Windows |
-|---|---:|---:|---:|
-| Dashboard, annotation, projects and dataset export | Yes | Yes | Yes |
+|---|:-:|:-:|:-:|
+| Archive, annotation, review, export | Yes | Yes | Yes |
 | Local OCR prefill on CPU | Yes | Yes | Yes |
-| Local NVIDIA/CUDA model serving and training | Yes | No | Via WSL2 |
-| Remote GPU through SSH, Vast.ai or RunPod | Yes | Yes | Yes |
+| Local model serving on NVIDIA/CUDA, fine-tuning | Yes | No | Via WSL2 |
+| Local model serving with MLX (selected models) | No | Apple Silicon | No |
+| Remote GPU through SSH, Vast.ai, RunPod or Modal | Yes | Yes | Yes |
 
-On macOS and Windows the application remains fully usable for archive
-preparation and annotation. GPU-dependent model serving/training must run on
-Linux, either directly, through WSL2 on Windows, or on a remote Linux GPU.
-The CI runs the complete backend and frontend test/build cycle on macOS in
-addition to the Linux Python-version matrix, so dashboard compatibility is
-checked continuously rather than inferred from the shared POSIX scripts.
+Which models run locally depends on the pair *machine + model*, and the Models
+screen says so per model. The measured matrix is in
+[docs/LOCAL_INFERENCE_GUIDE.md](docs/LOCAL_INFERENCE_GUIDE.md) §0. CI runs the
+full backend and frontend test/build cycle on macOS as well as Linux.
 
 ## Quickstart
 
@@ -151,141 +178,69 @@ checked continuously rather than inferred from the shared POSIX scripts.
 ./scripts/run.sh                    # Windows: scripts\run.ps1
 ```
 
-The backend installers accept Python 3.11, 3.12 or 3.13 and explicitly refuse
-versions outside the verified matrix.
+The backend installers accept Python 3.11, 3.12 or 3.13 and refuse versions
+outside the verified matrix.
 
-**Linux prerequisites.** The installer brings the OCR engine (`rapidocr-onnxruntime`), which
-depends on `opencv-python`. That build imports `libGL`/`glib`, so on a headless Linux box the
-setup prints the exact remedy if the import fails:
+**Linux prerequisites.** The bundled OCR engine depends on `opencv-python`,
+which imports `libGL`/`glib`; on a headless box the setup prints the remedy if
+the import fails:
 
 ```bash
 sudo apt-get install -y libgl1 libglib2.0-0   # Debian/Ubuntu; equivalent elsewhere
 ```
 
-Everything else the app needs at runtime (vLLM for CUDA machines, MLX on Apple Silicon, the
-PaddleOCR-VL official pipeline) is provisioned by Tabularium itself at first use — no manual
-virtualenvs, no environment variables.
-
 On first launch the app shows the **setup screen** where you create the
-instance administrator; every later session starts at the login page.
-
-For a single-user local machine without authentication, start the backend with
+instance administrator; later sessions start at the login page. For a
+single-user machine without authentication, start the backend with
 `TABULARIUM_AUTH=off`. Registration is closed by default; the administrator can
 open it from **Settings**.
 
-### Connecting a model (optional)
+### Then
 
-Model-driven prefill, evaluation and the playground need a vLLM server. This
-is entirely point-and-click from the app — no shell commands, no environment
-variables, nothing to install by hand:
+1. **Archive** → create a project on your scans folder and scan it.
+2. **Models** → pick a model and where it runs (skip this to use local OCR only).
+3. **Recognize** → select pages and start.
+4. **Results** → check, open pages in **Annotate** to correct, export.
 
-1. Open **Registro Modelli** (Model Registry).
-2. Pick a model (`MonkeyOCRv2-Parsing`, `MinerU2.5`, `dots.mocr`,
-   `PaddleOCR-VL`, `Unlimited-OCR`, `GLM-OCR`, `DeepSeek-OCR-2`, `Qwen3-VL`,
-   `TeleOCR` (layout Detection upstream, riconoscimento crop di testo, tabelle
-   OTSL e formule),
-   or **add your own** Hugging Face repo) → **Download**.
-3. Once downloaded → **Start as local server**.
+Model-specific serving details — exact vLLM flags, memory limits, the MLX and
+PaddleOCR-VL pipelines, TeleOCR, custom repos — are in
+[docs/LOCAL_INFERENCE_GUIDE.md](docs/LOCAL_INFERENCE_GUIDE.md); rented GPUs
+(Vast.ai, RunPod, Modal, SSH tunnels) in
+[docs/CLOUD_INFERENCE_GUIDE.md](docs/CLOUD_INFERENCE_GUIDE.md); tested GPU
+profiles in [benchmarks.md](benchmarks.md). A catalog entry is not by itself a
+promise that every checkpoint fits an 8 GB GPU.
 
-The adapter catalog includes experimental/download-only entries as well as
-models verified on the current machine. See [benchmarks.md](benchmarks.md) for
-the tested GPU profiles and the exact local serving status; a catalog entry is
-not by itself a promise that every checkpoint fits an 8 GB GPU.
+### Comparing models on the same page
 
-On Apple Silicon, PaddleOCR-VL's native pipeline and the Qwen3-VL MLX checkpoint
-have completed local inference runs. Qwen has now been switched to the producer's
-full-page `qwenvl html` workflow after its old table prompt returned invalid
-Markdown; that new path needs a fresh benchmark on Metal. MinerU has a separate
-local path through the producer's `MinerUClient` `mlx-engine`; its live corpus
-benchmark is still pending. The other catalog models, including TeleOCR, require
-a remote CUDA endpoint.
-TeleOCR uses the upstream 1036×1036
-layout input, bbox parser, system prompt, task-specific sampling, and
-no-repeat-ngram logits processor; text/table/formula crops use upstream
-prompts. In **Settings → Models**, its official `Detection` default can be
-changed to `Segmentation`, which upstream recommends for degraded scans. The
-Tabularium adapter still orchestrates layout and crop requests itself; it does
-not yet run upstream `infer.py`'s asynchronous page batching and middle-JSON
-post-processing, so results are not claimed as equivalent to the complete
-official pipeline.
-
-PaddleOCR-VL prefill invokes the official `PaddleOCRVL.predict` workflow, with
-layout detection followed by visual-language recognition of the detected
-regions; it does not send the whole page through the generic crop adapter.
-**Settings → Models** leaves PaddleX defaults intact in Automatic mode and can
-override the documented layout, orientation, unwarping, chart, seal, image-OCR,
-Markdown, merge and queue options. Generation and image limits are forwarded
-to the same official `predict` call.
-The cloud recipe installs the official repository root, which registers the
-custom vLLM architecture and supplies its processor, with the upstream-pinned
-vLLM/Transformers versions. On Modal, deploy
-`scripts/cloud/modal_teleocr.py`; on Vast, choose TeleOCR in the cloud model
-selector.
-
-The first time you start *any* model, Tabularium creates a dedicated Python
-environment and installs vLLM into it by itself (a couple of minutes,
-one-time only); for `MonkeyOCRv2-Parsing` it also clones the
-[official repo](https://github.com/Yuliang-Liu/MonkeyOCRv2) it needs for
-serving, automatically. `TABULARIUM_TRAIN_REPO` / `TABULARIUM_TRAIN_PYTHON` /
-`TABULARIUM_SERVE_PYTHON` still exist as **optional overrides** if you already
-have your own checkout or environment — they are never required.
-
-### Vast.ai: prepare, reconnect, change model
-
-From **Cloud → Vast.ai**, save the Vast API key, select a running instance and
-choose the model from the recipe selector. **Prepare and connect** is
-idempotent: an already-ready server with the same model is reused; selecting a
-different model restarts only the remote serving process, reuses cached weights
-when available, and recreates/verifies the SSH tunnel. The UI shows provisioning
-logs and connection status. Archive scans run as background jobs with a real
-file counter, so refreshing the page does not lose the scan status.
-
-```bash
-./scripts/train_on_gpu.sh    # fine-tuning helper (separate from serving)
-```
-
-Exact vLLM flags verified per model, and how the size warning works when a
-checkpoint may not fit your GPU, are documented in
-[docs/LOCAL_INFERENCE_GUIDE.md](docs/LOCAL_INFERENCE_GUIDE.md).
-
-To compare already-running local endpoints with the same page, use the
-non-destructive benchmark (one `--target` per server):
+Point the non-destructive benchmark at already-running endpoints (one
+`--target` per server); results are never written as labels:
 
 ```bash
 PYTHONPATH=backend data/vllm-runtime/bin/python scripts/benchmark_models.py \
-  --image test/1502-a-BANCO-SAN-GIORGIO-originale.jpg \
+  --image path/to/page.jpg \
   --target monkeyocrv2-parsing,http://127.0.0.1:8888/v1,MonkeyOCRv2 \
   --target mineru2.5,http://127.0.0.1:8889/v1,mineru2.5 \
   --task layout --repeat 2 --output data/benchmarks/run.json
 ```
 
-The report records success/failure, wall latency, TTFT, tokens/s, output
+It records success/failure, latency, time to first token, tokens/s, output
 validity and token usage. Use `--task end2end` for adapters whose layout
-protocol is not verified; benchmark results are never written as labels.
-
-A GPU can also be rented on demand — Tabularium has built-in cloud instance
-management (SSH tunnel, RunPod proxy, serverless) documented in
-[docs/CLOUD_INFERENCE_GUIDE.md](docs/CLOUD_INFERENCE_GUIDE.md).
+protocol is not verified.
 
 ### Optional extras
 
 - **Page rectification** — *Align and compare* in the studio proposes a
   corrected page without touching your annotations; you accept or reject it.
   The only neural rectifier is the **official MonkeyOCRv2 preprocessor**, the
-  same stage the model's own pipeline runs on every page before parsing (see
-  [docs/LOCAL_INFERENCE_GUIDE.md](docs/LOCAL_INFERENCE_GUIDE.md) §2.2). It
-  needs no extra install: it reuses the checkpoint's weights and the vLLM
-  runtime. Alongside it there are only rotation-only deskew and the manual
-  perspective/mesh corrections. The earlier third-party engines (UVDoc,
-  DocScanner-L) were substitutes chosen before the model's own preprocessor was
-  reachable, and have been removed: preparing pages differently from how the
-  model expects to receive them is a liability, not an option.
+  same stage the model's own pipeline runs before parsing; alongside it there
+  are rotation-only deskew and manual perspective/mesh corrections.
 - **Alternative OCR engines** — see
   [docs/OCR_MODEL_ALTERNATIVES.md](docs/OCR_MODEL_ALTERNATIVES.md).
 
 ## Configuration
 
-Everything is controlled by environment variables; nothing is hard-coded.
+Everything has a working default; these environment variables are optional
+overrides.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -298,7 +253,7 @@ Everything is controlled by environment variables; nothing is hard-coded.
 | `TABULARIUM_VLLM_URL` | `http://127.0.0.1:8888/v1` | inference server endpoint |
 | `TABULARIUM_VLLM_MODEL` | `MonkeyOCRv2` | served model name |
 | `TABULARIUM_VLLM_MAX_PIXELS` | unset | cap on pixels sent to the layout model |
-| `TABULARIUM_TRAIN_REPO` | unset | official MonkeyOCRv2 checkout (training) |
+| `TABULARIUM_TRAIN_REPO` | unset | your own MonkeyOCRv2 checkout (otherwise cloned automatically) |
 | `TABULARIUM_TRAIN_ENV` | `monkeyocrv2-train` | conda/venv name for training |
 | `TABULARIUM_MODELS_DIR` | `<repo>/models` | local model checkpoints |
 
@@ -307,26 +262,28 @@ Everything is controlled by environment variables; nothing is hard-coded.
 One backend process serves both the API and the built frontend:
 
 ```
-backend  (FastAPI + SQLite + Pillow/NumPy; vLLM client; subprocess for training)
-  services/   table detection · OTSL encoding · dataset builder · vLLM client
-              trainer orchestration · VRAM preflight · auth/permissions · prefill
+backend  (FastAPI + SQLite + Pillow/NumPy; model clients; subprocess for training)
+  services/   recognition sessions · table detection · OTSL encoding · dataset builder
+              trainer orchestration · VRAM preflight · runtimes · auth/permissions
 
-frontend (React 19 + Vite + TypeScript + Tailwind; Konva canvas)
-  studio/     zoom/pan canvas · blocks · reading order · table editor
-  app/        auth gate · layout · i18n (English / Italiano / Français)
+frontend (React 19 + Vite + TypeScript + Tailwind; Konva canvas; Univer spreadsheet)
+  studio/     zoom/pan canvas · blocks · reading order · table workspace
+  app/        auth gate · layout · command palette · i18n (English / Italiano / Français)
 ```
 
 Design principles:
 
 - **The data comes first.** Annotations are stored in source pixels with full
-  provenance; the model-specific formats (0–1000 coordinates, OTSL, JSONL) are
+  provenance; model-specific formats (0–1000 coordinates, OTSL, JSONL) are
   produced only at export. Your annotations never get locked to one model.
+- **Generated is not verified.** Everything a model or OCR proposes stays a
+  draft until a person confirms it, and the dataset report says how much is
+  still draft.
 - **Nothing destructive is implicit.** Autosave preserves identifiers, and
-  every operation that can remove work requires explicit confirmation.
+  every operation that can remove work asks first.
 - **The official stack is used, not forked.** Training scripts, prompts,
-  coordinate conventions and the OTSL encoder all match the official
-  MonkeyOCRv2 repo, which is referenced as an external checkout and never
-  modified.
+  coordinate conventions and the OTSL encoder match the official MonkeyOCRv2
+  repo, which is referenced as an external checkout and never modified.
 
 ## Documentation
 
@@ -334,7 +291,7 @@ Design principles:
   the reasoning behind every design decision (Italian; the source of truth).
 - **[PRODUCT.md](PRODUCT.md)** — what the product promises and its constraints.
 - **[DESIGN.md](DESIGN.md)** — the interface design system.
-- **[docs/](docs/)** — cloud inference guide, OCR engine alternatives.
+- **[docs/](docs/)** — local and cloud inference guides, OCR engine alternatives.
 
 ## Development
 
@@ -346,17 +303,17 @@ cd backend && python -m pytest tests -q
 cd frontend && npm run typecheck && npm test && npm run build
 
 # end-to-end smoke (needs a running instance and Chromium)
-npm run test:e2e
+cd frontend && npm run test:e2e
 ```
 
-Continuous integration runs the backend tests, the frontend checks and the
-end-to-end workflow (see `.github/workflows/ci.yml`).
+Continuous integration runs the backend tests (Python 3.11–3.13), the frontend
+checks, a macOS pass and the end-to-end workflow (`.github/workflows/ci.yml`).
 
 ## Troubleshooting
 
 **I forgot the administrator password.**
-Reset it from the terminal with the bundled tool — it uses the same hashing
-and session invalidation as the app itself:
+Reset it from the terminal; it uses the same hashing and session invalidation
+as the app:
 
 ```bash
 backend/.venv/bin/python scripts/reset_password.py          # list users
@@ -367,17 +324,14 @@ Pass a second argument to set the password non-interactively. The data root
 follows `TABULARIUM_ROOT` (default `<repo>/data`).
 
 **The app doesn't start / the page is blank.**
-Check that the frontend was built at least once (`scripts/setup_frontend.sh`,
-or `cd frontend && npm run build`): the backend serves `frontend/dist`. When
-started with `scripts/run.sh`/`run.ps1`, the frontend is rebuilt automatically
-if its sources are newer than `dist/index.html` (or when
-`TABULARIUM_BUILD_FRONTEND=1` is set). The server log reports the health
-endpoint on `/api/health`.
+The backend serves `frontend/dist`, so the frontend must have been built once
+(`scripts/setup_frontend.sh`, or `cd frontend && npm run build`).
+`scripts/run.sh`/`run.ps1` rebuild it automatically when its sources are newer
+(or with `TABULARIUM_BUILD_FRONTEND=1`). Health is reported on `/api/health`.
 
-**Model prefill or playground says the model is unavailable.**
-Those features need the vLLM server (`scripts/serve_model.sh`); everything
-else works without it. Cloud instances are covered in
-[docs/CLOUD_INFERENCE_GUIDE.md](docs/CLOUD_INFERENCE_GUIDE.md).
+**Recognition with a model, evaluation or the playground say the model is unavailable.**
+They need a model being served: start one from **Models**. Everything else —
+local OCR, annotation, review, export — works without it.
 
 ## License
 
@@ -392,3 +346,5 @@ else works without it. Cloud instances are covered in
   (official fork bundled with MonkeyOCRv2).
 - [RapidOCR](https://github.com/RapidAI/RapidOCR) /
   [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) — CPU prefill engines.
+- [Univer](https://github.com/dream-num/univer) — the spreadsheet surface of
+  the table workspace.

@@ -335,6 +335,14 @@ vllm serve <model_path> --port <porta> \
 - Checkpoint piccolo (~1.8 GB); i maintainer confermano solo una RTX 3060
   12GB come configurazione minima testata — su 8 GB non c'è conferma
   ufficiale, ma il margine aritmetico è ampio.
+- **Prefill con la pipeline ufficiale.** Il prefill chiama il flusso ufficiale
+  `PaddleOCRVL.predict`: rilevamento del layout, poi riconoscimento visivo-linguistico
+  delle regioni trovate; la pagina intera non passa dall'adapter generico per ritagli.
+  In **Impostazioni → Modelli**, la modalità Automatica lascia intatti i default di
+  PaddleX; si possono forzare le opzioni documentate di layout, orientamento,
+  raddrizzamento, grafici, timbri, OCR delle immagini, Markdown, unione e coda.
+  I limiti di generazione e d'immagine arrivano alla stessa chiamata `predict`.
+  (Spostato dal README il 12 ottobre 2026.)
 
 ---
 
@@ -586,3 +594,24 @@ utilizzabile per confronti e per qualche pagina, non per macinare il corpus.
 
 Fonti dettagliate (model card, README, recipe vLLM, issue) sono citate nei
 docstring dei rispettivi adapter in `backend/app/services/model_adapters.py`.
+
+---
+
+## 14. TeleOCR (cloud CUDA)
+
+Spostato dal README il 12 ottobre 2026: è dettaglio di un modello, non dell'app.
+
+- **Ingresso e prompt upstream.** Layout a 1036×1036, parser dei bbox, prompt di
+  sistema, campionamento per compito e logits processor no-repeat-ngram come
+  upstream; i ritagli di testo, tabelle (OTSL) e formule usano i prompt upstream.
+- **Detection o Segmentation.** In **Impostazioni → Modelli** il default ufficiale
+  `Detection` si può cambiare in `Segmentation`, che upstream consiglia per le
+  scansioni degradate.
+- **Non equivalente alla pipeline completa.** L'adapter di Tabularium orchestra da sé
+  layout e richieste sui ritagli; non esegue ancora il batching asincrono per pagina di
+  `infer.py` né il post-processing del middle-JSON, quindi i risultati non sono
+  dichiarati equivalenti alla pipeline ufficiale completa.
+- **Servirlo.** La recipe cloud installa la radice del repository ufficiale, che
+  registra l'architettura vLLM personalizzata e fornisce il processor, con le versioni
+  di vLLM/Transformers fissate upstream. Su Modal: `scripts/cloud/modal_teleocr.py`;
+  su Vast: TeleOCR nel selettore del modello cloud. In locale serve un endpoint CUDA.
