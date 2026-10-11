@@ -35,12 +35,13 @@ import type { ColumnOp, SheetSelection } from './UniverSheet'
 
 import { univerGridSignature } from '../../lib/univerGrid'
 import { apiGet, apiPost } from '../../lib/api'
-import { LoadingGrid, Modal, Module, WarnNotice } from '../../app/ui'
+import { LoadingGrid, Modal, Module, Select, WarnNotice } from '../../app/ui'
 import { IconDown, IconSave, IconTrash, IconUp } from '../../app/icons'
 import { useI18n } from '../../i18n'
 import type { LabelDef, TableCheck, TableChecksOut } from '../../lib/types'
 import type { DisplayBlock, LivePrefillOutput, PrefillDraft } from '../types'
 import JspreadsheetSheet from './JspreadsheetSheet'
+import { useFlipList, useHeightTransition } from '../../lib/motion'
 import SplitColumnDialog from './SplitColumnDialog'
 import TablePageImage from './TablePageImage'
 import LiveStream from './LiveStream'
@@ -672,6 +673,10 @@ function RowShell({
   children,
 }: RowShellProps) {
   const { t } = useI18n()
+  // Verificata, la riga si chiude in una riga sola: ci arriva scorrendo, e chi
+  // le sta sotto sale con lei invece di saltare.
+  const rowRef = useRef<HTMLLIElement>(null)
+  useHeightTransition(rowRef, collapsed)
   const orderButton = (
     <button
       type="button"
@@ -704,6 +709,7 @@ function RowShell({
   if (collapsed) {
     return (
       <li
+        ref={rowRef}
         id={`content-row-${id}`}
         data-block={id}
         className="stream-in flex cursor-pointer items-center gap-2 border-b border-[color:var(--color-rule)] px-2.5 py-1.5 last:border-b-0 hover:bg-[color:var(--color-fill)]"
@@ -724,9 +730,12 @@ function RowShell({
   }
   return (
     <li
+      ref={rowRef}
       id={`content-row-${id}`}
       data-block={id}
-      className={`stream-in border-b border-[color:var(--color-rule)] p-2.5 last:border-b-0 ${
+      // Ogni riga entra animata e diventa un proprio contesto di sovrapposizione:
+      // senza `z-40` la tendina della classe finirebbe sotto la riga successiva.
+      className={`stream-in relative border-b border-[color:var(--color-rule)] p-2.5 last:border-b-0 has-[details[open]]:z-40 ${
         selected ? 'bg-[color:var(--color-sig-wash)]' : ''
       }`}
     >
@@ -734,18 +743,14 @@ function RowShell({
         {orderButton}
 
         {onLabel && labels ? (
-          <select
+          <Select
             value={label}
-            onChange={(e) => onLabel(e.target.value)}
+            onChange={onLabel}
             onFocus={onSelect}
+            ariaLabel={t('inspector.class')}
             className="fld !w-auto text-xs"
-          >
-            {labels.map((l) => (
-              <option key={l.name} value={l.name}>
-                {l.name}
-              </option>
-            ))}
-          </select>
+            options={labels.map((l) => ({ value: l.name, label: l.name }))}
+          />
         ) : (
           <span className="mono text-[11px] uppercase tracking-[0.04em] text-[color:var(--color-ink-3)]">
             {label}
@@ -902,6 +907,9 @@ export default function ContentPane({
   working,
 }: ContentPaneProps) {
   const { t, tn } = useI18n()
+  // Le righe che cambiano posto scivolano (v. lib/motion.ts).
+  const listRef = useRef<HTMLUListElement>(null)
+  useFlipList(listRef)
   const [rulesOpen, setRulesOpen] = useState(false)
 
   // Le bozze già confermate sono già ricomparse fra i blocchi dopo il ricarico
@@ -963,7 +971,7 @@ export default function ContentPane({
         <p className="p-3 text-[12px] text-[color:var(--color-ink-2)]">{t('content.emptyPageBody')}</p>
       ) : (
         <>
-          <ul className="cascade flex flex-col">
+          <ul ref={listRef} className="cascade relative flex flex-col">
             {sortedBlocks.map((block, i) => {
               const isTable = block.label === 'Table'
               const noContent = NO_CONTENT_LABELS.has(block.label)

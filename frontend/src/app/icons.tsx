@@ -232,6 +232,14 @@ export const IconCheck = (p: IconProps) => (
   </Icon>
 )
 
+/** Lente: la ricerca dei comandi (⌘K). */
+export const IconSearch = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="7" cy="7" r="4.5" />
+    <path d="M10.5 10.5l3.5 3.5" />
+  </Icon>
+)
+
 /** Chevron: apre e chiude una fisarmonica. */
 export const IconChevron = (p: IconProps) => (
   <Icon {...p}>

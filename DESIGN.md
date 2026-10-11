@@ -55,6 +55,13 @@ chiude. Nient'altro ha ombra.
 linguetta di navigazione corrente, azione primaria, selezione corrente, testo selezionato,
 cursore di testo, anello di messa a fuoco.
 
+**Un'eccezione, voluta: il marchio.** Nel logotipo «Tabularium**Lab**» (testata, login,
+primo avvio) «Tabularium» è inchiostro `--color-ink` e «Lab» è `--color-sig-text`: è la
+*rubrica*, il rosso con cui gli scribi scrivevano titoli e intestazioni (lat. *rubrica*, ocra
+rossa), e il *tabularium* era l'archivio dei documenti di Roma. Lì il rosso non significa
+«vivo» ma «titolo», e resta lo stesso rosso della famiglia — mai un secondo rosso. Scelto fra
+quattro varianti (rubrica, bronzo, peperino, tutto bronzo) l'11 ottobre 2026.
+
 Due intensità della stessa famiglia, mai un secondo rosso:
 - `--color-sig-plate` `#d0000f` — piastre piene con testo bianco (contrasto AA).
 - `--color-sig-text` `#c4000e` — rosso su bianco a corpo piccolo (contrasto AA).
@@ -123,7 +130,7 @@ studio sono lo stesso oggetto a densità diverse.
   iperparametri avanzati del training vivono qui, non nel form principale.
 
 Componenti in `frontend/src/app/ui.tsx`: `Module`, `Collapsible`, `ErrorNotice`, `WarnNotice`,
-`Notice`, `Badge`, `Progress`, `Modal`, `Field`, `Menu`.
+`Notice`, `Badge`, `Progress`, `Modal`, `Field`, `Menu`, `Select`.
 
 `Menu` è la forma delle azioni **rare**: un pulsante con nome («Altro ▾», il nome utente) che
 si apre al clic — mai al passaggio del mouse — e tiene i comandi scritti per esteso. In vista
@@ -192,6 +199,18 @@ governa dalle righe stesse — non da un secondo elenco che ripete gli stessi bl
 trascrizione sono materiale di consultazione e stanno dietro il loro pulsante, non in un pannello
 che occupa il rail per sempre.
 
+La barra sopra il canvas (`.studio-bar`) ha **un'altezza sola**, 28px per ogni controllo, e
+**resta su una riga**: a sinistra come si disegna (strumenti, classe — sempre presente, spenta
+quando non si disegna — e Annulla), a destra cosa viene dopo (Altro, Prossimo compito). Quando
+la colonna è stretta la barra misura sé stessa e toglie per gradi (`lib/fitRow.ts`, livelli in
+`index.css`): il nome della pagina, le lettere dei tasti, la parola «Annulla», i nomi degli
+strumenti non attivi, tutti i nomi, poi stringe classe e spazi. Misurare e non fissare soglie
+regge le tre lingue. **Eccezione dichiarata** alla regola «nessun pulsante affidato alla sola
+icona»: a barra stretta gli strumenti restano solo icona, ma lo strumento attivo tiene il nome,
+e ogni nome resta al passaggio del mouse e ai lettori di schermo. Lo stato del salvataggio sta
+fermo nell'angolo in alto a destra del foglio: nella barra, cambiando parola, ne cambiava la
+larghezza.
+
 Quella lista è anche l'equivalente DOM del canvas: i blocchi disegnati su Konva non esistono nel
 DOM, quindi devono vivere qui come righe vere, navigabili da tastiera (frecce, Alt+frecce per
 riordinare, Canc) e leggibili da uno screen reader.
@@ -233,7 +252,7 @@ Sono sempre `aria-hidden`: il nome accessibile sta sul controllo.
 
 ## Movimento
 
-Minimo e funzionale. Due momenti soltanto, entrambi con la stessa curva: `.swap` — il cambio di contenuto in posto,
+Minimo e funzionale, con la stessa curva ovunque. Il primo momento è `.swap` — il cambio di contenuto in posto,
 140ms, `cubic-bezier(0.16, 1, 0.3, 1)`, con un `clip-path` che scopre da sinistra (il gesto
 della piastra che viene stampata). Sotto `prefers-reduced-motion` diventa uno scambio istantaneo
 e ogni transizione dell'app si azzera.
@@ -251,6 +270,39 @@ così nessuna resta invisibile), la scansione dello Studio sul canvas. Mentre i 
 si vede la loro **forma** (`SkeletonLines`, `PageSkeleton`, le righe della lista pagine, il
 riquadro della scansione), non la parola «Caricamento…»; la testata e le linguette restano
 ferme. Sotto `prefers-reduced-motion` niente entra: tutto compare quando è pronto.
+
+**Risposta al gesto, rapida.** Un pulsante premuto cede al 97% (100 ms): dice «preso» prima
+dell'esito. I dialoghi entrano con il velo che si scurisce e il pannello che cresce dal 97%
+(`.modal-backdrop`, `.modal-panel`, ≤ 200 ms) ed escono di colpo; un `Collapsible` si apre con
+`.swap` e si chiude ripiegandosi (`.collapse-out`, 140 ms). La piastra rossa del rail è una
+sola (`NavMark` in `Layout.tsx`) e cambiando sezione **scorre** verso la linguetta nuova
+(220 ms) invece di saltare. Le transizioni nominano sempre le proprietà, mai `all`.
+
+**Scorrimento.** I moduli affiorano mentre entrano in vista (`animation-timeline: view()`,
+legata allo scorrimento e non al tempo; ciò che è già in vista non si muove, e su Firefox i
+moduli sono semplicemente lì). I salti fatti dall'app scivolano (`.glide`: area principale,
+lista pagine e contenuto dello Studio — mai i log che seguono lo stream). La testata, a
+pagina scorsa, prende un'ombra appena accennata: è la seconda ombra del sistema, e dice
+soltanto che il contenuto le passa sotto.
+
+**Cambi di forma.** Una riga del contenuto che si chiude una volta verificata (o si riapre)
+scorre dalla vecchia alla nuova altezza, e le righe che cambiano posto — una bozza confermata,
+un blocco tolto, un riordino con Alt+frecce — scivolano al posto nuovo (FLIP), 260 ms con la
+curva di sempre (`lib/motion.ts`). Niente sotto `prefers-reduced-motion`.
+
+**Eccezione dichiarata: i menu al rallentatore.** Il menu dell'account, «Altro» dello Studio
+e le tendine `Select` (progetto, classe del blocco) si srotolano in ~0,7 s con le voci che
+entrano una alla volta, e si riavvolgono in 0,45 s (`.menu-unfold`). Sono richiesti, si aprono
+di rado rispetto agli edit, e la lista di un `<select>` nativo il CSS non la raggiunge: per
+questo `Select` (`app/ui.tsx`) sostituisce il nativo dove serve l'animazione, con tastiera da
+select (frecce, Home/Fine, Invio, Escape).
+
+**Tavolozza dei comandi.** Una barra larga e bassa in alto al centro, come Spotlight: il
+campo con la lente, sotto un elenco breve (circa sei voci, poi scorre) con a destra ciò che
+ogni voce è (Vai a, Progetto, Pagina, Azione). ⌘K (Ctrl+K) da qualunque schermata, o «Cerca» in testata: sezioni,
+progetti, pagine del progetto attivo (solo cercando), lingua, uscita
+(`app/CommandPalette.tsx`). Non sostituisce rail e menu: ogni comando resta raggiungibile
+anche col mouse.
 
 ## Superfici del browser
 

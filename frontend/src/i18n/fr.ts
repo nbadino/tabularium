@@ -1900,8 +1900,21 @@ export const fr: Dict = {
 
   layout: {
     menu: 'Menu',
+    language: 'Langue',
     logout: 'Se déconnecter',
     changePassword: 'Changer le mot de passe',
+  },
+
+  commands: {
+    open: 'Rechercher',
+    title: 'Commandes',
+    placeholder: 'Aller à une section, un projet, une page…',
+    empty: 'Aucun résultat',
+    groupGo: 'Aller à',
+    kindProject: 'Projet',
+    kindPage: 'Page',
+    kindAction: 'Action',
+    language: 'Langue',
   },
 
   account: {

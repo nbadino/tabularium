@@ -1901,8 +1901,21 @@ export const it = {
 
   layout: {
     menu: 'Menu',
+    language: 'Lingua',
     logout: 'Esci',
     changePassword: 'Cambia password',
+  },
+
+  commands: {
+    open: 'Cerca',
+    title: 'Comandi',
+    placeholder: 'Vai a una sezione, un progetto, una pagina…',
+    empty: 'Nessun risultato',
+    groupGo: 'Vai a',
+    kindProject: 'Progetto',
+    kindPage: 'Pagina',
+    kindAction: 'Azione',
+    language: 'Lingua',
   },
 
   account: {

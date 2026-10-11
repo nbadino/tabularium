@@ -16,7 +16,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import Select, WebDriverWait
+from selenium.webdriver.support.ui import WebDriverWait
 
 BASE = os.environ.get("TABULARIUM_E2E_URL", "http://127.0.0.1:8787").rstrip("/")
 
@@ -129,8 +129,11 @@ def main() -> int:
         # Editor tabellare e preview OTSL nel DOM.
         stage = "table editor DOM"
         driver.get(f"{BASE}/annotazione")
-        wait_for(driver, lambda d: len(d.find_elements(By.CSS_SELECTOR, "select")) >= 2)
-        Select(driver.find_elements(By.CSS_SELECTOR, "select")[1]).select_by_value(str(project_id))
+        # Il selettore del progetto è la tendina `Select` (app/ui.tsx), non un
+        # <select> nativo: si apre e si sceglie la voce per valore. È la prima
+        # tendina della pagina, nella colonna di sinistra.
+        wait_for(driver, EC.element_to_be_clickable((By.CSS_SELECTOR, "summary[role='combobox']"))).click()
+        wait_for(driver, EC.element_to_be_clickable((By.CSS_SELECTOR, f"[role='option'][data-value='{project_id}']"))).click()
         wait_for(driver, EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'page.png')]"))).click()
         # Un blocco già verificato sta su una riga sola e si apre col clic:
         # si apre quello di testo, come farebbe una persona.

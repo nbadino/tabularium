@@ -293,6 +293,7 @@
     background: var(--color-sheet);
     color: var(--color-ink);
     font-size: 13px;
+    transition: border-color 120ms ease;
   }
   .fld:hover:not(:disabled) {
     border-color: var(--color-ink-3);
@@ -333,7 +334,14 @@
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
-    transition: background-color 120ms ease, border-color 120ms ease;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      transform 100ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  /* Premuto, il pulsante cede appena: dice «preso» prima ancora dell'esito. */
+  .btn:active:not(:disabled) {
+    transform: scale(0.97);
   }
   .btn:hover:not(:disabled) {
     border-color: var(--color-ink);
@@ -415,6 +423,7 @@
     white-space: nowrap;
     border-right: 1px solid var(--color-rule);
     border-radius: var(--radius-md) var(--radius-md) 0 0;
+    transition: background-color 120ms ease, color 120ms ease;
   }
   .navtab:hover {
     background: var(--color-fill);
@@ -424,7 +433,9 @@
     background: var(--color-ink);
     color: var(--color-sheet);
   }
-  /* La piastra di segnale stampata sotto la linguetta viva. */
+  /* La piastra di segnale stampata sotto la linguetta viva (Impostazioni e
+     ogni altra fila di linguette). Il rail principale non la stampa: ha una
+     piastra sola che scorre (`.navtab-mark`, sotto). */
   .navtab[data-active='true']::after {
     content: '';
     position: absolute;
@@ -432,6 +443,134 @@
     bottom: 0;
     height: 3px;
     background: var(--color-sig);
+  }
+  .nav-rail .navtab[data-active='true']::after {
+    display: none;
+  }
+  /* La piastra del rail: una sola, posizionata da `NavMark` (Layout.tsx),
+     che scorre fra le linguette. */
+  .navtab-mark {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 3px;
+    background: var(--color-sig);
+    pointer-events: none;
+  }
+  .navtab-mark[data-ready] {
+    transition:
+      transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
+      width 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* ---- barra dello Studio: un'altezza sola -----------------------------
+     Strumenti, classe, Annulla, Altro e Prossimo compito stavano su tre
+     altezze diverse (btn, btn-sm, fld) e non condividevano una linea. Dentro la
+     barra ogni controllo è alto 28px con lo stesso corpo; i menu che si aprono
+     dalla barra non ne sono toccati. */
+  .studio-bar :is(.btn, .fld):not(.float-layer *) {
+    height: 28px;
+    padding-block: 0;
+    font-size: 12px;
+  }
+  .studio-bar .btn:not(.float-layer *) {
+    padding-inline: 10px;
+  }
+  .studio-bar [role='toolbar'] .btn {
+    padding-inline: 8px;
+  }
+  /* Quando la riga non basta, la barra toglie per gradi (`useFitOneRow`):
+     1 il nome della pagina, 2 le lettere dei tasti, 3 la parola «Annulla»,
+     4 i nomi degli strumenti non attivi, 5 tutti i nomi, 6 stringe la classe,
+     7 stringe gli spazi.
+     Le parole tolte restano ai lettori di schermo e nel titolo al passaggio. */
+  .studio-bar[data-fit~='1'] .tb-name,
+  .studio-bar[data-fit~='2'] .tb-key {
+    display: none;
+  }
+  .studio-bar[data-fit~='3'] .tb-undo-label,
+  .studio-bar[data-fit~='4'] [role='toolbar'] .btn:not([aria-pressed='true']) .tb-label,
+  .studio-bar[data-fit~='5'] [role='toolbar'] .tb-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .studio-bar[data-fit~='6'] select.fld {
+    max-width: 6rem;
+    text-overflow: ellipsis;
+  }
+  .studio-bar[data-fit~='7'] {
+    column-gap: 4px;
+  }
+  .studio-bar[data-fit~='7'] [role='toolbar'] .btn {
+    padding-inline: 6px;
+  }
+  .studio-bar .fld:not(.float-layer *) {
+    padding-inline: 8px;
+  }
+
+  /* ---- voci di menu: righe semplici, non pulsanti incorniciati ----------
+     Dentro un piano sospeso il bordo del pannello basta a raccogliere i
+     comandi: ogni voce è testo, con un fondo appena accennato al passaggio.
+     La voce della pagina in cui sei (`.active` di NavLink) è la selezione
+     corrente, quindi rossa. */
+  .menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 5px 8px;
+    border-radius: var(--radius-md);
+    color: var(--color-ink);
+    font-size: 12px;
+    font-weight: 500;
+    text-align: left;
+    white-space: nowrap;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 120ms ease;
+  }
+  .menu-item:hover:not(:disabled) {
+    background: var(--color-fill);
+  }
+  .menu-item:active:not(:disabled) {
+    background: var(--color-fill-2);
+  }
+  .menu-item:disabled {
+    color: var(--color-ink-3);
+    cursor: not-allowed;
+  }
+  .menu-item.active {
+    color: var(--color-sig-text);
+    font-weight: 600;
+  }
+  .menu-sep {
+    margin: 4px 0;
+    border: 0;
+    border-top: 1px solid var(--color-rule);
+  }
+  /* Una scelta fra poche opzioni in riga (lingua, vista): testo, la scelta
+     corrente in grassetto su fondo appena accennato. */
+  .menu-choice {
+    padding: 3px 7px;
+    border-radius: var(--radius-sm);
+    color: var(--color-ink-2);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  .menu-choice:hover {
+    background: var(--color-fill);
+    color: var(--color-ink);
+  }
+  .menu-choice[aria-pressed='true'] {
+    background: var(--color-fill);
+    color: var(--color-ink);
+    font-weight: 700;
   }
 
   /* ---- piani sospesi: menu e dialoghi -----------------------------------
@@ -732,6 +871,130 @@
     }
   }
 
+  /* Il menu dell'account si apre e si chiude al rallentatore: il pannello si
+     srotola dall'alto e le voci entrano una alla volta; alla chiusura si
+     riavvolge. Eccezione voluta alla regola dei 200 ms: si apre di rado, e il
+     movimento è richiesto. Ogni regola dipende dallo stato (`:not([data-closing])`)
+     e apertura e chiusura usano keyframe distinti: un'animazione riparte solo
+     se cambia il nome, non la direzione, e riaprire durante la chiusura
+     altrimenti non animerebbe più niente. */
+  .menu-unfold[open]:not([data-closing]) > div {
+    animation: unfold 700ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+  .menu-unfold[open]:not([data-closing]) > div > * {
+    animation: enter-up 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .menu-unfold[open]:not([data-closing]) > div > :nth-child(1) { animation-delay: 150ms; }
+  .menu-unfold[open]:not([data-closing]) > div > :nth-child(2) { animation-delay: 250ms; }
+  .menu-unfold[open]:not([data-closing]) > div > :nth-child(3) { animation-delay: 350ms; }
+  .menu-unfold[open]:not([data-closing]) > div > :nth-child(4) { animation-delay: 450ms; }
+  .menu-unfold[open]:not([data-closing]) > div > :nth-child(n + 5) { animation-delay: 550ms; }
+  /* Durata = FOLD_MS in ui.tsx; `forwards` tiene il pannello nascosto finché
+     il timer non toglie `open`. */
+  .menu-unfold[data-closing] > div {
+    animation: fold 450ms cubic-bezier(0.7, 0, 0.84, 0) forwards;
+    pointer-events: none;
+  }
+  .menu-unfold > summary svg {
+    transition: transform 500ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .menu-unfold[open]:not([data-closing]) > summary svg {
+    transform: rotate(180deg);
+  }
+
+  @keyframes unfold {
+    from {
+      opacity: 0;
+      clip-path: inset(0 0 100% 0 round 8px);
+    }
+    to {
+      opacity: 1;
+      clip-path: inset(0 0 0 0 round 8px);
+    }
+  }
+
+  @keyframes fold {
+    from {
+      opacity: 1;
+      clip-path: inset(0 0 0 0 round 8px);
+    }
+    to {
+      opacity: 0;
+      clip-path: inset(0 0 100% 0 round 8px);
+    }
+  }
+
+  /* ---- dialoghi, sezioni, cambio di sezione: rapidi (≤ 220 ms) ---------
+     Il velo si scurisce, il dialogo cresce dal 97% mentre affiora: niente
+     compare dal nulla. `backwards` e non `both`: una trasformazione rimasta
+     applicata farebbe da riferimento ai `position: fixed` interni. */
+  .modal-backdrop {
+    animation: fade-in 160ms ease-out backwards;
+  }
+  .modal-panel {
+    animation: dialog-in 200ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+  .collapse-out {
+    animation: collapse-out 140ms cubic-bezier(0.7, 0, 0.84, 0) forwards;
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes dialog-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.97);
+    }
+  }
+  @keyframes collapse-out {
+    to {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+  }
+
+  /* ---- scorrimento ----------------------------------------------------
+     I salti che fa l'app (la riga selezionata sul canvas, la pagina corrente
+     nella lista, un passo dell'hub) scivolano invece di teletrasportare. Solo
+     su questi contenitori: `scroll-behavior` non si eredita, e i log che
+     restano agganciati in fondo mentre lo stream scrive devono restare istantanei. */
+  .glide {
+    scroll-behavior: smooth;
+  }
+
+  /* La testata si stacca dal contenuto che le scorre sotto: un'ombra appena
+     accennata, solo a pagina scorsa (`data-scrolled`, Layout.tsx). */
+  .app-header {
+    transition: box-shadow 200ms ease;
+  }
+  .app-header[data-scrolled] {
+    box-shadow: 0 6px 16px -10px rgb(17 17 17 / 0.28);
+  }
+
+  /* I moduli affiorano mentre entrano in vista scorrendo: animazione legata
+     allo scorrimento, non al tempo, quindi segue la mano. Riempimento solo
+     `backwards`: finita l'entrata il modulo non porta più né trasformazione né
+     contesto di sovrapposizione, e i suoi menu restano sopra i moduli vicini.
+     Ciò che è già in vista all'apertura non si muove. Dove il browser non
+     conosce `animation-timeline` (Firefox), i moduli sono semplicemente lì. */
+  @supports (animation-timeline: view()) {
+    main .mod:not(.mod .mod) {
+      animation: reveal cubic-bezier(0.16, 1, 0.3, 1) backwards;
+      animation-timeline: view();
+      animation-range: entry 0% entry 35%;
+    }
+  }
+
+  @keyframes reveal {
+    from {
+      opacity: 0;
+      transform: translateY(16px);
+    }
+  }
+
   /* Le immagini (miniature, ritagli) affiorano quando sono pronte invece di
      comparire a pezzi: `data-loaded` lo mette `main.tsx` al primo `load` o
      `error`, così un'immagine rotta non resta mai invisibile. */
@@ -773,6 +1036,13 @@
     .enter,
     .cascade > * {
       animation: none;
+    }
+    /* Niente rivelazione allo scorrimento, e i salti tornano istantanei. */
+    main .mod:not(.mod .mod) {
+      animation: none;
+    }
+    .glide {
+      scroll-behavior: auto;
     }
     *,
     *::before,

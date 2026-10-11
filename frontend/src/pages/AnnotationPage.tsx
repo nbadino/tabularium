@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useFitOneRow } from '../lib/fitRow'
 import { Link, useSearchParams } from 'react-router'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
 import { loadImageSize, PixelSize, scaleRatio } from '../lib/coords'
@@ -23,6 +24,7 @@ import type { PrefillEngines, TableDetectOut, TableDetectRequest, TableGrid, Tab
 import { useI18n, tn } from '../i18n'
 import {
   IconNext,
+  IconCheck,
   IconFlow,
   IconHand,
   IconPrefill,
@@ -829,6 +831,10 @@ export default function AnnotationPage() {
   )
 
   // --- toolbar ----------------------------------------------------------------
+  // La barra dello Studio resta su una riga: v. `useFitOneRow` e i livelli in index.css.
+  const barRef = useRef<HTMLDivElement>(null)
+  useFitOneRow(barRef, 7, [t, ann.tool, page?.id, prefillBusy, labels.length])
+
   const tools = [
     { id: 'select' as Tool, labelKey: 'annotate.select', key: 'V', Icon: IconSelect },
     { id: 'rect' as Tool, labelKey: 'annotate.rect', key: 'R', Icon: IconRectangle },
@@ -889,36 +895,44 @@ export default function AnnotationPage() {
             Annulla, stato del salvataggio, Prossimo compito); il resto — vista,
             flusso di lettura, prefill, salvataggio manuale, «riparti da zero» —
             sta in «Altro», scritto per esteso e a un clic. */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-2 py-1.5">
-          <div className="flex overflow-hidden rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)]" role="toolbar" aria-label={t('annotate.toolsAria')}>
-            {tools.map((tool) => (
-              <button
-                key={tool.id}
-                type="button"
-                onClick={() => ann.setTool(tool.id)}
-                aria-pressed={ann.tool === tool.id}
-                title={t('annotate.toolTitle', { tool: t(tool.labelKey), key: tool.key })}
-                className={
-                  ann.tool === tool.id
-                    ? 'btn rounded-none border-y-0 border-l-0 border-r-[color:var(--color-rule)] bg-[color:var(--color-sig-plate)] text-white last:border-r-0'
-                    : 'btn rounded-none border-y-0 border-l-0 border-r-[color:var(--color-rule)] last:border-r-0'
-                }
-              >
-                <tool.Icon size={13} />
-                {t(tool.labelKey)}
-                <kbd className={`mono ml-1 border px-1 text-[11px] ${ann.tool === tool.id ? 'border-white/60 text-white' : 'border-[color:var(--color-rule)] text-[color:var(--color-ink-3)]'}`}>
-                  {tool.key}
-                </kbd>
-              </button>
-            ))}
-          </div>
-          {(ann.tool === 'rect' || ann.tool === 'polygon') && (
-            // La classe serve solo quando si disegna un blocco nuovo.
+        <div ref={barRef} className="studio-bar flex flex-wrap items-center gap-2 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-2 py-1.5">
+          {/* A sinistra come si disegna, a destra cosa viene dopo. Ogni
+              controllo è alto uguale (`.studio-bar`, index.css) e la barra resta su
+              una riga: quando lo spazio manca toglie dettagli per gradi
+              (`useFitOneRow`, livelli in index.css) invece di andare a capo. */}
+            <div className="flex overflow-hidden rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)]" role="toolbar" aria-label={t('annotate.toolsAria')}>
+              {tools.map((tool) => {
+                const on = ann.tool === tool.id
+                return (
+                  <button
+                    key={tool.id}
+                    type="button"
+                    onClick={() => ann.setTool(tool.id)}
+                    aria-pressed={on}
+                    aria-keyshortcuts={tool.key}
+                    title={t('annotate.toolTitle', { tool: t(tool.labelKey), key: tool.key })}
+                    className={`btn whitespace-nowrap rounded-none border-0 border-r border-[color:var(--color-rule)] last:border-r-0 ${
+                      on ? 'bg-[color:var(--color-sig-plate)] text-white' : ''
+                    }`}
+                  >
+                    <tool.Icon size={13} />
+                    <span className="tb-label">{t(tool.labelKey)}</span>
+                    <span aria-hidden="true" className={`tb-key mono text-[10.5px] ${on ? 'text-white/70' : 'text-[color:var(--color-ink-3)]'}`}>
+                      {tool.key}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+            {/* Sempre presente, spenta quando non si disegna: comparire e
+                sparire spostava tutto ciò che le stava a destra. */}
             <select
               value={ann.activeLabel}
               onChange={(e) => ann.setActiveLabel(e.target.value)}
+              disabled={ann.tool !== 'rect' && ann.tool !== 'polygon'}
               aria-label={t('inspector.class')}
-              className="fld !w-auto text-xs"
+              title={t('inspector.class')}
+              className="fld !w-auto"
             >
               {labels.map((l) => (
                 <option key={l.name} value={l.name}>
@@ -926,47 +940,19 @@ export default function AnnotationPage() {
                 </option>
               ))}
             </select>
-          )}
-          <button
-            type="button"
-            onClick={ann.undo}
-            disabled={!ann.canUndo}
-            title={t('annotate.undoTitle')}
-            className="btn btn-sm"
-          >
-            <IconUndo size={12} />
-            {t('annotate.undo')}
-          </button>
-          <div className="flex items-center gap-2 text-xs">
-            {ann.save.state === 'saving' && (
-              <span className="text-[color:var(--color-ink-2)]">{t('annotate.saving')}</span>
-            )}
-            {ann.save.state !== 'saving' && ann.dirty && (
-              <span className="text-[color:var(--color-warn)]">{t('annotate.unsaved')}</span>
-            )}
-            {ann.save.state === 'saved' && !ann.dirty && (
-              <span className="text-[color:var(--color-ok)]">{t('annotate.saved')}</span>
-            )}
-            {ann.save.state === 'error' && (
-              <span className="flex items-center gap-1.5 text-[color:var(--color-sig-text)]">
-                {t('annotate.saveFailed')}
-                <button onClick={() => void ann.saveNow()} className="btn btn-sm">
-                  {t('annotate.retry')}
-                </button>
-              </span>
-            )}
-            {ann.save.state === 'conflict' && (
-              <span className="flex items-center gap-1.5 text-[color:var(--color-sig-text)]">
-                {t('annotate.conflictRemote')}
-                <button onClick={() => page && void applyBlocks(page, ratio)} className="btn btn-sm">
-                  {t('annotate.conflictReload')}
-                </button>
-              </span>
-            )}
-                    </div>
-          <div className="ml-auto flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={ann.undo}
+              disabled={!ann.canUndo}
+              title={t('annotate.undoTitle')}
+              className="btn"
+            >
+              <IconUndo size={12} />
+              <span className="tb-undo-label">{t('annotate.undo')}</span>
+            </button>
+          <div className="ml-auto flex items-center gap-2">
             {page && (
-              <span className="mono text-[11px] text-[color:var(--color-ink-3)]" title={`${page.width}×${page.height}`}>
+              <span className="tb-name mono max-w-[16ch] truncate text-[11px] text-[color:var(--color-ink-3)]" title={`${pageLabel(page)} · ${page.width}×${page.height}`}>
                 {pageLabel(page)}
               </span>
             )}
@@ -974,22 +960,22 @@ export default function AnnotationPage() {
               <button
                 type="button"
                 onClick={stopPrelabel}
-                className="btn btn-danger btn-sm"
+                className="btn btn-danger"
                 aria-label={t('annotate.stopInference')}
               >
                 {t('annotate.stopInference')}
               </button>
             )}
-            <Menu label={t('annotate.more')}>
-              <span className="lbl !mb-0">{t('annotate.viewMode')}</span>
-              <div className="flex gap-1" role="group" aria-label={t('annotate.viewModeAria')}>
+            <Menu unfold label={t('annotate.more')}>
+              <span className="lbl !mb-0 px-2 pt-1">{t('annotate.viewMode')}</span>
+              <div className="flex gap-0.5 px-1 pb-0.5" role="group" aria-label={t('annotate.viewModeAria')}>
                 {(['all', 'canvas', 'transcription'] as const).map((mode) => (
                   <button
                     key={mode}
                     type="button"
                     onClick={() => setMode(mode)}
                     aria-pressed={studioMode === mode}
-                    className={studioMode === mode ? 'btn btn-sm bg-[color:var(--color-sig-wash)]' : 'btn btn-sm'}
+                    className="menu-choice"
                   >
                     {t(`annotate.view${mode[0].toUpperCase()}${mode.slice(1)}` as 'annotate.viewAll' | 'annotate.viewCanvas' | 'annotate.viewTranscription')}
                   </button>
@@ -999,31 +985,33 @@ export default function AnnotationPage() {
                 type="button"
                 onClick={() => setShowFlow((value) => !value)}
                 aria-pressed={showFlow}
-                className={showFlow ? 'btn btn-sm justify-start bg-[color:var(--color-sig-wash)]' : 'btn btn-sm justify-start'}
+                className="menu-item"
               >
                 <IconFlow size={12} />
                 {showFlow ? t('annotate.showFlow') : t('annotate.viewFlow')}
+                {showFlow && <IconCheck size={12} className="ml-auto text-[color:var(--color-sig-text)]" />}
               </button>
               <button
                 type="button"
                 onClick={ann.redo}
                 disabled={!ann.canRedo}
                 title={t('annotate.redoTitle')}
-                className="btn btn-sm justify-start"
+                className="menu-item"
               >
                 <IconRedo size={12} />
                 {t('annotate.redo')}
               </button>
-              <span className="lbl !mb-0 mt-1">{t('annotate.prefill')}</span>
+              <hr className="menu-sep" />
+              <span className="lbl !mb-0 px-2 pt-1">{t('annotate.prefill')}</span>
               {/* I due motori non sono intercambiabili: `ocr` trova righe di testo
                   e le etichetta tutte Text, `model` restituisce blocchi già
                   classificati e riconosce le tabelle. */}
-              <div className="flex items-center">
+              <div className="flex items-center gap-1 pr-1">
                 <button
                   type="button"
                   onClick={onPrefillClick}
                   disabled={prefillBusy || !page || prefillEngine === 'off'}
-                  className="btn btn-sm !border-r-0"
+                  className="menu-item !w-auto"
                   title={
                     prefillEngine === 'off'
                       ? t('annotate.prefillOff')
@@ -1040,7 +1028,7 @@ export default function AnnotationPage() {
                 onChange={(e) => setPrefillEngine(e.target.value as 'off' | 'ocr' | 'model-native')}
                 disabled={prefillBusy}
                 aria-label={t('annotate.prefillEngine')}
-                className="fld !w-auto !border-l-0 text-xs"
+                className="fld !w-auto text-xs"
               >
                 <option value="off">{t('annotate.prefillOff')}</option>
                 <option value="ocr">{t('annotate.prefillEngineOcr')} (CPU)</option>
@@ -1065,11 +1053,12 @@ export default function AnnotationPage() {
                 </option>
               </select>
               </div>
+              <hr className="menu-sep" />
               <button
                 type="button"
                 onClick={() => void ann.saveNow()}
                 disabled={!page || prefillBusy}
-                className="btn btn-sm mt-1 justify-start"
+                className="menu-item"
               >
                 <IconSave size={12} />
                 {t('annotate.save')}
@@ -1079,7 +1068,7 @@ export default function AnnotationPage() {
                 type="button"
                 onClick={() => void clearPageAnnotations()}
                 disabled={!page || prefillBusy || contentCount === 0}
-                className="btn btn-sm justify-start border-t text-[color:var(--color-sig-text)]"
+                className="menu-item !text-[color:var(--color-sig-text)]"
                 title={t('annotate.clearAllTitle')}
               >
                 <IconTrash size={12} />
@@ -1090,7 +1079,7 @@ export default function AnnotationPage() {
               type="button"
               onClick={openNextTask}
               disabled={reviewRun ? !nextReviewPage : !nextTask}
-              className="btn btn-primary"
+              className="btn btn-primary whitespace-nowrap"
               title={reviewRun ? t('annotate.nextRunPage') : nextTask?.reason}
             >
               <IconNext size={12} />
@@ -1099,6 +1088,41 @@ export default function AnnotationPage() {
           </div>
         </div>
         <div className="relative flex-1">
+          {/* Lo stato del salvataggio sta fermo nell'angolo del foglio, non nella
+              barra: cambiando parola ne cambiava la larghezza e la mandava a capo. */}
+          <div
+            className="pointer-events-auto absolute right-3 top-3 z-10 flex items-center gap-1.5 rounded-full border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] px-2.5 py-0.5 text-[11px] empty:hidden"
+            aria-live="polite"
+          >
+            {ann.save.state === 'saving' && (
+              <span className="text-[color:var(--color-ink-2)]">{t('annotate.saving')}</span>
+            )}
+            {ann.save.state !== 'saving' && ann.dirty && (
+              <span className="text-[color:var(--color-warn)]">{t('annotate.unsaved')}</span>
+            )}
+            {ann.save.state === 'saved' && !ann.dirty && (
+              <span className="flex items-center gap-1 text-[color:var(--color-ok)]">
+                <IconCheck size={11} />
+                {t('annotate.saved')}
+              </span>
+            )}
+            {ann.save.state === 'error' && (
+              <span className="flex items-center gap-1.5 text-[color:var(--color-sig-text)]">
+                {t('annotate.saveFailed')}
+                <button onClick={() => void ann.saveNow()} className="btn btn-sm">
+                  {t('annotate.retry')}
+                </button>
+              </span>
+            )}
+            {ann.save.state === 'conflict' && (
+              <span className="flex items-center gap-1.5 text-[color:var(--color-sig-text)]">
+                {t('annotate.conflictRemote')}
+                <button onClick={() => page && void applyBlocks(page, ratio)} className="btn btn-sm">
+                  {t('annotate.conflictReload')}
+                </button>
+              </span>
+            )}
+          </div>
           {error && (
             <div className="absolute left-3 top-3 z-10 max-w-md border border-[color:var(--color-sig-plate)] bg-[color:var(--color-sig-wash)] p-3 text-xs text-[color:var(--color-sig-text)]">
               {error}
@@ -1180,7 +1204,7 @@ export default function AnnotationPage() {
       />}
       <section
         aria-label={t('content.paneAria')}
-        className={`flex min-w-0 flex-col overflow-y-auto bg-[color:var(--color-sheet)] p-3 ${studioMode === 'all' ? 'shrink-0' : 'flex-1'}`}
+        className={`glide flex min-w-0 flex-col overflow-y-auto bg-[color:var(--color-sheet)] p-3 ${studioMode === 'all' ? 'shrink-0' : 'flex-1'}`}
         style={studioMode === 'all' ? { width: split.content } : undefined}
       >
         <ContentPane

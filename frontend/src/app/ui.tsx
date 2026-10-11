@@ -11,7 +11,7 @@
  */
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { CSSProperties, ReactNode } from 'react'
+import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react'
 import { IconAlert, IconChevron, IconClose, IconWarn } from './icons'
 import { describeError } from '../lib/errors'
 import type { StatusTone } from '../lib/vocab'
@@ -53,6 +53,9 @@ export function Module({
 
 /* ------------------------------------------------------- modulo a soffietto */
 
+// Durata di `.collapse-out` in index.css.
+const COLLAPSE_MS = 140
+
 export function Collapsible({
   tab,
   quiet,
@@ -61,14 +64,33 @@ export function Collapsible({
   children,
 }: ModuleProps & { defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen)
+  // Chiudendo, il corpo resta montato il tempo di `.collapse-out` (index.css);
+  // riaprire nel frattempo annulla la chiusura.
+  const [closing, setClosing] = useState(false)
+  const closeTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(closeTimer.current), [])
+  const toggle = () => {
+    window.clearTimeout(closeTimer.current)
+    if (open && !closing) {
+      setClosing(true)
+      closeTimer.current = window.setTimeout(() => {
+        setOpen(false)
+        setClosing(false)
+      }, COLLAPSE_MS)
+    } else {
+      setOpen(true)
+      setClosing(false)
+    }
+  }
+  const expanded = open && !closing
   const id = useId()
   return (
     <section className="mod" aria-label={tab}>
       <h2 className="mod-head">
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
+          onClick={toggle}
+          aria-expanded={expanded}
           aria-controls={id}
           className="flex flex-1 items-stretch gap-2 text-left"
         >
@@ -76,14 +98,15 @@ export function Collapsible({
           <span className="mod-head-aux !ml-0 !px-0">
             <IconChevron
               size={12}
-              style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }}
+              className="transition-transform duration-150"
+              style={{ transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)' }}
             />
           </span>
           {aux && <span className="mod-head-aux">{aux}</span>}
         </button>
       </h2>
       {open && (
-        <div id={id} className="mod-body swap">
+        <div id={id} className={`mod-body ${closing ? 'collapse-out' : 'swap'}`}>
           {children}
         </div>
       )}
@@ -181,24 +204,38 @@ export function WarnNotice({
  * scritte per esteso, ma non occupano la barra. Si apre col clic, mai al
  * passaggio del mouse; si chiude con un clic fuori, Esc o scegliendo.
  */
-export function Menu({
-  label,
-  children,
-  align = 'right',
-  className = '',
-}: {
-  label: ReactNode
-  children: ReactNode
-  align?: 'left' | 'right'
-  className?: string
-}) {
-  const ref = useRef<HTMLDetailsElement>(null)
+// Durata del ripiegamento: deve coincidere con `.menu-unfold[data-closing]`
+// in index.css. Un timer e non `animationend`: l'evento può non arrivare mai
+// (scheda in background, animazione saltata) e il menu resterebbe aperto.
+const FOLD_MS = 450
+let foldSeq = 0
+
+/** Chiude il menu; con `animate` prima lo ripiega, poi toglie `open`. */
+function closeMenu(d: HTMLDetailsElement | null, animate: boolean) {
+  if (!d?.open || d.dataset.closing !== undefined) return
+  if (!animate || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    d.open = false
+    return
+  }
+  // Il gettone distingue questa chiusura da una successiva: se il menu viene
+  // riaperto e richiuso prima dello scadere, il timer vecchio non deve chiudere.
+  const token = String(++foldSeq)
+  d.dataset.closing = token
+  window.setTimeout(() => {
+    if (d.dataset.closing !== token) return
+    delete d.dataset.closing
+    d.open = false
+  }, FOLD_MS)
+}
+
+/** Clic fuori ed Escape chiudono il menu (con ripiegamento se `unfold`). */
+function useDismiss(ref: RefObject<HTMLDetailsElement | null>, unfold: boolean) {
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
-      if (ref.current?.open && !ref.current.contains(e.target as Node)) ref.current.open = false
+      if (ref.current?.open && !ref.current.contains(e.target as Node)) closeMenu(ref.current, unfold)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && ref.current?.open) ref.current.open = false
+      if (e.key === 'Escape') closeMenu(ref.current, unfold)
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
@@ -206,21 +243,183 @@ export function Menu({
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
     }
-  }, [])
+  }, [ref, unfold])
+}
+
+/** Il toggle nativo del `<summary>` chiuderebbe di colpo: con `unfold` lo sostituiamo. */
+function onSummaryClick(e: ReactMouseEvent, d: HTMLDetailsElement | null, unfold: boolean) {
+  if (!unfold || !d?.open) return
+  e.preventDefault()
+  if (d.dataset.closing !== undefined) delete d.dataset.closing // riaperto mentre si ripiegava
+  else closeMenu(d, true)
+}
+
+export function Menu({
+  label,
+  children,
+  align = 'right',
+  className = '',
+  unfold = false,
+}: {
+  label: ReactNode
+  children: ReactNode
+  align?: 'left' | 'right'
+  className?: string
+  /** Apertura e chiusura al rallentatore (menu dell'account). */
+  unfold?: boolean
+}) {
+  const ref = useRef<HTMLDetailsElement>(null)
+  useDismiss(ref, unfold)
   return (
-    <details ref={ref} className={`relative ${className}`}>
-      <summary className="btn btn-sm cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+    <details ref={ref} className={`relative ${unfold ? 'menu-unfold' : ''} ${className}`}>
+      <summary
+        className="btn btn-sm cursor-pointer list-none [&::-webkit-details-marker]:hidden"
+        onClick={(e) => onSummaryClick(e, ref.current, unfold)}
+      >
         {label}
         <IconChevron size={11} />
       </summary>
       <div
-        className={`float-layer absolute top-full z-30 mt-1 flex min-w-[19rem] flex-col gap-1.5 p-2 text-[12px] ${align === 'right' ? 'right-0' : 'left-0'}`}
+        className={`float-layer absolute top-full z-30 mt-1 flex w-max min-w-44 max-w-[calc(100vw-1.5rem)] flex-col gap-px p-1 text-[12px] ${align === 'right' ? 'right-0' : 'left-0'}`}
         onClick={(e) => {
           // Un pulsante scelto chiude il menu; i campi (select, radio) no.
-          if ((e.target as HTMLElement).closest('button, a') && ref.current) ref.current.open = false
+          if ((e.target as HTMLElement).closest('button, a')) closeMenu(ref.current, unfold)
         }}
       >
         {children}
+      </div>
+    </details>
+  )
+}
+
+/* ----------------------------------------------------------------- Select -- */
+
+/**
+ * Tendina che si srotola come il menu dell'account. Sostituisce `<select>`
+ * dove serve l'animazione: la lista di un `<select>` nativo la disegna il
+ * browser e il CSS non la raggiunge. Tastiera come un select: frecce,
+ * Home/Fine, Invio, Escape; Tab chiude e prosegue.
+ */
+export function Select({
+  value,
+  options,
+  onChange,
+  disabled = false,
+  className = '',
+  ariaLabel,
+  onFocus,
+}: {
+  value: string
+  options: { value: string; label: string }[]
+  onChange: (value: string) => void
+  disabled?: boolean
+  /** Classi del pulsante (es. `fld`, `fld !w-auto text-xs`). */
+  className?: string
+  ariaLabel?: string
+  onFocus?: () => void
+}) {
+  const ref = useRef<HTMLDetailsElement>(null)
+  const listId = useId()
+  // Per `aria-expanded`: il ruolo combobox lo richiede, e il <details> non lo
+  // espone una volta che il <summary> ha un ruolo suo.
+  const [expanded, setExpanded] = useState(false)
+  useDismiss(ref, true)
+  const current = options.find((o) => o.value === value)
+  const optionButtons = () => [...(ref.current?.querySelectorAll<HTMLButtonElement>('[role=option]') ?? [])]
+  const summary = () => ref.current?.querySelector('summary')
+
+  const pick = (v: string) => {
+    closeMenu(ref.current, true)
+    summary()?.focus()
+    if (v !== value) onChange(v)
+  }
+
+  return (
+    <details
+      ref={ref}
+      className={`menu-unfold relative ${disabled ? 'pointer-events-none opacity-50' : ''}`}
+      onToggle={(e) => {
+        setExpanded(e.currentTarget.open)
+        // All'apertura il fuoco va sulla voce scelta, come in un select.
+        if (e.currentTarget.open) {
+          const btns = optionButtons()
+          ;(btns.find((b) => b.getAttribute('aria-selected') === 'true') ?? btns[0])?.focus()
+        }
+      }}
+    >
+      <summary
+        role="combobox"
+        aria-haspopup="listbox"
+        aria-expanded={expanded}
+        aria-controls={listId}
+        aria-label={ariaLabel}
+        aria-disabled={disabled || undefined}
+        tabIndex={disabled ? -1 : 0}
+        onFocus={onFocus}
+        className={`${className} flex cursor-pointer list-none items-center justify-between gap-2 [&::-webkit-details-marker]:hidden`}
+        onClick={(e) => {
+          if (disabled) e.preventDefault()
+          else onSummaryClick(e, ref.current, true)
+        }}
+        onKeyDown={(e) => {
+          if (disabled || ref.current?.open) return
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault()
+            ref.current!.open = true
+          }
+        }}
+      >
+        <span className="truncate">{current?.label ?? ''}</span>
+        <IconChevron size={11} />
+      </summary>
+      <div
+        id={listId}
+        role="listbox"
+        aria-label={ariaLabel}
+        className="float-layer absolute top-full left-0 z-30 mt-1 flex max-h-80 w-max min-w-full flex-col overflow-y-auto p-1 text-[12px]"
+        onKeyDown={(e) => {
+          const btns = optionButtons()
+          const i = btns.indexOf(document.activeElement as HTMLButtonElement)
+          const go = (n: number) => {
+            e.preventDefault()
+            btns[Math.max(0, Math.min(btns.length - 1, n))]?.focus()
+          }
+          // Una lettera porta alla voce successiva che comincia così, come in un
+          // select nativo; e non arriva alle scorciatoie dello Studio (R, V, 1–9).
+          if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            e.stopPropagation()
+            const ch = e.key.toLowerCase()
+            const order = [...btns.slice(i + 1), ...btns.slice(0, i + 1)]
+            const hit = order.find((b) => (b.textContent ?? '').trim().toLowerCase().startsWith(ch))
+            if (hit) {
+              e.preventDefault()
+              hit.focus()
+            }
+            return
+          }
+          if (e.key === 'ArrowDown') go(i + 1)
+          else if (e.key === 'ArrowUp') go(i - 1)
+          else if (e.key === 'Home') go(0)
+          else if (e.key === 'End') go(btns.length - 1)
+          else if (e.key === 'Escape') summary()?.focus()
+          else if (e.key === 'Tab') closeMenu(ref.current, true)
+        }}
+      >
+        {options.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            role="option"
+            aria-selected={o.value === value}
+            data-value={o.value}
+            onClick={() => pick(o.value)}
+            className={`btn btn-sm justify-start whitespace-nowrap !border-transparent ${
+              o.value === value ? 'bg-[color:var(--color-sig-wash)] font-semibold' : ''
+            }`}
+          >
+            {o.label}
+          </button>
+        ))}
       </div>
     </details>
   )
@@ -478,7 +677,7 @@ export function Modal({
   // blocco contenitore di `fixed` — la finestra finirebbe tagliata in basso.
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgb(17_17_17/0.55)] p-4"
+      className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-[rgb(17_17_17/0.55)] p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
@@ -488,7 +687,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`float-layer flex w-full flex-col overflow-hidden ${
+        className={`modal-panel float-layer flex w-full flex-col overflow-hidden ${
           extraWide
             ? 'h-[96vh] max-h-[96vh] max-w-[96vw]'
             : `max-h-[92vh] ${wide ? 'max-w-[1150px]' : 'max-w-md'}`

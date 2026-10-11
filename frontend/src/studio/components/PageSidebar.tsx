@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import type { PageItem, PageSums, Project } from '../../lib/types'
 import { statusLabel, STATUS_TONE } from '../../lib/vocab'
-import { Badge, Field } from '../../app/ui'
+import { Badge, Field, Select } from '../../app/ui'
 import { IconNext, IconPrev } from '../../app/icons'
 import { t as translate, useI18n, tn } from '../../i18n'
 import { pageLabel, pageShortLabel } from '../../lib/pageLabel'
@@ -105,19 +105,17 @@ export default function PageSidebar({
             </Link>
           )}
         </div>
-        <select
-            value={projectId}
-            onChange={(e) => onProjectChange(e.target.value === '' ? '' : Number(e.target.value))}
-            disabled={Boolean(reviewScope)}
-            className="fld"
-          >
-            <option value="">{t('common.chooseProject')}</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+        <Select
+          value={String(projectId)}
+          onChange={(v) => onProjectChange(v === '' ? '' : Number(v))}
+          disabled={Boolean(reviewScope)}
+          ariaLabel={t('sidebar.project')}
+          className="fld"
+          options={[
+            { value: '', label: t('common.chooseProject') },
+            ...projects.map((p) => ({ value: String(p.id), label: p.name })),
+          ]}
+        />
         {/* Su poche pagine la lista si scorre a occhio: la ricerca serve
             quando l'archivio cresce. */}
         {pages.length > SEARCH_FROM && (
@@ -168,7 +166,7 @@ export default function PageSidebar({
         </div>
       )}
 
-      <ul ref={listRef} className="cascade min-h-0 flex-1 overflow-y-auto">
+      <ul ref={listRef} className="glide cascade min-h-0 flex-1 overflow-y-auto">
         {projectId === '' && (
           <li className="p-2 text-[12px] text-[color:var(--color-ink-2)]">
             {t('sidebar.noProject')}

@@ -1899,8 +1899,21 @@ export const en: Dict = {
 
   layout: {
     menu: 'Menu',
+    language: 'Language',
     logout: 'Sign out',
     changePassword: 'Change password',
+  },
+
+  commands: {
+    open: 'Search',
+    title: 'Commands',
+    placeholder: 'Go to a section, project, page…',
+    empty: 'No results',
+    groupGo: 'Go to',
+    kindProject: 'Project',
+    kindPage: 'Page',
+    kindAction: 'Action',
+    language: 'Language',
   },
 
   account: {
