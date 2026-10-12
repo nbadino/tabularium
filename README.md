@@ -1,16 +1,16 @@
 # Tabularium
 
 **A local-first studio that turns archives of dense, borderless tables into
-structured, reviewable data — and, when you need it, fine-tunes the parsing
+structured, reviewable data and, when you need it, fine-tunes the parsing
 model on your own corpus.**
 
-You choose a model and where it runs once — this machine or a rented GPU — and
+You choose a model and where it runs once (this machine or a rented GPU) and
 then work the same way everywhere. Three independent paths, none of them
 mandatory:
 
 ```
 Recognize          select pages → recognize → review results → correct or export
-Annotate           blocks, tables, reading order, transcription — your gold pages
+Annotate           blocks, tables, reading order, transcription: your gold pages
 Refine the model   dataset → fine-tune → evaluate → recognize again with it
 ```
 
@@ -18,19 +18,19 @@ Many archives only ever need the first path. Annotation stands on its own, and
 fine-tuning is the optional branch for when the base model is not good enough
 on your pages.
 
-It was built for — and is in daily use on — historical registers (shipping
+It was built for, and is in daily use on, historical registers (shipping
 indexes, 1900s–1970s): pages whose tables have **no ruling lines**, hand-set
 columns that drift down the page, and hundreds of cells per page. Nothing in it
 is specific to that corpus: any archive of table-heavy pages works the same way.
 
-> *Tabularium* — the public archive where ancient Rome kept its *tabulae*:
+> *Tabularium*: the public archive where ancient Rome kept its *tabulae*:
 > the records **and** the tables.
 
 ![Table workspace: a borderless sea-borne trade table, scan on the left, its corrected grid on the right](docs/screenshots/table-workspace.jpg)
 
 *A page of the 1912–13 Annual Statement of Sea-borne Trade (no ruling lines) in
 the table workspace: the scan on the left, the grid Tabularium proposed and a
-person corrected on the right — 68 × 12 cells, 672 of 677 verified, 24 of 25
+person corrected on the right: 68 × 12 cells, 672 of 677 verified, 24 of 25
 column sums adding up.*
 
 ---
@@ -40,8 +40,8 @@ column sums adding up.*
 ### 1. Register your archive
 
 Point a project at a folder of scans (images or multi-page PDFs). Every page is
-registered with the metadata your domain needs — issue date, issue number, page
-number, page type — and previews are generated on demand, however large the
+registered with the metadata your domain needs (issue date, issue number, page
+number, page type), and previews are generated on demand, however large the
 scans are. The source files are never modified.
 
 ![Archive: the three paths and the state of every page](docs/screenshots/archive.jpg)
@@ -51,17 +51,17 @@ scans are. The source files are never modified.
 The **Models** screen is a three-step path, in the order the decision is made:
 **model → where → configure**.
 
-- **Model** — MonkeyOCRv2-Parsing, MinerU2.5, PaddleOCR-VL, Qwen3-VL and other
+- **Model**: MonkeyOCRv2-Parsing, MinerU2.5, PaddleOCR-VL, Qwen3-VL and other
   document-parsing models, or any Hugging Face repo you add.
-- **Where** — this machine (NVIDIA/CUDA, or Apple Silicon for models with a
+- **Where**: this machine (NVIDIA/CUDA, or Apple Silicon for models with a
   verified MLX port) or a remote GPU (SSH, Vast.ai, RunPod, Modal). Each option
   says *before* you click whether it can host that model, and why not.
-- **Configure** — a checklist that follows what is actually true right now:
+- **Configure**: a checklist that follows what is actually true right now:
   weights → server → check locally; account → GPU → server → connection on
   Vast.ai. A refresh never loses a long preparation.
 
 Runtimes (vLLM, MLX, the PaddleOCR-VL pipeline) are installed by Tabularium
-itself on first use — no manual virtualenvs, no environment variables.
+itself on first use: no manual virtualenvs, no environment variables.
 
 ![Models: each model says whether it runs on this computer or needs a remote GPU](docs/screenshots/models.jpg)
 
@@ -70,21 +70,21 @@ itself on first use — no manual virtualenvs, no environment variables.
 Select a page, a range or a whole archive and start a recognition session. Each
 page's result is saved as it arrives, and sessions belong to the backend: they
 keep running if you close the browser. When the queue is done you can switch
-the model off — everything after that works without a GPU.
+the model off; everything after that works without a GPU.
 
 Two engines, chosen explicitly:
 
-- **Local OCR** (RapidOCR / PaddleOCR, CPU) — detects text lines; with table
+- **Local OCR** (RapidOCR / PaddleOCR, CPU): detects text lines; with table
   promotion on, the largest cluster of lines whose geometry proves a grid
   becomes a `Table` block with its cells filled **cell by cell**.
-- **The model** — returns blocks already classified, in its native mode.
+- **The model**: returns blocks already classified, in its native mode.
 
 ![Recognize: select pages, pick the engine, start; past sessions on the right](docs/screenshots/recognize.jpg)
 
 ### 4. Review, correct, export
 
-**Results** lists every page of a session — completed, empty, failed, still to
-check — and opens any of them in the studio. Generated content is a **draft**
+**Results** lists every page of a session (completed, empty, failed, still to
+check) and opens any of them in the studio. Generated content is a **draft**
 (`verified: false`) until someone confirms it. Export either the original model
 output or the current, corrected version, as JSON, CSV or plain text.
 
@@ -92,39 +92,39 @@ output or the current, corrected version, as JSON, CSV or plain text.
 
 ### 5. Annotate in a purpose-built studio
 
-- **Blocks** — rectangles and polygons on a zoom/pan canvas, a label palette,
+- **Blocks**: rectangles and polygons on a zoom/pan canvas, a label palette,
   drag/resize, undo/redo, keyboard shortcuts, autosave.
-- **Reading order** — explicit ordering with a "flow" preview that walks the
+- **Reading order**: explicit ordering with a "flow" preview that walks the
   page the way a reader would.
-- **Transcription** — per-block text with the project's transcription rules
+- **Transcription**: per-block text with the project's transcription rules
   always at hand, so annotators stay consistent.
-- **Borderless tables** — Tabularium **proposes the grid** of a table crop from
+- **Borderless tables**: Tabularium **proposes the grid** of a table crop from
   the baselines of the glyphs, with column boundaries that follow the drift of
   hand-set columns instead of cutting through numbers. You correct it in a
-  spreadsheet-style workspace — merged cells, column actions (trim, fill down,
-  split, join…), cell-by-cell verification, arithmetic checks on column sums —
+  spreadsheet-style workspace with merged cells, column actions (trim, fill down,
+  split, join…), cell-by-cell verification and arithmetic checks on column sums,
   inside the studio or on a second screen.
 
 ![Annotation studio: labelled blocks on the scan, verified tables in the content panel](docs/screenshots/annotation-studio.jpg)
 
 ### 6. Refine the model (optional)
 
-- **Dataset** — one click builds the JSONL families the official ms-swift
+- **Dataset**: one click builds the JSONL families the official ms-swift
   training expects: layout (full page, coordinates normalized 0–1000, reading
   order), text recognition (crops + transcriptions) and table recognition
   (full table crops + **OTSL**). Splits are deterministic and **by page**, never
   by crop, and a health report lists what is still unverified.
-- **Fine-tuning** — Tabularium generates and launches the *official*
+- **Fine-tuning**: Tabularium generates and launches the *official*
   `swift sft` scripts (LoRA or full SFT) with a **VRAM preflight** that refuses
   runs your GPU cannot fit and proposes the largest sequence length that will;
   live logs, loss and GPU charts, stop and resume; immutable run recipes and
   SHA-256 artifact manifests. LoRA merge into a vLLM-servable checkpoint is a
   tracked follow-up, not yet offered.
-- **Evaluation** — approved pages scored on layout (IoU per label), reading
+- **Evaluation**: approved pages scored on layout (IoU per label), reading
   order, per-cell CER/WER and table structure, with a GT-vs-prediction overlay
   and the worst failures one click from the editor. Run it before training too:
   the base model's score is the baseline to beat.
-- **Playground** — try any model on any page without saving anything.
+- **Playground**: try any model on any page without saving anything.
 
 ### Self-hosted, multi-user
 
@@ -202,8 +202,8 @@ open it from **Settings**.
 3. **Recognize** → select pages and start.
 4. **Results** → check, open pages in **Annotate** to correct, export.
 
-Model-specific serving details — exact vLLM flags, memory limits, the MLX and
-PaddleOCR-VL pipelines, TeleOCR, custom repos — are in
+Model-specific serving details (exact vLLM flags, memory limits, the MLX and
+PaddleOCR-VL pipelines, TeleOCR, custom repos) are in
 [docs/LOCAL_INFERENCE_GUIDE.md](docs/LOCAL_INFERENCE_GUIDE.md); rented GPUs
 (Vast.ai, RunPod, Modal, SSH tunnels) in
 [docs/CLOUD_INFERENCE_GUIDE.md](docs/CLOUD_INFERENCE_GUIDE.md); tested GPU
@@ -229,12 +229,12 @@ protocol is not verified.
 
 ### Optional extras
 
-- **Page rectification** — *Align and compare* in the studio proposes a
+- **Page rectification**: *Align and compare* in the studio proposes a
   corrected page without touching your annotations; you accept or reject it.
   The only neural rectifier is the **official MonkeyOCRv2 preprocessor**, the
   same stage the model's own pipeline runs before parsing; alongside it there
   are rotation-only deskew and manual perspective/mesh corrections.
-- **Alternative OCR engines** — see
+- **Alternative OCR engines**: see
   [docs/OCR_MODEL_ALTERNATIVES.md](docs/OCR_MODEL_ALTERNATIVES.md).
 
 ## Configuration
@@ -287,11 +287,11 @@ Design principles:
 
 ## Documentation
 
-- **[AGENTS.md](AGENTS.md)** — the complete product spec, data conventions and
+- **[AGENTS.md](AGENTS.md)**: the complete product spec, data conventions and
   the reasoning behind every design decision (Italian; the source of truth).
-- **[PRODUCT.md](PRODUCT.md)** — what the product promises and its constraints.
-- **[DESIGN.md](DESIGN.md)** — the interface design system.
-- **[docs/](docs/)** — local and cloud inference guides, OCR engine alternatives.
+- **[PRODUCT.md](PRODUCT.md)**: what the product promises and its constraints.
+- **[DESIGN.md](DESIGN.md)**: the interface design system.
+- **[docs/](docs/)**: local and cloud inference guides, OCR engine alternatives.
 
 ## Development
 
@@ -330,8 +330,8 @@ The backend serves `frontend/dist`, so the frontend must have been built once
 (or with `TABULARIUM_BUILD_FRONTEND=1`). Health is reported on `/api/health`.
 
 **Recognition with a model, evaluation or the playground say the model is unavailable.**
-They need a model being served: start one from **Models**. Everything else —
-local OCR, annotation, review, export — works without it.
+They need a model being served: start one from **Models**. Everything else
+(local OCR, annotation, review, export) works without it.
 
 ## License
 
@@ -339,12 +339,12 @@ local OCR, annotation, review, export — works without it.
 
 ## Acknowledgments
 
-- [MonkeyOCRv2](https://github.com/Yuliang-Liu/MonkeyOCRv2) — the parsing
+- [MonkeyOCRv2](https://github.com/Yuliang-Liu/MonkeyOCRv2): the parsing
   model and training stack Tabularium fine-tunes. This repository never
   modifies the official checkout; it drives it.
-- [ms-swift](https://github.com/modelscope/ms-swift) — training framework
+- [ms-swift](https://github.com/modelscope/ms-swift): training framework
   (official fork bundled with MonkeyOCRv2).
 - [RapidOCR](https://github.com/RapidAI/RapidOCR) /
-  [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) — CPU prefill engines.
-- [Univer](https://github.com/dream-num/univer) — the spreadsheet surface of
+  [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR): CPU prefill engines.
+- [Univer](https://github.com/dream-num/univer): the spreadsheet surface of
   the table workspace.
