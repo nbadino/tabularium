@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import type { PageItem, PlaygroundResult, PrefillEngines } from '../lib/types'
 import { blocks } from '../lib/vocab'
-import { ErrorNotice, Field, Loading, Module, Notice } from '../app/ui'
+import { ErrorNotice, Field, Loading, Module, Notice, PageHeader } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { useInference } from '../app/inference'
 import { IconCopy, IconPlayground } from '../app/icons'
@@ -104,14 +104,7 @@ export default function PlaygroundPage() {
 
   return (
     <div className="p-3">
-      <div className="mb-3 border-b border-[color:var(--color-rule-strong)] pb-3">
-        <h1 className="text-[26px] font-bold leading-tight tracking-[-0.03em]">
-          {t('playground.title')}
-        </h1>
-        <p className="mt-1 max-w-[80ch] text-[13px] text-[color:var(--color-ink-2)]">
-          {t('playground.intro')}
-        </p>
-      </div>
+      <PageHeader title={t('playground.title')} intro={t('playground.intro')} />
 
       {!inference.enabled && (
         <div className="mb-3 flex items-center justify-between border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-3 py-2 text-[12px] text-[color:var(--color-ink-2)]">

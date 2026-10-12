@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiGet, apiPost } from '../lib/api'
 import type { GpuInfo, TrainConfigBody, TrainingPreflight, TrainingStatus } from '../lib/types'
-import { ErrorNotice } from '../app/ui'
+import { ErrorNotice, PageHeader } from '../app/ui'
 import { PipelineStrip } from '../app/PipelineView'
 import { buildPipeline, usePipelineState } from '../app/pipeline'
 import { useProjects, writeActiveProject } from '../app/activeProject'
@@ -187,14 +187,7 @@ export default function TrainingPage() {
 
   return (
     <div className="p-3">
-      <div className="mb-3 border-b border-[color:var(--color-rule-strong)] pb-3">
-        <h1 className="text-[26px] font-bold leading-tight tracking-[-0.03em]">
-          {t('training.title')}
-        </h1>
-        <p className="mt-1 max-w-[80ch] text-[13px] text-[color:var(--color-ink-2)]">
-          {t('training.intro')}
-        </p>
-      </div>
+      <PageHeader title={t('training.title')} intro={t('training.intro')} />
 
       {error != null && (
         <div className="mb-3">

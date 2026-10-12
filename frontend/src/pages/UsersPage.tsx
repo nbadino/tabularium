@@ -9,7 +9,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { apiDelete, apiGet, apiPatch, apiPost } from '../lib/api'
 import type { User } from '../lib/types'
-import { ErrorNotice, Field, Modal, Module } from '../app/ui'
+import { ErrorNotice, Field, Modal, Module, PageHeader } from '../app/ui'
 import { useAuth } from '../app/auth'
 import { useI18n } from '../i18n'
 
@@ -109,14 +109,7 @@ export default function UsersPage() {
 
   return (
     <div className="p-3">
-      <div className="mb-3 border-b border-[color:var(--color-rule-strong)] pb-3">
-        <h1 className="text-[26px] font-bold leading-tight tracking-[-0.03em]">
-          {t('users.title')}
-        </h1>
-        <p className="mt-1 max-w-[78ch] text-[13px] text-[color:var(--color-ink-2)]">
-          {t('users.intro')}
-        </p>
-      </div>
+      <PageHeader title={t('users.title')} intro={t('users.intro')} />
 
       {error != null && (
         <div className="mb-3">

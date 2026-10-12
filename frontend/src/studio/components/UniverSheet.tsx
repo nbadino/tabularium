@@ -62,6 +62,7 @@ export type ColumnOp =
   | 'split'
   | 'join'
   | 'normalize'
+  | 'fractions'
   | 'upper'
   | 'lower'
   | 'title'
@@ -236,11 +237,9 @@ interface UniverSheetProps {
    *  poi i due si scambiano in dissolvenza. Ai rimontaggi (una colonna
    *  aggiunta) il foglio non ripassa dallo scheletro. */
   intro?: boolean
-  /** «8 1/8» → «8⅛» alla conferma della cella (v. `lib/fractions.ts`). */
-  autoFractions?: boolean
 }
 
-export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, onSelectionChange, autoFractions = false, intro = false }: UniverSheetProps) {
+export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, onSelectionChange, intro = false }: UniverSheetProps) {
   const { t, locale } = useI18n()
   const host = useRef<HTMLDivElement | null>(null)
   const [failed, setFailed] = useState(false)
@@ -255,8 +254,6 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
   opRef.current = onColumnOp
   const selectRef = useRef(onSelectionChange)
   selectRef.current = onSelectionChange
-  const fractionsRef = useRef(autoFractions)
-  fractionsRef.current = autoFractions
   /** Ridipinge le celle sospette; `null` finché il foglio non è montato. */
   const paintRef = useRef<((cells: [number, number][]) => void) | null>(null)
   const suspectsRef = useRef(suspects ?? [])
@@ -467,10 +464,11 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
           }
         })
 
+        // «8 1/8» → «8⅛» alla conferma della cella (v. `lib/fractions.ts`).
         // La conversione è un comando a sé, dopo quello della cella: Ctrl+Z la
         // annulla da sola e restituisce la frazione come l'hai digitata.
         editListener = api.addEvent(api.Event.SheetEditEnded, ({ worksheet, row, column, isConfirm }) => {
-          if (!isConfirm || !fractionsRef.current) return
+          if (!isConfirm) return
           const range = worksheet.getRange(row, column)
           const text = range.getValue()
           if (typeof text !== 'string') return

@@ -15,6 +15,7 @@ import { useI18n } from '../../i18n'
 import { apiGet } from '../../lib/api'
 import type { HealthResponse } from '../../lib/types'
 import { useCanAdminister } from '../../app/auth'
+import { PageHeader } from '../../app/ui'
 import { Navigate, useSearchParams } from 'react-router'
 import AccountSection from './AccountSection'
 import DataSection from './DataSection'
@@ -60,21 +61,12 @@ export default function SettingsPage() {
 
   return (
     <div className="p-3">
-      <div className="border-b border-[color:var(--color-rule-strong)] pb-3">
-        <div className="flex flex-wrap items-baseline gap-x-3">
-          <h1 className="text-[26px] font-bold leading-tight tracking-[-0.03em]">
-            {t('settings.title')}
-          </h1>
-          {version && (
-            <span className="mono text-[12px] text-[color:var(--color-ink-3)]">
-              Tabularium v{version}
-            </span>
-          )}
-        </div>
-        <p className="mt-1 max-w-[78ch] text-[13px] text-[color:var(--color-ink-2)]">
-          {t('settings.intro')}
-        </p>
-      </div>
+      <PageHeader
+        title={t('settings.title')}
+        intro={t('settings.intro')}
+        className="pb-2"
+        aux={version && <span className="mono text-[12px] text-[color:var(--color-ink-3)]">Tabularium v{version}</span>}
+      />
 
       <nav
         aria-label={t('settings.sections')}

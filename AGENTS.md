@@ -772,6 +772,10 @@ dal CER e li conta il recall).
     l'output del modello come risposta giusta. Senza pagine approvate l'API risponde
     `no_gold_pages`. La valutazione **non richiede un training**: misurare il modello di partenza
     sul proprio corpus è il riferimento che il fine-tuning deve battere.
+  - **Quali pagine si misurano.** Finché nessun training del progetto è `finished` nessuna
+    pagina è stata vista dal modello, quindi si misurano **tutte** le pagine approvate
+    (`report.scope = "all_approved"`): col solo val split un corpus da 11 pagine ne misurava 2.
+    Dopo il primo training finito si torna al val split (`scope = "val"`), l'unico onesto.
 - **M7 — Pseudo-labeling** ✅ — `services/ocr.py` (import lazy RapidOCR/PaddleOCR, config
   `TABULARIUM_OCR_ENGINE`), `POST /api/projects/{id}/prelabel`: rileva righe di testo su una pagina,
   filtra per confidenza/dimensione + NMS-lite, inserisce blocchi `Text` con `prefill_source` e

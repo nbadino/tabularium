@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { apiDownload, apiGet, apiPost } from '../lib/api'
 import type { RecognitionRun } from '../lib/types'
-import { Badge, ErrorNotice, Field, Module, Notice, Progress } from '../app/ui'
+import { Badge, ErrorNotice, Field, Module, Notice, Progress, PageHeader } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { syncInferenceFromBackend, toggleInferenceEnabled, useInference } from '../app/inference'
 import { useI18n } from '../i18n'
@@ -152,10 +152,7 @@ export default function ResultsPage() {
 
   return (
     <div className="p-3">
-      <div className="mb-3 border-b border-[color:var(--color-rule-strong)] pb-3">
-        <h1 className="text-[26px] font-bold leading-tight tracking-[-0.03em]">{t('recognition.resultsTitle')}</h1>
-        <p className="mt-1 max-w-[72ch] text-[13px] text-[color:var(--color-ink-2)]">{t('recognition.resultsIntro')}</p>
-      </div>
+      <PageHeader title={t('recognition.resultsTitle')} intro={t('recognition.resultsIntro')} />
       {error != null && <div className="mb-3"><ErrorNotice error={error} onDismiss={() => setError(null)} /></div>}
 
       <div className="grid gap-3 lg:grid-cols-[300px_minmax(0,1fr)]">
@@ -192,7 +189,9 @@ export default function ResultsPage() {
         {!run ? (
           <Module tab={t('recognition.resultsTitle')} quiet><p className="text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.pickRun')}</p></Module>
         ) : (
-          <div className="space-y-3">
+          // Resta in vista mentre si scorre l'elenco delle esecuzioni; se è
+          // più alta della finestra scorre per conto suo.
+          <div className="space-y-3 lg:sticky lg:top-0 lg:max-h-[calc(100dvh-6rem)] lg:self-start lg:overflow-y-auto">
             <Module tab={`${t('recognition.resultsTitle')} · #${run.id}`} aux={<Badge tone={isActive(run) ? 'progress' : run.failed_pages ? 'warn' : 'ok'}>{t(stateKey(run.state))}</Badge>}>
               <div className="mb-2 flex flex-wrap items-baseline gap-x-3">
                 <span className="text-[18px] font-bold">{runTitle(run, nameOf)}</span>

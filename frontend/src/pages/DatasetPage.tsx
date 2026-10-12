@@ -4,7 +4,7 @@ import type { DatasetReport, DatasetStatus, PageItem } from '../lib/types'
 import { formatDateTime } from '../lib/dates'
 import { Link } from 'react-router'
 import { familyLabel, lines as linesPlural, splitStrategyLabel } from '../lib/vocab'
-import { Badge, Collapsible, ErrorNotice, Field, Module, WarnNotice } from '../app/ui'
+import { Badge, Collapsible, ErrorNotice, Field, Module, WarnNotice, PageHeader } from '../app/ui'
 import { PipelineStrip } from '../app/PipelineView'
 import { buildPipeline, usePipelineState } from '../app/pipeline'
 import { useProjects, writeActiveProject } from '../app/activeProject'
@@ -189,14 +189,7 @@ export default function DatasetPage() {
 
   return (
     <div className="p-3">
-      <div className="mb-3 border-b border-[color:var(--color-rule-strong)] pb-3">
-        <h1 className="text-[26px] font-bold leading-tight tracking-[-0.03em]">
-          {t('dataset.title')}
-        </h1>
-        <p className="mt-1 max-w-[80ch] text-[13px] text-[color:var(--color-ink-2)]">
-          {t('dataset.intro')}
-        </p>
-      </div>
+      <PageHeader title={t('dataset.title')} intro={t('dataset.intro')} />
 
       {error != null && (
         <div className="mb-3">

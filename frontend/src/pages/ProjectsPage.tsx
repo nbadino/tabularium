@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import type { Project } from '../lib/types'
 import { pages, projects } from '../lib/vocab'
-import { ErrorNotice, Field, Module } from '../app/ui'
+import { ErrorNotice, Field, Module, PageHeader } from '../app/ui'
 import { IconPlus, IconProjects } from '../app/icons'
 import { useI18n } from '../i18n'
 import { useCanAdminister } from '../app/auth'
@@ -61,14 +61,7 @@ export default function ProjectsPage() {
 
   return (
     <div className="p-3">
-      <div className="mb-3 border-b border-[color:var(--color-rule-strong)] pb-3">
-        <h1 className="text-[26px] font-bold leading-tight tracking-[-0.03em]">
-          {t('projects.title')}
-        </h1>
-        <p className="mt-1 max-w-[78ch] text-[13px] text-[color:var(--color-ink-2)]">
-          {t('projects.intro')}
-        </p>
-      </div>
+      <PageHeader title={t('projects.title')} intro={t('projects.intro')} />
 
       {error != null && (
         <div className="mb-3">

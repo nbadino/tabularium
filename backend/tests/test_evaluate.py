@@ -235,7 +235,9 @@ def test_evaluate_project(tmp_path: Path, monkeypatch):
     with connect() as conn:
         conn.execute("UPDATE pages SET status='approved' WHERE project_id=?", (pid,))
     report = evmod.evaluate_project(pid, with_text=True)
-    assert report["pages_evaluated"] >= 1
+    # Nessun training finito: nessuna pagina è stata vista, si misurano tutte.
+    assert report["scope"] == "all_approved"
+    assert report["pages_evaluated"] == 2
     agg = report["aggregates"]
     assert "layout" in agg and "text" in agg and "tables" in agg
     assert agg["text"]["n"] >= 1
@@ -243,6 +245,16 @@ def test_evaluate_project(tmp_path: Path, monkeypatch):
     first_gt = report["pages"][0]["gt_items"][0]
     assert first_gt["bbox"] == [11, 77, 989, 692]
     assert first_gt["source_bbox"] == [10.0, 100.0, 890.0, 900.0]
+
+    # Dopo un training finito la misura torna al solo val split.
+    from app.services import trainer
+
+    run = trainer.runs_dir(pid) / "run_1"
+    run.mkdir(parents=True)
+    (run / "run.json").write_text(json.dumps({"state": "finished"}), encoding="utf-8")
+    report = evmod.evaluate_project(pid, with_text=False)
+    assert report["scope"] == "val"
+    assert report["pages_evaluated"] == report["val_pages"] < 2
 
     # progetto senza annotazioni -> errore chiaro
     try:

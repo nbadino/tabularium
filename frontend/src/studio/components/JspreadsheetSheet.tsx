@@ -614,6 +614,7 @@ export default function JspreadsheetSheet({ grid: initialGrid, onSave, onDetect,
       ...(onColumnOp ? [
         { type: 'line', title: '', onclick: () => {} },
         { title: t('table.normalizeSpaces'), onclick: () => runColumnOp('normalize', range) },
+        { title: t('table.toFractions'), onclick: () => runColumnOp('fractions', range) },
         { title: t('table.fillDown'), onclick: () => runColumnOp('fill', range) },
         { title: t('table.joinColumn'), onclick: () => runColumnOp('join', range) },
         { title: t('table.caseUpper'), onclick: () => runColumnOp('upper', range) },

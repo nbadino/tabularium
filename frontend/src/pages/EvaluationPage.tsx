@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { apiPost } from '../lib/api'
 import type { EvalPage, EvalReport } from '../lib/types'
 import { pages } from '../lib/vocab'
-import { ErrorNotice, Field, Loading, Module, Notice, WarnNotice } from '../app/ui'
+import { ErrorNotice, Field, Loading, Module, Notice, WarnNotice, PageHeader } from '../app/ui'
 import { PipelineStrip } from '../app/PipelineView'
 import { buildPipeline, usePipelineState } from '../app/pipeline'
 import { useProjects, writeActiveProject } from '../app/activeProject'
@@ -95,14 +95,7 @@ export default function EvaluationPage() {
 
   return (
     <div className="p-3">
-      <div className="mb-3 border-b border-[color:var(--color-rule-strong)] pb-3">
-        <h1 className="text-[26px] font-bold leading-tight tracking-[-0.03em]">
-          {t('evaluate.title')}
-        </h1>
-        <p className="mt-1 max-w-[80ch] text-[13px] text-[color:var(--color-ink-2)]">
-          {t('evaluate.intro')}
-        </p>
-      </div>
+      <PageHeader title={t('evaluate.title')} intro={t('evaluate.intro')} />
 
       {error != null && (
         <div className="mb-3">
@@ -201,7 +194,7 @@ export default function EvaluationPage() {
             <Metric
               tab={t('evaluate.pagesEvaluated')}
               value={String(report.pages_evaluated)}
-              sub={t('evaluate.ofVal', { n: report.val_pages })}
+              sub={t(report.scope === 'all_approved' ? 'evaluate.ofApproved' : 'evaluate.ofVal', { n: report.val_pages })}
             />
             <Metric
               tab={t('evaluate.precision')}

@@ -312,6 +312,19 @@ def _image_from_bytes(data: bytes):
 # --- valutazione progetto -----------------------------------------------------
 
 
+def _has_finished_training(project_id: int) -> bool:
+    """Vero se almeno un training del progetto è arrivato in fondo."""
+    from . import trainer  # noqa: PLC0415
+
+    root = trainer.runs_dir(project_id)
+    if not root.is_dir():
+        return False
+    return any(
+        (trainer._read_run_meta(run) or {}).get("state") == "finished"  # noqa: SLF001
+        for run in root.iterdir() if run.is_dir()
+    )
+
+
 def evaluate_project(
     project_id: int,
     server_url: str | None = None,
@@ -347,8 +360,15 @@ def evaluate_project(
     }
     if not page_data:
         raise ValueError(msg("no_gold_pages", lang))
-    _train, val_ids = builder.compute_split(project_id, ratio, seed, split_strategy, approved_only=approved_only)
-    val_ids &= set(page_data)
+    # Il val split serve a tenere fuori le pagine viste in training. Finché
+    # nessun training è finito nessuna pagina è stata vista: la baseline si
+    # misura su tutte le pagine approvate, non su un decimo di esse.
+    scope = "val" if _has_finished_training(project_id) else "all_approved"
+    if scope == "val":
+        _train, val_ids = builder.compute_split(project_id, ratio, seed, split_strategy, approved_only=approved_only)
+        val_ids &= set(page_data)
+    else:
+        val_ids = set(page_data)
     val_ids = sorted(val_ids)[:limit]
     if not val_ids:
         raise ValueError(msg("no_val_pages", lang))
@@ -375,6 +395,7 @@ def evaluate_project(
         "config": {"server_url": client.url, "model": client.model, "provider": getattr(client, "provider", None), "with_text": with_text, "split": {"ratio": ratio, "seed": seed, "strategy": split_strategy}, "approved_only": approved_only},
         "pages_evaluated": len(ok_pages),
         "val_pages": len(val_ids),
+        "scope": scope,
         "aggregates": {
             "layout": _agg_layout(ok_pages),
             "layout_strict": _agg_layout(ok_pages, key="layout_strict"),

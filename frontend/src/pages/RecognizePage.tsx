@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import { ApiError } from '../lib/api'
 import type { PageItem, PrefillEngines, RecognitionRun, SystemInfo } from '../lib/types'
-import { Badge, ErrorNotice, Field, Modal, Module, Notice, Progress } from '../app/ui'
+import { Badge, ErrorNotice, Field, Modal, Module, Notice, Progress, PageHeader } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { useInference } from '../app/inference'
 import { useCanAdminister } from '../app/auth'
@@ -299,10 +299,7 @@ export default function RecognizePage() {
 
   return (
     <div className="p-3">
-      <div className="mb-3 border-b border-[color:var(--color-rule-strong)] pb-3">
-        <h1 className="text-[26px] font-bold leading-tight tracking-[-0.03em]">{t('recognition.title')}</h1>
-        <p className="mt-1 max-w-[72ch] text-[13px] text-[color:var(--color-ink-2)]">{t('recognition.intro')}</p>
-      </div>
+      <PageHeader title={t('recognition.title')} intro={t('recognition.intro')} />
 
       {error != null && <div className="mb-3"><ErrorNotice error={error} onDismiss={() => setError(null)} /></div>}
       {backendRestartRequired && (

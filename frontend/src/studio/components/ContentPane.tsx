@@ -29,6 +29,7 @@ import {
   mergeKeepsEveryText,
   mergeRange,
   normalizeColumn,
+  fractionsColumn,
   splitCell,
   transformColumnCase,
 } from '../../lib/grid'
@@ -90,6 +91,8 @@ function TableBlockEditor({
   pageImageSize,
   onSaveTable,
   onDetectTable,
+  confirmed,
+  onConfirmed,
 }: {
   id: string
   serverId: number | null
@@ -98,6 +101,9 @@ function TableBlockEditor({
   pageImageSize?: { w: number; h: number } | null
   onSaveTable: (serverId: number, grid: TableGrid) => Promise<string>
   onDetectTable?: (serverId: number, opts: TableDetectRequest) => Promise<TableDetectOut>
+  /** «Verificata» del blocco, la stessa casella della scheda. */
+  confirmed: boolean
+  onConfirmed: (confirmed: boolean) => void
 }) {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
@@ -122,7 +128,7 @@ function TableBlockEditor({
           <button
             type="button"
             onClick={() => {
-              const url = `/tabella/${serverId}?page=${pageId}&width=${pageImageSize?.w ?? ''}&height=${pageImageSize?.h ?? ''}`
+              const url = `/tabella/${serverId}?page=${pageId}&width=${pageImageSize?.w ?? ''}&height=${pageImageSize?.h ?? ''}&confirmed=${confirmed ? 1 : 0}`
               const w = Math.round(window.screen.availWidth * 0.85)
               const h = Math.round(window.screen.availHeight * 0.85)
               window.open(url, `tabularium-table-${serverId}`, `popup,width=${w},height=${h}`)?.focus()
@@ -142,6 +148,7 @@ function TableBlockEditor({
           {/* La griglia si rilegge dal server all'apertura: la scheda non tiene
               una seconda copia del modello da tenere allineata. */}
           <div className="flex min-h-0 flex-1 flex-col p-3">
+            <VerifiedToggle checked={confirmed} onChange={onConfirmed} className="mb-2" />
             <TableWorkspacePanel
               id={id}
               serverId={serverId}
@@ -158,10 +165,19 @@ function TableBlockEditor({
   )
 }
 
+/** La casella «Verificata» del blocco, anche dentro le viste della tabella. */
+export function VerifiedToggle({ checked, onChange, className = '' }: { checked: boolean; onChange: (checked: boolean) => void; className?: string }) {
+  const { t } = useI18n()
+  return (
+    <label className={`flex w-fit cursor-pointer items-center gap-1.5 text-[12px] text-[color:var(--color-ink-2)] ${className}`}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-[color:var(--color-sig)]" />
+      {t('content.confirmDraft')}
+    </label>
+  )
+}
+
 /** Univer è la superficie principale dell'editor tabellare. */
 const TABLE_SURFACE: 'univer' | 'ce' = 'univer'
-
-const FRACTIONS_KEY = 'tabularium.table.autoFractions'
 
 /** Celle con testo confermate, sul totale di quelle che si possono confermare. */
 function verifiedCount(grid: TableGrid): { n: number; total: number } {
@@ -223,14 +239,6 @@ export function TableWorkspacePanel({
   const [notice, setNotice] = useState<string | null>(null)
   const [otsl, setOtsl] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  // Preferenza dell'annotatore, spenta quando serve tenere «1/8» com'è scritto.
-  const [autoFractions, setAutoFractions] = useState(() => {
-    try {
-      return localStorage.getItem(FRACTIONS_KEY) !== 'off'
-    } catch {
-      return true
-    }
-  })
   // Ripiegata finché l'annotatore non la apre: è un controllo, non il lavoro.
   const [otslOpen, setOtslOpen] = useState(() => {
     try {
@@ -244,14 +252,6 @@ export function TableWorkspacePanel({
     setOtslOpen(open)
     try {
       localStorage.setItem(OTSL_KEY, open ? 'open' : 'closed')
-    } catch {
-      /* storage non disponibile: la scelta vale per questa sessione */
-    }
-  }
-  const toggleFractions = (on: boolean) => {
-    setAutoFractions(on)
-    try {
-      localStorage.setItem(FRACTIONS_KEY, on ? 'on' : 'off')
     } catch {
       /* storage non disponibile: la scelta vale per questa sessione */
     }
@@ -449,12 +449,14 @@ export function TableWorkspacePanel({
         ? joinColumns(current, column, { separator: ' ' })
         : op === 'normalize'
           ? normalizeColumn(current, column)
-          : op === 'fill'
-            ? // Con **una cella sola** selezionata l'intento è «questo valore
-              // vale per tutto ciò che sta sotto»: si propaga fino in fondo
-              // alla colonna. Con un intervallo scelto si rispetta l'intervallo.
-              fillDown(current, column, from, to === from ? current.rows - 1 : to)
-            : transformColumnCase(current, column, op)
+          : op === 'fractions'
+            ? fractionsColumn(current, column)
+            : op === 'fill'
+              ? // Con **una cella sola** selezionata l'intento è «questo valore
+                // vale per tutto ciò che sta sotto»: si propaga fino in fondo
+                // alla colonna. Con un intervallo scelto si rispetta l'intervallo.
+                fillDown(current, column, from, to === from ? current.rows - 1 : to)
+              : transformColumnCase(current, column, op)
     if (!next) {
       setNotice(t('table.columnOpRefused'))
       return
@@ -520,16 +522,13 @@ export function TableWorkspacePanel({
             {(['normalize', 'fill', 'join', 'upper', 'lower', 'split'] as const).map((op) => (
               <button key={op} type="button" className="btn btn-sm" onClick={() => runColumnOp(op, selection)}>{t(`table.${op}Short` as const)}</button>
             ))}
+            <button type="button" className="btn btn-sm" title={t('table.toFractionsHint')} onClick={() => runColumnOp('fractions', selection)}>{t('table.toFractionsShort')}</button>
           </div>
-          <label className="ml-auto flex items-center gap-1" title={`${t('table.autoFractions')} — ${t('table.autoFractionsHint')}`}>
-            <input type="checkbox" checked={autoFractions} onChange={(e) => toggleFractions(e.target.checked)} />
-            {t('table.fractionsShort')} ⅛
-          </label>
           <button
             type="button"
             onClick={() => void doSave(gridRef.current ?? grid)}
             disabled={saving}
-            className="btn btn-sm btn-primary"
+            className="btn btn-sm btn-primary ml-auto"
           >
             <IconSave size={11} />
             {saving ? t('table.saving') : t('table.saveGrid')}
@@ -594,7 +593,6 @@ export function TableWorkspacePanel({
                 grid={grid}
                 onGridChange={applyModel}
                 onColumnOp={runColumnOp}
-                autoFractions={autoFractions}
                 suspects={checks?.suspects}
                 onSelectionChange={(sel) => {
                   setActive({ r: sel.startRow, c: sel.startColumn })
@@ -1112,6 +1110,8 @@ export default function ContentPane({
                         pageImageSize={pageImageSize ?? null}
                         onSaveTable={onSaveTable}
                         onDetectTable={onDetectTable}
+                        confirmed={block.confirmed}
+                        onConfirmed={(v) => onConfirmed(block.id, v)}
                       />
                     </>
                   ) : noContent ? (
@@ -1163,6 +1163,8 @@ export default function ContentPane({
                         onDraftGrid(serverId, grid)
                         return onSaveDraftGrid(serverId, grid)
                       }}
+                      confirmed={draft.confirmed}
+                      onConfirmed={(v) => onDraftConfirmed(draft.serverId, v)}
                     />
                   ) : noContent ? (
                     <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('content.noContentBody')}</p>

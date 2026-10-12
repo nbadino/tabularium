@@ -1,8 +1,8 @@
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
-import { apiPost, apiPut } from '../lib/api'
-import type { TableDetectOut, TableDetectRequest, TableGrid, TableSaveOut } from '../lib/types'
-import { TableWorkspacePanel } from '../studio/components/ContentPane'
+import { apiPatch, apiPost, apiPut } from '../lib/api'
+import type { BlockOut, TableDetectOut, TableDetectRequest, TableGrid, TableSaveOut } from '../lib/types'
+import { TableWorkspacePanel, VerifiedToggle } from '../studio/components/ContentPane'
 import { useI18n } from '../i18n'
 
 export default function TableWorkspacePage() {
@@ -17,6 +17,7 @@ export default function TableWorkspacePage() {
   const imageUrl = useMemo(() => pageId ? `/api/pages/${pageId}/preview` : null, [pageId])
   const navigate = useNavigate()
   const flushRef = useRef<(() => Promise<void>) | null>(null)
+  const [confirmed, setConfirmed] = useState(params.get('confirmed') === '1')
   // Aperta dallo Studio («Apri su un altro schermo») questa finestra ne ha una
   // d'origine: tornare vuol dire chiudersi e lasciare il posto a quella, non
   // aprire una seconda annotazione qui dentro.
@@ -35,14 +36,26 @@ export default function TableWorkspacePage() {
     return <div className="p-4 text-sm">{t('table.loadFailed')}</div>
   }
 
+  // Lo Studio ascolta: riallinea la revisione e, se c'è, la «Verificata».
+  const notifyStudio = (message: { revision?: number; blockId?: number; confirmed?: boolean }) => {
+    if (!pageId || !('BroadcastChannel' in window)) return
+    const channel = new BroadcastChannel('tabularium.annotation-revision')
+    channel.postMessage({ pageId, ...message })
+    channel.close()
+  }
   const saveTable = async (_id: number, grid: TableGrid) => {
     const out = await apiPut<TableSaveOut>(`/blocks/${serverId}/table`, grid)
-    if (pageId && 'BroadcastChannel' in window) {
-      const channel = new BroadcastChannel('tabularium.annotation-revision')
-      channel.postMessage({ pageId, revision: out.annotation_revision })
-      channel.close()
-    }
+    notifyStudio({ revision: out.annotation_revision })
     return out.otsl
+  }
+  const setVerified = async (next: boolean) => {
+    setConfirmed(next)
+    try {
+      const out = await apiPatch<BlockOut>(`/blocks/${serverId}`, { confirmed: next })
+      notifyStudio({ revision: out.annotation_revision, blockId: serverId, confirmed: next })
+    } catch {
+      setConfirmed(!next)
+    }
   }
   const detectTable = (_id: number, request: TableDetectRequest) =>
     apiPost<TableDetectOut>(`/blocks/${serverId}/table/detect`, request)
@@ -63,6 +76,7 @@ export default function TableWorkspacePage() {
           <Link to="/annotazione" className="btn btn-sm no-underline">{t('table.backToAnnotation')}</Link>
         )}
         <h1 className="mod-tab title-plate m-0">{t('table.workspaceTitle')}</h1>
+        <VerifiedToggle checked={confirmed} onChange={(v) => void setVerified(v)} />
         <span className="flex-1" />
         <span className="mono text-[11px] text-[color:var(--color-ink-2)]">#{serverId}</span>
       </header>

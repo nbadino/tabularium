@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useFitOneRow } from '../lib/fitRow'
 import { Link, useSearchParams } from 'react-router'
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
+import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
 import { loadImageSize, PixelSize, scaleRatio } from '../lib/coords'
 import type { BlockOut, LabelDef, PageItem, PageSums, RecognitionRun } from '../lib/types'
 import StudioCanvas from '../studio/StudioCanvas'
@@ -38,7 +38,7 @@ import {
 } from '../app/icons'
 
 import { useInference } from '../app/inference'
-import { Menu } from '../app/ui'
+import { Menu, PageHeader } from '../app/ui'
 import { pageLabel } from '../lib/pageLabel'
 
 // --- larghezze dei pannelli dello studio (splitter, persistite) --------------
@@ -208,6 +208,20 @@ export default function AnnotationPage() {
 
   const ann = useAnnotationState(page, ratio, labels)
 
+  // «Verificata» spuntata nella finestra della tabella: è già sul server,
+  // qui si riallinea solo lo stato (un blocco del canvas o una bozza).
+  const verifiedElsewhereRef = useRef<(serverId: number, confirmed: boolean) => void>(() => {})
+  verifiedElsewhereRef.current = (serverId, confirmed) => {
+    const block = ann.blocks.find((b) => b.serverId === serverId)
+    if (block) {
+      if (block.confirmed !== confirmed) ann.setBlockConfirmed(block.id, confirmed)
+      return
+    }
+    if (!prefillDrafts.some((d) => d.serverId === serverId)) return
+    setPrefillDrafts((d) => d.map((x) => (x.serverId === serverId ? { ...x, confirmed } : x)))
+    if (page) void applyBlocks(page, ratio)
+  }
+
   // Il foglio può essere aperto in un'altra scheda/finestra. Le sue scritture
   // avanzano la revisione della pagina: riallinea l'autosave qui per evitare
   // un 409 alla prossima modifica del canvas.
@@ -217,6 +231,9 @@ export default function AnnotationPage() {
     channel.onmessage = ({ data }) => {
       if (data?.pageId === pageIdRef.current && Number.isInteger(data?.revision)) {
         ann.syncRevision(data.revision)
+        if (Number.isInteger(data.blockId) && typeof data.confirmed === 'boolean') {
+          verifiedElsewhereRef.current(data.blockId, data.confirmed)
+        }
       }
     }
     return () => channel.close()
@@ -849,10 +866,42 @@ export default function AnnotationPage() {
     else if (nextTask) void onPageSelect(nextTask.id)
   }
 
+  // Approvazione dallo Studio: prima si salva, perché il server giudica ciò
+  // che ha, poi lo stesso controllo di «pagina pronta» dell'Archivio.
+  const [approving, setApproving] = useState(false)
+  const approveCurrentPage = async () => {
+    if (!page || projectId === '') return
+    setError(null)
+    setApproving(true)
+    try {
+      await ann.flush()
+      await apiPost(`/pages/${page.id}/approve`)
+      setPage((cur) => (cur && cur.id === page.id ? { ...cur, status: 'approved' } : cur))
+      setPages((cur) => cur.map((p) => (p.id === page.id ? { ...p, status: 'approved' } : p)))
+      const queue = await apiGet<{ items: Array<{ id: number; reason: string; rel_path?: string }> }>(`/projects/${projectId}/annotation-queue?limit=1`)
+      setNextTask(queue.items[0] ?? null)
+    } catch (e) {
+      // 409: la pagina non è pronta, e il server dice perché.
+      let reasons: string[] = []
+      if (e instanceof ApiError && e.status === 409) {
+        try {
+          reasons = (JSON.parse(e.body)?.detail?.errors ?? []) as string[]
+        } catch {
+          /* corpo non JSON: resta il messaggio generico */
+        }
+      }
+      setError(reasons.length ? `${t('annotate.notReady')} ${reasons.join(' · ')}` : String(e))
+    } finally {
+      setApproving(false)
+    }
+  }
+  const approved = page?.status === 'approved' || page?.status === 'exported'
+
   const contentCount = prefillDrafts.length + ann.blocks.length
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <PageHeader title={t('annotate.title')} intro={t('annotate.intro')} className="shrink-0 px-3 py-1.5" />
       {reviewRun && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-2 py-1 text-[11px]">
           <b>{t('annotate.reviewRun', { id: reviewRun.id, count: pages.length })}</b>
@@ -1075,6 +1124,16 @@ export default function AnnotationPage() {
                 {t('annotate.clearAll')}
               </button>
             </Menu>
+            <button
+              type="button"
+              onClick={() => void approveCurrentPage()}
+              disabled={!page || approved || approving}
+              className="btn whitespace-nowrap"
+              title={t('project.approveTitle')}
+            >
+              <IconCheck size={12} />
+              {approved ? t('annotate.approved') : t('project.approve')}
+            </button>
             <button
               type="button"
               onClick={openNextTask}

@@ -23,6 +23,9 @@ _NIL = re.compile(r"^[\s.·…‥\-–—:]*$")
 _FRACTIONS = {"½": Fraction(1, 2), "¼": Fraction(1, 4), "¾": Fraction(3, 4), "⅕": Fraction(1, 5),
               "⅛": Fraction(1, 8), "⅜": Fraction(3, 8), "⅝": Fraction(5, 8), "⅞": Fraction(7, 8),
               "⅓": Fraction(1, 3), "⅔": Fraction(2, 3)}
+_SUP = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")
+_SUB = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
+_STACKED = re.compile(r"([⁰¹²³⁴⁵⁶⁷⁸⁹]+)⁄([₀₁₂₃₄₅₆₇₈₉]+)")
 _DITTO = {"„", ",,", "\"", "do.", "„ „"}
 
 
@@ -47,6 +50,9 @@ def number(text: str | None) -> Fraction | None:
         if ch in s:
             total += frac
             s = s.replace(ch, "")
+    # Frazione in apice/pedice («13¹²⁄₂₀», v. frontend `lib/fractions.ts`):
+    # si riporta alla forma mista «13 12/20».
+    s = _STACKED.sub(lambda m: f" {m[1].translate(_SUP)}/{m[2].translate(_SUB)}", s)
     s = s.strip()
     m = re.fullmatch(r"([\d,.\s']+?)\s+(\d+)\s*/\s*(\d+)", s)
     if m:

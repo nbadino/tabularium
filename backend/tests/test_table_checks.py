@@ -4,7 +4,9 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.table_checks import check_grid
+from fractions import Fraction
+
+from app.services.table_checks import check_grid, number
 
 
 def _grid(rows: list[list[str]]) -> dict:
@@ -23,6 +25,12 @@ COUNTRIES = [
 def test_a_correct_table_balances_everywhere():
     out = check_grid(_grid(COUNTRIES))
     assert (out["passed"], out["failed"], out["suspects"]) == (6, 0, [])
+
+
+def test_stacked_fractions_read_like_typed_ones():
+    assert number("13¹²⁄₂₀") == number("13 12/20") == Fraction(68, 5)
+    assert number("125,419⁹⁄₂₀") == Fraction(125419) + Fraction(9, 20)
+    assert number("8⅛") == Fraction(65, 8)
 
 
 def test_one_misread_digit_is_pinpointed():

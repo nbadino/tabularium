@@ -52,6 +52,36 @@ export function Module({
   )
 }
 
+/* ------------------------------------------------------------ PageHeader -- */
+
+/**
+ * Titolo della pagina e, sotto, il suo scopo su una riga sola: lo spazio
+ * verticale serve al lavoro. Se manca larghezza l'intro si tronca e resta
+ * intera nel tooltip.
+ */
+export function PageHeader({
+  title,
+  intro,
+  aux,
+  className = 'mb-3 pb-2',
+}: {
+  title: ReactNode
+  intro: string
+  /** Contenuto accanto al titolo (versione, conteggi). */
+  aux?: ReactNode
+  className?: string
+}) {
+  return (
+    <div className={`border-b border-[color:var(--color-rule-strong)] ${className}`}>
+      <div className="flex items-baseline gap-3">
+        <h1 className="text-[30px] font-bold leading-tight tracking-[-0.03em]">{title}</h1>
+        {aux}
+      </div>
+      <p className="truncate text-[12px] text-[color:var(--color-ink-2)]" title={intro}>{intro}</p>
+    </div>
+  )
+}
+
 /* ------------------------------------------------------- modulo a soffietto */
 
 // Durata di `.collapse-out` in index.css.

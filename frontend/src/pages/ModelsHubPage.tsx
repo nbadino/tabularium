@@ -16,7 +16,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
-import { Badge, ErrorNotice, Module, Notice } from '../app/ui'
+import { Badge, ErrorNotice, Module, Notice, PageHeader } from '../app/ui'
 import { apiGet } from '../lib/api'
 import type { SystemInfo } from '../lib/types'
 import { syncInferenceFromBackend, useInference } from '../app/inference'
@@ -138,10 +138,7 @@ export default function ModelsHubPage() {
 
   return (
     <div className="p-3">
-      <div className="mb-3 border-b border-[color:var(--color-rule-strong)] pb-3">
-        <h1 className="text-[26px] font-bold leading-tight tracking-[-0.03em]">{t('nav.models')}</h1>
-        <p className="mt-1 max-w-[80ch] text-[13px] text-[color:var(--color-ink-2)]">{t('modelsHub.intro')}</p>
-      </div>
+      <PageHeader title={t('nav.models')} intro={t('modelsHub.intro')} />
 
       {error != null && <div className="mb-3"><ErrorNotice error={error} /></div>}
 

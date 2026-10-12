@@ -580,6 +580,8 @@ export interface EvalReport {
   }
   pages_evaluated: number
   val_pages: number
+  /** `all_approved` finché nessun training è finito, poi `val`. */
+  scope?: 'val' | 'all_approved'
   aggregates: {
     layout: LayoutMetrics
     /** Stessa misura a IoU ≥ 0.75. */

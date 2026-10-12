@@ -1,5 +1,6 @@
 /** Helper sulle griglie di tabelle: matrice fisica, merge, split, resize. */
 import type { TableCell, TableGrid } from './types'
+import { toFractionGlyphs } from './fractions'
 
 /** Normalizza griglie provenienti da versioni precedenti del backend.
  * `phantom_cols` è stata aggiunta dopo il primo formato persistito e può
@@ -741,6 +742,15 @@ export function normalizeColumn(grid: TableGrid, at: number): TableGrid | null {
       .trim()
     return withText(cell, normalized)
   })
+  return { ...grid, cells }
+}
+
+/** Frazioni digitate → tipografiche su una colonna (v. `lib/fractions.ts`). */
+export function fractionsColumn(grid: TableGrid, at: number): TableGrid | null {
+  if (at < 0 || at >= grid.cols) return null
+  const cells = grid.cells.map((cell) =>
+    cell.c !== at || cell.rowspan > 1 || cell.colspan > 1 ? cell : withText(cell, toFractionGlyphs(cell.text ?? '')),
+  )
   return { ...grid, cells }
 }
 
