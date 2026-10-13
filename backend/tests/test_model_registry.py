@@ -288,6 +288,40 @@ def test_unlimited_ocr_serves_locally_via_dedicated_docker_image():
     assert "/weights/unlimited-ocr:/model" in cmd
 
 
+def test_unlimited_ocr_has_a_local_mlx_path_with_selectable_variants():
+    # Da `mlx-vlm` 0.6.4 esiste `unlimited_ocr` con la R-SWA di upstream: il
+    # modello ha quindi un percorso locale Apple Silicon, a differenza di
+    # quando la sua ricetta (il n-gram processor di vLLM) lo rendeva solo remoto.
+    adapter = model_adapters.get_adapter("unlimited-ocr")
+    assert "mlx-vlm" in adapter.capabilities.local_runtimes
+    assert adapter.capabilities.local_mlx_repo == "mlx-community/Unlimited-OCR-bf16"
+    variants = dict(adapter.capabilities.local_mlx_repo_choices)
+    assert variants == {
+        "bf16": "mlx-community/Unlimited-OCR-bf16",
+        "8bit": "mlx-community/Unlimited-OCR-8bit",
+    }
+    assert adapter.capabilities.local_mlx_repetition_penalty == 1.1
+    assert adapter.capabilities.local_mlx_repetition_context_size == 128
+
+    from app.services.hardware import plan_local
+
+    mac = {
+        "apple_silicon": True,
+        "cuda": {"devices": []},
+        "memory_gb": 24.0,
+        "runtimes": {"vllm": {"supported": False}, "mlx-vlm": {"supported": True}},
+        "usable_runtimes": ["mlx-vlm"],
+    }
+    plan = plan_local(
+        adapter.capabilities.local_runtimes,
+        machine=mac,
+        approx_size_gb=adapter.capabilities.approx_size_gb,
+        mlx_weight_factor=adapter.capabilities.local_mlx_weight_factor,
+    )
+    assert plan["runnable"] is True
+    assert plan["runtime"] == "mlx-vlm"
+
+
 def test_list_models_api_merges_capabilities_and_install_state():
     with TestClient(app) as client:
         res = client.get("/api/models")

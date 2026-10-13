@@ -308,6 +308,16 @@ def ensure_runtime_async(adapter_id: str) -> None:
     threading.Thread(target=worker, name=f"runtime-{adapter_id}", daemon=True).start()
 
 
+def _effective_mlx_repo(adapter_id: str, default: str | None) -> str | None:
+    """Variante MLX effettiva: override salvato se c'è, altrimenti il default."""
+    try:
+        from . import model_settings
+        choice = (model_settings.get_settings(adapter_id)["effective"].get("mlx") or {}).get("repo")
+    except Exception:  # noqa: BLE001 - registro consultabile senza DB
+        choice = None
+    return choice or default
+
+
 def _expected_bytes(adapter_id: str) -> int | None:
     try:
         approx = get_adapter(adapter_id).capabilities.approx_size_gb
@@ -447,7 +457,14 @@ def list_models() -> list[dict]:
                     approx_size_gb=cap.get("approx_size_gb"),
                     mlx_weight_factor=cap.get("local_mlx_weight_factor"),
                 ),
-                "mlx_repo": cap.get("local_mlx_repo") or None,
+                # Variante MLX effettiva: il default dichiarato, salvo scelta
+                # salvata in Impostazioni (es. bf16 vs 8-bit).
+                "mlx_repo": _effective_mlx_repo(cap["adapter_id"], cap.get("local_mlx_repo")) or None,
+                "mlx_repo_choices": [
+                    {"variant": variant, "repo": repo}
+                    for variant, repo in (cap.get("local_mlx_repo_choices") or ())
+                ],
+                "mlx_repetition_penalty": cap.get("local_mlx_repetition_penalty"),
             },
         })
     return items

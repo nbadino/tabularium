@@ -32,6 +32,9 @@ export interface ModelItem {
     runtime: string | null
     reason: string | null
     mlx_repo: string | null
+    /** Varianti MLX pubblicate della stessa conversione (es. bf16, 8-bit). */
+    mlx_repo_choices?: { variant: string; repo: string }[]
+    mlx_repetition_penalty?: number | null
   }
   cloud_serve_ready: boolean
   /** Template Modal che serve questo modello; `null` = nessuna ricetta. */

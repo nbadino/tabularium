@@ -61,7 +61,7 @@ e Qwen passano dall'endpoint OpenAI-compatibile `mlx-vlm`; MinerU usa il proprio
 | MonkeyOCRv2-Parsing | ✅ | ❌ | nessun port MLX dell'architettura |
 | MinerU2.5 | ✅ | 🧪 `MinerUClient` `mlx-engine` | percorso nativo aggiunto con runtime isolato; manca ancora la prova live sul corpus |
 | DeepSeek-OCR-2 | ✅ | ❌ | la ricetta richiede il logits processor n-gram di vLLM |
-| Unlimited-OCR | ✅ (immagine Docker) | ❌ | idem: senza il processore n-gram va in loop |
+| Unlimited-OCR | ✅ (immagine Docker) | 🧪 `mlx-community/Unlimited-OCR-{bf16,8bit}` | da `mlx-vlm` 0.6.4 c'è `unlimited_ocr` con la R-SWA; protocollo verificato sul campione, manca la prova di qualità sul gold |
 | dots.mocr | ✅ | ❌ | servito davvero: END2END si chiude a 682 caratteri, run fallita |
 | GLM-OCR | ✅ | ❌ | servito davvero: run «riuscita» con **zero** blocchi inseriti |
 
@@ -89,12 +89,29 @@ Due differenze pratiche del percorso MLX:
 - **Il nome del modello è l'id del checkpoint MLX** (`/v1/models` del server MLX). Lo
   start lo imposta da sé; chiedere il nome sbagliato sarebbe un 404 a ogni chiamata.
 
-**Non basta che l'architettura esista in MLX: serve che la ricetta sia riproducibile.** Due
-modelli con un checkpoint MLX pubblicato restano fuori perché la loro ricetta verificata
-dipende dal **logits processor n-gram di vLLM** (`--logits-processors`), che `mlx-vlm` non ha:
-ha `repetition_penalty`/`presence_penalty`, che sono penalità, non un divieto. Provato
-servendo Unlimited-OCR via MLX: la pagina produce 12288 caratteri di `alpha.alpha.alpha…`
-fino al tetto dei token. Meglio «solo remoto» che un output plausibile e sbagliato.
+**Non basta che l'architettura esista in MLX: serve che la ricetta sia riproducibile.** Fino a
+`mlx-vlm` 0.6.3 Unlimited-OCR non era servibile via MLX: l'architettura mancava e la pagina
+produceva 12288 caratteri di `alpha.alpha.alpha…` fino al tetto dei token. Da 0.6.4 `mlx-vlm`
+porta `unlimited_ocr` con `RingSlidingKVCache`, cioè la R-SWA di upstream (prefisso intero +
+anello degli ultimi 128 token): è il pezzo che rende la ricetta riproducibile.
+
+Resta una differenza col percorso vLLM: il **logits processor n-gram** di upstream (35-gramma)
+non è fornito da `mlx-vlm` — la sua doc lo dichiara opt-in e non lo implementa — e il server
+MLX non accetta `logits_processors` via JSON. L'unico guard disponibile è la penalità di
+ripetizione. Misurato sul campione (pagina indice, modalità `gundam`, 3000 token): senza guard
+una riga si ripete 23 volte; con `repetition_penalty=1.1` ma la finestra di default (20 token)
+la penalità non basta (80 ripetizioni, la finestra non copre una riga da ~25 token); con
+`repetition_context_size=128` la generazione si **chiude da sola** senza ripetizioni, a
+~250 tok/s. I due valori sono quindi parte della ricetta MLX di questo modello, non un
+dettaglio, e sono i default in Impostazioni → Generazione locale (MLX).
+
+**Ma il server MLX standard non basta.** `mlx_vlm.server` 0.7.1 non inietta l'immagine
+per l'architettura `unlimited_ocr` (backend a continuous batching: `prompt_tokens` 6-7
+invece di 1518, output vuoto o allucinato), mentre l'API `mlx_vlm.generate` funziona.
+Tabularium quindi serve questo modello con un **server dedicato**
+(`backend/app/services/unlimited_ocr_mlx_server.py`, lanciato nel venv MLX come gli
+altri): stessa interfaccia OpenAI, ma costruita sull'API che funziona. Per tutti gli
+altri modelli il server resta `mlx_vlm.server`.
 
 **Il percorso ufficiale di PaddleOCR-VL ha un secondo runtime.** La pipeline Paddle
 (PP-DocLayout per il layout + riconoscimento) vive in `<root>/paddle-runtime` e si installa

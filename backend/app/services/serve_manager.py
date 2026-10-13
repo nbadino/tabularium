@@ -598,7 +598,11 @@ def start(
             mineru_mlx_runtime.ensure_ready()
         else:
             mlx_runtime.ensure_ready()
-        model_path = adapter.capabilities.local_mlx_repo
+        # La variante MLX è una scelta per modello (es. bf16 vs 8-bit): il
+        # default è quello dichiarato dall'adapter, l'override vince quando
+        # l'utente ne ha salvato uno in Impostazioni.
+        mlx_choice = (model_config["effective"].get("mlx") or {}).get("repo")
+        model_path = mlx_choice or adapter.capabilities.local_mlx_repo
     else:
         if not is_installed(adapter_id):
             raise ValueError(f"'{adapter_id}' non è installato: scaricalo prima di servirlo")
@@ -613,8 +617,20 @@ def start(
                 argv = mineru_mlx_runtime.serve_argv(
                     model_path, port=port, settings=model_config["effective"],
                 )
+            elif adapter_id == "unlimited-ocr":
+                # Il server MLX standard non inietta l'immagine per questa
+                # architettura (v. `unlimited_ocr_mlx_server.py`): serve il
+                # server dedicato, che usa l'API `mlx_vlm.generate`.
+                argv = mlx_runtime.unlimited_ocr_serve_argv(model_path, port=port)
             else:
-                mlx_overrides = model_settings.get_settings(adapter_id)["overrides"].get("mlx", {})
+                # `repo` e `repetition_penalty` sono scelte per richiesta (il
+                # primo è già risolto in `model_path`, la seconda la applica il
+                # client), non flag del server: non vanno passati a `serve_argv`.
+                mlx_overrides = {
+                    key: value
+                    for key, value in model_settings.get_settings(adapter_id)["overrides"].get("mlx", {}).items()
+                    if key not in {"repo", "repetition_penalty"}
+                }
                 argv = mlx_runtime.serve_argv(model_path, port=port, settings=mlx_overrides)
         elif adapter_id == "monkeyocrv2-parsing":
             # `scripts/serve_model.sh` legge queste due env var: se l'utente non

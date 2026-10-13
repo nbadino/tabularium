@@ -875,8 +875,10 @@ dal CER e li conta il recall).
   la decisione, `services/hardware.py`: piattaforma, memoria (unificata su Apple Silicon, VRAM
   su CUDA), e quali runtime di serving la macchina può ospitare. `vllm` su Linux+CUDA (su
   Windows via WSL2), `mlx-vlm` su Apple Silicon — dove vLLM non gira affatto, essendo
-  CUDA-first. Ogni adapter dichiara `local_runtimes` e, quando esiste, `local_mlx_repo`; il
-  registro espone per ogni modello `local: {runnable, runtime, reason, mlx_repo}`, con **codici
+  CUDA-first. Ogni adapter dichiara `local_runtimes` e, quando esiste, `local_mlx_repo` (più
+  `local_mlx_repo_choices` per le varianti pubblicate, es. bf16/8-bit, scelte per modello in
+  Impostazioni); il
+  registro espone per ogni modello `local: {runnable, runtime, reason, mlx_repo, mlx_repo_choices}`, con **codici
   stabili** che la UI traduce (`cuda_required`, `no_nvidia_gpu`, `apple_silicon_required`,
   `no_local_runtime`, `model_unsupported_locally`, `insufficient_memory`). Conseguenza di
   prodotto: su un Mac PaddleOCR-VL ha un benchmark MLX verificato. Qwen3-VL ha avuto prove
@@ -888,9 +890,15 @@ dal CER e li conta il recall).
   **MonkeyOCRv2** perché `mlx-vlm` non ha quell'architettura (verificato sui moduli installati);
   **MinerU2.5** usa il runtime nativo isolato `MinerUClient` MLX 2.0.5, verificato su
   scansioni corpus con layout completo e output tabellare HTML valido; le tabelle dense
-  restano da valutare contro annotazioni gold. **DeepSeek-OCR-2** e **Unlimited-OCR** perché la loro ricetta verificata
-  si regge sul logits processor n-gram di vLLM, che `mlx-vlm` non ha (Unlimited-OCR via MLX
-  produce 12288 caratteri di `alpha.alpha.alpha…` fino al tetto dei token); **dots.mocr**
+  restano da valutare contro annotazioni gold. **DeepSeek-OCR-2** perché la sua ricetta verificata
+  si regge sul logits processor n-gram di vLLM, che `mlx-vlm` non ha; **Unlimited-OCR** lo era
+  fino a `mlx-vlm` 0.6.3 (via MLX produceva 12288 caratteri di `alpha.alpha.alpha…`), ma da 0.6.4
+  `mlx-vlm` porta `unlimited_ocr` con `RingSlidingKVCache` (la R-SWA di upstream) e il modello
+  gira in locale — misurato il 2026-10-13 su M5 Pro / 24 GB con `mlx_vlm 0.7.1`: 265,6 tok/s,
+  TTFT 1,2 s, 5,8 GB, output grounded-markdown con `<table>` HTML. Essendo il n-gram processor
+  ancora assente, la ricetta MLX di questo modello include una penalità di ripetizione con
+  finestra 128 (`local_mlx_repetition_penalty`/`local_mlx_repetition_context_size`): senza, la
+  generazione entra in loop (misurato: una riga ripetuta 23 volte); **dots.mocr**
   perché la generazione END2END si chiude a 682 caratteri e la run fallisce; **GLM-OCR** perché
   la run «riesce» con **zero** blocchi inseriti — un successo vuoto, peggio di un errore.
   **LightOnOCR-3-1B** è remoto solo perché non è ancora stato provato: niente misura, niente

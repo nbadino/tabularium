@@ -319,6 +319,9 @@ export const en: Dict = {
       readyBody: '{model} is answering and is the model in use.',
       readyPending: 'Once the server answers, the model becomes the one in use, with no further steps.',
     },
+    localVariantTitle: 'Which model variant?',
+    localVariantIntro:
+      '{model} on a Mac runs through MLX. Choose the quantization: bf16 (16-bit) is the most faithful measurement, 8-bit is about 1.5× faster and half the size.',
     remoteIntro:
       'Configure {provider} for {model}. Once the connection is verified, the model becomes the one in use.',
     remoteDone: '{model} on {provider} is now the model in use.',
@@ -2027,7 +2030,9 @@ export const en: Dict = {
     modelDtypeHint: 'Choose a precision supported by the GPU; Automatic follows the model recipe.',
     modelMlxRuntime: 'Local serving (MLX)',
     modelMlxIntro: 'These values are passed to mlx-vlm on Apple Silicon. Automatic keeps the installed version defaults; changes require a server restart.',
-    mlxField: { kv_bits: 'KV cache bits', kv_group_size: 'KV quantization group size', max_kv_size: 'Maximum KV cache size', vision_cache_size: 'Vision cache size', kv_quant_scheme: 'KV quantization scheme', log_level: 'Log level' },
+    mlxField: { kv_bits: 'KV cache bits', kv_group_size: 'KV quantization group size', max_kv_size: 'Maximum KV cache size', vision_cache_size: 'Vision cache size', kv_quant_scheme: 'KV quantization scheme', log_level: 'Log level', repo: 'Checkpoint variant', repetition_penalty: 'Repetition penalty', repetition_context_size: 'Repetition penalty window' },
+    mlxRepoHint: 'bf16 is the most faithful measurement; 8-bit weighs about half and runs on Macs with less unified memory.',
+    mlxRepetitionHint: 'MLX lacks the model’s official n-gram processor: this penalty stands in for it. With the default window (20) a repeated register row is not penalized; 128 covers it and the generation closes on its own.',
     modelGeneration: 'Generation',
     modelImage: 'Image',
     modelPixelsHint: 'Leave blank for the default. Paddle mlx-vlm-server on Apple Silicon does not apply min_pixels/max_pixels; these overrides work with the vLLM backend.',

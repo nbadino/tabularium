@@ -46,6 +46,12 @@ _MLX_LIMITS = {
     "max_kv_size": (512, 131072),
     "vision_cache_size": (0, 1024),
 }
+# Guard anti-loop del percorso MLX: validi solo per gli adapter che li
+# dichiarano (`local_mlx_repetition_penalty`), perché nascono da una ricetta la
+# cui difesa n-gram `mlx-vlm` non fornisce. Applicati solo al serving locale
+# Apple Silicon (v. `inference._sampling_for`).
+_MLX_REPEAT_FLOAT_LIMITS = {"repetition_penalty": (0.5, 2.0)}
+_MLX_REPEAT_INT_LIMITS = {"repetition_context_size": (1, 2048)}
 _PADDLE_BOOLEAN_WORKFLOW = {
     "use_layout_detection",
     "layout_nms",
@@ -158,9 +164,26 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
         ),
         # None preserves the mlx-vlm version's own default. These only apply
         # to local Apple Silicon serving, never to remote vLLM deployments.
-        "mlx": {key: None for key in (*_MLX_LIMITS, "kv_quant_scheme", "log_level")}
-        if getattr(adapter.capabilities, "local_mlx_settings", False)
-        else {},
+        "mlx": (
+            {
+                **{key: None for key in (*_MLX_LIMITS, "kv_quant_scheme", "log_level")},
+                # Scelta della variante MLX (es. quantizzazione) quando
+                # l'adapter ne dichiara più di una. None = default dichiarato.
+                **({"repo": None} if getattr(adapter.capabilities, "local_mlx_repo_choices", ()) else {}),
+                # Guard anti-loop consigliato quando la ricetta ufficiale si
+                # regge su un n-gram processor che mlx-vlm non ha.
+                **(
+                    {
+                        "repetition_penalty": adapter.capabilities.local_mlx_repetition_penalty,
+                        "repetition_context_size": adapter.capabilities.local_mlx_repetition_context_size,
+                    }
+                    if getattr(adapter.capabilities, "local_mlx_repetition_penalty", None) is not None
+                    else {}
+                ),
+            }
+            if getattr(adapter.capabilities, "local_mlx_settings", False)
+            else {}
+        ),
     }
 
 
@@ -190,6 +213,13 @@ def get_settings(adapter_id: str) -> dict[str, Any]:
     return {
         "adapter_id": adapter_id,
         "display_name": adapter.capabilities.display_name,
+        # Varianti MLX selezionabili per la UI (es. quantizzazione): l'etichetta
+        # è stabile e tradotta lato frontend, il repo è la stringa che il server
+        # passa a mlx-vlm.
+        "mlx_repo_choices": [
+            {"variant": variant, "repo": repo}
+            for variant, repo in getattr(adapter.capabilities, "local_mlx_repo_choices", ())
+        ],
         "recommended": recommended,
         "overrides": overrides,
         "effective": effective,
@@ -201,7 +231,7 @@ def get_settings(adapter_id: str) -> dict[str, Any]:
     }
 
 
-def _validated_section(section: str, values: Any) -> dict[str, Any]:
+def _validated_section(section: str, values: Any, adapter_id: str | None = None) -> dict[str, Any]:
     if not isinstance(values, dict):
         raise HTTPException(status_code=422, detail=f"'{section}' deve essere un oggetto")
     if section == "workflow":
@@ -238,16 +268,37 @@ def _validated_section(section: str, values: Any) -> dict[str, Any]:
             result[key] = float(value) if key == "gpu_memory_utilization" else int(value)
         return result
     if section == "mlx":
-        if set(values) - (set(limits) | set(mlx_enums)):
+        capabilities = get_adapter(adapter_id).capabilities if adapter_id else None
+        repo_choices = (
+            {repo for _label, repo in capabilities.local_mlx_repo_choices} if capabilities else set()
+        )
+        # I campi del guard anti-loop esistono solo per gli adapter che lo
+        # dichiarano: su un modello senza guard sono un parametro sconosciuto.
+        guard = bool(capabilities) and getattr(capabilities, "local_mlx_repetition_penalty", None) is not None
+        repeat_float = _MLX_REPEAT_FLOAT_LIMITS if guard else {}
+        repeat_int = _MLX_REPEAT_INT_LIMITS if guard else {}
+        allowed = set(limits) | set(mlx_enums) | set(repeat_float) | set(repeat_int) | ({"repo"} if repo_choices else set())
+        if set(values) - allowed:
             raise HTTPException(status_code=422, detail="parametro mlx non riconosciuto")
         result = {}
         for key, value in values.items():
             if value is None:
                 continue
+            if key == "repo":
+                if value not in repo_choices:
+                    raise HTTPException(status_code=422, detail="mlx.repo non è una variante disponibile")
+                result[key] = value
+                continue
             if key in mlx_enums:
                 if value not in mlx_enums[key]:
                     raise HTTPException(status_code=422, detail=f"mlx.{key} non valido")
                 result[key] = value
+                continue
+            if key in repeat_float or key in repeat_int:
+                lo, hi = (repeat_float | repeat_int)[key]
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not lo <= value <= hi:
+                    raise HTTPException(status_code=422, detail=f"mlx.{key} deve essere tra {lo:g} e {hi:g}")
+                result[key] = float(value) if key in repeat_float else int(value)
                 continue
             lo, hi = limits[key]
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not lo <= value <= hi:
@@ -289,7 +340,7 @@ def save_settings(adapter_id: str, payload: Any, actor: dict | None = None) -> d
                 raise HTTPException(status_code=422, detail="image.min_pixels è disponibile solo nei workflow PaddleOCR-VL e Qwen3-VL")
             if section == "image" and adapter_id == "mineru2.5" and values:
                 raise HTTPException(status_code=422, detail="MinerU usa la propria preparazione immagini; regola layout_image_size nelle opzioni del workflow ufficiale")
-            overrides[section] = _validated_section(section, values)
+            overrides[section] = _validated_section(section, values, adapter_id)
             unsupported_generation = (
                 set(overrides[section]) & _UNSUPPORTED_GENERATION_FIELDS.get(adapter_id, set())
                 if section == "generation" else set()

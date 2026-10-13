@@ -174,9 +174,12 @@ def serve_start(adapter_id: str, payload: dict | None = None, _admin: dict = Dep
     # Il nome che il client deve chiedere dipende dal runtime: `vllm` espone
     # `--served-model-name`, il server MLX espone l'id del checkpoint MLX
     # (`/v1/models`). Chiedere il nome sbagliato è un 404 a ogni chiamata.
+    from ..services import model_settings
+
     local_runtime_id = hardware.pick_serve_runtime(adapter.capabilities)
+    mlx_choice = (model_settings.get_settings(adapter_id)["effective"].get("mlx") or {}).get("repo")
     served_model = (
-        adapter.capabilities.local_mlx_repo
+        (mlx_choice or adapter.capabilities.local_mlx_repo)
         if local_runtime_id == hardware.RUNTIME_MLX
         else (adapter.capabilities.served_model_name or adapter_id)
     )

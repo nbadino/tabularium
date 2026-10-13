@@ -687,3 +687,80 @@ MinerU (`layout_image_size 1036×1036`, `min_image_edge 28`,
 L’istanza è sana e utilizzabile, ma lo spazio libero resta sotto i preflight
 di GLM-OCR, TeleOCR e DeepSeek-OCR-2; Qwen3-VL-8B resta oltre la VRAM totale.
 Questa verifica quindi non rimuove i blocker della matrice restante.
+
+### Unlimited-OCR su MLX — percorso locale Apple Silicon (2026-10-13)
+
+`mlx-vlm` 0.6.4 ha aggiunto il modello `unlimited_ocr` con `RingSlidingKVCache`
+(la R-SWA di upstream: prefisso intero + anello degli ultimi 128 token). È il
+pezzo che prima mancava e che rendeva il modello «solo remoto»: fino a 0.6.3 la
+pagina produceva `alpha.alpha.alpha…` fino al tetto dei token.
+
+Misurato su **M5 Pro / 24 GB** (la macchina di riferimento della card), non da
+shell ma con l’`mlx_vlm 0.7.1` che Tabularium installa già in
+`<root>/mlx-runtime`, sulla pagina indice `LSI_4322_045` (2816×3680):
+
+| Config (3000 token max) | tok/s | TTFT | Esito |
+|---|---:|---:|---|
+| `mxfp8`, gundam, nessun guard | 265,6 | 1,2 s | loop: una riga ripetuta 23× |
+| `mxfp8`, gundam, `rep 1.1` (finestra 20) | 248,4 | 1,3 s | loop: 80 ripetizioni, la finestra non copre la riga |
+| `mxfp8`, gundam, `rep 1.1` + **finestra 128** | 251,1 | 0,9 s | **nessuna ripetizione, `finish=stop`** a 2917 token |
+| `mxfp8`, base, `rep 1.1` | 122,1 | 1,1 s | ~2× più lento di gundam, loop con finestra 20 |
+
+Output valido: grounded-markdown con `<|det|>header [122,42,262,62]<|/det|>` e
+una `<table>` HTML completa con le righe reali del Lloyd’s Daily Index — lo
+stesso formato che `parse_layout` già legge. Riferimento «prima»: sullo stesso
+tipo di pagina il percorso vLLM su RTX 4060 Laptop 8 GB in offload dava 13,3
+tok/s; qui non c’è cloud e si sta ~20× più veloci.
+
+**Best practice dedotte** (dalla doc `mlx-vlm/models/unlimited_ocr/README.md` e
+misurate):
+
+1. Il prompt è il testo puro (`document parsing.`): `<image>` lo inserisce il
+   template, non va aggiunto a mano.
+2. `gundam` (default: `cropping=True`, `image_size=640`, `base_size=1024`) è il
+   modo per la pagina singola ed è ~2× più veloce di `base`; `base` è documentato
+   per il multi-pagina, che Tabularium non usa (riconosce pagina per pagina).
+3. Il **no-repeat n-gram processor è opt-in e `mlx-vlm` non lo fornisce**, e il
+   server MLX non accetta processor callable via JSON. Il sostituto è
+   `repetition_penalty`; la **finestra conta**: con il default (20 token) una
+   riga di registro (~25 token) scivola fuori e non viene mai penalizzata.
+   `repetition_context_size=128` è il valore che chiude il loop.
+4. `temperature=0.0` per output deterministico; `max_tokens` alto (il modello è
+   nato per documenti lunghi).
+
+I default esposti da Tabularium (`unlimited-ocr`, sezione MLX) sono questi:
+variante `bf16` (misura pulita) o `8bit` (circa metà dei pesi), `repetition_penalty`
+1.1 e `repetition_context_size` 128, applicati **solo** al serving locale Apple
+Silicon (su vLLM il modello ha già il suo processore n-gram). Resta da fare la
+prova di **qualità** contro annotazioni gold: questa è una verifica di
+protocollo, non un punteggio.
+
+#### Confronto varianti MLX (gundam, rep 1.1 + finestra 128, 3000 token)
+
+| Variante | tok/s | wall | picco | righe | ripetizioni | Note |
+|---|---:|---:|---:|---:|---:|---|
+| `Unlimited-OCR-8bit` (3,6 GB) | **239,6** | 14,3 s | **5,9 GB** | 67 | 1 | più veloce e più leggera |
+| `Unlimited-OCR-bf16` (6,2 GB) | 154,4 | 22,9 s | 8,7 GB | 68 | 1 | fedeltà massima, la più lenta |
+| `Unlimited-OCR-mxfp8` (3,6 GB) | 224,7 | 17,2 s | 8,7 GB | 73 | 1 | **artefatti di detokenizzazione** (`Ġ` al posto degli spazi) |
+
+L'8-bit è ~1,5× più veloce del bf16 a parità di contenuto riconosciuto, e su un
+Mac da 16 GB è la variante che entra. Il bf16 resta il default perché è la
+misura pulita: la differenza di qualità si può affermare solo contro il gold.
+Un avvertimento su `mxfp8` (non esposto): decodifica con gli spazi resi come
+`Ġ`, quindi le trascrizioni escono sporche.
+
+#### Il server MLX standard non basta: server dedicato
+
+`mlx_vlm.server` 0.7.1 **non inietta l'immagine** per l'architettura
+`unlimited_ocr`: costruisce il prompt coi soli token di testo (`prompt_tokens`
+6-7 contro i 1518 dell'API Python) e il modello restituisce vuoto o testo
+allucinato. Il difetto è nel backend a continuous batching, non nel formato
+della richiesta: `prepare_inputs` espande correttamente a 1518 token sia col
+prompt testuale sia con la lista di messaggi.
+
+Tabularium quindi serve Unlimited-OCR con un server dedicato
+(`backend/app/services/unlimited_ocr_mlx_server.py`), lanciato nel venv MLX:
+espone la stessa interfaccia OpenAI ma si regge sull'API `mlx_vlm.generate` che
+funziona. Verificato end-to-end (streaming e non): `prompt_tokens=1518`, col
+guard `finish=stop` e zero ripetizioni; senza guard il loop. Poiché espone la
+stessa interfaccia, il resto del client resta invariato.

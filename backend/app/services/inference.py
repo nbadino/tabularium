@@ -690,6 +690,21 @@ class VllmClient:
             return wanted
         return max(512, min(wanted, context - 2048))
 
+    def _uses_local_mlx(self) -> bool:
+        """Vero quando questo endpoint è il server MLX locale di questa macchina.
+
+        Non basta l'URL: un tunnel Vast ascolta su localhost. Si guarda prima
+        il provider persistito (`is_cloud`), poi il runtime che *questa*
+        macchina sceglierebbe per l'adapter.
+        """
+        if self.is_cloud:
+            return False
+        try:
+            from . import hardware
+            return hardware.pick_serve_runtime(self.adapter.capabilities) == hardware.RUNTIME_MLX
+        except Exception:  # noqa: BLE001
+            return False
+
     def _sampling_for(self, task: str) -> dict | None:
         """Override di sampling per task, se l'adapter ne dichiara (es.
         le penalità anti-ripetizione richieste da MinerU2.5)."""
@@ -697,7 +712,19 @@ class VllmClient:
         sampling = dict(sampling_for(task) or {}) if callable(sampling_for) else {}
         try:
             from . import model_settings
-            sampling.update(model_settings.get_settings(self.adapter.adapter_id)["effective"]["generation"])
+            settings = model_settings.get_settings(self.adapter.adapter_id)
+            sampling.update(settings["effective"]["generation"])
+            # Sul percorso MLX la ricetta ufficiale non ha il logits processor
+            # n-gram (mlx-vlm non lo fornisce, e il server non accetta processor
+            # callable via JSON): l'unico guard è la penalità di ripetizione.
+            # Vale solo per il serving locale Apple Silicon, mai per vLLM, dove
+            # il modello ha già il suo processore n-gram.
+            if self._uses_local_mlx():
+                mlx = settings["effective"].get("mlx") or {}
+                if mlx.get("repetition_penalty") is not None:
+                    sampling.setdefault("repetition_penalty", float(mlx["repetition_penalty"]))
+                if mlx.get("repetition_context_size") is not None:
+                    sampling.setdefault("repetition_context_size", int(mlx["repetition_context_size"]))
         except (ImportError, ValueError, KeyError):
             pass
         return sampling or None

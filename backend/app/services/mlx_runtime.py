@@ -154,6 +154,27 @@ def ensure_ready() -> None:
     _write_state(state="ready", error=None)
 
 
+def unlimited_ocr_serve_argv(repo: str, *, port: int, host: str = "127.0.0.1") -> list[str]:
+    """Comando del server MLX dedicato di Unlimited-OCR.
+
+    Non usa `mlx_vlm.server`: per l'architettura `unlimited_ocr` quel server
+    non inietta l'immagine (v. `unlimited_ocr_mlx_server.py`). Il server
+    dedicato espone la stessa interfaccia OpenAI ma usa l'API `mlx_vlm.generate`
+    che funziona. Gira comunque nel venv MLX, come il server generico.
+    """
+    script = Path(__file__).with_name("unlimited_ocr_mlx_server.py")
+    return [
+        str(python_bin()),
+        str(script),
+        "--model",
+        repo,
+        "--host",
+        host,
+        "--port",
+        str(int(port)),
+    ]
+
+
 def serve_argv(
     repo: str,
     *,

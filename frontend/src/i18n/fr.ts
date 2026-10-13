@@ -319,6 +319,9 @@ export const fr: Dict = {
       readyBody: '{model} répond et c’est le modèle utilisé.',
       readyPending: 'Dès que le serveur répond, le modèle devient celui utilisé, sans autre étape.',
     },
+    localVariantTitle: 'Quelle variante du modèle ?',
+    localVariantIntro:
+      '{model} sur Mac s’exécute via MLX. Choisissez la quantification : bf16 (16 bits) est la mesure la plus fidèle, 8 bits est environ 1,5× plus rapide et deux fois plus léger.',
     remoteIntro:
       'Configurez {provider} pour {model}. Une fois la connexion vérifiée, le modèle devient celui utilisé.',
     remoteDone: '{model} sur {provider} est maintenant le modèle utilisé.',
@@ -2028,7 +2031,9 @@ export const fr: Dict = {
     modelDtypeHint: 'Choisissez une précision prise en charge par le GPU ; Automatique suit la recette du modèle.',
     modelMlxRuntime: 'Service local (MLX)',
     modelMlxIntro: 'Ces valeurs sont transmises à mlx-vlm sur Apple Silicon. Automatique conserve les valeurs par défaut de la version installée ; les changements nécessitent un redémarrage du serveur.',
-    mlxField: { kv_bits: 'Bits du cache KV', kv_group_size: 'Taille du groupe de quantification KV', max_kv_size: 'Taille maximale du cache KV', vision_cache_size: 'Taille du cache visuel', kv_quant_scheme: 'Schéma de quantification KV', log_level: 'Niveau de journalisation' },
+    mlxField: { kv_bits: 'Bits du cache KV', kv_group_size: 'Taille du groupe de quantification KV', max_kv_size: 'Taille maximale du cache KV', vision_cache_size: 'Taille du cache visuel', kv_quant_scheme: 'Schéma de quantification KV', log_level: 'Niveau de journalisation', repo: 'Variante du checkpoint', repetition_penalty: 'Pénalité de répétition', repetition_context_size: 'Fenêtre de pénalité de répétition' },
+    mlxRepoHint: 'bf16 est la mesure la plus fidèle ; 8-bit pèse environ moitié moins et tourne sur les Mac à mémoire unifiée plus faible.',
+    mlxRepetitionHint: 'MLX n’a pas le processeur n-gram officiel du modèle : cette pénalité le remplace. Avec la fenêtre par défaut (20), une ligne de registre répétée n’est pas pénalisée ; 128 la couvre et la génération se termine seule.',
     modelGeneration: 'Génération',
     modelImage: 'Image',
     modelPixelsHint: 'Laissez vide pour le réglage par défaut. Paddle mlx-vlm-server sur Apple Silicon ignore min_pixels/max_pixels ; ces réglages fonctionnent avec le backend vLLM.',

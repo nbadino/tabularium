@@ -8,8 +8,9 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
-import { apiDelete, apiGet, apiPost } from '../../lib/api'
+import { apiDelete, apiGet, apiPost, apiPut } from '../../lib/api'
 import { localRuntimeLabel } from '../../lib/vocab'
+import { useCanAdminister } from '../auth'
 import { useI18n } from '../../i18n'
 import { Module, Notice, Progress } from '../ui'
 import { ChecklistItem, type ChecklistState } from './Checklist'
@@ -91,7 +92,15 @@ export function LocalSetup({ model, onChanged }: LocalSetupProps) {
   const [rate, setRate] = useState<number | null>(null)
   const firstSample = useRef<{ t: number; bytes: number } | null>(null)
 
+  const isAdmin = useCanAdminister()
   const mlx = model.local.runtime === 'mlx-vlm'
+  // Varianti MLX pubblicate (es. bf16 vs 8-bit): la scelta è la variante
+  // effettiva, quella che il server carica.
+  const variants = model.local.mlx_repo_choices ?? []
+  const [variant, setVariant] = useState(model.local.mlx_repo ?? '')
+  useEffect(() => {
+    setVariant(model.local.mlx_repo ?? '')
+  }, [model.local.mlx_repo])
 
   const loadServe = async () => {
     try {
@@ -228,6 +237,21 @@ export function LocalSetup({ model, onChanged }: LocalSetupProps) {
       await loadServe()
     }, 'cloud.models.serveError')
 
+  const changeVariant = (repo: string) =>
+    run(async () => {
+      // Il PUT sostituisce l'intero blocco degli override: si rilegge e si
+      // fonde, così cambiare variante non cancella le altre impostazioni del
+      // modello. `onChanged` rilegge il registro e riallinea la selezione.
+      const current = await apiGet<{ overrides: Record<string, Record<string, unknown>> }>(
+        `/system/model-settings/${model.adapter_id}`,
+      )
+      await apiPut(`/system/model-settings/${model.adapter_id}`, {
+        ...current.overrides,
+        mlx: { ...(current.overrides.mlx ?? {}), repo },
+      })
+      await onChanged()
+    }, 'cloud.models.serveError')
+
   const connectHf = async () => {
     // Il popup va riservato in modo sincrono dal click, o il browser blocca la
     // scheda OAuth aperta dopo la richiesta.
@@ -309,7 +333,30 @@ export function LocalSetup({ model, onChanged }: LocalSetupProps) {
           }
         >
           {mlx ? (
-            <p>{t('modelsHub.local.weightsMlxBody', { repo: model.local.mlx_repo ?? model.hf_repo })}</p>
+            <div>
+              <p>{t('modelsHub.local.weightsMlxBody', { repo: model.local.mlx_repo ?? model.hf_repo })}</p>
+              {variants.length > 0 && (
+                <label className="mt-2 block max-w-md">
+                  <span className="lbl">{t('settings.mlxField.repo')}</span>
+                  <select
+                    className="fld mt-1 w-full"
+                    value={variant}
+                    disabled={!isAdmin || busy || ready || starting}
+                    onChange={(event) => {
+                      const next = event.target.value
+                      if (next && next !== variant) void changeVariant(next)
+                    }}
+                  >
+                    {variants.map((choice) => (
+                      <option key={choice.repo} value={choice.repo}>
+                        {choice.variant} · {choice.repo}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="mt-1 block text-[10px] text-[color:var(--color-ink-3)]">{t('settings.mlxRepoHint')}</span>
+                </label>
+              )}
+            </div>
           ) : model.installed ? (
             <div className="flex flex-wrap items-center gap-2">
               <span className="mono text-[11px]">{model.path ?? model.hf_repo}</span>

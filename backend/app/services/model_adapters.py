@@ -99,6 +99,20 @@ class ModelCapabilities:
     # MLX quantizzati usano il fattore globale; i loader nativi non quantizzati
     # possono dichiarare il proprio.
     local_mlx_weight_factor: float | None = None
+    # Varianti MLX selezionabili, come coppie (etichetta, repo Hugging Face).
+    # `local_mlx_repo` resta il default; queste sono le alternative pubblicate
+    # della stessa conversione (es. 8-bit più leggero del bf16). Vuoto = una
+    # sola scelta, quella di default.
+    local_mlx_repo_choices: tuple[tuple[str, str], ...] = ()
+    # Penalità di ripetizione consigliata per il percorso MLX. Serve ai modelli
+    # la cui ricetta ufficiale si regge su un logits processor n-gram che
+    # `mlx-vlm` non fornisce (v. Unlimited-OCR): senza, la generazione lunga
+    # entra in loop. None = nessun guard imposto, valgono i default di mlx-vlm.
+    local_mlx_repetition_penalty: float | None = None
+    # Finestra su cui la penalità guarda indietro. Il default di mlx-vlm è 20
+    # token: troppo corto per una riga di registro ripetuta (~25 token), che
+    # scivola fuori dalla finestra e non viene mai penalizzata. 128 la copre.
+    local_mlx_repetition_context_size: int = 0
 
 
 class ModelAdapter(Protocol):
@@ -514,15 +528,40 @@ class UnlimitedOcrAdapter(_StubAdapter):
         # del produttore — su una GPU capiente si può alzare.
         max_model_len=12288,
         served_model_name="Unlimited-OCR",
-        local_runtimes=("vllm",),
-        # Nessun percorso locale MLX, e non per pigrizia: la ricetta verificata
-        # di questo modello si regge sul logits processor n-gram di vLLM
-        # (`unlimited_ocr:NGramPerReqLogitsProcessor`, «senza, i documenti
-        # lunghi vanno in loop sui token `<|det|>`»). `mlx-vlm` non ha logits
-        # processor, solo `repetition_penalty`/`presence_penalty`, che sono
-        # un'altra cosa. Provato servendolo davvero via MLX: la pagina produce
-        # 12288 caratteri di `alpha.alpha.alpha…` fino al tetto dei token.
-        # Meglio «solo remoto» che un output plausibile e sbagliato.
+        # Percorso locale Apple Silicon. Fino a `mlx-vlm` 0.6.4 l'architettura
+        # non c'era e il modello andava in loop (`alpha.alpha.alpha…`); da
+        # 0.6.4 esiste il modello `unlimited_ocr` con `RingSlidingKVCache`,
+        # cioè la R-SWA di upstream (prefisso intero + anello degli ultimi 128
+        # token). Verificato il 2026-10-13 su M5 Pro / 24 GB con
+        # `mlx_vlm 0.7.1`: pagina indice LSI (2816×3680) in modalità `gundam`,
+        # 265,6 tok/s, TTFT 1,2 s, picco 5,8 GB, output grounded-markdown con
+        # `<|det|>` e `<table>` HTML — lo stesso formato che `parse_layout` legge.
+        #
+        # Il ban n-gram a 35 di upstream **non** è in `mlx-vlm` (la doc lo
+        # dichiara opt-in e non lo fornisce) e il server MLX non accetta
+        # `logits_processors` via JSON: la difesa pratica è `repetition_penalty`
+        # (misurato: senza, una riga si ripete 23 volte; con 1.3, zero). Va
+        # impostata lato richiesta, non nei `vllm_xargs` che valgono solo per
+        # vLLM. Vedi `recommended_generation` sotto.
+        local_runtimes=("vllm", "mlx-vlm"),
+        # Default bf16 (misura pulita, la scelta di chi vuole la massima
+        # fedeltà); l'8-bit è l'alternativa per Mac con meno memoria unificata.
+        local_mlx_repo="mlx-community/Unlimited-OCR-bf16",
+        local_mlx_repo_choices=(
+            ("bf16", "mlx-community/Unlimited-OCR-bf16"),
+            ("8bit", "mlx-community/Unlimited-OCR-8bit"),
+        ),
+        local_mlx_settings=True,
+        # bf16 è ~6,2 GB contro i 6,0 GB stimati dei pesi sorgente: fattore ~1.
+        local_mlx_weight_factor=1.05,
+        # Guard anti-loop per il percorso MLX (v. commento sopra). Misurato sul
+        # campione in modalità `gundam`, 3000 token: senza guard una riga si
+        # ripete 23 volte; con context 20 la penalità non basta (80 ripetizioni,
+        # la finestra non copre la riga); con context 128 la generazione si
+        # chiude da sola (finish=stop) senza ripetizioni, a ~250 tok/s. Il
+        # context è quindi parte della ricetta, non un dettaglio.
+        local_mlx_repetition_penalty=1.1,
+        local_mlx_repetition_context_size=128,
     )
 
     def prompt_for(self, task: str, label: str | None = None) -> str | None:

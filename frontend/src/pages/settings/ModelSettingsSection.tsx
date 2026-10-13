@@ -14,7 +14,11 @@ interface ModelSettingsItem {
   overrides: Values
   effective: Values
   restart_required: boolean
+  /** Varianti MLX selezionabili della stessa conversione (es. bf16, 8-bit). */
+  mlx_repo_choices?: { variant: string; repo: string }[]
 }
+
+const MLX_MODELS = ['paddleocr-vl', 'qwen3-vl-8b', 'unlimited-ocr']
 
 const SERVING_FIELDS = [
   { key: 'gpu_memory_utilization', min: 0.2, max: 0.98, step: 0.01 },
@@ -195,15 +199,32 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
                 <p className="mt-2 text-[10px] text-[color:var(--color-ink-3)]">{t('settings.modelPixelsHint')}</p>
               </section>
             </div>
-            {['paddleocr-vl', 'qwen3-vl-8b'].includes(selected.adapter_id) && (
+            {MLX_MODELS.includes(selected.adapter_id) && (
               <section className="mt-4 border-t border-[color:var(--color-rule)] pt-3">
                 <h3 className="mb-1 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelMlxRuntime')}</h3>
                 <p className="mb-3 max-w-[75ch] text-[11px] text-[color:var(--color-ink-2)]">{t('settings.modelMlxIntro')}</p>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {(selected.mlx_repo_choices?.length ?? 0) > 0 && (
+                    <label className="block border-t border-[color:var(--color-rule)] pt-2">
+                      <span className="lbl">{t('settings.mlxField.repo')}</span>
+                      <select className="fld mt-1 w-full" value={String(draft.mlx?.repo ?? '')} disabled={!isAdmin || loading || saving}
+                        onChange={(event) => { setDraft((current) => ({ ...current, mlx: { ...(current.mlx ?? {}), repo: event.target.value || null } })); setSaved(false) }}>
+                        <option value="">{t('settings.modelAuto')}</option>
+                        {selected.mlx_repo_choices?.map((choice) => <option key={choice.repo} value={choice.repo}>{choice.variant} · {choice.repo}</option>)}
+                      </select>
+                      <span className="mt-1 block text-[10px] text-[color:var(--color-ink-3)]">{t('settings.mlxRepoHint')}</span>
+                    </label>
+                  )}
                   {([
                     ['kv_bits', 2, 8, 0.5], ['kv_group_size', 16, 256, 16],
                     ['max_kv_size', 512, 131072, 512], ['vision_cache_size', 0, 1024, 1],
                   ] as const).map(([key, min, max, step]) => numberField('mlx', key, t(`settings.mlxField.${key}`), min, max, step, true))}
+                  {selected.recommended?.mlx?.repetition_penalty != null && (
+                    <>
+                      {numberField('mlx', 'repetition_penalty', t('settings.mlxField.repetition_penalty'), 0.5, 2, 0.05, true)}
+                      {numberField('mlx', 'repetition_context_size', t('settings.mlxField.repetition_context_size'), 1, 2048, 1, true)}
+                    </>
+                  )}
                   {(['kv_quant_scheme', 'log_level'] as const).map((key) => (
                     <label key={key} className="block border-t border-[color:var(--color-rule)] pt-2">
                       <span className="lbl">{t(`settings.mlxField.${key}`)}</span>
@@ -215,6 +236,9 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
                     </label>
                   ))}
                 </div>
+                {selected.recommended?.mlx?.repetition_penalty != null && (
+                  <p className="mt-2 text-[10px] text-[color:var(--color-ink-3)]">{t('settings.mlxRepetitionHint')}</p>
+                )}
               </section>
             )}
             {selected.adapter_id === 'teleocr' && (

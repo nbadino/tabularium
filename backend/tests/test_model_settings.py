@@ -318,6 +318,38 @@ def test_mlx_model_settings_reject_unsupported_models_and_values(tmp_path, monke
         model_settings.save_settings("paddleocr-vl", {"mlx": {"kv_bits": 9}})
 
 
+def test_unlimited_ocr_mlx_variant_and_repetition_guard(tmp_path, monkeypatch):
+    # La variante MLX (bf16 vs 8-bit) e il guard anti-loop sono opzioni del
+    # modello `unlimited-ocr`, l'unico che dichiara le varianti e la penalità.
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "unlimited-mlx.db")
+    init_db()
+    settings = model_settings.get_settings("unlimited-ocr")
+    assert settings["recommended"]["mlx"]["repetition_penalty"] == 1.1
+    assert settings["recommended"]["mlx"]["repetition_context_size"] == 128
+    assert {choice["repo"] for choice in settings["mlx_repo_choices"]} == {
+        "mlx-community/Unlimited-OCR-bf16",
+        "mlx-community/Unlimited-OCR-8bit",
+    }
+
+    saved = model_settings.save_settings("unlimited-ocr", {
+        "mlx": {
+            "repo": "mlx-community/Unlimited-OCR-8bit",
+            "repetition_penalty": 1.15,
+            "repetition_context_size": 256,
+        },
+    })
+    assert saved["restart_required"] is True
+    assert saved["effective"]["mlx"]["repo"] == "mlx-community/Unlimited-OCR-8bit"
+    assert saved["effective"]["mlx"]["repetition_penalty"] == 1.15
+    assert saved["effective"]["mlx"]["repetition_context_size"] == 256
+
+    with pytest.raises(HTTPException, match="variante"):
+        model_settings.save_settings("unlimited-ocr", {"mlx": {"repo": "mlx-community/nope"}})
+    # Un modello che non dichiara il guard non accetta i suoi campi.
+    with pytest.raises(HTTPException, match="non riconosciuto"):
+        model_settings.save_settings("paddleocr-vl", {"mlx": {"repetition_penalty": 1.1}})
+
+
 def test_teleocr_sampling_preserves_upstream_task_defaults():
     from app.services.model_adapters import get_adapter
 

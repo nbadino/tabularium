@@ -855,3 +855,45 @@ def test_apple_silicon_serves_through_mlx_and_does_not_need_the_registry_downloa
         "--port",
         "18907",
     ], argv
+
+
+def test_apple_silicon_serves_unlimited_ocr_through_the_dedicated_server(monkeypatch):
+    """Il server MLX standard non inietta l'immagine per l'architettura
+    `unlimited_ocr` (misurato: `prompt_tokens` resta pari al solo testo).
+    Unlimited-OCR usa quindi un server dedicato, che espone la stessa
+    interfaccia OpenAI ma si regge sull'API `mlx_vlm.generate`; il default è la
+    variante bf16."""
+    from app.services import mlx_runtime
+
+    monkeypatch.setattr(
+        serve_manager.hardware,
+        "pick_serve_runtime",
+        lambda capabilities, machine=None: serve_manager.hardware.RUNTIME_MLX,
+    )
+    monkeypatch.setattr(mlx_runtime, "ensure_ready", lambda: None)
+    monkeypatch.setattr(mlx_runtime, "python_bin", lambda: Path("/tmp/mlx-python"))
+
+    captured: dict = {}
+
+    class FakeProc:
+        pid = 4322
+
+        def poll(self):
+            return None
+
+    def fake_popen(argv, **kwargs):
+        captured["argv"] = argv
+        return FakeProc()
+
+    monkeypatch.setattr(serve_manager.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(serve_manager, "_reclaim_port", lambda port, settle=10.0: None)
+    monkeypatch.setattr(serve_manager, "_set_phase", lambda *a, **k: None)
+    monkeypatch.setattr(serve_manager, "is_installed", lambda adapter_id: False)
+    monkeypatch.setattr(serve_manager, "_pid_alive", lambda pid: True)
+
+    serve_manager.start("unlimited-ocr", port=18908)
+
+    argv = captured["argv"]
+    assert argv[1].endswith("unlimited_ocr_mlx_server.py"), argv
+    assert argv[argv.index("--model") + 1] == "mlx-community/Unlimited-OCR-bf16"
+    assert argv[argv.index("--port") + 1] == "18908"

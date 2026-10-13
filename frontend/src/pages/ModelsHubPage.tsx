@@ -16,8 +16,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
-import { Badge, ErrorNotice, Module, Notice, PageHeader } from '../app/ui'
-import { apiGet } from '../lib/api'
+import { Badge, ErrorNotice, Modal, Module, Notice, PageHeader } from '../app/ui'
+import { apiGet, apiPut } from '../lib/api'
 import type { SystemInfo } from '../lib/types'
 import { syncInferenceFromBackend, useInference } from '../app/inference'
 import { CloudControlModal } from '../app/CloudControlModal'
@@ -49,6 +49,11 @@ export default function ModelsHubPage() {
   const [error, setError] = useState<unknown>(null)
   const [caps, setCaps] = useState<SystemInfo['capabilities'] | null>(null)
   const [remoteDone, setRemoteDone] = useState(false)
+  // Un modello con più varianti MLX pubblicate (es. Unlimited-OCR bf16/8-bit)
+  // chiede quale quantizzazione usare nel momento in cui si sceglie «locale»:
+  // la variante decide i pesi scaricati, quindi appartiene a quella decisione.
+  const [variantPrompt, setVariantPrompt] = useState(false)
+  const [variantBusy, setVariantBusy] = useState(false)
   const stepsRef = useRef<HTMLElement>(null)
 
   const reload = useCallback(async (force = true) => {
@@ -99,6 +104,30 @@ export default function ModelsHubPage() {
     // schermo scorrendo il catalogo, la si riporta in vista.
     const top = stepsRef.current?.getBoundingClientRect().top
     if (top != null && top < 0) stepsRef.current?.scrollIntoView({ block: 'start' })
+  }
+
+  const chooseVariant = async (repo: string) => {
+    if (!model) return
+    setVariantBusy(true)
+    setError(null)
+    try {
+      // Il PUT sostituisce l'intero blocco degli override: si rilegge e si
+      // fonde, così la scelta della variante non cancella le altre.
+      const current = await apiGet<{ overrides: Record<string, Record<string, unknown>> }>(
+        `/system/model-settings/${model.adapter_id}`,
+      )
+      await apiPut(`/system/model-settings/${model.adapter_id}`, {
+        ...current.overrides,
+        mlx: { ...(current.overrides.mlx ?? {}), repo },
+      })
+      await reload(true)
+    } catch (e) {
+      setError(e)
+    } finally {
+      setVariantBusy(false)
+      setVariantPrompt(false)
+      go({ dest: 'local', step: 'configure' })
+    }
   }
 
   const selectModel = (m: ModelItem) => {
@@ -260,7 +289,15 @@ export default function ModelsHubPage() {
             model={model}
             selected={dest}
             caps={caps}
-            onSelect={(d) => go({ dest: d, step: 'configure' })}
+            onSelect={(d) => {
+              // «Locale» con più varianti MLX: si chiede prima quale
+              // quantizzazione, poi si prosegue alla configurazione.
+              if (d === 'local' && (model.local.mlx_repo_choices?.length ?? 0) > 1) {
+                setVariantPrompt(true)
+                return
+              }
+              go({ dest: d, step: 'configure' })
+            }}
           />
         )}
 
@@ -304,6 +341,28 @@ export default function ModelsHubPage() {
           <Notice tone="warn">{t('modelsHub.modelMissing')}</Notice>
         )}
       </div>
+
+      {variantPrompt && model && (
+        <Modal title={t('modelsHub.localVariantTitle')} onClose={() => setVariantPrompt(false)}>
+          <p className="max-w-[70ch] text-[12px] text-[color:var(--color-ink-2)]">
+            {t('modelsHub.localVariantIntro', { model: model.display_name })}
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {(model.local.mlx_repo_choices ?? []).map((choice) => (
+              <button
+                key={choice.repo}
+                type="button"
+                className="btn text-left"
+                disabled={variantBusy}
+                onClick={() => void chooseVariant(choice.repo)}
+              >
+                <span className="block font-semibold">{choice.variant}</span>
+                <span className="mono block text-[11px] text-[color:var(--color-ink-3)]">{choice.repo}</span>
+              </button>
+            ))}
+          </div>
+        </Modal>
+      )}
 
       <div className="mt-3">
         <Module tab={t('modelsHub.improveModel')} quiet>

@@ -318,6 +318,9 @@ export const it = {
       readyBody: '{model} risponde ed è il modello in uso.',
       readyPending: 'Quando il server risponde il modello diventa quello in uso, senza altri passaggi.',
     },
+    localVariantTitle: 'Quale variante del modello?',
+    localVariantIntro:
+      '{model} su Mac si serve in MLX. Scegli la quantizzazione: il bf16 (16 bit) è la misura più fedele, l’8-bit è circa 1,5× più veloce e pesa la metà.',
     remoteIntro:
       'Configura {provider} per {model}. Quando la connessione è verificata, il modello diventa quello in uso.',
     remoteDone: '{model} su {provider} è ora il modello in uso.',
@@ -2029,7 +2032,9 @@ export const it = {
     modelDtypeHint: 'Scegli la precisione supportata dalla GPU; Automatico segue la ricetta del modello.',
     modelMlxRuntime: 'Serving locale (MLX)',
     modelMlxIntro: 'Questi valori vengono passati a mlx-vlm su Apple Silicon. Automatico mantiene i default della versione installata; le modifiche richiedono il riavvio del server.',
-    mlxField: { kv_bits: 'Bit cache KV', kv_group_size: 'Gruppo quantizzazione KV', max_kv_size: 'Dimensione massima cache KV', vision_cache_size: 'Cache visiva', kv_quant_scheme: 'Schema quantizzazione KV', log_level: 'Livello log' },
+    mlxField: { kv_bits: 'Bit cache KV', kv_group_size: 'Gruppo quantizzazione KV', max_kv_size: 'Dimensione massima cache KV', vision_cache_size: 'Cache visiva', kv_quant_scheme: 'Schema quantizzazione KV', log_level: 'Livello log', repo: 'Variante del checkpoint', repetition_penalty: 'Penalità di ripetizione', repetition_context_size: 'Finestra penalità ripetizione' },
+    mlxRepoHint: 'bf16 è la misura più fedele; 8-bit pesa circa la metà e gira sui Mac con meno memoria unificata.',
+    mlxRepetitionHint: 'Su MLX manca il processore n-gram ufficiale del modello: questa penalità è il suo sostituto. Con la finestra di default (20) una riga di registro ripetuta non viene penalizzata; 128 la copre e la generazione si chiude da sola.',
     modelGeneration: 'Generazione',
     modelImage: 'Immagine',
     modelPixelsHint: 'Lascia vuoto per il default. Paddle mlx-vlm-server su Apple Silicon non applica min_pixels/max_pixels; questi override funzionano con il backend vLLM.',
