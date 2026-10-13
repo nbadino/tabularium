@@ -320,6 +320,7 @@ export const it = {
       readyPending: 'Quando il server risponde il modello diventa quello in uso, senza altri passaggi.',
     },
     localVariantTitle: 'Quale variante del modello?',
+    variantTooBig: 'troppo grande per la memoria di questo computer',
     localVariantIntro:
       '{model} su Mac si serve in MLX. Scegli la quantizzazione: il bf16 (16 bit) è la misura più fedele, l’8-bit è circa 1,5× più veloce e pesa la metà.',
     remoteIntro:

@@ -321,6 +321,7 @@ export const fr: Dict = {
       readyPending: 'Dès que le serveur répond, le modèle devient celui utilisé, sans autre étape.',
     },
     localVariantTitle: 'Quelle variante du modèle ?',
+    variantTooBig: 'trop grand pour la mémoire de cet ordinateur',
     localVariantIntro:
       '{model} sur Mac s’exécute via MLX. Choisissez la quantification : bf16 (16 bits) est la mesure la plus fidèle, 8 bits est environ 1,5× plus rapide et deux fois plus léger.',
     remoteIntro:

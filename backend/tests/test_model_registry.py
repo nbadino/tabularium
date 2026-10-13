@@ -322,6 +322,44 @@ def test_unlimited_ocr_has_a_local_mlx_path_with_selectable_variants():
     assert plan["runtime"] == "mlx-vlm"
 
 
+
+def test_unlimited_ocr_picks_the_largest_mlx_variant_that_fits_this_mac():
+    # Il verdetto guardava solo il bf16 di default: su un Mac da 8 GB il
+    # modello risultava «memoria insufficiente» e «Questo Mac» restava spento,
+    # quindi la scelta della variante — che viene dopo — non si raggiungeva mai,
+    # anche se l'8-bit ci sta.
+    from app.services.hardware import mlx_variant_fits, pick_mlx_repo, plan_local, mlx_variant_factor
+
+    cap = model_adapters.get_adapter("unlimited-ocr").capabilities
+
+    def mac(memory_gb: float) -> dict:
+        return {
+            "apple_silicon": True,
+            "cuda": {"devices": []},
+            "memory_gb": memory_gb,
+            "runtimes": {"vllm": {"supported": False}, "mlx-vlm": {"supported": True}},
+            "usable_runtimes": ["mlx-vlm"],
+        }
+
+    small, large = mac(8.0), mac(24.0)
+    assert not mlx_variant_fits(cap, "mlx-community/Unlimited-OCR-bf16", small)
+    assert mlx_variant_fits(cap, "mlx-community/Unlimited-OCR-8bit", small)
+
+    # Senza una scelta salvata: un Mac grande resta sul bf16, uno da 8 GB passa all'8-bit.
+    assert pick_mlx_repo(cap, large) == "mlx-community/Unlimited-OCR-bf16"
+    picked = pick_mlx_repo(cap, small)
+    assert picked == "mlx-community/Unlimited-OCR-8bit"
+    plan = plan_local(
+        cap.local_runtimes, machine=small, approx_size_gb=cap.approx_size_gb,
+        mlx_weight_factor=mlx_variant_factor(cap, picked),
+    )
+    assert plan["runnable"] is True and plan["runtime"] == "mlx-vlm"
+
+    # Una scelta salvata vince sempre, anche se non ci sta: il verdetto lo dirà.
+    assert pick_mlx_repo(cap, small, saved="mlx-community/Unlimited-OCR-bf16") == "mlx-community/Unlimited-OCR-bf16"
+    # Nessuna variante entra: resta il default.
+    assert pick_mlx_repo(cap, mac(4.0)) == cap.local_mlx_repo
+
 def test_list_models_api_merges_capabilities_and_install_state():
     with TestClient(app) as client:
         res = client.get("/api/models")

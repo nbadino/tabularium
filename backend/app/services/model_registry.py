@@ -267,7 +267,7 @@ def _will_serve_locally(adapter_id: str) -> bool:
     plan = hardware.plan_local(
         getattr(adapter.capabilities, "local_runtimes", ()) or (),
         approx_size_gb=getattr(adapter.capabilities, "approx_size_gb", None),
-        mlx_weight_factor=getattr(adapter.capabilities, "local_mlx_weight_factor", None),
+        mlx_weight_factor=_mlx_factor(adapter.capabilities),
     )
     if not plan["runnable"]:
         return False
@@ -308,14 +308,22 @@ def ensure_runtime_async(adapter_id: str) -> None:
     threading.Thread(target=worker, name=f"runtime-{adapter_id}", daemon=True).start()
 
 
-def _effective_mlx_repo(adapter_id: str, default: str | None) -> str | None:
-    """Variante MLX effettiva: override salvato se c'è, altrimenti il default."""
+def _saved_mlx_repo(adapter_id: str) -> str | None:
     try:
         from . import model_settings
-        choice = (model_settings.get_settings(adapter_id)["effective"].get("mlx") or {}).get("repo")
+        return (model_settings.get_settings(adapter_id)["effective"].get("mlx") or {}).get("repo")
     except Exception:  # noqa: BLE001 - registro consultabile senza DB
-        choice = None
-    return choice or default
+        return None
+
+
+def _effective_mlx_repo(capabilities, machine: dict | None = None) -> str | None:
+    """Variante MLX effettiva: la salvata, altrimenti la più grande che ci sta."""
+    return hardware.pick_mlx_repo(capabilities, machine, saved=_saved_mlx_repo(capabilities.adapter_id))
+
+
+def _mlx_factor(capabilities, machine: dict | None = None) -> float | None:
+    """Fattore dei pesi della variante che si servirebbe davvero qui."""
+    return hardware.mlx_variant_factor(capabilities, _effective_mlx_repo(capabilities, machine))
 
 
 def _expected_bytes(adapter_id: str) -> int | None:
@@ -455,13 +463,17 @@ def list_models() -> list[dict]:
                     cap.get("local_runtimes") or (),
                     machine=local_machine,
                     approx_size_gb=cap.get("approx_size_gb"),
-                    mlx_weight_factor=cap.get("local_mlx_weight_factor"),
+                    mlx_weight_factor=_mlx_factor(adapter.capabilities, local_machine),
                 ),
-                # Variante MLX effettiva: il default dichiarato, salvo scelta
-                # salvata in Impostazioni (es. bf16 vs 8-bit).
-                "mlx_repo": _effective_mlx_repo(cap["adapter_id"], cap.get("local_mlx_repo")) or None,
+                # Variante MLX effettiva: la salvata in Impostazioni, altrimenti
+                # la più grande che entra in questa macchina (es. bf16 vs 8-bit).
+                "mlx_repo": _effective_mlx_repo(adapter.capabilities, local_machine),
                 "mlx_repo_choices": [
-                    {"variant": variant, "repo": repo}
+                    {
+                        "variant": variant,
+                        "repo": repo,
+                        "fits": hardware.mlx_variant_fits(adapter.capabilities, repo, local_machine),
+                    }
                     for variant, repo in (cap.get("local_mlx_repo_choices") or ())
                 ],
                 "mlx_repetition_penalty": cap.get("local_mlx_repetition_penalty"),

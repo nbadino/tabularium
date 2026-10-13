@@ -353,11 +353,14 @@ export default function ModelsHubPage() {
                 key={choice.repo}
                 type="button"
                 className="btn text-left"
-                disabled={variantBusy}
+                disabled={variantBusy || choice.fits === false}
                 onClick={() => void chooseVariant(choice.repo)}
               >
                 <span className="block font-semibold">{choice.variant}</span>
                 <span className="mono block text-[11px] text-[color:var(--color-ink-3)]">{choice.repo}</span>
+                {choice.fits === false && (
+                  <span className="block text-[11px] text-[color:var(--color-warn)]">{t('modelsHub.variantTooBig')}</span>
+                )}
               </button>
             ))}
           </div>

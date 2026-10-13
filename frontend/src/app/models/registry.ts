@@ -33,7 +33,8 @@ export interface ModelItem {
     reason: string | null
     mlx_repo: string | null
     /** Varianti MLX pubblicate della stessa conversione (es. bf16, 8-bit). */
-    mlx_repo_choices?: { variant: string; repo: string }[]
+    /** `fits` = entra nella memoria di questa macchina (stima del backend). */
+    mlx_repo_choices?: { variant: string; repo: string; fits?: boolean }[]
     mlx_repetition_penalty?: number | null
   }
   cloud_serve_ready: boolean

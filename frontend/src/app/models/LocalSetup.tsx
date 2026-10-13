@@ -348,8 +348,8 @@ export function LocalSetup({ model, onChanged }: LocalSetupProps) {
                     }}
                   >
                     {variants.map((choice) => (
-                      <option key={choice.repo} value={choice.repo}>
-                        {choice.variant} · {choice.repo}
+                      <option key={choice.repo} value={choice.repo} disabled={choice.fits === false}>
+                        {choice.variant} · {choice.repo}{choice.fits === false ? ` — ${t('modelsHub.variantTooBig')}` : ''}
                       </option>
                     ))}
                   </select>

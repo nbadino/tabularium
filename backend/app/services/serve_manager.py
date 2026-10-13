@@ -598,11 +598,11 @@ def start(
             mineru_mlx_runtime.ensure_ready()
         else:
             mlx_runtime.ensure_ready()
-        # La variante MLX è una scelta per modello (es. bf16 vs 8-bit): il
-        # default è quello dichiarato dall'adapter, l'override vince quando
-        # l'utente ne ha salvato uno in Impostazioni.
+        # La variante MLX è una scelta per modello (es. bf16 vs 8-bit): vince
+        # quella salvata in Impostazioni, altrimenti la più grande che entra in
+        # questa macchina — lo stesso criterio del verdetto del registro.
         mlx_choice = (model_config["effective"].get("mlx") or {}).get("repo")
-        model_path = mlx_choice or adapter.capabilities.local_mlx_repo
+        model_path = hardware.pick_mlx_repo(adapter.capabilities, saved=mlx_choice)
     else:
         if not is_installed(adapter_id):
             raise ValueError(f"'{adapter_id}' non è installato: scaricalo prima di servirlo")

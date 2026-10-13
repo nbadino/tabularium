@@ -104,6 +104,11 @@ class ModelCapabilities:
     # della stessa conversione (es. 8-bit più leggero del bf16). Vuoto = una
     # sola scelta, quella di default.
     local_mlx_repo_choices: tuple[tuple[str, str], ...] = ()
+    # Fattore dei pesi per variante, come coppie (repo, fattore): quanto pesa
+    # quella variante rispetto ai pesi sorgente. Senza, ogni variante vale
+    # `local_mlx_weight_factor` e l'8-bit sembrerebbe grande quanto il bf16:
+    # un Mac da 8 GB si vedeva negare il modello per la variante che non usa.
+    local_mlx_variant_weight_factors: tuple[tuple[str, float], ...] = ()
     # Penalità di ripetizione consigliata per il percorso MLX. Serve ai modelli
     # la cui ricetta ufficiale si regge su un logits processor n-gram che
     # `mlx-vlm` non fornisce (v. Unlimited-OCR): senza, la generazione lunga
@@ -554,6 +559,11 @@ class UnlimitedOcrAdapter(_StubAdapter):
         local_mlx_settings=True,
         # bf16 è ~6,2 GB contro i 6,0 GB stimati dei pesi sorgente: fattore ~1.
         local_mlx_weight_factor=1.05,
+        # 8-bit: 3,6 GB su 6,0 GB di pesi sorgente.
+        local_mlx_variant_weight_factors=(
+            ("mlx-community/Unlimited-OCR-bf16", 1.05),
+            ("mlx-community/Unlimited-OCR-8bit", 0.6),
+        ),
         # Guard anti-loop per il percorso MLX (v. commento sopra). Misurato sul
         # campione in modalità `gundam`, 3000 token: senza guard una riga si
         # ripete 23 volte; con context 20 la penalità non basta (80 ripetizioni,

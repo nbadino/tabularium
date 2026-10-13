@@ -172,6 +172,37 @@ def weight_factor(runtime: str | None, mlx_weight_factor: float | None = None) -
     return 1.2
 
 
+def mlx_variant_factor(capabilities, repo: str | None) -> float | None:
+    """Fattore dei pesi della variante MLX `repo` (v. `local_mlx_variant_weight_factors`)."""
+    factors = dict(getattr(capabilities, "local_mlx_variant_weight_factors", ()) or ())
+    return factors.get(repo, getattr(capabilities, "local_mlx_weight_factor", None))
+
+
+def mlx_variant_fits(capabilities, repo: str | None, machine: dict) -> bool:
+    return fits_in_memory(
+        getattr(capabilities, "approx_size_gb", None), machine,
+        runtime=RUNTIME_MLX, mlx_weight_factor=mlx_variant_factor(capabilities, repo),
+    )
+
+
+def pick_mlx_repo(capabilities, machine: dict | None = None, saved: str | None = None) -> str | None:
+    """La variante MLX da servire su questa macchina.
+
+    Vince quella salvata in Impostazioni. Altrimenti la prima delle varianti
+    dichiarate che ci sta — sono elencate dalla più fedele alla più leggera —
+    così un Mac grande resta sul bf16 e uno da 8 GB passa da solo all'8-bit.
+    Se non ne entra nessuna resta il default, e il verdetto dirà perché.
+    """
+    default = getattr(capabilities, "local_mlx_repo", "") or None
+    if saved:
+        return saved
+    choices = [repo for _label, repo in (getattr(capabilities, "local_mlx_repo_choices", ()) or ())]
+    if not choices:
+        return default
+    machine = machine or summary()
+    return next((repo for repo in choices if mlx_variant_fits(capabilities, repo, machine)), default)
+
+
 def pick_serve_runtime(capabilities, machine: dict | None = None) -> str:
     """Il runtime locale da usare per servire questo modello su questa macchina.
 

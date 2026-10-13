@@ -872,6 +872,16 @@ def test_apple_silicon_serves_unlimited_ocr_through_the_dedicated_server(monkeyp
     )
     monkeypatch.setattr(mlx_runtime, "ensure_ready", lambda: None)
     monkeypatch.setattr(mlx_runtime, "python_bin", lambda: Path("/tmp/mlx-python"))
+    # La variante dipende dalla memoria: su un Mac da 24 GB entra il bf16.
+    monkeypatch.setattr(
+        serve_manager.hardware,
+        "summary",
+        lambda: {
+            "apple_silicon": True, "cuda": {"devices": []}, "memory_gb": 24.0,
+            "runtimes": {"vllm": {"supported": False}, "mlx-vlm": {"supported": True}},
+            "usable_runtimes": ["mlx-vlm"],
+        },
+    )
 
     captured: dict = {}
 

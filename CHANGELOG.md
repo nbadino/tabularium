@@ -23,6 +23,15 @@ Le modifiche rilevanti di Tabularium sono raccolte qui. Il formato segue
   quale quantizzazione usare; la scelta è editabile anche nel passo Pesi e in
   Impostazioni → Modelli.
 
+### Fixed
+- Varianti MLX e memoria: il verdetto «gira su questo Mac» guardava solo la variante
+  di default, quindi su un Mac da 8 GB Unlimited-OCR risultava «memoria insufficiente»
+  per il bf16 e «Questo Mac» restava spento, anche se l'8-bit ci sta — e la scelta
+  della variante, che viene dopo, non si raggiungeva mai. Ora ogni variante dichiara
+  il proprio peso (`local_mlx_variant_weight_factors`); senza una scelta salvata si
+  serve la più grande che entra (bf16 sui Mac grandi, 8-bit su quelli da 8 GB), e le
+  varianti che non entrano sono spente nella scelta.
+
 ## [0.1.0]
 
 ### Added
