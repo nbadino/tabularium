@@ -7,6 +7,7 @@ import type { BlockOut, LabelDef, PageItem, PageSums, RecognitionRun } from '../
 import StudioCanvas from '../studio/StudioCanvas'
 import PageSidebar from '../studio/components/PageSidebar'
 import ContentPane from '../studio/components/ContentPane'
+import NewLabelDialog from '../studio/components/NewLabelDialog'
 import Splitter from '../studio/components/Splitter'
 import { clamp } from '../studio/canvasGeometry'
 import { useAnnotationState } from '../studio/useAnnotationState'
@@ -29,6 +30,7 @@ import {
   IconHand,
   IconPrefill,
   IconPolygon,
+  IconPlus,
   IconRectangle,
   IconRedo,
   IconSave,
@@ -141,6 +143,14 @@ export default function AnnotationPage() {
     } catch (e) {
       setError(String(e))
     }
+  }
+  /** Cambia la classe di una bozza: il pannello la aggiorna subito e la
+   *  classe si persiste sul blocco (la bozza non è sul canvas). */
+  const onDraftLabel = (serverId: number, label: string) => {
+    setPrefillDrafts((d) => d.map((x) => (x.serverId === serverId ? { ...x, label } : x)))
+    void apiPatch<BlockOut>(`/blocks/${serverId}`, { label })
+      .then((out) => ann.syncRevision(out.annotation_revision))
+      .catch((e) => setError(String(e)))
   }
   const onDraftGrid = (serverId: number, grid: TableGrid) => {
     setPrefillDrafts((drafts) => drafts.map((draft) => (draft.serverId === serverId ? { ...draft, grid } : draft)))
@@ -404,16 +414,21 @@ export default function AnnotationPage() {
       deskew_angle?: number
       tables?: number
       grids?: number
+      unmapped_labels?: Record<string, number>
     } | null
     if (s) {
       // L'avviso dice solo ciò che il pannello non mostra già da sé: quante
       // bozze siano arrivate e che siano da verificare si legge nelle righe,
       // ripeterlo in un riquadro sopra la pagina era rumore. Restano le due
       // cose che sono *successe* alla pagina e non si vedono altrove.
+      const unmapped = Object.keys(s.unmapped_labels ?? {})
       const parts = [
         (s.replaced_blocks ?? 0) > 0 ? tn('annotate.prefillReplaced', s.replaced_blocks ?? 0) : null,
         s.deskew_angle && Math.abs(s.deskew_angle) >= 0.05
           ? t('annotate.deskewApplied', { angle: s.deskew_angle.toFixed(2) })
+          : null,
+        unmapped.length > 0
+          ? `${t('annotate.unmappedLabels', { labels: unmapped.join(', ') })} ${t('annotate.unmappedLabelsHint')}`
           : null,
       ].filter(Boolean)
       setPrefillNotice(parts.length > 0 ? parts.join(' ') : null)
@@ -847,6 +862,26 @@ export default function AnnotationPage() {
     [],
   )
 
+  // --- creazione rapida di una classe (a livello di progetto) -------------------
+  const [newLabelOpen, setNewLabelOpen] = useState(false)
+  const [labelToast, setLabelToast] = useState<string | null>(null)
+  const labelToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const handleLabelCreated = (next: LabelDef[], name: string) => {
+    setLabels(next)
+    ann.setActiveLabel(name)
+    setNewLabelOpen(false)
+    if (labelToastTimer.current) clearTimeout(labelToastTimer.current)
+    setLabelToast(t('labels.createdToast', { name }))
+    labelToastTimer.current = setTimeout(() => setLabelToast(null), 6000)
+  }
+  useEffect(
+    () => () => {
+      if (labelToastTimer.current) clearTimeout(labelToastTimer.current)
+    },
+    [],
+  )
+
   // --- toolbar ----------------------------------------------------------------
   // La barra dello Studio resta su una riga: v. `useFitOneRow` e i livelli in index.css.
   const barRef = useRef<HTMLDivElement>(null)
@@ -989,6 +1024,16 @@ export default function AnnotationPage() {
                 </option>
               ))}
             </select>
+            <button
+              type="button"
+              onClick={() => setNewLabelOpen(true)}
+              title={t('labels.newTitle')}
+              aria-label={t('labels.newTitle')}
+              className="btn whitespace-nowrap"
+            >
+              <IconPlus size={12} />
+              <span className="tb-label">{t('labels.new')}</span>
+            </button>
             <button
               type="button"
               onClick={ann.undo}
@@ -1202,6 +1247,15 @@ export default function AnnotationPage() {
               </button>
             </div>
           )}
+          {labelToast && (
+            <div
+              role="status"
+              className="float-layer absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 border border-[color:var(--color-ok)] bg-[color:var(--color-ok-wash)] px-3 py-2 text-xs text-[color:var(--color-ok)]"
+            >
+              <IconCheck size={12} />
+              <span>{labelToast}</span>
+            </div>
+          )}
           {!page ? (
             // Senza pagina lo Studio propone la prossima, invece di un invito
             // generico a «scegliere progetto e pagina» anche a progetto scelto.
@@ -1289,6 +1343,7 @@ export default function AnnotationPage() {
             void redetectTable(serverId, true)
           }}
           onDraftContent={onDraftContent}
+          onDraftLabel={onDraftLabel}
           onDraftGrid={onDraftGrid}
           onSaveDraftGrid={onSaveDraftGrid}
           onDraftConfirmed={onDraftConfirmed}
@@ -1298,6 +1353,8 @@ export default function AnnotationPage() {
           colorFor={ann.colorFor}
           projectId={projectId !== '' ? projectId : undefined}
           liveOutput={liveOutput}
+          activeAdapterId={inf.adapterId}
+          onLabelsSaved={setLabels}
           working={
             prefillBusy && prefillProgress
               ? {
@@ -1320,6 +1377,15 @@ export default function AnnotationPage() {
           busy={prefillBusy}
           onRun={(mode) => void runPrelabel(mode)}
           onClose={() => setPrefillOpen(false)}
+        />
+      )}
+
+      {newLabelOpen && projectId !== '' && (
+        <NewLabelDialog
+          projectId={projectId}
+          existingNames={labels.map((l) => l.name)}
+          onClose={() => setNewLabelOpen(false)}
+          onCreated={handleLabelCreated}
         />
       )}
     </div>

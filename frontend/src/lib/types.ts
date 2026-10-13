@@ -260,6 +260,24 @@ export interface LabelDef {
   short: string
   prompt_kind: 'text' | 'table' | 'formula' | 'picture' | 'structure'
   prompt: string
+  /** `public` = il modello base la conosce già; `custom` = token da insegnare. */
+  origin: 'public' | 'custom'
+  /** Classe dello schema di default: presente sempre, non rimovibile. */
+  builtin: boolean
+  /** Sinonimi nativi accettati (il bridge fra i vocabolari dei modelli). */
+  aliases: string[]
+  /** Adapter che la emettono nativamente. Vuoto = nessun modello base. */
+  known_models: string[]
+}
+
+/** Payload di scrittura: solo le custom del progetto (i default non si toccano). */
+export interface LabelInput {
+  name: string
+  color: string
+  short: string
+  prompt_kind: LabelDef['prompt_kind']
+  prompt: string
+  aliases: string[]
 }
 
 export interface LabelSchema {

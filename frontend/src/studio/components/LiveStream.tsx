@@ -13,6 +13,7 @@
  * leggibili, e si dipingono subito invece di aspettare la fine.
  */
 import { useEffect, useRef, useState } from 'react'
+import { IconChevron } from '../../app/icons'
 import { useI18n } from '../../i18n'
 
 /* ------------------------------------------------------------- parsing --- */
@@ -241,6 +242,12 @@ export default function LiveStream({ working, text, phase }: LiveStreamProps) {
   // Incollato in fondo mentre scrive, ma solo finché sei tu a lasciarlo lì:
   // se risali per rileggere, lo streaming non ti strappa via la riga.
   const stick = useRef(true)
+  // A stream finito il testo resta ma chiuso: è la generazione verbatim, buona
+  // per il confronto con il parsing già strutturato sotto, non per occupare il
+  // rail. Aprire è una scelta, e la fa chi annota.
+  const [open, setOpen] = useState(false)
+  const live = working != null
+  const expanded = live || open
 
   useEffect(() => {
     const el = scroller.current
@@ -256,17 +263,32 @@ export default function LiveStream({ working, text, phase }: LiveStreamProps) {
   return (
     <section
       aria-label={t('content.streamTitle')}
-      aria-busy={working != null}
+      aria-busy={live}
       className="border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)]"
     >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1.5">
-        {working && (
-          <span
-            aria-hidden
-            className="h-3 w-3 shrink-0 animate-spin border-[1.5px] border-[color:var(--color-rule)] border-t-[color:var(--color-sig)]"
-          />
-        )}
-        <span className="lbl !mb-0">{t('content.streamTitle')}</span>
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          disabled={live}
+          aria-expanded={expanded}
+          aria-label={expanded ? t('content.streamCollapse') : t('content.streamExpand')}
+          className="flex items-center gap-1 text-left disabled:cursor-default"
+        >
+          {live ? (
+            <span
+              aria-hidden
+              className="h-3 w-3 shrink-0 animate-spin border-[1.5px] border-[color:var(--color-rule)] border-t-[color:var(--color-sig)]"
+            />
+          ) : (
+            <IconChevron
+              size={11}
+              className="shrink-0 text-[color:var(--color-ink-3)] transition-transform duration-150"
+              style={{ transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)' }}
+            />
+          )}
+          <span className="lbl !mb-0">{t('content.streamTitle')}</span>
+        </button>
         {phaseLabel && (
           <span className="text-[11px] text-[color:var(--color-ink-3)]">{phaseLabel}</span>
         )}
@@ -285,7 +307,7 @@ export default function LiveStream({ working, text, phase }: LiveStreamProps) {
         )}
       </div>
 
-      {(chunks.length > 0 || working) && (
+      {expanded && (chunks.length > 0 || working) && (
         <div
           ref={scroller}
           onScroll={(e) => {
@@ -295,7 +317,7 @@ export default function LiveStream({ working, text, phase }: LiveStreamProps) {
           className="max-h-[38vh] overflow-y-auto border-t border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] px-2.5 py-2"
         >
           {chunks.length > 0 ? (
-            <Chunks chunks={chunks} streaming={working != null} />
+            <Chunks chunks={chunks} streaming={live} />
           ) : (
             <p className="m-0 text-[12px] text-[color:var(--color-ink-3)]">
               {t('content.streamWaiting')}

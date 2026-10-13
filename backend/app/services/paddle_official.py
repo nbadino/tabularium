@@ -17,6 +17,7 @@ from PIL import Image
 
 from .. import config
 from . import paddle_runtime
+from .model_labels import PADDLE_LABELS
 
 
 _RUNNER = r'''
@@ -132,39 +133,9 @@ def _items(value) -> list[dict]:
             # tradurre in prompt. Una label fuori tassonomia arriva fino al
             # DB e il report d'export la segnala come «classe senza prompt»:
             # per questo la mappa copre l'intera tassonomia di PP-DocLayout e
-            # non solo le voci che capitavano nel primo campione.
-            labels = {
-                # titoli
-                "doc_title": "Title",
-                "paragraph_title": "Title",
-                "title": "Title",
-                # didascalie di figure, tabelle e grafici
-                "figure_title": "Caption",
-                "chart_title": "Caption",
-                "table_title": "Caption",
-                # testata e piede
-                "number": "Issue-number",
-                "header": "Page-header",
-                "footer": "Page-footer",
-                "footnote": "Footnote",
-                "vision_footnote": "Footnote",
-                # corpi di testo
-                "text": "Text",
-                "abstract": "Text",
-                "content": "Text",
-                "aside_text": "Text",
-                "vertical_text": "Text",
-                "reference": "List-item",
-                # contenuti non testuali
-                "table": "Table",
-                "formula": "Formula",
-                "image": "Picture",
-                "figure": "Picture",
-                "chart": "Picture",
-                "seal": "Picture",
-                "header_image": "Picture",
-                "footer_image": "Picture",
-            }
+            # non solo le voci che capitavano nel primo campione. La mappa vive
+            # in `model_labels.py` (fonte unica, condivisa con le classi note).
+            labels = PADDLE_LABELS
             normalized = labels.get(str(label).lower(), str(label))
             found.append({"bbox": list(bbox), "label": normalized, "content": str(content)})
         for child in value.values():

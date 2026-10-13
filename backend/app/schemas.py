@@ -312,10 +312,37 @@ class LabelDef(BaseModel):
     short: str
     prompt_kind: str  # 'text' | 'table' | 'formula' | 'picture' | 'structure'
     prompt: str = ""
+    # `public` = il modello base conosce già questa classe (transfer gratuito);
+    # `custom` = token nuovo, lo impara col fine-tuning.
+    origin: Literal["public", "custom"] = "custom"
+    # True per le classi dello schema di default: presenti sempre, non
+    # rimovibili. False per le classi aggiunte dal progetto.
+    builtin: bool = False
+    # Sinonimi nativi accettati per questa classe (il "bridge" fra i vocabolari
+    # dei modelli): `Table` ← `table`, `Table_document`, … Normalizzati
+    # (minuscole, separatori unificati) al momento della risoluzione.
+    aliases: list[str] = []
+    # Adapter (id) che emettono già questa classe nativamente. Vuoto = nessun
+    # modello base la produce: servono esempi per insegnarla. Dipende dal
+    # modello, non dalla classe in astratto.
+    known_models: list[str] = []
 
 
 class LabelSchemaOut(BaseModel):
     labels: list[LabelDef]
+
+
+class LabelIn(BaseModel):
+    name: str
+    color: str
+    short: str
+    prompt_kind: str
+    prompt: str = ""
+    aliases: list[str] = []
+
+
+class LabelsIn(BaseModel):
+    labels: list[LabelIn]
 
 
 # --- Tabelle (grid) -----------------------------------------------------------

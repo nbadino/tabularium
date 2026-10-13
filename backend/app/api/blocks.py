@@ -14,7 +14,9 @@ from ..schemas import (
     BlockListOut,
     BlockOut,
     BlockUpdate,
+    LabelIn,
     LabelSchemaOut,
+    LabelsIn,
     TableCell,
     TableCellRecognizeOut,
     TableCellRecognizeRequest,
@@ -26,6 +28,7 @@ from ..schemas import (
     TableSaveOut,
 )
 from ..services import inference, labeling, otsl, table_checks, table_detect
+from ..services import model_labels
 from ..services import blocks as blockssvc
 from ..services import audit as auditsvc
 from ..services import ocr as ocrmod
@@ -158,17 +161,93 @@ def delete_block(
     return {"deleted": True, "id": block["id"]}
 
 
+def _label_schema(settings: dict) -> LabelSchemaOut:
+    """Schema del progetto con, per ogni classe, i modelli che la conoscono."""
+    schema = labeling.project_schema(settings)
+    for label in schema.labels:
+        label.known_models = model_labels.known_models_for(label.name)
+    return schema
+
+
+def _load_settings(conn, project_id: int) -> dict:
+    from ..api.projects import _get_project_or_404  # noqa: PLC0415
+
+    project = _get_project_or_404(conn, project_id)
+    return json.loads(project["settings_json"] or "{}")
+
+
+def _store_custom_labels(conn, project_id: int, settings: dict, customs: list[dict]) -> None:
+    if customs:
+        settings["labels"] = customs
+    else:
+        settings.pop("labels", None)
+    conn.execute(
+        "UPDATE projects SET settings_json=? WHERE id=?",
+        (json.dumps(settings, ensure_ascii=False), project_id),
+    )
+
+
+def _validate_or_400(items, lang: str) -> list[dict]:
+    try:
+        return labeling.validate_labels(items)
+    except labeling.LabelValidationError as exc:
+        raise HTTPException(status_code=400, detail=msg(exc.code, lang, **exc.params)) from exc
+
+
 @router.get("/api/projects/{project_id}/labels", response_model=LabelSchemaOut)
 def project_labels(
     project_id: int,
     _auth: dict = Depends(require_resource(write=False)),
 ) -> LabelSchemaOut:
-    # Verifica che il progetto esista (endpoint attualmente indipendente da settings).
-    from ..api.projects import _get_project_or_404  # noqa: PLC0415
-
+    """Classi del progetto (default + custom) con origine e modelli che le conoscono."""
     with connect() as conn:
-        _get_project_or_404(conn, project_id)
-    return labeling.default_schema()
+        settings = _load_settings(conn, project_id)
+    return _label_schema(settings)
+
+
+@router.put("/api/projects/{project_id}/labels", response_model=LabelSchemaOut)
+def put_project_labels(
+    project_id: int,
+    payload: LabelsIn,
+    request: Request,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> LabelSchemaOut:
+    """Sostituisce le classi **custom** del progetto (i default restano).
+
+    Additivo: i default non si toccano, le custom si aggiungono/rimuovono.
+    """
+    lang = parse_lang(request.headers.get("accept-language"))
+    cleaned = _validate_or_400(payload.labels, lang)
+    with connect() as conn:
+        settings = _load_settings(conn, project_id)
+        _store_custom_labels(conn, project_id, settings, cleaned)
+    return _label_schema(settings)
+
+
+@router.post("/api/projects/{project_id}/labels", response_model=LabelSchemaOut)
+def create_project_label(
+    project_id: int,
+    payload: LabelIn,
+    request: Request,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> LabelSchemaOut:
+    """Crea **una** classe custom, senza toccare le altre.
+
+    È il gesto rapido dallo Studio (creare una classe mentre si annota): a
+    differenza del PUT non riscrive l'intera lista, quindi due schede non si
+    sovrascrivono a vicenda.
+    """
+    lang = parse_lang(request.headers.get("accept-language"))
+    cleaned = _validate_or_400([payload], lang)
+    with connect() as conn:
+        settings = _load_settings(conn, project_id)
+        customs = list(settings.get("labels") or [])
+        name = cleaned[0]["name"]
+        if any(str(c.get("name")) == name for c in customs):
+            raise HTTPException(status_code=409, detail=msg("label_name_duplicate", lang, name=name))
+        customs.append(cleaned[0])
+        _store_custom_labels(conn, project_id, settings, customs)
+    return _label_schema(settings)
 
 
 # --- Tabelle ------------------------------------------------------------------

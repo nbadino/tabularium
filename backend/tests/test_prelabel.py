@@ -452,6 +452,56 @@ def test_prelabel_stream_summary_matches_batch(tmp_path: Path, monkeypatch):
         assert streamed == batch
 
 
+def test_model_prefill_bridges_native_labels_and_reports_unmapped(tmp_path: Path, monkeypatch):
+    """Il bridge traduce la label nativa nella classe del progetto e **dichiara**
+    i token fuori tassonomia invece di coercizzarli in silenzio."""
+    from app.api import prelabel as prelabelmod
+    from app.services import prefill as prefillsvc
+
+    class FakeModel:
+        model = "fake"
+
+        def ping(self):
+            return True
+
+        def end2end(self, image):
+            return [
+                {"bbox": [10, 20, 900, 200], "label": "ship_name", "content": "Aagtekerk"},
+                {"bbox": [10, 220, 900, 400], "label": "bogus_xyz", "content": "??"},
+            ]
+
+    monkeypatch.setattr(prelabelmod.inference, "VllmClient", FakeModel)
+    monkeypatch.setattr(prefillsvc, "_looks_like_table", lambda *_args: False)
+
+    with TestClient(app) as client:
+        pid, page_id = _get_page(client, tmp_path / "bridge")
+        # Una classe custom con un sinonimo nativo: è il bridge del progetto.
+        put = client.put(
+            f"/api/projects/{pid}/labels",
+            json={"labels": [{
+                "name": "Vessel-name", "color": "#3a5f7d", "short": "VSL",
+                "prompt_kind": "text", "prompt": "text", "aliases": ["ship_name"],
+            }]},
+        )
+        assert put.status_code == 200, put.text
+
+        r = client.post(
+            f"/api/projects/{pid}/prelabel",
+            json={"page_ids": [page_id], "mode": "replace", "engine": "model", "model_mode": "end2end"},
+        )
+        assert r.status_code == 200, r.text
+        result = r.json()["results"][0]
+        # Il token sconosciuto è dichiarato, non nascosto.
+        assert result["unmapped_labels"] == {"bogus_xyz": 1}
+
+        by_content = {
+            b["content"]: b["label"]
+            for b in client.get(f"/api/pages/{page_id}/annotations").json()["items"]
+        }
+        assert by_content["Aagtekerk"] == "Vessel-name"  # alias → canonica
+        assert by_content["??"] == "Text"  # non mappata → fallback dichiarato
+
+
 def test_dedupe_drops_nested_same_label_blocks():
     """Le fasce contenute in una tabella più grande sono la stessa tabella.
 

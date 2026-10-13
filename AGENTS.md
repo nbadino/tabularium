@@ -343,7 +343,10 @@ questo motivo.
        alias storico di `replace_all`). La risposta dichiara `replaced_blocks`/`replaced_grids`;
        su pagina piena il pulsante Prefill apre un dialog di conferma (`PrefillDialog`);
      - **dove vivono le bozze**: nel pannello contenuti, non sull'immagine — sul canvas non
-       compare nulla di generato finché qualcuno non lo verifica. Le **tabelle** fanno
+       compare nulla di generato finché qualcuno non lo verifica. La **classe** di una bozza si
+       cambia dal pannello (`onDraftLabel` → `PATCH /blocks/{id}`): non essendo sul canvas,
+       è lì che si ri-etichetta, per esempio quando una data finisce dentro `Page-header` e va
+       promossa a `Issue-date`. Le **tabelle** fanno
        eccezione, e la ragione è misurata: la regione è ciò che il layout sbaglia più spesso
        (sulla pagina `index` da 11,3 MP del campione, PaddleOCR-VL propone come `Table` la sola colonna di sinistra e
        lascia *From/For/Latest Report* fuori, come `Text`), e i confini della griglia si
@@ -497,7 +500,7 @@ tabularium/
         state/              # store annotazioni + history (undo/redo)
       lib/                  # api.ts, coords.ts (coordinate 0-1000), otsl.ts (preview), types.ts
     package.json
-  conf/                     # template full.sh/lora.sh, labeling_schema.yaml, conventions.yaml
+  conf/                     # template full.sh/lora.sh, conventions.yaml
   scripts/
     setup_backend.sh / .ps1 # env + dipendenze
     setup_frontend.sh / .ps1
@@ -635,9 +638,53 @@ nome file (`backend/app/services/page_meta.py`) e va valorizzato **prima** di an
 `issue_date` non si deduce dal nome file e **non va mai presa dall'EXIF**: quella è la data di
 digitalizzazione. Finisce in `meta_json.scan_date`.
 
-La mappa è in `conf/labeling_schema.yaml` e modificabile per progetto. Le classi riconoscibili
+La mappa è **per progetto** e vive in `projects.settings_json["labels"]` (modello additivo: i
+default restano sempre disponibili, le custom si aggiungono/rimuovono). Le classi riconoscibili
 (teste alla `ALL_PROMPT` §2.3) compaiono nel LAYOUT e nei JSONL di crop; le classi pure-struttura
 solo nel LAYOUT.
+
+### 8.2 Classi: origine, classi note per modello, vocabolario nativo
+
+Una classe ha un'**origine**: `public` se appartiene alla tassonomia pubblica del parsing (§2.7,
+il modello base la conosce già → transfer gratuito) oppure `custom` (token nuovo, da insegnare).
+L'origine è calcolata da `labeling.PUBLIC_LABELS`, non salvata.
+
+«Già nota» però **non è una proprietà assoluta della classe: è della coppia classe + modello.**
+Ogni adapter ha un vocabolario nativo (PP-DocLayout `number`, MinerU `doc_title`, …) che traduce
+nel canonico. Quelle mappe sono dichiarate una sola volta in `services/model_labels.py` (gli
+adapter le importano: una sola fonte) e `known_models_for(name)` dice quali modelli emettono già
+una classe. `GET /api/projects/{id}/labels` restituisce per ogni classe `origin` e `known_models`;
+`PUT` (admin/editor) sostituisce le **custom** del progetto con validazione rigida (nome unico e
+non di default, colore `#RGB`/`#RRGGBB`, tipo ammesso, prompt obbligatorio per testo/tabella/
+formula); `POST` crea **una** classe senza riscrivere la lista (il gesto rapido dallo Studio, che
+così non sovrascrive il lavoro di un'altra scheda; 409 se il nome esiste già). Il dataset builder
+costruisce `_LABEL_INFO` dal progetto (`_project_label_info`), così una classe custom entra davvero
+in text_rec invece di essere saltata in silenzio.
+
+**Il bridge nativa → canonica** (`model_labels.resolve_native_label`) traduce qualunque label di
+un modello nel vocabolario del progetto, normalizzando l'ortografia (minuscole, `spazio`/`_`/`-`
+equivalenti: `Table_document` ≡ `table document`). Ordine di risoluzione, dal più specifico al più
+generico: nome canonico esatto → **mappa nativa dell'adapter** (la semantica del modello vince sul
+generico) → **alias della classe** (sinonimi dichiarati, anche per le custom). Ogni classe porta
+`aliases` in `settings_json`; l'`LabelsEditor` li edita e il prefill li usa. La risoluzione
+**fallisce in modo rumoroso**: una label fuori tassonomia non entra mai in silenzio — il prefill
+la conta in `summary.unmapped_labels` e il blocco ricade su `Text`, così la UI avvisa e l'utente
+può aggiungere l'alias o la classe. Il prefill risolve sulle classi **del progetto** (non sul solo
+default), quindi le custom non vengono più coercizzate a `Text`.
+
+**Regola di coerenza per il fine-tuning**: l'addestramento insegna **sempre il vocabolario
+canonico**; le mappe native e gli alias servono solo a leggere il modello *base* prima del
+fine-tune. Aggiungere un modello = dichiarare la sua mappa in `model_labels.py`; è questo che rende
+il sistema model-agnostic.
+
+**Superficie per chi annota**: nello Studio il pulsante **Classi** apre `LabelsEditor`
+(`frontend/src/studio/components/LabelsEditor.tsx`) — elenca le classi con badge di origine
+(pubblica/custom), segna quelle note al modello attivo (`knownByModel`) e permette di
+aggiungere/rimuovere le **custom** del progetto. Il PUT sostituisce solo le custom; i default
+(`builtin`) non si toccano. Accanto al selettore di classe nella barra c'è **Nuova classe**
+(`NewLabelDialog`): un gesto rapido che crea **una** classe via `POST /labels` e lo conferma con
+un avviso, perché la classe vale su tutto il progetto. I campi del form sono condivisi
+(`LabelFields`) fra le due superfici. La logica pura è in `frontend/src/lib/labels.ts`.
 
 ---
 

@@ -20,6 +20,16 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Protocol
 
+from .model_labels import (
+    DEEPSEEK_LABELS,
+    GLM_LABELS,
+    LIGHTON_LABELS,
+    MINERU_LAYOUT_LABELS,
+    MINERU_NATIVE_LABELS,
+    QWEN3_LABELS,
+    TELEOCR_LABELS,
+)
+
 
 @dataclass(frozen=True)
 class ModelCapabilities:
@@ -285,15 +295,7 @@ class MinerU2_5Adapter(_StubAdapter):
     # tassonomia pubblica di Tabularium; ciò che non compare qui ricade su
     # "Text" più a valle in `model_prelabel_pages` (comportamento esistente
     # per qualunque label sconosciuta, non specifico di questo adapter).
-    _LABEL_MAP = {
-        "text": "Text",
-        "title": "Title",
-        "doc_title": "Title",
-        "table": "Table",
-        "equation": "Formula",
-        "image": "Picture",
-        "chart": "Picture",
-    }
+    _LABEL_MAP = MINERU_LAYOUT_LABELS
 
     # Verificato su mineru_client.py (agosto 2026): stesso pattern del client
     # ufficiale. Coordinate in scala 0-1000 (v. docstring della classe).
@@ -380,19 +382,7 @@ class MinerU2_5Adapter(_StubAdapter):
         """Map MinerUClient's normalized ContentBlock list to app coordinates."""
         if not isinstance(blocks, list):
             return []
-        labels = {
-            "text": "Text", "title": "Title", "table": "Table",
-            "equation": "Formula", "formula_number": "Formula",
-            "equation_block": "Formula", "image": "Picture", "chart": "Picture",
-            "image_block": "Picture", "header": "Page-header",
-            "footer": "Page-footer", "page_number": "Page-footer",
-            "page_footnote": "Footnote", "table_footnote": "Footnote",
-            "image_footnote": "Footnote", "list": "List-item",
-            "list_item": "List-item", "ref_text": "List-item",
-            "table_caption": "Caption", "image_caption": "Caption",
-            "code_caption": "Caption", "code": "Text", "algorithm": "Text",
-            "aside_text": "Note", "index": "Text", "phonetic": "Text",
-        }
+        labels = MINERU_NATIVE_LABELS
         items = []
         for block in blocks:
             if isinstance(block, dict):
@@ -767,13 +757,7 @@ class GlmOcrAdapter(_StubAdapter):
         regions = pages[0]
         if not isinstance(regions, list):
             return []
-        labels = {
-            "title": "Title", "text": "Text", "table": "Table",
-            "figure": "Picture", "formula": "Formula", "header": "Page-header",
-            "footer": "Page-footer", "page_number": "Page-footer", "seal": "Picture",
-            "reference": "Text", "chart": "Picture", "image": "Picture",
-            "display_formula": "Formula", "inline_formula": "Formula",
-        }
+        labels = GLM_LABELS
         result = []
         for region in regions:
             if not isinstance(region, dict):
@@ -869,14 +853,7 @@ class DeepSeekOcrAdapter(_StubAdapter):
         "table": "<|grounding|>Convert the document to markdown.",
     }
     supports_two_stage = False
-    _LABEL_MAP = {
-        "title": "Title", "doc_title": "Title", "paragraph_title": "Section-header",
-        "section_header": "Section-header", "text": "Text", "paragraph": "Text",
-        "table": "Table", "figure": "Picture", "image": "Picture", "chart": "Picture",
-        "caption": "Caption", "footnote": "Footnote", "header": "Page-header",
-        "footer": "Page-footer", "list": "List-item", "list_item": "List-item",
-        "formula": "Formula", "equation": "Formula",
-    }
+    _LABEL_MAP = DEEPSEEK_LABELS
 
     def prompt_for(self, task: str, label: str | None = None) -> str | None:
         prompt = self._PROMPTS.get(task)
@@ -1189,11 +1166,7 @@ class Qwen3VlAdapter(_StubAdapter):
         except Exception:  # noqa: BLE001 - tolerate model-generated malformed HTML
             return []
 
-        label_map = {
-            "caption": "Caption", "footnote": "Footnote", "footer": "Page-footer",
-            "header": "Page-header", "list-item": "List-item", "formula": "Formula",
-            "image": "Picture", "chart": "Picture", "table": "Table",
-        }
+        label_map = QWEN3_LABELS
         items: list[dict] = []
 
         def walk(node: _QwenHtmlNode) -> None:
@@ -1325,25 +1298,7 @@ class TeleOcrAdapter(_StubAdapter):
         import re
 
         items: list[dict] = []
-        labels = {
-            "text": "Text",
-            "title": "Title",
-            "table": "Table",
-            "image": "Picture",
-            "header": "Page-header",
-            "footer": "Page-footer",
-            "page_number": "Issue-number",
-            "page_footnote": "Footnote",
-            "aside_text": "Text",
-            "equation": "Formula",
-            "equation_block": "Formula",
-            "ref_text": "List-item",
-            "list": "List-item",
-            "table_caption": "Caption",
-            "image_caption": "Caption",
-            "table_footnote": "Footnote",
-            "image_footnote": "Footnote",
-        }
+        labels = TELEOCR_LABELS
         pattern = re.compile(r"^<box:([\d\s]+)><label:(\w+)><([^>]+)>$")
         for line in (raw or "").splitlines():
             match = pattern.match(line.strip())
@@ -1373,16 +1328,7 @@ class TeleOcrAdapter(_StubAdapter):
         """
         if not isinstance(blocks, list):
             return []
-        labels = {
-            "text": "Text", "title": "Title", "table": "Table",
-            "image": "Picture", "header": "Page-header",
-            "footer": "Page-footer", "page_number": "Issue-number",
-            "page_footnote": "Footnote", "aside_text": "Text",
-            "equation": "Formula", "equation_block": "Formula",
-            "ref_text": "List-item", "list": "List-item",
-            "table_caption": "Caption", "image_caption": "Caption",
-            "table_footnote": "Footnote", "image_footnote": "Footnote",
-        }
+        labels = TELEOCR_LABELS
         items: list[dict] = []
         for block in blocks:
             if not isinstance(block, dict):
@@ -1502,18 +1448,7 @@ class LightOnOcr3Adapter(_StubAdapter):
         local_runtimes=("vllm",),
     )
 
-    _LABEL_MAP = {
-        "text": "Text", "title": "Title", "list": "List-item",
-        "header": "Page-header", "footer": "Page-footer",
-        # Sul corpus il numero in testata delle pagine `index` è il numero
-        # del fascicolo (come per TeleOCR). Sulle pagine voyage-supplement è
-        # un numero di pagina: va corretto in revisione.
-        "page_number": "Issue-number",
-        "footnote": "Footnote", "caption": "Caption", "formula": "Formula",
-        "code": "Text", "table": "Table", "aside_text": "Note",
-        "image": "Picture", "chart": "Picture",
-        "header_image": "Picture", "footer_image": "Picture",
-    }
+    _LABEL_MAP = LIGHTON_LABELS
     _MARKER = re.compile(
         r"^!\[([a-z_]+)\+?\]\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)[ \t]*\n?"
         r"(.*?)(?=^!\[[a-z_]+\+?\]\(\s*\d|\Z)",

@@ -33,7 +33,18 @@ FORMULA_PROMPT = (
     "Please write out the expression of the formula in the image using LaTeX format."
 )
 
-_LABEL_INFO = {l.name: l for l in labeling.DEFAULT_LABELS}
+def _project_label_info(project_id: int) -> dict:
+    """Info per label delle classi **del progetto** (default + custom).
+
+    Le custom vivono in `settings_json["labels"]`; senza questo, una classe
+    creata dal ricercatore verrebbe saltata in silenzio in text_rec.
+    """
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT settings_json FROM projects WHERE id=?", (project_id,)
+        ).fetchone()
+    settings = json.loads(row["settings_json"] or "{}") if row else {}
+    return {label.name: label for label in labeling.project_schema(settings).labels}
 
 
 def _sample(image_path: str, prompt: str, content: str) -> dict:
@@ -371,6 +382,7 @@ def build_datasets(
         adapter = get_adapter(adapter_id)
     except ValueError as exc:
         raise ValueError(str(exc)) from exc
+    label_info = _project_label_info(project_id)
     base_dir = _project_dir(project_id)
     dataset_dir = base_dir / "dataset"
     crops_dir = base_dir / "crops"
@@ -450,7 +462,7 @@ def build_datasets(
         # RITAGLI: text_rec / table / formula
         for block in data["blocks"]:
             label = block["label"]
-            info = _LABEL_INFO.get(label)
+            info = label_info.get(label)
             points = parse_points(block["points"])
             if not points:
                 continue

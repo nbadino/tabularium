@@ -48,6 +48,7 @@ import SplitColumnDialog from './SplitColumnDialog'
 import TablePageImage from './TablePageImage'
 import LiveStream from './LiveStream'
 import ConventionsChecklist from './ConventionsChecklist'
+import LabelsEditor from './LabelsEditor'
 
 /** Univer pesa: il preset «sheets core» con il motore di rendering e quello
  *  delle formule porta la pagina di annotazione da 892 kB a **7,4 MB** se lo si
@@ -945,6 +946,9 @@ interface ContentPaneProps {
   onDismissRedetect?: () => void
   onRedetectNow?: (serverId: number) => void
   onDraftContent: (serverId: number, content: string) => void
+  /** Cambia la classe di una bozza: le bozze vivono solo qui, quindi la loro
+   *  label si governa da qui (non dal canvas). */
+  onDraftLabel?: (serverId: number, label: string) => void
   onDraftGrid: (serverId: number, grid: TableGrid) => void
   onSaveDraftGrid: (serverId: number, grid: TableGrid) => Promise<string>
   onDraftConfirmed: (serverId: number, confirmed: boolean) => void
@@ -956,6 +960,10 @@ interface ContentPaneProps {
   /** Serve solo ad aprire le regole del progetto: qui non si annota nulla. */
   projectId?: number
   liveOutput?: LivePrefillOutput | null
+  /** Modello attivo: serve a dire quali classi conosce già (badge). */
+  activeAdapterId?: string | null
+  /** Il pannello classi ha salvato: il chiamante riallinea la tassonomia. */
+  onLabelsSaved?: (labels: LabelDef[]) => void
   /** Presente mentre il modello scrive: l'output live sta sopra la lista e i
    *  blocchi arrivano SOTTO, in diretta, senza coprire nulla. */
   working: { engine: string; startedAt: number; blocks: number; last: string | null; output?: LivePrefillOutput | null } | null
@@ -981,6 +989,7 @@ export default function ContentPane({
   onDismissRedetect,
   onRedetectNow,
   onDraftContent,
+  onDraftLabel,
   onDraftGrid,
   onSaveDraftGrid,
   onDraftConfirmed,
@@ -990,6 +999,8 @@ export default function ContentPane({
   colorFor,
   projectId,
   liveOutput,
+  activeAdapterId,
+  onLabelsSaved,
   working,
 }: ContentPaneProps) {
   const { t, tn } = useI18n()
@@ -997,6 +1008,7 @@ export default function ContentPane({
   const listRef = useRef<HTMLUListElement>(null)
   useFlipList(listRef)
   const [rulesOpen, setRulesOpen] = useState(false)
+  const [labelsOpen, setLabelsOpen] = useState(false)
 
   // Le bozze già confermate sono già ricomparse fra i blocchi dopo il ricarico
   // dal server: qui restano solo quelle ancora da revisionare, altrimenti la
@@ -1040,6 +1052,11 @@ export default function ContentPane({
           {projectId != null && (
             <button type="button" onClick={() => setRulesOpen(true)} className="btn btn-sm">
               {t('content.rules')}
+            </button>
+          )}
+          {projectId != null && (
+            <button type="button" onClick={() => setLabelsOpen(true)} className="btn btn-sm">
+              {t('labels.tab')}
             </button>
           )}
         </>
@@ -1140,6 +1157,8 @@ export default function ContentPane({
                   id={`draft-${draft.serverId}`}
                   order={null}
                   label={draft.label}
+                  labels={labels}
+                  onLabel={onDraftLabel ? (label) => onDraftLabel(draft.serverId, label) : undefined}
                   badge={{ text: 'OCR', title: t('content.prefillDraftBody') }}
                   confirmed={draft.confirmed}
                   onConfirmed={(v) => onDraftConfirmed(draft.serverId, v)}
@@ -1189,6 +1208,17 @@ export default function ContentPane({
           <div className="p-3">
             <ConventionsChecklist projectId={projectId} />
           </div>
+        </Modal>
+      )}
+
+      {labelsOpen && projectId != null && (
+        <Modal title={t('labels.tab')} wide onClose={() => setLabelsOpen(false)}>
+          <LabelsEditor
+            projectId={projectId}
+            labels={labels}
+            activeAdapterId={activeAdapterId}
+            onSaved={(next) => onLabelsSaved?.(next)}
+          />
         </Modal>
       )}
     </Module>

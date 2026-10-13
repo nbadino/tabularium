@@ -31,7 +31,8 @@ vi.mock('./UniverSheet', () => ({
 
 import ContentPane from './ContentPane'
 import { emptyGrid } from '../../lib/grid'
-import type { DisplayBlock } from '../types'
+import type { DisplayBlock, PrefillDraft } from '../types'
+import type { LabelDef } from '../../lib/types'
 
 afterEach(() => cleanup())
 
@@ -61,6 +62,7 @@ const noop = {
   onDelete: vi.fn(),
   onSaveTable: vi.fn(),
   onDraftContent: vi.fn(),
+  onDraftLabel: vi.fn(),
   onDraftGrid: vi.fn(),
   onSaveDraftGrid: vi.fn(),
   onDraftConfirmed: vi.fn(),
@@ -442,5 +444,52 @@ describe('ContentPane', () => {
     )
     expect(screen.queryAllByRole('columnheader')).toHaveLength(0)
     expect(screen.getByText('A. C. Bedford')).toBeTruthy()
+  })
+
+  it('a stream finito resta chiuso: il testo grezzo si apre a richiesta', async () => {
+    const user = userEvent.setup()
+    render(
+      <ContentPane
+        blocks={[]}
+        drafts={[]}
+        labels={[]}
+        selectedId={null}
+        working={null}
+        liveOutput={{ phase: 'completed', text: 'Titolo riconosciuto' }}
+        {...noop}
+      />,
+    )
+    const stream = screen.getByRole('region', { name: 'Output del modello' })
+    expect(stream).toHaveAttribute('aria-busy', 'false')
+    // Chiuso di default: sotto c'è già il parsing, il grezzo non occupa il rail.
+    expect(screen.queryByText('Titolo riconosciuto')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Apri l’output del modello' }))
+    expect(screen.getByText('Titolo riconosciuto')).toBeTruthy()
+  })
+
+  it('una bozza del prefill può cambiare classe dal pannello', async () => {
+    const user = userEvent.setup()
+    const onDraftLabel = vi.fn()
+    const labels: LabelDef[] = [
+      { name: 'Page-header', color: '#45594f', short: 'PGH', prompt_kind: 'text', prompt: 't', origin: 'public', builtin: true, aliases: [], known_models: [] },
+      { name: 'Issue-date', color: '#6b4f1d', short: 'DAT', prompt_kind: 'text', prompt: 't', origin: 'custom', builtin: true, aliases: [], known_models: [] },
+    ]
+    const drafts: PrefillDraft[] = [
+      { serverId: 42, label: 'Page-header', content: '[NOV.21925]', confirmed: false, grid: null },
+    ]
+    render(
+      <ContentPane
+        blocks={[]}
+        drafts={drafts}
+        labels={labels}
+        selectedId={null}
+        working={null}
+        {...noop}
+        onDraftLabel={onDraftLabel}
+      />,
+    )
+    // La bozza porta il menu della classe, come un blocco confermato.
+    await user.click(screen.getByRole('option', { name: 'Issue-date' }))
+    expect(onDraftLabel).toHaveBeenCalledWith(42, 'Issue-date')
   })
 })

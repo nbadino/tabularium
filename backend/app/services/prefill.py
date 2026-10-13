@@ -15,6 +15,7 @@ from fastapi import HTTPException
 
 from ..db import connect
 from . import labeling, ocr as ocrmod, otsl, table_detect, table_headers
+from . import model_labels
 from . import paddle_official
 from .inference import OutputTruncated
 from .model_adapters import supported_prefill_modes
@@ -345,6 +346,16 @@ def native_mode(adapter) -> str:
     )
 
 
+def _project_schema_labels(project_id: int) -> list:
+    """Classi del progetto (default + custom) per il bridge nativa → canonica."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT settings_json FROM projects WHERE id=?", (project_id,)
+        ).fetchone()
+    settings = json.loads(row["settings_json"] or "{}") if row else {}
+    return labeling.project_schema(settings).labels
+
+
 def model_prelabel_events(
     project_id: int,
     page_ids: list[int],
@@ -369,7 +380,12 @@ def model_prelabel_events(
     mm = opts.model_mode
     if mm == "native":
         mm = native_mode(client.adapter)
-    known = {label.name for label in labeling.DEFAULT_LABELS}
+    adapter_id = getattr(getattr(client, "adapter", None), "adapter_id", None)
+    # Le classi del PROGETTO (default + custom): una label nativa si traduce nel
+    # vocabolario canonico del progetto. Prima si usava la sola tassonomia di
+    # default, quindi le classi custom del ricercatore venivano coercizzate a
+    # `Text` in silenzio.
+    schema_labels = _project_schema_labels(project_id)
     with connect() as conn:
         for pid in page_ids:
             if cancel_event is not None and cancel_event.is_set():
@@ -531,15 +547,24 @@ def model_prelabel_events(
 
             width, height = page["width"], page["height"]
             kept = []
+            unmapped: dict[str, int] = {}
             for item in items:
                 bbox = _scale_bbox(item, width, height)
                 if bbox[2] - bbox[0] < opts.min_size or bbox[3] - bbox[1] < opts.min_size:
                     continue
-                label = item["label"] if item["label"] in known else "Text"
+                # Bridge nativa → canonica. Una label fuori tassonomia non entra
+                # in silenzio: si conta e si dichiara nel riepilogo, e il blocco
+                # ricade su `Text` (la UI lo mostra e l'utente può aggiungere
+                # l'alias o la classe).
+                resolved = model_labels.resolve_native_label(item["label"], schema_labels, adapter_id)
+                if resolved is None:
+                    raw = str(item["label"] or "").strip() or "—"
+                    unmapped[raw] = unmapped.get(raw, 0) + 1
+                    resolved = "Text"
                 kept.append(
                     {
                         "bbox": bbox,
-                        "label": label,
+                        "label": resolved,
                         "content": str(item.get("content") or "").strip(),
                     }
                 )
@@ -721,6 +746,7 @@ def model_prelabel_events(
                     "model_mode": page_mode,
                     "table_sources": table_sources,
                     "deskew_angle": applied_angle,
+                    "unmapped_labels": unmapped,
                 },
             }
 

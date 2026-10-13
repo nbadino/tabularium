@@ -199,7 +199,10 @@ remota. Il modello in uso porta il badge «In uso ora».
 
 Nello studio il rail destro è **una zona sola**: il contenuto della pagina. L'output del modello
 arriva in diretta in cima, i blocchi si correggono riga per riga sotto, e l'ordine di lettura si
-governa dalle righe stesse — non da un secondo elenco che ripete gli stessi blocchi. Le regole di
+governa dalle righe stesse — non da un secondo elenco che ripete gli stessi blocchi. A run conclusa
+il riquadro dell'output **si chiude da solo** e resta una riga da aprire a richiesta: la generazione
+verbatim serve a confrontarla con il parsing già strutturato sotto, non a occupare il rail quando il
+risultato c'è. Le regole di
 trascrizione sono materiale di consultazione e stanno dietro il loro pulsante, non in un pannello
 che occupa il rail per sempre.
 

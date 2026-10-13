@@ -179,6 +179,16 @@ _IT: dict[str, str] = {
     "username_taken": "nome utente già esistente",
     "user_not_found": "utente non trovato",
     "last_admin": "non si può eliminare o declassare l'ultimo amministratore",
+    # --- tassonomia classi ---------------------------------------------------------
+    "label_name_invalid": "nome classe non valido: «{name}» (lettera iniziale, poi lettere, cifre, spazio, . _ -, max 40)",
+    "label_name_conflict": "«{name}» è una classe di default: non si può ridefinire",
+    "label_name_duplicate": "classe «{name}» ripetuta",
+    "label_color_invalid": "colore non valido per «{name}»: usa #RGB o #RRGGBB",
+    "label_short_invalid": "abbreviazione non valida per «{name}»: 1–6 caratteri",
+    "label_kind_invalid": "tipo classe non valido per «{name}»: {kind}",
+    "label_prompt_missing": "la classe «{name}» di tipo {kind} richiede un prompt",
+    "label_alias_invalid": "sinonimo non valido per «{name}»: «{alias}»",
+    "unmapped_native_label": "classi native non mappate: {labels} — ricadute su Text",
 }
 
 _EN: dict[str, str] = {
@@ -329,6 +339,15 @@ _EN: dict[str, str] = {
     "username_taken": "username already exists",
     "user_not_found": "user not found",
     "last_admin": "you cannot delete or demote the last administrator",
+    "label_name_invalid": "invalid class name: “{name}” (letter first, then letters, digits, space, . _ -, max 40)",
+    "label_name_conflict": "“{name}” is a default class: it cannot be redefined",
+    "label_name_duplicate": "duplicate class “{name}”",
+    "label_color_invalid": "invalid colour for “{name}”: use #RGB or #RRGGBB",
+    "label_short_invalid": "invalid abbreviation for “{name}”: 1–6 characters",
+    "label_kind_invalid": "invalid class kind for “{name}”: {kind}",
+    "label_prompt_missing": "class “{name}” of kind {kind} requires a prompt",
+    "label_alias_invalid": "invalid alias for “{name}”: “{alias}”",
+    "unmapped_native_label": "unmapped native classes: {labels} — fell back to Text",
 }
 
 _FR: dict[str, str] = {
@@ -479,6 +498,15 @@ _FR: dict[str, str] = {
     "username_taken": "ce nom d'utilisateur existe déjà",
     "user_not_found": "utilisateur introuvable",
     "last_admin": "vous ne pouvez pas supprimer ou rétrograder le dernier administrateur",
+    "label_name_invalid": "nom de classe invalide : « {name} » (lettre au début, puis lettres, chiffres, espace, . _ -, max 40)",
+    "label_name_conflict": "« {name} » est une classe par défaut : elle ne peut pas être redéfinie",
+    "label_name_duplicate": "classe « {name} » répétée",
+    "label_color_invalid": "couleur invalide pour « {name} » : utilisez #RGB ou #RRGGBB",
+    "label_short_invalid": "abréviation invalide pour « {name} » : 1–6 caractères",
+    "label_kind_invalid": "type de classe invalide pour « {name} » : {kind}",
+    "label_prompt_missing": "la classe « {name} » de type {kind} exige un prompt",
+    "label_alias_invalid": "synonyme invalide pour « {name} » : « {alias} »",
+    "unmapped_native_label": "classes natives non mappées : {labels} — repli sur Text",
 }
 
 CATALOG: dict[str, dict[str, str]] = {"it": _IT, "en": _EN, "fr": _FR}
