@@ -129,6 +129,7 @@ export const fr: Dict = {
     startReview: 'Commencer la révision',
     drafts: '{n} à vérifier',
     blocks: '{n} blocs',
+    pageN: 'Page {n}',
     computeOff: 'Modèle désactivé : la révision et l’export restent disponibles.',
     disableNow: 'Désactiver le modèle',
     retryFailed: 'Réessayer les pages en échec',

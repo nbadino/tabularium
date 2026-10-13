@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import type { PageItem, PageSums, Project } from '../../lib/types'
 import { statusLabel, STATUS_TONE } from '../../lib/vocab'
-import { Badge, Field, Select } from '../../app/ui'
-import { IconNext, IconPrev } from '../../app/icons'
+import { Field, Select } from '../../app/ui'
+import { IconCheck, IconNext, IconPrev, IconWarn } from '../../app/icons'
 import { t as translate, useI18n, tn } from '../../i18n'
-import { pageLabel, pageShortLabel } from '../../lib/pageLabel'
+import { pageLabel } from '../../lib/pageLabel'
 
 interface PageSidebarProps {
   projects: Project[]
@@ -29,6 +29,21 @@ const SEARCH_FROM = 20
 /** L'etichetta dice **di che somme** si parla: una tavola per paese ha somme
  *  lungo le righe (Merchandise + Treasure = Total) e lungo le colonne (le voci
  *  che sommano al «Total»); un'altra può averne di un tipo solo. */
+const STATUS_TEXT: Record<string, string> = {
+  neutral: 'text-[color:var(--color-ink-2)]',
+  progress: 'text-[color:var(--color-ink)]',
+  ok: 'text-[color:var(--color-ok)]',
+  warn: 'text-[color:var(--color-warn)]',
+  sig: 'text-[color:var(--color-sig-text)]',
+}
+
+/** «Pagina 4» quando la pagina ha un numero, altrimenti il nome del file. */
+function pageTitle(p: PageItem): string {
+  if (p.pdf_page != null) return translate('recognition.pageN', { n: p.pdf_page + 1 })
+  if (p.page_no) return translate('recognition.pageN', { n: p.page_no })
+  return p.rel_path
+}
+
 function sumsLabel({ failed, rows, cols }: { failed: number; rows: number; cols: number }) {
   const which = rows && cols ? 'Both' : rows ? 'Row' : 'Col'
   return failed > 0 ? tn(`sidebar.sumsFailed${which}`, failed) : translate(`sidebar.sumsOk${which}`)
@@ -212,30 +227,41 @@ export default function PageSidebar({
                   loading="lazy"
                   className="h-14 w-11 shrink-0 rounded-sm border border-[color:var(--color-rule)] bg-white object-cover object-top"
                 />
-                <span className="flex min-w-0 flex-1 flex-col items-start gap-1">
-                  <span className="mono truncate text-[11px]" title={pageLabel(p)}>
-                    {pageShortLabel(p)}
+                {/* Come in Risultati: il numero di pagina è il titolo, il file
+                    sta sotto in piccolo, lo stato è una riga colorata. */}
+                <span className="flex min-w-0 flex-1 flex-col items-start">
+                  <span className="text-[14px] font-semibold leading-tight tracking-[-0.01em]" title={pageLabel(p)}>
+                    {pageTitle(p)}
                   </span>
-                  {p.status === 'new' && (p.drafts ?? 0) > 0 ? (
-                    <Badge tone="warn">{t('home.draftsBadge', { n: p.drafts ?? 0 })}</Badge>
-                  ) : (
-                    <Badge tone={STATUS_TONE[p.status] ?? 'neutral'}>{statusLabel(p.status)}</Badge>
+                  {pageTitle(p) !== p.rel_path && (
+                    <span className="mono w-full truncate text-[10.5px] text-[color:var(--color-ink-3)]">{p.rel_path}</span>
                   )}
-                  {/* Le somme si segnalano quando non tornano; quando tornano
-                      basta un segno quieto, con il conto nel titolo. */}
-                  {sums?.[p.id] && (sums[p.id].failed > 0 ? (
-                    <span title={t('sidebar.sumsFailedTitle', sums[p.id])}>
-                      <Badge tone="warn">{sumsLabel(sums[p.id])}</Badge>
-                    </span>
-                  ) : (
-                    <span
-                      className="text-[11px] text-[color:var(--color-ok)]"
-                      title={t('sidebar.sumsOkTitle', sums[p.id])}
-                      aria-label={sumsLabel(sums[p.id])}
-                    >
-                      ✓
-                    </span>
-                  ))}
+                  <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
+                    {p.status === 'new' && (p.drafts ?? 0) > 0 ? (
+                      <span className="font-semibold text-[color:var(--color-warn)]">{t('home.draftsBadge', { n: p.drafts ?? 0 })}</span>
+                    ) : (
+                      <span className={`inline-flex items-center gap-1 font-semibold ${STATUS_TEXT[STATUS_TONE[p.status] ?? 'neutral']}`}>
+                        {(p.status === 'approved' || p.status === 'exported') && <IconCheck size={11} />}
+                        {statusLabel(p.status)}
+                      </span>
+                    )}
+                    {/* Le somme si segnalano quando non tornano; quando tornano
+                        basta un segno quieto, con il conto nel titolo. */}
+                    {sums?.[p.id] && (sums[p.id].failed > 0 ? (
+                      <span className="inline-flex items-center gap-1 text-[color:var(--color-warn)]" title={t('sidebar.sumsFailedTitle', sums[p.id])}>
+                        <IconWarn size={11} />
+                        {sumsLabel(sums[p.id])}
+                      </span>
+                    ) : (
+                      <span
+                        className="text-[color:var(--color-ok)]"
+                        title={t('sidebar.sumsOkTitle', sums[p.id])}
+                        aria-label={sumsLabel(sums[p.id])}
+                      >
+                        Σ ✓
+                      </span>
+                    ))}
+                  </span>
                 </span>
               </button>
             </li>

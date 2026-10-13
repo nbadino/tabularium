@@ -6,6 +6,7 @@ import { Badge, ErrorNotice, Field, Module, Notice, Progress, PageHeader } from 
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { syncInferenceFromBackend, toggleInferenceEnabled, useInference } from '../app/inference'
 import { useI18n } from '../i18n'
+import { IconAlert, IconCheck, IconNext, IconWarn } from '../app/icons'
 import { useCanAdminister } from '../app/auth'
 import { pageLabel } from '../lib/pageLabel'
 import { runTitle, useModelNames } from '../app/models/names'
@@ -257,28 +258,40 @@ export default function ResultsPage() {
                 </p>
               )}
               {shownItems.length === 0 && <p className="p-3 text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.noneInFilter')}</p>}
+              {/* Il numero di pagina è ciò che si cerca: viene prima, il file
+                  (spesso un nome lungo e uguale per tutte) sta sotto, in piccolo. */}
               <ul className="cascade divide-y divide-[color:var(--color-rule)]">
-                {shownItems.map((item) => (
-                  <li key={item.id} className="grid gap-2 p-2 sm:grid-cols-[56px_minmax(0,1fr)_auto] sm:items-center">
-                    <img data-fade src={`/api/pages/${item.page_id}/thumbnail`} alt="" className="h-16 w-12 border border-[color:var(--color-rule)] bg-white object-cover object-top" />
-                    <div className="min-w-0">
-                      <div className="mono truncate text-[12px] font-semibold" title={pageLabel(item)}>{pageLabel(item)}</div>
-                      <div className="mt-1 flex flex-wrap gap-1.5">
-                        {isEmptyResult(item) ? (
-                          <Badge tone="warn">{t('recognition.emptyResult')}</Badge>
-                        ) : (
-                          <>
-                            <Badge tone={item.state === 'finished' ? 'ok' : item.state === 'failed' ? 'sig' : 'progress'}>{t(stateKey(item.state))}</Badge>
-                            <Badge>{t('recognition.blocks', { n: item.blocks })}</Badge>
-                          </>
+                {shownItems.map((item) => {
+                  const empty = isEmptyResult(item)
+                  const tone = empty ? 'text-[color:var(--color-warn)]' : item.state === 'finished' ? 'text-[color:var(--color-ok)]' : item.state === 'failed' ? 'text-[color:var(--color-sig-text)]' : 'text-[color:var(--color-ink-2)]'
+                  const StateIcon = empty ? IconWarn : item.state === 'finished' ? IconCheck : item.state === 'failed' ? IconAlert : null
+                  return (
+                    <li key={item.id} className="grid grid-cols-[48px_minmax(0,1fr)] items-center gap-x-3.5 gap-y-2 px-3.5 py-3 sm:grid-cols-[48px_minmax(0,1fr)_auto]">
+                      <img data-fade src={`/api/pages/${item.page_id}/thumbnail`} alt="" className="h-16 w-12 rounded-[4px] border border-[color:var(--color-rule)] bg-white object-cover object-top" />
+                      <div className="min-w-0">
+                        <div className="text-[18px] font-semibold leading-tight tracking-[-0.01em]">
+                          {item.pdf_page != null ? t('recognition.pageN', { n: item.pdf_page + 1 }) : item.rel_path}
+                        </div>
+                        {item.pdf_page != null && (
+                          <div className="mono truncate text-[12px] text-[color:var(--color-ink-2)]" title={pageLabel(item)}>{item.rel_path}</div>
                         )}
-                        {item.drafts > 0 && <Badge tone="warn">{t('recognition.drafts', { n: item.drafts })}</Badge>}
+                        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-[color:var(--color-ink-2)]">
+                          <span className={`inline-flex items-center gap-1 font-semibold ${tone}`}>
+                            {StateIcon && <StateIcon size={12} />}
+                            {empty ? t('recognition.emptyResult') : t(stateKey(item.state))}
+                          </span>
+                          {!empty && item.state !== 'failed' && <span>{t('recognition.blocks', { n: item.blocks })}</span>}
+                          {item.drafts > 0 && <span className="text-[color:var(--color-warn)]">{t('recognition.drafts', { n: item.drafts })}</span>}
+                        </div>
+                        {item.error && <p className="mt-1 text-[11px] text-[color:var(--color-sig-text)]">{item.error}</p>}
                       </div>
-                      {item.error && <p className="mt-1 text-[11px] text-[color:var(--color-sig-text)]">{item.error}</p>}
-                    </div>
-                    <Link to={`/annotazione?project=${run.project_id}&page=${item.page_id}&run=${run.id}`} className="btn no-underline">{t('recognition.review')}</Link>
-                  </li>
-                ))}
+                      <Link to={`/annotazione?project=${run.project_id}&page=${item.page_id}&run=${run.id}`} className="btn col-span-2 justify-center no-underline sm:col-span-1">
+                        {t('recognition.review')}
+                        <IconNext size={12} />
+                      </Link>
+                    </li>
+                  )
+                })}
               </ul>
             </Module>
           </div>

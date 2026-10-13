@@ -933,6 +933,20 @@ export default function AnnotationPage() {
   const approved = page?.status === 'approved' || page?.status === 'exported'
 
   const contentCount = prefillDrafts.length + ann.blocks.length
+  // Le tre viste. Stanno nel menu «Altro» della barra del canvas, ma la vista
+  // «solo trascrizione» nasconde il canvas e con lui la barra: lì si ripetono
+  // in testa al pannello, altrimenti non si torna indietro.
+  const viewChoices = (['all', 'canvas', 'transcription'] as const).map((mode) => (
+    <button
+      key={mode}
+      type="button"
+      onClick={() => setMode(mode)}
+      aria-pressed={studioMode === mode}
+      className="menu-choice"
+    >
+      {t(`annotate.view${mode[0].toUpperCase()}${mode.slice(1)}` as 'annotate.viewAll' | 'annotate.viewCanvas' | 'annotate.viewTranscription')}
+    </button>
+  ))
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -1063,38 +1077,31 @@ export default function AnnotationPage() {
             <Menu label={t('annotate.more')}>
               <span className="lbl !mb-0 px-2 pt-1">{t('annotate.viewMode')}</span>
               <div className="flex gap-0.5 px-1 pb-0.5" role="group" aria-label={t('annotate.viewModeAria')}>
-                {(['all', 'canvas', 'transcription'] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => setMode(mode)}
-                    aria-pressed={studioMode === mode}
-                    className="menu-choice"
-                  >
-                    {t(`annotate.view${mode[0].toUpperCase()}${mode.slice(1)}` as 'annotate.viewAll' | 'annotate.viewCanvas' | 'annotate.viewTranscription')}
-                  </button>
-                ))}
+                {viewChoices}
               </div>
-              <button
-                type="button"
-                onClick={() => setShowFlow((value) => !value)}
-                aria-pressed={showFlow}
-                className="menu-item"
-              >
-                <IconFlow size={12} />
-                {showFlow ? t('annotate.showFlow') : t('annotate.viewFlow')}
-                {showFlow && <IconCheck size={12} className="ml-auto text-[color:var(--color-sig-text)]" />}
-              </button>
-              <button
-                type="button"
-                onClick={ann.redo}
-                disabled={!ann.canRedo}
-                title={t('annotate.redoTitle')}
-                className="menu-item"
-              >
-                <IconRedo size={12} />
-                {t('annotate.redo')}
-              </button>
+              {/* Su una riga: il menu resta largo e basso invece che quadrato. */}
+              <div className="flex gap-px">
+                <button
+                  type="button"
+                  onClick={() => setShowFlow((value) => !value)}
+                  aria-pressed={showFlow}
+                  className="menu-item !w-auto flex-1 whitespace-nowrap"
+                >
+                  <IconFlow size={12} />
+                  {showFlow ? t('annotate.showFlow') : t('annotate.viewFlow')}
+                  {showFlow && <IconCheck size={12} className="ml-auto text-[color:var(--color-sig-text)]" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={ann.redo}
+                  disabled={!ann.canRedo}
+                  title={t('annotate.redoTitle')}
+                  className="menu-item !w-auto whitespace-nowrap"
+                >
+                  <IconRedo size={12} />
+                  {t('annotate.redo')}
+                </button>
+              </div>
               <hr className="menu-sep" />
               <span className="lbl !mb-0 px-2 pt-1">{t('annotate.prefill')}</span>
               {/* I due motori non sono intercambiabili: `ocr` trova righe di testo
@@ -1320,6 +1327,14 @@ export default function AnnotationPage() {
         className={`glide flex min-w-0 flex-col overflow-y-auto bg-[color:var(--color-sheet)] p-3 ${studioMode === 'all' ? 'shrink-0' : 'flex-1'}`}
         style={studioMode === 'all' ? { width: split.content } : undefined}
       >
+        {studioMode === 'transcription' && (
+          <div className="mb-3 flex items-center gap-2">
+            <span className="lbl !mb-0">{t('annotate.viewMode')}</span>
+            <div className="flex gap-0.5 rounded-md border border-[color:var(--color-rule)] p-0.5" role="group" aria-label={t('annotate.viewModeAria')}>
+              {viewChoices}
+            </div>
+          </div>
+        )}
         <ContentPane
           blocks={ann.blocks}
           drafts={prefillDrafts}

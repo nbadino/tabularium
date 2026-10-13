@@ -128,6 +128,7 @@ export const it = {
     startReview: 'Inizia revisione',
     drafts: '{n} da verificare',
     blocks: '{n} blocchi',
+    pageN: 'Pagina {n}',
     computeOff: 'Modello disattivato: revisione ed export restano disponibili.',
     disableNow: 'Disattiva modello',
     retryFailed: 'Riprova pagine fallite',

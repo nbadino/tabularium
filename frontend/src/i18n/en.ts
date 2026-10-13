@@ -129,6 +129,7 @@ export const en: Dict = {
     startReview: 'Start review',
     drafts: '{n} to verify',
     blocks: '{n} blocks',
+    pageN: 'Page {n}',
     computeOff: 'Model disabled: review and export remain available.',
     disableNow: 'Disable model',
     retryFailed: 'Retry failed pages',
