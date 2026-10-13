@@ -12,14 +12,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-APP_NAME = "Tabularium"
-VERSION = "0.1.0"
-
 # --- Radice del checkout ------------------------------------------------------
 # Serve agli script che il backend consegna a macchine remote
 # (`scripts/cloud/…`): il codice eseguito in cloud è quello di questo
 # checkout, non una copia scaricata altrove.
 REPO_DIR: Path = Path(__file__).resolve().parents[2]
+
+APP_NAME = "Tabularium"
+VERSION = (REPO_DIR / "VERSION").read_text(encoding="utf-8").strip()
 
 # Il .env va caricato dall'app stessa, non solo dai launcher: un avvio che
 # bypassa scripts/run_backend.sh (uvicorn diretto, systemd, IDE) altrimenti

@@ -4,6 +4,14 @@
 structured, reviewable data and, when you need it, fine-tunes the parsing
 model on your own corpus.**
 
+[![CI](https://github.com/nbadino/tabularium/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nbadino/tabularium/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+Start with the [quickstart](#quickstart), or jump to
+[what works on your computer](#platform-boundaries),
+[model setup](#connecting-a-model-optional), or
+[troubleshooting](#troubleshooting).
+
 You choose a model and where it runs once (this machine or a rented GPU) and
 then work the same way everywhere. Three independent paths, none of them
 mandatory:
@@ -167,19 +175,47 @@ full backend and frontend test/build cycle on macOS as well as Linux.
 
 ## Quickstart
 
+Tabularium runs as a local web app: the backend serves the dashboard at
+`http://localhost:8787`. You do not need a GPU to organize scans, annotate pages,
+or build datasets. Model inference and fine-tuning can use a remote GPU.
+
+### Before you start
+
+- macOS, Linux, or Windows;
+- Python 3.11–3.13 and Node.js 20–22;
+- internet access for the first dependency installation.
+
+Tabularium is currently installed from source; prebuilt `.app` and `.exe`
+installers are not published yet. Download the repository with **Code →
+Download ZIP** on [GitHub](https://github.com/nbadino/tabularium), extract it,
+and open a terminal in the `tabularium` folder. The setup scripts create the
+app environments and build the web interface.
+
 ```bash
-# 1. backend (venv + dependencies)
-./scripts/setup_backend.sh          # Windows: scripts\setup_backend.ps1
-
-# 2. frontend (built once; the backend then serves it)
-./scripts/setup_frontend.sh         # Windows: scripts\setup_frontend.ps1
-
-# 3. run everything on http://localhost:8787
-./scripts/run.sh                    # Windows: scripts\run.ps1
+# macOS / Linux
+./scripts/setup_backend.sh
+./scripts/setup_frontend.sh
+./scripts/run.sh
 ```
 
-The backend installers accept Python 3.11, 3.12 or 3.13 and refuse versions
-outside the verified matrix.
+On Windows, run these PowerShell scripts in order:
+
+```powershell
+scripts\setup_backend.ps1
+scripts\setup_frontend.ps1
+scripts\run.ps1
+```
+
+Then visit **<http://localhost:8787>**. The first visit asks you to create an
+administrator account. Keep the terminal window open while using the app;
+press `Ctrl+C` there to stop it.
+
+To start again later, run `./scripts/run.sh` (Windows:
+`scripts\run.ps1`). It rebuilds the frontend when needed. Project data is kept
+in `data/` by default and stays on your machine.
+
+The backend installers accept Python 3.11, 3.12 or 3.13 and explicitly refuse
+versions outside the verified matrix.
 
 **Linux prerequisites.** The bundled OCR engine depends on `opencv-python`,
 which imports `libGL`/`glib`; on a headless box the setup prints the remedy if
@@ -308,6 +344,23 @@ cd frontend && npm run test:e2e
 
 Continuous integration runs the backend tests (Python 3.11–3.13), the frontend
 checks, a macOS pass and the end-to-end workflow (`.github/workflows/ci.yml`).
+
+### Versioning
+
+The application version lives in `VERSION`; the version displayed by the
+backend and the frontend package metadata are synchronized by the helper:
+
+```bash
+python3 scripts/version.py                 # show current version
+python3 scripts/version.py bump patch      # 0.1.0 → 0.1.1
+python3 scripts/version.py bump minor      # 0.1.0 → 0.2.0
+python3 scripts/version.py bump major      # 0.1.0 → 1.0.0
+```
+
+After a bump, add user-facing notes under the new version in `CHANGELOG.md`,
+review the changed files, then commit and tag the release (`vX.Y.Z`). The tag
+is a version marker; release publishing is still a deliberate manual step.
+See [CHANGELOG.md](CHANGELOG.md) for the format and history.
 
 ## Troubleshooting
 
