@@ -179,7 +179,8 @@ def serve_start(adapter_id: str, payload: dict | None = None, _admin: dict = Dep
     local_runtime_id = hardware.pick_serve_runtime(adapter.capabilities)
     mlx_choice = (model_settings.get_settings(adapter_id)["effective"].get("mlx") or {}).get("repo")
     served_model = (
-        (mlx_choice or adapter.capabilities.local_mlx_repo)
+        # Stesso criterio dell'avvio: salvata, altrimenti la variante che entra.
+        hardware.pick_mlx_repo(adapter.capabilities, saved=mlx_choice)
         if local_runtime_id == hardware.RUNTIME_MLX
         else (adapter.capabilities.served_model_name or adapter_id)
     )

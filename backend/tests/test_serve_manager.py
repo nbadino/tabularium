@@ -907,3 +907,28 @@ def test_apple_silicon_serves_unlimited_ocr_through_the_dedicated_server(monkeyp
     assert argv[1].endswith("unlimited_ocr_mlx_server.py"), argv
     assert argv[argv.index("--model") + 1] == "mlx-community/Unlimited-OCR-bf16"
     assert argv[argv.index("--port") + 1] == "18908"
+
+
+def test_serve_start_names_the_mlx_variant_the_server_loads(monkeypatch):
+    """Il nome chiesto al server deve essere la variante che il server carica:
+    senza scelta salvata, su un Mac da 8 GB è l'8-bit, non il bf16 di default
+    (altrimenti ogni richiesta è un 404)."""
+    from app.services import hardware, inference as infmod
+
+    small_mac = {
+        "apple_silicon": True, "cuda": {"devices": []}, "memory_gb": 8.0,
+        "runtimes": {"vllm": {"supported": False}, "mlx-vlm": {"supported": True}},
+        "usable_runtimes": ["mlx-vlm"],
+    }
+    monkeypatch.setattr(hardware, "summary", lambda: small_mac)
+    monkeypatch.setattr(hardware, "pick_serve_runtime", lambda capabilities, machine=None: hardware.RUNTIME_MLX)
+    monkeypatch.setattr(
+        serve_manager, "start_async",
+        lambda adapter_id, port, owner_id=None: serve_manager.ServeStatus(
+            running=False, starting=True, adapter_id=adapter_id, port=port,
+        ),
+    )
+    with TestClient(app) as client:
+        res = client.post("/api/models/unlimited-ocr/serve/start", json={"port": 18911})
+        assert res.status_code == 202
+        assert infmod.get_inference_config()["model"] == "mlx-community/Unlimited-OCR-8bit"
