@@ -255,9 +255,16 @@ def collect_pages_with_blocks(project_id: int) -> dict[int, dict]:
             (project_id,),
         ).fetchall()
         for page in pages:
+            # Su una pagina approvata la verità è ciò che una persona ha
+            # approvato: una bozza del modello arrivata dopo (un riconoscimento
+            # rilanciato sulla pagina) non è confermata e non ne fa parte.
+            # Altrimenti valutazione e dataset la prenderebbero per gold, e il
+            # modello verrebbe misurato e addestrato sul proprio output.
+            gold = page["status"] in {"approved", "exported"}
             blocks = conn.execute(
                 "SELECT * FROM blocks WHERE page_id=? "
-                "ORDER BY COALESCE(order_idx, 2147483647), id",
+                + ("AND NOT (prefill_source IS NOT NULL AND confirmed=0) " if gold else "")
+                + "ORDER BY COALESCE(order_idx, 2147483647), id",
                 (page["id"],),
             ).fetchall()
             if not blocks:

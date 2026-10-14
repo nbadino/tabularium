@@ -608,3 +608,40 @@ def test_an_adapter_that_declares_no_context_keeps_the_full_budget():
         assert client._output_budget(TABLE_MAX_TOKENS) == TABLE_MAX_TOKENS
     finally:
         object.__setattr__(adapter.capabilities, "max_model_len", 24576)
+
+
+def test_model_drafts_on_an_approved_page_are_not_gold(tmp_path: Path):
+    """Un riconoscimento rilanciato su una pagina approvata vi aggiunge bozze
+    non confermate: non sono verità, né per la valutazione né per il dataset."""
+    from app.db import connect
+    from app.services import dataset_builder as builder
+
+    with TestClient(app) as client:
+        archive = tmp_path / "archive_gold"
+        archive.mkdir(parents=True)
+        Image.new("RGB", (900, 1300), (215, 215, 215)).save(archive / "p.png")
+        pid = client.post("/api/projects", json={"name": "G", "archive_dir": str(archive)}).json()["id"]
+        client.post(f"/api/projects/{pid}/scan")
+        page_id = client.get(f"/api/projects/{pid}/pages").json()["items"][0]["id"]
+        client.put(
+            f"/api/pages/{page_id}/annotations",
+            json={"items": [{"label": "Text", "kind": "rect", "points": [[10, 100], [890, 900]],
+                             "content": "Approved by a person.", "order_idx": 1, "confirmed": True}]},
+        )
+
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO blocks(page_id, label, kind, points, content, order_idx, prefill_source, confirmed) "
+            "VALUES(?, 'Text', 'rect', '[[10,950],[890,1200]]', 'Model draft.', 2, 'model:x:end2end', 0)",
+            (page_id,),
+        )
+        conn.execute("UPDATE pages SET status='approved' WHERE id=?", (page_id,))
+    contents = [b["content"] for b in builder.collect_pages_with_blocks(pid)[page_id]["blocks"]]
+    assert contents == ["Approved by a person."]
+
+    # Su una pagina ancora in lavorazione la bozza resta: il report la conta
+    # come prefill non verificato.
+    with connect() as conn:
+        conn.execute("UPDATE pages SET status='annotated' WHERE id=?", (page_id,))
+    contents = [b["content"] for b in builder.collect_pages_with_blocks(pid)[page_id]["blocks"]]
+    assert contents == ["Approved by a person.", "Model draft."]

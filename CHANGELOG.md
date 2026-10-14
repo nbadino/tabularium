@@ -44,6 +44,11 @@ Le modifiche rilevanti di Tabularium sono raccolte qui. Il formato segue
   guasto Metal, perché dopo un timeout il GPU rifiuta ogni comando finché il
   processo vive. Provato e scartato: passi di prefill più piccoli non abbassano il
   picco (4,90 GB contro 4,89).
+- Pagine approvate e bozze del modello: un riconoscimento rilanciato su una pagina già
+  approvata vi aggiunge bozze non confermate, e valutazione ed export le prendevano
+  per verità — il modello veniva misurato (e addestrato) sul proprio output. Ora su
+  una pagina approvata contano solo i blocchi confermati; sulle altre pagine nulla
+  cambia (il report conta le bozze come prefill non verificato).
 
 ## [0.1.0]
 
