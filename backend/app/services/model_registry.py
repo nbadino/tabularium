@@ -451,8 +451,14 @@ def list_models() -> list[dict]:
             # Un adapter servito via Docker dipende da prerequisiti di sistema
             # che non possiamo installare noi: dichiararli prima del click è
             # meglio che un `exit code 125` dopo.
+            # Solo se qui si servirebbe davvero via Docker: su Apple Silicon un
+            # modello con percorso MLX (Unlimited-OCR) non tocca Docker, e
+            # «docker_missing» spaventava senza motivo.
             "local_serve_blocker": (
-                _docker_gpu_blocker() if cap.get("serve_backend") == "docker-vllm-openai" else None
+                _docker_gpu_blocker()
+                if cap.get("serve_backend") == "docker-vllm-openai"
+                and hardware.pick_serve_runtime(adapter.capabilities, local_machine) != hardware.RUNTIME_MLX
+                else None
             ),
             # Dove questo modello gira *davvero* su questa macchina, con la
             # causa scritta quando non gira. È la risposta a «posso usarlo in

@@ -42,6 +42,8 @@ interface ModelRuntimeInfo {
   adapter_id: string
   vram_warning: string | null
   local_serve_blocker?: string | null
+  /** Verdetto del registro: il modello gira su questa macchina (es. via MLX). */
+  local?: { runnable: boolean }
 }
 
 function RunSummary({ run, onCancel }: { run: RecognitionRun; onCancel: () => void }) {
@@ -217,7 +219,9 @@ export default function RecognizePage() {
   // Su una macchina senza CUDA locale «l'endpoint non risponde» è il sintomo,
   // non la causa: mostrarli entrambi manda a controllare un endpoint che non
   // potrà mai rispondere. Vince la causa, che dice anche come uscirne.
-  const noLocalGpu = engine === 'model' && !inference.isCloud && caps?.local_cuda === false
+  // Senza CUDA un modello può comunque girare qui via MLX: lo dice il verdetto
+  // del registro, che vince sulla sola assenza di CUDA.
+  const noLocalGpu = engine === 'model' && !inference.isCloud && caps?.local_cuda === false && !runtimeWarning?.local?.runnable
   // La macchina può servire *qualcosa* in locale? Su Apple Silicon sì, via
   // MLX — ma non quel modello, se non ha un checkpoint MLX. Distinguere le due
   // cose evita di dire «questa macchina non può» quando può, solo con un
