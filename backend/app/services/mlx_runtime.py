@@ -154,7 +154,9 @@ def ensure_ready() -> None:
     _write_state(state="ready", error=None)
 
 
-def unlimited_ocr_serve_argv(repo: str, *, port: int, host: str = "127.0.0.1") -> list[str]:
+def unlimited_ocr_serve_argv(
+    repo: str, *, port: int, host: str = "127.0.0.1", cache_limit_gb: float | None = None,
+) -> list[str]:
     """Comando del server MLX dedicato di Unlimited-OCR.
 
     Non usa `mlx_vlm.server`: per l'architettura `unlimited_ocr` quel server
@@ -172,6 +174,7 @@ def unlimited_ocr_serve_argv(repo: str, *, port: int, host: str = "127.0.0.1") -
         host,
         "--port",
         str(int(port)),
+        *(["--cache-limit-gb", f"{cache_limit_gb:g}"] if cache_limit_gb is not None else []),
     ]
 
 

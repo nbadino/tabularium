@@ -31,6 +31,12 @@ Le modifiche rilevanti di Tabularium sono raccolte qui. Il formato segue
   il proprio peso (`local_mlx_variant_weight_factors`); senza una scelta salvata si
   serve la più grande che entra (bf16 sui Mac grandi, 8-bit su quelli da 8 GB), e le
   varianti che non entrano sono spente nella scelta.
+- Unlimited-OCR su Mac da 8 GB: la cache dei buffer di MLX tratteneva memoria già
+  liberata, la memoria libera scendeva al 2% e il GPU andava in timeout alla prima
+  pagina (`kIOGPUCommandBufferCallbackErrorTimeout`). Fino a 12 GB il server dedicato
+  parte con la cache spenta (`--cache-limit-gb 0`) e la svuota dopo ogni pagina;
+  misurato su M1 / 8 GB: pagina a tabella in 42 s, una da 30k caratteri in 130 s,
+  memoria libera minima 7–9%.
 
 ## [0.1.0]
 

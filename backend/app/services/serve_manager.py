@@ -621,7 +621,15 @@ def start(
                 # Il server MLX standard non inietta l'immagine per questa
                 # architettura (v. `unlimited_ocr_mlx_server.py`): serve il
                 # server dedicato, che usa l'API `mlx_vlm.generate`.
-                argv = mlx_runtime.unlimited_ocr_serve_argv(model_path, port=port)
+                # Fino a 12 GB di memoria la cache dei buffer di MLX va spenta:
+                # su un M1 da 8 GB, con backend e browser aperti, la memoria
+                # libera scendeva al 2% e il GPU andava in timeout alla prima
+                # pagina; senza cache la stessa pagina passa in 42 s col 9%
+                # libero. Sui Mac più grandi resta il comportamento di MLX.
+                memory_gb = hardware.summary().get("memory_gb") or 0
+                argv = mlx_runtime.unlimited_ocr_serve_argv(
+                    model_path, port=port, cache_limit_gb=0 if 0 < memory_gb <= 12 else None,
+                )
             else:
                 # `repo` e `repetition_penalty` sono scelte per richiesta (il
                 # primo è già risolto in `model_path`, la seconda la applica il

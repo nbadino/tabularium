@@ -906,6 +906,8 @@ def test_apple_silicon_serves_unlimited_ocr_through_the_dedicated_server(monkeyp
     argv = captured["argv"]
     assert argv[1].endswith("unlimited_ocr_mlx_server.py"), argv
     assert argv[argv.index("--model") + 1] == "mlx-community/Unlimited-OCR-bf16"
+    # Su un Mac grande la cache di MLX resta com'è.
+    assert "--cache-limit-gb" not in argv
     assert argv[argv.index("--port") + 1] == "18908"
 
 
@@ -932,3 +934,47 @@ def test_serve_start_names_the_mlx_variant_the_server_loads(monkeypatch):
         res = client.post("/api/models/unlimited-ocr/serve/start", json={"port": 18911})
         assert res.status_code == 202
         assert infmod.get_inference_config()["model"] == "mlx-community/Unlimited-OCR-8bit"
+
+
+def test_small_mac_serves_unlimited_ocr_without_the_mlx_buffer_cache(monkeypatch):
+    """Su 8 GB la cache dei buffer di MLX porta il GPU in timeout: il server
+    dedicato parte con la cache spenta, e con la variante 8-bit."""
+    from app.services import mlx_runtime
+
+    monkeypatch.setattr(
+        serve_manager.hardware, "pick_serve_runtime",
+        lambda capabilities, machine=None: serve_manager.hardware.RUNTIME_MLX,
+    )
+    monkeypatch.setattr(
+        serve_manager.hardware, "summary",
+        lambda: {
+            "apple_silicon": True, "cuda": {"devices": []}, "memory_gb": 8.0,
+            "runtimes": {"vllm": {"supported": False}, "mlx-vlm": {"supported": True}},
+            "usable_runtimes": ["mlx-vlm"],
+        },
+    )
+    monkeypatch.setattr(mlx_runtime, "ensure_ready", lambda: None)
+    monkeypatch.setattr(mlx_runtime, "python_bin", lambda: Path("/tmp/mlx-python"))
+    captured: dict = {}
+
+    class FakeProc:
+        pid = 4323
+
+        def poll(self):
+            return None
+
+    def fake_popen(argv, **kwargs):
+        captured["argv"] = argv
+        return FakeProc()
+
+    monkeypatch.setattr(serve_manager.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(serve_manager, "_reclaim_port", lambda port, settle=10.0: None)
+    monkeypatch.setattr(serve_manager, "_set_phase", lambda *a, **k: None)
+    monkeypatch.setattr(serve_manager, "is_installed", lambda adapter_id: False)
+    monkeypatch.setattr(serve_manager, "_pid_alive", lambda pid: True)
+
+    serve_manager.start("unlimited-ocr", port=18912)
+
+    argv = captured["argv"]
+    assert argv[argv.index("--model") + 1] == "mlx-community/Unlimited-OCR-8bit"
+    assert argv[argv.index("--cache-limit-gb") + 1] == "0"

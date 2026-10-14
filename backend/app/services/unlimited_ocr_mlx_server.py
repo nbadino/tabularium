@@ -89,6 +89,11 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--max-tokens", type=int, default=8192)
+    # Su un Mac da 8 GB i pesi (3,7 GB in 8-bit) lasciano poco margine, e la
+    # cache dei buffer di MLX trattiene memoria già liberata: misurato, la
+    # memoria libera del sistema scende al 2% e il GPU va in timeout. Un tetto
+    # alla cache (0 = nessuna cache) la restituisce subito al sistema.
+    parser.add_argument("--cache-limit-gb", type=float, default=None)
     args = parser.parse_args()
 
     import uvicorn
@@ -101,10 +106,20 @@ def main() -> None:
     from mlx_vlm.utils import load_config
 
     model_id = args.model
+    import mlx.core as mx
+
+    if args.cache_limit_gb is not None:
+        mx.set_cache_limit(int(args.cache_limit_gb * 1024 ** 3))
     model, processor = load(model_id)
     config = load_config(model_id)
 
     app = FastAPI(title="Tabularium Unlimited-OCR MLX")
+
+    def release_memory() -> None:
+        """Dopo ogni pagina: riporta il picco e restituisce la cache al sistema."""
+        print(f"peak_gpu_gb={mx.get_peak_memory() / 1024 ** 3:.2f}", flush=True)
+        mx.clear_cache()
+        mx.reset_peak_memory()
 
     def build_prompt(text: str, num_images: int) -> str:
         return apply_chat_template(processor, config, _normalize_text(text), num_images=num_images)
@@ -157,6 +172,7 @@ def main() -> None:
                 prompt_tokens = result.prompt_tokens
                 completion_tokens = result.generation_tokens
                 finish = getattr(result, "finish_reason", None) or finish
+            release_memory()
             return {
                 "id": cid,
                 "object": "chat.completion",
@@ -193,6 +209,7 @@ def main() -> None:
                 finish = getattr(result, "finish_reason", None) or finish
                 if result.text:
                     yield _sse(chunk({"content": result.text}))
+            release_memory()
             yield _sse(chunk({}, finish or "stop"))
             if include_usage:
                 yield _sse({
