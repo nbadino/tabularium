@@ -37,6 +37,13 @@ Le modifiche rilevanti di Tabularium sono raccolte qui. Il formato segue
   parte con la cache spenta (`--cache-limit-gb 0`) e la svuota dopo ogni pagina;
   misurato su M1 / 8 GB: pagina a tabella in 42 s, una da 30k caratteri in 130 s,
   memoria libera minima 7–9%.
+- Riconoscimento con un modello locale: se il server muore a metà pagina (su un Mac da
+  8 GB il GPU può andare in timeout anche con la cache spenta), la sessione lo
+  riavvia sulla stessa porta e riprova la pagina una volta, invece di far fallire
+  quella e tutte le successive. Il server di Unlimited-OCR esce da solo al primo
+  guasto Metal, perché dopo un timeout il GPU rifiuta ogni comando finché il
+  processo vive. Provato e scartato: passi di prefill più piccoli non abbassano il
+  picco (4,90 GB contro 4,89).
 
 ## [0.1.0]
 

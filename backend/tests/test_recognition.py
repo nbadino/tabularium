@@ -262,3 +262,96 @@ def test_playground_parses_with_local_ocr_without_an_endpoint(tmp_path, monkeypa
         assert body["items"][0]["label"] == "Text"
         assert body["items"][0]["content"] == "Recognized text"
         assert body["items"][0]["bbox_px"] == [10, 20, 180, 50]
+
+
+def _wait_run(client, project_id, run_id):
+    body = {}
+    for _ in range(200):
+        body = client.get(f"/api/projects/{project_id}/recognition-runs/{run_id}").json()
+        if body["state"] not in {"queued", "running"}:
+            break
+        time.sleep(0.02)
+    return body
+
+
+def _ocr_run(client, project_id, page_ids):
+    created = client.post(
+        f"/api/projects/{project_id}/recognition-runs",
+        json={"page_ids": page_ids, "engine": "ocr", "mode": "replace_drafts", "stop_policy": "none"},
+    )
+    assert created.status_code == 202, created.text
+    return created.json()["id"]
+
+
+def test_a_page_lost_to_a_dead_local_server_is_retried_once(tmp_path, monkeypatch):
+    """Su un Mac piccolo il server MLX può morire a metà pagina (timeout del
+    GPU): la pagina non fallisce, il server si riavvia e la pagina si riprova."""
+    from app.services import recognition
+
+    monkeypatch.setattr(recognition.ocrmod, "OcrEngine", FakeOcr)
+    calls: list[int] = []
+
+    def flaky(run, item, opts, client, engine, cancel):
+        calls.append(item["page_id"])
+        if calls.count(item["page_id"]) == 1:
+            return [], None, "Response ended prematurely"
+        return [], {"detected": 0, "inserted": 0}, None
+
+    monkeypatch.setattr(recognition, "_recognize_page", flaky)
+    monkeypatch.setattr(recognition, "_recover_local_server", lambda run, cancel: True)
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        body = _wait_run(client, project_id, _ocr_run(client, project_id, page_ids))
+
+    assert body["state"] == "finished"
+    assert calls == [page_ids[0], page_ids[0], page_ids[1], page_ids[1]]
+
+
+def test_no_retry_when_the_server_cannot_be_recovered(tmp_path, monkeypatch):
+    from app.services import recognition
+
+    monkeypatch.setattr(recognition.ocrmod, "OcrEngine", FakeOcr)
+    calls: list[int] = []
+
+    def failing(run, item, opts, client, engine, cancel):
+        calls.append(item["page_id"])
+        return [], None, "Response ended prematurely"
+
+    monkeypatch.setattr(recognition, "_recognize_page", failing)
+    monkeypatch.setattr(recognition, "_recover_local_server", lambda run, cancel: False)
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        body = _wait_run(client, project_id, _ocr_run(client, project_id, page_ids))
+
+    assert body["state"] == "finished_with_errors"
+    assert calls == page_ids  # una volta sola per pagina
+    assert all(item["error"] == "Response ended prematurely" for item in body["items"])
+
+
+def test_recovery_restarts_only_a_dead_local_server(monkeypatch):
+    import threading as _threading
+
+    from app.services import recognition, serve_manager
+
+    started: list[tuple] = []
+    state = {"running": False, "phase": None}
+
+    monkeypatch.setattr(serve_manager, "get_status", lambda: serve_manager.ServeStatus(running=state["running"]))
+    monkeypatch.setattr(serve_manager, "progress", lambda status=None: {"phase": state["phase"], "error": None})
+
+    def fake_start(adapter_id, port=8888, owner_id=None):
+        started.append((adapter_id, port))
+        state.update(running=True, phase="ready")
+        return serve_manager.ServeStatus(running=True)
+
+    monkeypatch.setattr(serve_manager, "start_async", fake_start)
+    cancel = _threading.Event()
+    local = {"engine": "model", "provider": "local", "adapter_id": "unlimited-ocr",
+             "endpoint": "http://127.0.0.1:8889/v1", "owner_id": 1}
+
+    # Remoto: non si riavvia niente da qui.
+    assert recognition._recover_local_server({**local, "provider": "vast"}, cancel) is False
+    assert started == []
+    # Locale e morto: si riavvia sulla stessa porta e si aspetta che risponda.
+    assert recognition._recover_local_server(local, cancel) is True
+    assert started == [("unlimited-ocr", 8889)]

@@ -11,6 +11,7 @@ import json
 import csv
 import io
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -319,6 +320,85 @@ def _refresh_counts(run_id: int) -> None:
         )
 
 
+def _recognize_page(run, item, opts, client, engine, cancel: threading.Event):
+    """Riconosce una pagina: blocchi emessi, riepilogo, eventuale errore."""
+    blocks: list[dict[str, Any]] = []
+    summary: dict[str, Any] | None = None
+    failure: str | None = None
+    events = (
+        prefill.model_prelabel_events(
+            run["project_id"], [item["page_id"]], opts, client, "it",
+            cancel_event=cancel,
+        )
+        if client is not None
+        else prefill.ocr_prelabel_events(run["project_id"], [item["page_id"]], opts, engine, "it")
+    )
+    try:
+        for event in events:
+            if event["type"] == "block":
+                blocks.append(event["block"])
+                # Persist each emitted block immediately.  The run API
+                # is also the live transport for the Studio: polling
+                # it must not wait for the whole page to finish.
+                _mark_item(
+                    item["id"],
+                    "running",
+                    detected=len(blocks),
+                    result_json=json.dumps(
+                        {"summary": summary, "blocks": blocks},
+                        ensure_ascii=False,
+                    ),
+                )
+            elif event["type"] == "page_done":
+                summary = event["summary"]
+            elif event["type"] == "error":
+                failure = str(event.get("message") or "riconoscimento non riuscito")
+    except Exception as exc:  # noqa: BLE001
+        failure = str(exc)
+    return blocks, summary, failure
+
+
+# Quanto aspettare che il server locale riavviato risponda: con i pesi già in
+# cache MLX ci mette 20–60 s; il margine copre un Mac lento o sotto pressione.
+RECOVERY_READY_TIMEOUT_S = 240
+
+
+def _recover_local_server(run, cancel: threading.Event) -> bool:
+    """Riavvia il server locale del modello se è morto; vero se ora risponde.
+
+    Vale solo per i modelli serviti su questa macchina: un endpoint remoto
+    non si riavvia da qui. Se il server è ancora vivo l'errore era un altro, e
+    riprovare non servirebbe.
+    """
+    if run["engine"] != "model" or str(run["provider"] or "") != "local" or not run["adapter_id"]:
+        return False
+    from urllib.parse import urlparse
+
+    from . import serve_manager
+
+    # Il server esce poco dopo il guasto: si lascia il tempo di accorgersene.
+    deadline = time.monotonic() + 5
+    while serve_manager.get_status().running and time.monotonic() < deadline:
+        time.sleep(0.5)
+    if serve_manager.get_status().running:
+        return False
+    port = urlparse(str(run["endpoint"] or "")).port or 8888
+    try:
+        serve_manager.start_async(str(run["adapter_id"]), port=port, owner_id=run["owner_id"])
+    except (ValueError, RuntimeError):
+        return False
+    deadline = time.monotonic() + RECOVERY_READY_TIMEOUT_S
+    while time.monotonic() < deadline and not cancel.is_set():
+        status = serve_manager.get_status()
+        progress = serve_manager.progress(status)
+        if progress["phase"] == "ready":
+            return True
+        if progress["error"] or not (status.running or status.starting):
+            return False
+        time.sleep(2)
+    return False
+
+
 def _worker(run_id: int, cancel: threading.Event) -> None:
     started = _now()
     with connect() as conn:
@@ -352,39 +432,14 @@ def _worker(run_id: int, cancel: threading.Event) -> None:
                 _refresh_counts(run_id)
                 continue
             _mark_item(item["id"], "running", started_at=_now(), error=None)
-            blocks: list[dict[str, Any]] = []
-            summary: dict[str, Any] | None = None
-            failure: str | None = None
-            events = (
-                prefill.model_prelabel_events(
-                    run["project_id"], [item["page_id"]], opts, client, "it",
-                    cancel_event=cancel,
-                )
-                if client is not None
-                else prefill.ocr_prelabel_events(run["project_id"], [item["page_id"]], opts, engine, "it")
-            )
-            try:
-                for event in events:
-                    if event["type"] == "block":
-                        blocks.append(event["block"])
-                        # Persist each emitted block immediately.  The run API
-                        # is also the live transport for the Studio: polling
-                        # it must not wait for the whole page to finish.
-                        _mark_item(
-                            item["id"],
-                            "running",
-                            detected=len(blocks),
-                            result_json=json.dumps(
-                                {"summary": summary, "blocks": blocks},
-                                ensure_ascii=False,
-                            ),
-                        )
-                    elif event["type"] == "page_done":
-                        summary = event["summary"]
-                    elif event["type"] == "error":
-                        failure = str(event.get("message") or "riconoscimento non riuscito")
-            except Exception as exc:  # noqa: BLE001
-                failure = str(exc)
+            blocks, summary, failure = _recognize_page(run, item, opts, client, engine, cancel)
+            # Un server locale morto a metà (su un Mac piccolo il GPU può andare
+            # in timeout e il server esce) non deve far fallire la pagina: lo si
+            # riavvia e la si riprova una volta. Solo se il tentativo fallito non
+            # ha scritto niente, così non si duplicano blocchi.
+            if failure and not blocks and not cancel.is_set() and _recover_local_server(run, cancel):
+                _mark_item(item["id"], "running", error=None)
+                blocks, summary, failure = _recognize_page(run, item, opts, client, engine, cancel)
 
             if cancel.is_set() and summary is None:
                 _mark_item(item["id"], "cancelled", ended_at=_now())

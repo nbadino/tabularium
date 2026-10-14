@@ -623,9 +623,11 @@ def start(
                 # server dedicato, che usa l'API `mlx_vlm.generate`.
                 # Fino a 12 GB di memoria la cache dei buffer di MLX va spenta:
                 # su un M1 da 8 GB, con backend e browser aperti, la memoria
-                # libera scendeva al 2% e il GPU andava in timeout alla prima
-                # pagina; senza cache la stessa pagina passa in 42 s col 9%
-                # libero. Sui Mac più grandi resta il comportamento di MLX.
+                # libera scendeva al 2% e il GPU andava in timeout; senza cache
+                # la pagina passa in 42 s col 9% libero, ma con il browser
+                # aperto può ancora cedere (v. il riavvio in `recognition`).
+                # Passi di prefill più piccoli non abbassano il picco (misurato:
+                # 4,90 GB contro 4,89). Sui Mac più grandi nulla cambia.
                 memory_gb = hardware.summary().get("memory_gb") or 0
                 argv = mlx_runtime.unlimited_ocr_serve_argv(
                     model_path, port=port, cache_limit_gb=0 if 0 < memory_gb <= 12 else None,

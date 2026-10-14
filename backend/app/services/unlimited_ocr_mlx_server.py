@@ -24,6 +24,8 @@ import argparse
 import base64
 import io
 import json
+import os
+import threading
 import time
 import uuid
 from typing import Any
@@ -115,6 +117,22 @@ def main() -> None:
 
     app = FastAPI(title="Tabularium Unlimited-OCR MLX")
 
+    def generate(prompt: str, images: list, kwargs: dict):
+        """`stream_generate`, ma un guasto del GPU chiude il processo.
+
+        Dopo un timeout Metal ogni comando successivo viene rifiutato
+        (`SubmissionsIgnored`) finché il processo vive: restare in piedi vuol
+        dire far fallire tutte le pagine che seguono. Uscendo, Tabularium vede
+        il server morto, lo riavvia e riprova la pagina.
+        """
+        try:
+            yield from stream_generate(model, processor, prompt, images, **kwargs)
+        except RuntimeError as exc:
+            if "[METAL]" in str(exc):
+                print(f"gpu_fault: {exc}; exiting so the server can be restarted", flush=True)
+                threading.Timer(0.5, lambda: os._exit(75)).start()
+            raise
+
     def release_memory() -> None:
         """Dopo ogni pagina: riporta il picco e restituisce la cache al sistema."""
         print(f"peak_gpu_gb={mx.get_peak_memory() / 1024 ** 3:.2f}", flush=True)
@@ -167,7 +185,7 @@ def main() -> None:
             text_out = ""
             prompt_tokens = completion_tokens = 0
             finish = "stop"
-            for result in stream_generate(model, processor, prompt, images, **kwargs):
+            for result in generate(prompt, images, kwargs):
                 text_out += result.text
                 prompt_tokens = result.prompt_tokens
                 completion_tokens = result.generation_tokens
@@ -203,7 +221,7 @@ def main() -> None:
             yield _sse(chunk({"role": "assistant", "content": ""}))
             prompt_tokens = completion_tokens = 0
             finish: str | None = None
-            for result in stream_generate(model, processor, prompt, images, **kwargs):
+            for result in generate(prompt, images, kwargs):
                 prompt_tokens = result.prompt_tokens
                 completion_tokens = result.generation_tokens
                 finish = getattr(result, "finish_reason", None) or finish
