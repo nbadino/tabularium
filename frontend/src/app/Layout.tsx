@@ -242,7 +242,7 @@ export default function Layout() {
               return (
             <Link
               to="/modelli"
-              className="flex min-w-0 items-center gap-1.5 rounded-full border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] px-3 py-1 text-[11px] no-underline hover:bg-[color:var(--color-fill)]"
+              className="flex min-w-0 items-center gap-1.5 rounded-[var(--radius-sm)] border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] px-3 py-1 text-[11px] no-underline hover:bg-[color:var(--color-fill)]"
               title={t('recognition.changeModel')}
             >
               <span className="max-w-[24ch] truncate font-semibold" title={inference.model || undefined}>{nameOf(inference.adapterId) ?? (inference.model || t('recognition.activeModel'))}</span>
