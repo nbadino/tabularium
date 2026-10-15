@@ -167,12 +167,12 @@ export function CommandPalette() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="btn btn-sm text-[color:var(--color-ink-2)]"
+        className="btn btn-sm w-48 justify-start text-[color:var(--color-ink-2)]"
         aria-keyshortcuts={IS_MAC ? 'Meta+K' : 'Control+K'}
       >
         <IconSearch size={12} />
         {t('commands.open')}
-        <kbd className="mono rounded-[var(--radius-sm)] border border-[color:var(--color-rule)] px-1 text-[11px] text-[color:var(--color-ink-3)]">
+        <kbd className="mono ml-auto rounded-[var(--radius-sm)] border border-[color:var(--color-rule)] px-1 text-[11px] text-[color:var(--color-ink-3)]">
           {IS_MAC ? '⌘K' : 'Ctrl K'}
         </kbd>
       </button>
