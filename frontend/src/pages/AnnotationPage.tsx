@@ -993,11 +993,15 @@ export default function AnnotationPage() {
             Annulla, stato del salvataggio, Prossimo compito); il resto — vista,
             flusso di lettura, prefill, salvataggio manuale, «riparti da zero» —
             sta in «Altro», scritto per esteso e a un clic. */}
-        <div ref={barRef} className="studio-bar flex flex-wrap items-center gap-2 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-2 py-1.5">
+        <div ref={barRef} className="studio-bar flex flex-wrap items-start justify-end gap-2 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-2 py-1.5">
           {/* A sinistra come si disegna, a destra cosa viene dopo. Ogni
-              controllo è alto uguale (`.studio-bar`, index.css) e la barra resta su
-              una riga: quando lo spazio manca toglie dettagli per gradi
-              (`useFitOneRow`, livelli in index.css) invece di andare a capo. */}
+              controllo è alto uguale (`.studio-bar`, index.css). La barra
+              stringe i dettagli per gradi (`useFitOneRow`, livelli in index.css);
+              quando lo spazio non basta più, le azioni di destra vanno a capo
+              una per volta. Sono figli diretti della barra — il loro
+              contenitore è `display: contents` — e il `mr-auto` sull'ultimo
+              controllo di sinistra le tiene a destra, con `justify-end` che le
+              allinea a destra anche sulla riga successiva. */}
             <div className="flex overflow-hidden rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)]" role="toolbar" aria-label={t('annotate.toolsAria')}>
               {tools.map((tool) => {
                 const on = ann.tool === tool.id
@@ -1053,12 +1057,12 @@ export default function AnnotationPage() {
               onClick={ann.undo}
               disabled={!ann.canUndo}
               title={t('annotate.undoTitle')}
-              className="btn"
+              className="btn mr-auto"
             >
               <IconUndo size={12} />
               <span className="tb-undo-label">{t('annotate.undo')}</span>
             </button>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="contents">
             {page && (
               <span className="tb-name mono max-w-[16ch] truncate text-[11px] text-[color:var(--color-ink-3)]" title={`${pageLabel(page)} · ${page.width}×${page.height}`}>
                 {pageLabel(page)}
