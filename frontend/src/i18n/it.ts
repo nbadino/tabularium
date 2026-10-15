@@ -419,14 +419,13 @@ export const it = {
   },
 
   projects: {
-    picker: { open: 'Sfoglia…', title: 'Scegli la cartella archivio', up: 'Su', use: 'Usa questa cartella', files: { one: '{n} immagine o PDF qui', other: '{n} immagini o PDF qui' }, recursive: 'La scansione include anche le sottocartelle.', noSubfolders: 'Nessuna sottocartella.', truncated: 'Cartella molto grande: l\u2019elenco è parziale.' },
+    picker: { open: 'Sfoglia…', nativeWaiting: 'In attesa della finestra cartelle… si apre sul computer che esegue il server.', title: 'Scegli la cartella archivio', up: 'Su', use: 'Usa questa cartella', files: { one: '{n} immagine o PDF qui', other: '{n} immagini o PDF qui' }, recursive: 'La scansione include anche le sottocartelle.', noSubfolders: 'Nessuna sottocartella.', truncated: 'Cartella molto grande: l\u2019elenco è parziale.' },
     title: 'Progetti',
     intro: 'Ogni progetto punta a una cartella archivio (scansioni o PDF). Le pagine vengono registrate con una scansione, che non modifica mai i file sorgente.',
     new: 'Nuovo progetto',
     name: 'Nome',
     namePlaceholder: 'Es. Historic Shipping Index 1904',
     archiveDir: 'Cartella archivio',
-    archiveDirHint: 'Percorso assoluto sulla macchina che esegue il backend.',
     archiveDirPlaceholder: '/percorso/alle/scansioni',
     dirError:
       'Il percorso deve essere assoluto (es. /archivio/scansioni oppure C:\\scansioni).',

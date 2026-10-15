@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { Link } from 'react-router'
-import { apiGet, apiPost } from '../lib/api'
+import { ApiError, apiGet, apiPost } from '../lib/api'
 import type { Project } from '../lib/types'
 import { pages, projects } from '../lib/vocab'
 import { ErrorNotice, Field, Module, PageHeader } from '../app/ui'
@@ -19,8 +19,17 @@ export default function ProjectsPage() {
   const [error, setError] = useState<unknown>(null)
   const [dirTouched, setDirTouched] = useState(false)
   const [picking, setPicking] = useState(false)
+  const [nativePicking, setNativePicking] = useState(false)
   // La navigazione mostra il filesystem del server: solo gli amministratori.
   const canBrowse = useCanAdminister()
+
+  // Un percorso scelto (dalla finestra di sistema o dal browser web) vale come
+  // digitato: riempie il campo e, se il nome è vuoto, lo ricava dalla cartella.
+  const applyPath = (path: string) => {
+    setArchiveDir(path)
+    setDirTouched(true)
+    if (!name.trim()) setName(path.split(/[\\/]/).filter(Boolean).pop() ?? '')
+  }
 
   // percorso assoluto POSIX o Windows; null = campo vuoto (validato da required)
   const dirError = (() => {
@@ -59,6 +68,28 @@ export default function ProjectsPage() {
     }
   }
 
+  // Un unico pulsante «Sfoglia»: apre la finestra di sistema sulla macchina
+  // del backend, che è quella dell'utente quando il server gira in locale. Se
+  // la finestra non può comparire (server headless o remoto) l'API risponde
+  // 501: si ripiega sulla navigazione web del filesystem, senza un secondo
+  // pulsante da spiegare.
+  const pickNative = async () => {
+    setNativePicking(true)
+    setError(null)
+    try {
+      const start = archiveDir.trim()
+      const out = await apiPost<{ path: string | null }>(
+        `/system/fs/pick${start ? `?start=${encodeURIComponent(start)}` : ''}`,
+      )
+      if (out.path) applyPath(out.path)
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 501) setPicking(true)
+      else setError(err)
+    } finally {
+      setNativePicking(false)
+    }
+  }
+
   return (
     <div className="p-3">
       <PageHeader title={t('projects.title')} intro={t('projects.intro')} />
@@ -84,23 +115,34 @@ export default function ProjectsPage() {
               </Field>
               <Field
                 label={t('projects.archiveDir')}
-                hint={t('projects.archiveDirHint')}
                 error={dirTouched && dirError ? dirError : null}
               >
-                <div className="flex gap-2">
-                  <input
-                    value={archiveDir}
-                    onChange={(e) => setArchiveDir(e.target.value)}
-                    onBlur={() => setDirTouched(true)}
-                    required
-                    placeholder={t('projects.archiveDirPlaceholder')}
-                    aria-invalid={dirTouched && dirError ? true : undefined}
-                    className="fld fld-mono"
-                  />
-                  {canBrowse && (
-                    <button type="button" className="btn shrink-0" onClick={() => setPicking(true)}>
-                      {t('projects.picker.open')}
-                    </button>
+                <div>
+                  <div className="flex gap-2">
+                    <input
+                      value={archiveDir}
+                      onChange={(e) => setArchiveDir(e.target.value)}
+                      onBlur={() => setDirTouched(true)}
+                      required
+                      placeholder={t('projects.archiveDirPlaceholder')}
+                      aria-invalid={dirTouched && dirError ? true : undefined}
+                      className="fld fld-mono"
+                    />
+                    {canBrowse && (
+                      <button
+                        type="button"
+                        className="btn shrink-0"
+                        disabled={nativePicking}
+                        onClick={() => void pickNative()}
+                      >
+                        {t('projects.picker.open')}
+                      </button>
+                    )}
+                  </div>
+                  {nativePicking && (
+                    <span className="mt-1 block text-[11px] text-[color:var(--color-ink-2)]">
+                      {t('projects.picker.nativeWaiting')}
+                    </span>
                   )}
                 </div>
               </Field>
@@ -115,11 +157,8 @@ export default function ProjectsPage() {
               start={archiveDir}
               onClose={() => setPicking(false)}
               onPick={(path) => {
-                setArchiveDir(path)
-                setDirTouched(true)
+                applyPath(path)
                 setPicking(false)
-                // Il nome del progetto, se vuoto, parte da quello della cartella.
-                if (!name.trim()) setName(path.split(/[\\/]/).filter(Boolean).pop() ?? '')
               }}
             />
           )}

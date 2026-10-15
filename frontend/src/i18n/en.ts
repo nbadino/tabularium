@@ -419,14 +419,13 @@ export const en: Dict = {
   },
 
   projects: {
-    picker: { open: 'Browse…', title: 'Choose the archive folder', up: 'Up', use: 'Use this folder', files: { one: '{n} image or PDF here', other: '{n} images or PDFs here' }, recursive: 'The scan also includes subfolders.', noSubfolders: 'No subfolders.', truncated: 'Very large folder: the list is partial.' },
+    picker: { open: 'Browse…', nativeWaiting: 'Waiting for the folder window… it opens on the computer running the server.', title: 'Choose the archive folder', up: 'Up', use: 'Use this folder', files: { one: '{n} image or PDF here', other: '{n} images or PDFs here' }, recursive: 'The scan also includes subfolders.', noSubfolders: 'No subfolders.', truncated: 'Very large folder: the list is partial.' },
     title: 'Projects',
     intro: 'Each project points to an archive folder (scans or PDFs). Pages are registered with a scan, which never modifies the source files.',
     new: 'New project',
     name: 'Name',
     namePlaceholder: 'E.g. Historic Shipping Index 1904',
     archiveDir: 'Archive folder',
-    archiveDirHint: 'Absolute path on the machine running the backend.',
     archiveDirPlaceholder: '/path/to/scans',
     dirError:
       'The path must be absolute (e.g. /archive/scans or C:\\scans).',

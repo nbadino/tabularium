@@ -419,14 +419,13 @@ export const fr: Dict = {
   },
 
   projects: {
-    picker: { open: 'Parcourir…', title: 'Choisir le dossier d\u2019archive', up: 'Haut', use: 'Utiliser ce dossier', files: { one: '{n} image ou PDF ici', other: '{n} images ou PDF ici' }, recursive: 'L\u2019analyse inclut aussi les sous-dossiers.', noSubfolders: 'Aucun sous-dossier.', truncated: 'Dossier très volumineux : la liste est partielle.' },
+    picker: { open: 'Parcourir…', nativeWaiting: 'En attente de la fenêtre de dossiers… elle s\u2019ouvre sur l\u2019ordinateur qui exécute le serveur.', title: 'Choisir le dossier d\u2019archive', up: 'Haut', use: 'Utiliser ce dossier', files: { one: '{n} image ou PDF ici', other: '{n} images ou PDF ici' }, recursive: 'L\u2019analyse inclut aussi les sous-dossiers.', noSubfolders: 'Aucun sous-dossier.', truncated: 'Dossier très volumineux : la liste est partielle.' },
     title: 'Projets',
     intro: 'Chaque projet pointe vers un dossier d’archive (numérisations ou PDF). Les pages sont enregistrées lors d’une numérisation, qui ne modifie jamais les fichiers sources.',
     new: 'Nouveau projet',
     name: 'Nom',
     namePlaceholder: 'Ex. Historic Shipping Index 1904',
     archiveDir: 'Dossier d’archive',
-    archiveDirHint: 'Chemin absolu sur la machine qui exécute le backend.',
     archiveDirPlaceholder: '/chemin/vers/les/numérisations',
     dirError:
       'Le chemin doit être absolu (ex. /archives/numérisations ou C:\\numérisations).',

@@ -488,3 +488,25 @@ def browse_folders(path: str | None = None, _user: dict = Depends(_admin)) -> di
         "files": files,
         "truncated": seen > _BROWSE_LIMIT,
     }
+
+
+@router.post("/api/system/fs/pick")
+def pick_folder(start: str | None = None, _user: dict = Depends(_admin)) -> dict:
+    """Apre la finestra di sistema per scegliere una cartella sulla macchina
+    del backend e ne restituisce il percorso assoluto (`path: null` se annullata).
+
+    È il complemento di `browse_folders`: quando il server gira sul computer
+    dell'utente, la scelta passa dal dialogo nativo invece che dalla finestra
+    web. Mostra una GUI sul server, quindi è riservata agli amministratori, come
+    la navigazione. Se la finestra non può comparire (server headless, nessun
+    display) risponde 501 e la UI ripiega sul browser web.
+    """
+    from ..services import native_picker
+
+    try:
+        return {"path": native_picker.pick_folder(start)}
+    except native_picker.PickerUnavailable as exc:
+        raise HTTPException(
+            status_code=501,
+            detail=f"finestra di sistema non disponibile: {exc}",
+        ) from exc
