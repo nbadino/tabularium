@@ -31,7 +31,7 @@ frontend (React 19 + Vite + TypeScript + Tailwind; Konva canvas; spreadsheet tab
 ```
 
 The full product spec, data conventions and the reasoning behind every design
-decision are in [AGENTS.md](https://github.com/nbadino/tabularium/blob/main/AGENTS.md) (Italian; the source of truth).
+decision are in [AGENTS.md](https://github.com/nbadino/tabularium/blob/main/AGENTS.md) (the source of truth).
 
 ## Comparing models from the command line
 

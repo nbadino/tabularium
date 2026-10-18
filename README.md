@@ -156,7 +156,7 @@ archive, from source) are in the [installation guide](docs/guide/installation.md
   [Cloud GPUs](docs/guide/cloud-gpus.md) ·
   [Training](docs/guide/training.md)
 - [Development](docs/guide/development.md) ·
-  [Product spec and design rationale](AGENTS.md) (Italian)
+  [Product spec and design rationale](AGENTS.md)
 
 ## Design principles
 

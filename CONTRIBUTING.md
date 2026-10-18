@@ -8,7 +8,7 @@ test pages from new kinds of archives are all welcome.
 - For anything larger than a small fix, open an issue first so we can agree on
   the approach.
 - [AGENTS.md](AGENTS.md) is the product spec and records why things are the way
-  they are (in Italian). Read the section for the area you touch.
+  they are. Read the section for the area you touch.
 
 ## Setup
 
@@ -22,7 +22,8 @@ cd frontend && npm run typecheck && npm test && npm run build
 
 ## Conventions
 
-- Identifiers and logs in English; code comments and internal docs in Italian.
+- Everything in English: code, comments, docs, commit messages. Existing Italian comments
+  are translated when you touch the surrounding code.
 - No hard-coded UI strings: every text goes through the i18n dictionaries
   (`frontend/src/i18n/{it,en,fr}.ts`), with the same placeholders in all three.
 - Every new API route is protected by the permission layer.

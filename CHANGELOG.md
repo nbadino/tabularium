@@ -6,6 +6,11 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Changed
+- `AGENTS.md` (product spec and agent rules) is now in English and up to date: Univer table
+  workspace, current repository structure and schema, distribution with uv, releases, the
+  English-only rule for new code, docs and commits.
+
 ## [0.3.0] - 2026-10-18
 
 ### Added

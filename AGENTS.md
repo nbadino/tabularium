@@ -1,1288 +1,1225 @@
 # AGENTS.md — Tabularium
 
-Ambiente locale multipiattaforma per il **riconoscimento documentale e il fine-tuning guidato di MonkeyOCRv2-Parsing**
-su **giornali storici "Historic Shipping Index" (1900s)**, focalizzato su **layout multi-colonna complesso
-e forma tabulare densa** (registri di movimenti navali, *casualties*, *maritime intelligence*).
+Tabularium is software for **researchers who want to run OCR on historical documents and,
+when the base model is not good enough, fine-tune it** — simply, but with state-of-the-art
+results. It is **model-agnostic** and adds open-weight OCR models over time; any model can run
+on the user's machine (CUDA or Apple Silicon) or on an external GPU provider (Vast.ai, RunPod,
+Modal, SSH), and one self-hosted instance serves a whole research team.
 
-Questo documento è la fonte di verità per chiunque (umano o agente IA) lavori su questo repo:
-contiene necessità di prodotto, vincoli tecnici verificati sul repo ufficiale, architettura,
-convenzioni dati, roadmap progressiva e regole operative.
+The reference corpus is a series of historical newspapers, called **"Historic Shipping Index"
+(1900s–1970s)** in this document: **dense multi-column layouts and borderless tables**
+(ship movement registers, *casualties*, *maritime intelligence*). The reference model is
+**MonkeyOCRv2-Parsing**, whose official conventions (§2) shaped the data model. Neither is a
+limit: any table-heavy archive and any supported model work the same way.
 
----
-
-## 1. Missione
-
-Costruire uno strumento unico che accompagni l'utente dall'archivio di immagini al testo
-strutturato e, quando serve, al modello affinato. La UX primaria è indipendente
-dall'infrastruttura: si sceglie modello e provider una volta, poi riconoscimento, revisione ed
-export restano identici in locale, su Vast.ai, Modal o altri endpoint compatibili.
-
-1. **Registra** le pagine dell'archivio (scansioni, PDF multi-pagina) con metadati (data, annata, pagina).
-2. **Riconosce** una o molte pagine in sessioni persistenti, esportabili oppure revisionabili
-   successivamente anche con l'inferenza disattivata.
-3. **Annota manualmente in modo guidato e super-dettagliato** la struttura del documento:
-   blocchi semantici + **tabelle complesse con celle unite** + **ordine di lettura** + **trascrizione**.
-4. **Esporta** risultati e dataset nell'unico formato che l'addestramento ufficiale accetta
-   (JSONL ms-swift, coordinate normalizzate 0–1000, tabelle in OTSL).
-5. **Addestra** MonkeyOCRv2-Parsing (LoRA o full-SFT) generando e lanciando gli script
-   ufficiali, con monitoraggio live di log, loss e GPU.
-6. **Valuta** su pagine mai viste (layout/IoU, ordine di lettura, TEDS per tabelle, CER/WER per testo)
-   e **itera**.
-
-Vincolo trasversale: **multipiattaforma** (Windows/Linux/macOS) per la UI e la preparazione dati;
-il training richiede GPU NVIDIA CUDA (su Linux; eventualmente WSL2 su Windows).
+This document is the source of truth for anyone (human or AI agent) working on this repo:
+product needs, technical constraints verified against official repositories, architecture,
+data conventions, roadmap and operating rules.
 
 ---
 
-## 2. Contesto tecnico ufficiale (fatti verificati — da NON mettere in discussione senza proof)
+## 1. Mission
 
-### 2.1 Modello e stack di training
-- Modello: `zenosai/MonkeyOCRv2-B-Parsing` (0.7B: ViT 113M congelato + LLM 0.6B) o `-S` (0.6B: ViT-S 28M).
-- Stack di training: versione **monkeyocrv2-compatibile di ms-swift** bundlata in
-  `parsing/train/ms-swift` del repo ufficiale `Yuliang-Liu/MonkeyOCRv2`.
-- Comando canonico: `swift sft --model zenosai/MonkeyOCRv2-B-Parsing --model_type monkeyocrv2 --template monkeyocrv2 ...`
-- Il ViT resta **congelato** di default (`--freeze_vit True`); sbloccarlo solo se lo shift
-  visivo dei fogli d'epoca lo richiede (`--vit_lr` ridotto).
+One tool that takes the user from an archive of images to structured text and, when needed,
+to a fine-tuned model. The primary UX does not depend on infrastructure: model and provider are
+chosen once, then recognition, review and export work the same locally, on Vast.ai, on Modal or
+on any compatible endpoint.
 
-### 2.2 Formato dataset (assoluto, non negoziabile)
-Una riga JSONL = un campione, formato `messages` multimodale ms-swift:
+1. **Register** archive pages (scans, multi-page PDFs) with metadata (date, issue, page).
+2. **Recognize** one or many pages in persistent sessions, exportable or reviewable later,
+   even with inference switched off.
+3. **Annotate** the document structure in a guided, very detailed way: semantic blocks +
+   **complex tables with merged cells** + **reading order** + **transcription**.
+4. **Export** results and datasets in the exact format each model's official training accepts
+   (for MonkeyOCRv2: ms-swift JSONL, coordinates normalized to 0–1000, tables in OTSL).
+5. **Train** open-weight models (LoRA or full SFT) by generating and launching the official
+   scripts of each model, with live logs, loss and GPU monitoring.
+6. **Evaluate** on unseen pages (layout/IoU, reading order, TEDS for tables, CER/WER for text),
+   compare models side by side, and **iterate**.
+
+Cross-cutting constraint: **cross-platform** (Windows/Linux/macOS) for the UI and data
+preparation. Training needs an NVIDIA CUDA GPU (Linux; WSL2 on Windows), local or rented.
+
+---
+
+## 2. Official technical context (verified facts — do NOT question without proof)
+
+These facts describe the reference model, MonkeyOCRv2. Other models declare their own
+conventions in their adapter (`services/model_adapters.py`), serving recipe
+(`services/serve_recipes.py`) and training recipe (`services/train_recipes.py`).
+
+### 2.1 Model and training stack
+- Model: `zenosai/MonkeyOCRv2-B-Parsing` (0.7B: frozen 113M ViT + 0.6B LLM) or `-S` (0.6B: 28M ViT-S).
+- Training stack: the **monkeyocrv2-compatible ms-swift** bundled in
+  `parsing/train/ms-swift` of the official `Yuliang-Liu/MonkeyOCRv2` repository.
+- Canonical command: `swift sft --model zenosai/MonkeyOCRv2-B-Parsing --model_type monkeyocrv2 --template monkeyocrv2 ...`
+- The ViT stays **frozen** by default (`--freeze_vit True`); unfreeze it only if the visual
+  shift of period sheets requires it (with a reduced `--vit_lr`).
+
+### 2.2 Dataset format (absolute, non-negotiable)
+One JSONL line = one sample, ms-swift multimodal `messages` format:
 
 ```json
 {"messages": [{"role": "user", "content": "<image><PROMPT>"}, {"role": "assistant", "content": "<CONTENT>"}], "images": ["/absolute/path/to/image.jpg"]}
 ```
 
-- Numero di `<image>` in `content` = numero di elementi in `images`. Percorsi **assoluti**.
+- Number of `<image>` tokens in `content` = number of items in `images`. Paths are **absolute**.
 
-### 2.3 Prompt ufficiali (autoritativi: da `parsing/core_runner.py` → `ALL_PROMPT`)
+### 2.3 Official prompts (authoritative: from `parsing/core_runner.py` → `ALL_PROMPT`)
 | Task | PROMPT | CONTENT |
 |---|---|---|
-| Layout | `Please output the categories and coordinates of the document elements in reading order.` | Lista di `{'bbox': [x1,y1,x2,y2], 'label': '...'}` nell'ordine di lettura |
-| Testo | `Please output the text content from the image.` | Testo semplice, no Markdown |
+| Layout | `Please output the categories and coordinates of the document elements in reading order.` | List of `{'bbox': [x1,y1,x2,y2], 'label': '...'}` in reading order |
+| Text | `Please output the text content from the image.` | Plain text, no Markdown |
 | Formula | `Please write out the expression of the formula in the image using LaTeX format.` | LaTeX in `$...$` |
-| Tabella | `Please extract the table from the image and represent it in OTSL format.` | OTSL (v. §2.5) |
-| END2END | `List the document elements in reading order, including their categories, coordinates, and the content of each element.` | record con bbox+label+content |
+| Table | `Please extract the table from the image and represent it in OTSL format.` | OTSL (see §2.5) |
+| END2END | `List the document elements in reading order, including their categories, coordinates, and the content of each element.` | records with bbox+label+content |
 
-### 2.3.1 Due percorsi ufficiali: due stadi ed END2END
-Il runner predefinito usa `get_layout()` con `ALL_PROMPT["LAYOUT"]` e ottiene bbox + label; il
-contenuto arriva da una seconda chiamata per blocco. Il repository espone però anche il prompt
-ufficiale `END2END`, che in una sola generazione restituisce bbox + label + contenuto dell'intera
-pagina. Non va quindi descritto il percorso a due stadi come l'unico percorso supportato.
+### 2.3.1 Two official paths: two-stage and END2END
+The default runner uses `get_layout()` with `ALL_PROMPT["LAYOUT"]` and gets bbox + label; the
+content comes from a second call per block. The repository also exposes the official `END2END`
+prompt, which returns bbox + label + content for the whole page in a single generation. The
+two-stage path must therefore not be described as the only supported one.
 
-Conseguenza pratica: **se il layout a due stadi etichetta `Text` un registro,
-non vuol dire che il modello non sappia leggere le tabelle.** Basta ritagliare quel blocco e
-interrogarlo con il prompt Tabella per ottenere OTSL corretto — colonne separate, celle di uno o due
-caratteri incluse. Le due cose vanno valutate separatamente.
+Practical consequence: **if the two-stage layout labels a register as `Text`, it does not mean
+the model cannot read tables.** Cropping that block and querying it with the Table prompt gives
+correct OTSL — separate columns, including one- or two-character cells. The two things must be
+evaluated separately.
 
-Sul corpus Historic Shipping Index END2END a 2 MP ha già corretto testata, titolo e sottotitolo di una
-pagina del campione rispetto al percorso a due stadi, ma produce output molto lungo (~9k token) e il comportamento sul
-registro OTSL completo deve ancora essere misurato. La UI espone entrambi: nessuno dei due diventa
-default sulla base di una sola pagina.
+On the Historic Shipping Index corpus, END2END at 2 MP already fixed the masthead, title and
+subtitle of a sample page compared with the two-stage path, but it produces very long output
+(~9k tokens) and its behaviour on a full OTSL register is still to be measured. The UI exposes
+both: neither becomes the default on the strength of one page.
 
-### 2.3.2 Risoluzione delle immagini (`min_pixels` ≠ `max_pixels`)
-In `load_image()` ufficiale `min_pixels` **ingrandisce** le immagini piccole e non riduce mai;
-`get_layout()` lo passa a `1003520`. Il tetto superiore è la env `MOCR2_MAX_PIXELS`, che il CLI
-ufficiale `parse.py` imposta **sempre** dal suo `--max-pixels` (default `1003520`) e propaga a tutte
-le chiamate, end2end compresa. Minimo e massimo coincidono: **il layout ufficiale lavora a 1 MP.**
+### 2.3.2 Image resolution (`min_pixels` ≠ `max_pixels`)
+In the official `load_image()`, `min_pixels` **upscales** small images and never downscales;
+`get_layout()` passes `1003520`. The upper bound is the `MOCR2_MAX_PIXELS` env var, which the
+official CLI `parse.py` **always** sets from its `--max-pixels` (default `1003520`) and
+propagates to every call, END2END included. Minimum and maximum coincide: **the official
+layout works at 1 MP.**
 
-Da non confondere con `max_pixels 1003520` degli iperparametri di *training* (§2.6): è un altro
-parametro, di un'altra fase, anche se il valore coincide.
+Not to be confused with `max_pixels 1003520` among the *training* hyperparameters (§2.6): a
+different parameter of a different phase, even though the value is the same.
 
-Le scansioni d'archivio però stanno molto oltre la taglia per cui il pipeline è pensato, e il layout
-degrada. Misurato su una pagina `index` del campione (2864×3952 = 11,3 MP), a parità di tutto il resto:
+Archive scans are far larger than the size the pipeline is designed for, and the layout
+degrades. Measured on a sample `index` page (2864×3952 = 11.3 MP), everything else equal:
 
-| Pixel inviati | Blocchi | Esito |
+| Pixels sent | Blocks | Outcome |
 |---|---|---|
-| 11.3 MP (nessun tetto) | 2 | riquadri sovrapposti, inutilizzabili |
-| 6.0 MP | 16 | frammentato |
-| 4.0 MP | 137 | esploso a livello di cella |
-| 2.0 MP | 5 | `Title`, numero, data, corpo — corretto |
-| **1.0 MP** | **4** | corretto, meno granulare — **default ufficiale** |
+| 11.3 MP (no cap) | 2 | overlapping boxes, unusable |
+| 6.0 MP | 16 | fragmented |
+| 4.0 MP | 137 | exploded down to cells |
+| 2.0 MP | 5 | `Title`, number, date, body — correct |
+| **1.0 MP** | **4** | correct, less granular — **official default** |
 
-Il default MonkeyOCRv2 è il valore ufficiale: `1003520`, coerente con `MOCR2_MAX_PIXELS`.
-Questo limite appartiene alla ricetta MonkeyOCRv2 e non va applicato agli altri VLM, che devono
-conservare il proprio preprocessore nativo quando la ricetta non dichiara un tetto. La granularità
-in più a 2 MP era una nostra deviazione misurata su una pagina, non il protocollo del checkpoint:
-chi la rivuole imposta `TABULARIUM_VLLM_MAX_PIXELS=2000000` (override globale) o il campo
-*max pixels* del singolo modello in Impostazioni. `TABULARIUM_VLLM_MAX_PIXELS=0` toglie il tetto; in quel caso resta
-`LAYOUT_MAX_PIXELS` (2 MP) come sola rete di sicurezza sul layout, perché a 11 MP collassa.
+The MonkeyOCRv2 default is the official value, `1003520`, consistent with `MOCR2_MAX_PIXELS`.
+This cap belongs to the MonkeyOCRv2 recipe and must not be applied to other VLMs, which keep
+their own native preprocessor when their recipe declares no cap. The extra granularity at 2 MP
+was our own deviation, measured on one page, not the checkpoint's protocol: to get it back set
+`TABULARIUM_VLLM_MAX_PIXELS=2000000` (global override) or the per-model *max pixels* field in
+Settings. `TABULARIUM_VLLM_MAX_PIXELS=0` removes the cap; `LAYOUT_MAX_PIXELS` (2 MP) then
+remains as the only safety net for layout, because at 11 MP it collapses.
 
-### 2.3.4 Preprocessore ufficiale delle pagine
-`parsing/core_runner.py` non manda mai la pagina grezza al VLM: costruisce un `Preprocessor`
-(pesi `preprocessor1.pth`/`preprocessor2.pth`, già dentro il checkpoint) e vi passa ogni pagina
-prima di layout e riconoscimento. Il CLI ufficiale lo salta solo con `--skip-preprocess`,
-documentato come «this may lead to worse accuracy but faster speed».
+### 2.3.3 Official page preprocessor
+`parsing/core_runner.py` never sends the raw page to the VLM: it builds a `Preprocessor`
+(weights `preprocessor1.pth`/`preprocessor2.pth`, shipped inside the checkpoint) and runs every
+page through it before layout and recognition. The official CLI skips it only with
+`--skip-preprocess`, documented as "this may lead to worse accuracy but faster speed".
 
-In Tabularium è il motore di trasformazione pagina `monkeyocr` (`services/monkey_preprocess.py`),
-**non** uno stadio nascosto dentro `inference.py`: il preprocessore cambia la geometria e i bbox
-normalizzati 0–1000 valgono sull'immagine che il modello ha ricevuto, quindi applicarlo di nascosto
-farebbe atterrare i blocchi su pixel diversi da quelli del canvas. Passando dal master di pagina
-resta valido il contratto «prefill, crop ed export osservano gli stessi pixel del canvas», che è
-anche ciò che fa il pipeline ufficiale (salva le pagine preprocessate e da lì lavora solo su quelle).
+In Tabularium it is the `monkeyocr` page transformation engine (`services/monkey_preprocess.py`),
+**not** a hidden stage inside `inference.py`: the preprocessor changes the geometry, and the
+0–1000 normalized bboxes refer to the image the model received, so applying it silently would
+put blocks on different pixels than the canvas. Going through the page master keeps the contract
+"prefill, crops and export see the same pixels as the canvas", which is also what the official
+pipeline does (it saves the preprocessed pages and works only on those).
 
-È l'**unica** rettifica neurale: UVDoc e DocScanner-L sono usciti. Erano surrogati scelti prima che
-quello del modello fosse raggiungibile, e tenerli in parallelo significava poter preparare le pagine
-in un modo diverso da come il modello si aspetta di riceverle.
+It is the **only** neural rectifier: UVDoc and DocScanner-L were removed. They were stand-ins
+chosen before the model's own preprocessor was reachable, and keeping them alongside meant pages
+could be prepared differently from how the model expects them.
 
-### 2.3.3 Tabelle grandi: intero come verità, bande come esperimento
-I chunk ciechi non sono una strategia sicura: possono spezzare righe, rowspan e contesto di
-colonna. Il dataset conserva sempre il crop completo della tabella. Come augmentazione opzionale
-può aggiungere bande di righe logiche sovrapposte, ma solo quando l'annotazione contiene `hlines`
-verificate; i boundary che attraversano un rowspan sono vietati. Non si usano filetti visibili.
-Il rilevatore geometrico è stabile su tutte e quattro le pagine del campione da quando ricava le
-righe dalle linee di base dei glifi (v. §2.3.4), ma resta una **proposta da correggere**, non una
-verità: le `hlines` valgono come verificate solo dopo il passaggio dell'annotatore.
+### 2.3.4 Large tables: the whole table is the truth, bands are an experiment
+Blind chunks are not a safe strategy: they can split rows, rowspans and column context. The
+dataset always keeps the full table crop. As an optional augmentation it can add overlapping
+bands of logical rows, but only when the annotation contains verified `hlines`; boundaries that
+cross a rowspan are forbidden. Visible rules are not used. The geometric detector (§2.3.5) is
+only a **proposal to correct**, not a truth: `hlines` count as verified only after an annotator
+has checked them.
 
-In inferenza il percorso a bande resta un fallback sperimentale del riconoscimento per crop. La
-prima riga non viene più trattata implicitamente come intestazione (su molti registri è già una
-nave); un'eventuale intestazione ripetuta deve essere dichiarata esplicitamente con `header_rows`.
-END2END a 2 MP deve essere confrontato con questo fallback su pagine gold senza sovrascriverle.
+At inference time the banded path remains an experimental fallback of crop recognition. The
+first row is no longer implicitly treated as a header (on many registers it is already a ship);
+a repeated header must be declared explicitly with `header_rows`. END2END at 2 MP must be
+compared with this fallback on gold pages without overwriting them.
 
-> Nota: il README di fine-tuning ufficiale suggerisce di annotare le tabelle in **HTML** e poi
-> convertire con `html2otsl.py`; a inferenza il modello viene interrogato **direttamente in OTSL**.
-> Quindi i dati di training devono contenere OTSL. Il builder esporterà OTSL generato dal grid
-> di annotazione (+ opzione HTML intermedio per fedeltà al flusso ufficiale).
+> Note: the official fine-tuning README suggests annotating tables in **HTML** and converting
+> them with `html2otsl.py`; at inference the model is queried **directly in OTSL**. Training data
+> must therefore contain OTSL. The builder exports OTSL generated from the annotation grid.
 
-### 2.3.4 Rilevamento della griglia: contratto e dominio d'uso — **DEPRECATO**
-> **Deprecato.** L'intero percorso geometrico è in via d'uscita: Tabularium è model-agnostic e i
-> modelli non ci danno la geometria del ritaglio (`vlines`/`hlines`/`row_columns`) — su 248 griglie
-> salvate una sola la porta. La correzione della struttura passa dal foglio (unisci/separa,
-> riga/colonna), non dai confini sul pixel. Restano in servizio, marcati nel codice, solo il
-> pulsante «Rileva griglia»/ri-rilevamento al resize dello Studio e la promozione a `Table` del
-> prefill OCR. La superficie di editing dei confini sul ritaglio (`TableGridOverlay`) e le sue
-> chiavi i18n sono deprecate e non montate. Il testo sotto resta come nota storica tecnica: non
-> costruire sopra questo modulo.
+### 2.3.5 Grid detection: contract and domain — **DEPRECATED**
+> **Deprecated.** The whole geometric path is being phased out: Tabularium is model-agnostic,
+> and models do not give us the crop geometry (`vlines`/`hlines`/`row_columns`) — out of 248
+> saved grids only one carries it. Structure is corrected in the sheet (merge/split, rows/columns),
+> not by moving boundaries on pixels. Only the Studio's "Detect grid" button / re-detection on
+> resize and the promotion to `Table` in OCR prefill remain in service, marked in the code. The
+> boundary editing surface on the crop (`TableGridOverlay`) and its i18n keys are deprecated and
+> not mounted. The text below is kept as a technical record: do not build on this module.
 
-`services/table_detect.detect_grid()` propone la struttura di un ritaglio `Table`. Non salva
-niente e non è una verità: è una bozza che l'annotatore accetta, sposta o rifiuta.
+`services/table_detect.detect_grid()` proposes the structure of a `Table` crop. It saves nothing
+and is not a truth: it is a draft the annotator accepts, moves or rejects.
 
-**Righe dalle linee di base, non dal profilo.** Il passo tipografico e le righe si ricavano dalle
-componenti connesse (istogramma dei *fondi* dei glifi), non dall'autocorrelazione del profilo di
-inchiostro. Il percorso a proiezione reggeva su una pagina su quattro e si rompeva in tre modi
-distinti, tutti riprodotti nei test di regressione (`tests/test_table_detect.py`; nel resto del
-documento le pagine d'archivio del campione sono indicate con lettere): armonica del
-periodo (pagina `B`, 156 px invece di 39), profilo saturo per interlinea stretta
-(pagina `C`), spalmatura da inclinazione (pagina `D`, −1,43°).
+**Rows from baselines, not from the profile.** Line pitch and rows come from connected
+components (a histogram of glyph *bottoms*), not from the autocorrelation of the ink profile.
+The projection path held on one page in four and broke in three distinct ways, all reproduced in
+regression tests (`tests/test_table_detect.py`; sample archive pages are labelled with letters in
+the rest of this document): period harmonic (page `B`, 156 px instead of 39), saturated profile
+from tight leading (page `C`), smearing from skew (page `D`, −1.43°).
 
-| Campo | Significato |
+| Field | Meaning |
 |---|---|
-| `vlines` / `hlines` | Confini normalizzati 0–1 **sul ritaglio**, crescenti, `cols+1` e `rows+1`. |
-| `column_support` | Su quante righe è attestato ciascun confine verticale. I due estremi valgono per definizione il numero di righe: non sono attestati, sono i bordi del contenuto. |
-| `warnings` | Codici stabili, mai prosa: il backend parla inglese, la UI traduce (§13.11). Oggi solo `skewed`. |
-| `diagnostics` | Misure che rendono verificabile l'esito: `pitch_px`, `glyph_height_px`, `glyphs`, `otsu`, `shear`, `skew_deg`, `row_bands`, `leader_dots_suppressed`, `gutters`, `content_x`. |
+| `vlines` / `hlines` | Boundaries normalized 0–1 **on the crop**, increasing, `cols+1` and `rows+1`. |
+| `column_support` | On how many rows each vertical boundary is attested. The two outer ones equal the row count by definition: they are not attested, they are the content edges. |
+| `warnings` | Stable codes, never prose: the backend speaks English, the UI translates (§13.11). Today only `skewed`. |
+| `diagnostics` | Measurements that make the result verifiable: `pitch_px`, `glyph_height_px`, `glyphs`, `otsu`, `shear`, `skew_deg`, `row_bands`, `leader_dots_suppressed`, `gutters`, `content_x`. |
 
-**Binarizzazione con Otsu**, non a soglia fissa: sul corpus la soglia cade fra 142 e 152, quindi
-128 perdeva sistematicamente i tratti sottili. Convenzione `gray <= t`, come `cv2`.
+**Otsu binarization**, not a fixed threshold: on the corpus the threshold falls between 142 and
+152, so 128 systematically lost thin strokes. Convention `gray <= t`, as in `cv2`.
 
-**L'inclinazione si compensa, non si ruota.** Lo scorrimento `tan θ` corregge le coordinate dei
-glifi e trasla i profili di riga; l'immagine non viene mai ruotata, così i confini restituiti
-restano nel sistema di riferimento del ritaglio. Ma un `hline` è orizzontale per contratto: oltre
-~0,2° non può più seguire la riga di testo, e il rilevatore emette `skewed` perché la pagina va
-raddrizzata con *⇱ Deskew* prima di annotare. L'avviso è un limite dichiarato, non un errore.
+**Skew is compensated, not rotated.** The `tan θ` shear corrects glyph coordinates and shifts
+row profiles; the image is never rotated, so returned boundaries stay in the crop's frame. But an
+`hline` is horizontal by contract: beyond ~0.2° it can no longer follow the text line, and the
+detector emits `skewed` because the page must be straightened with *⇱ Deskew* before annotating.
+The warning is a declared limit, not an error.
 
-**I confini piegano.** Una colonna di questi registri non sta ferma: composta a mano e ripresa
-da una pagina curva, deriva orizzontalmente scendendo. Misurato sul campione, ogni confine
-interno si sposta fra 25 e 77 px dall'alto al basso, cioè fra 0,6 e 2,0 passi tipografici,
-mentre una cifra è larga una ventina di pixel — quindi **nessuna retta può descrivere la
-tabella**: un taglio dritto alla mediana finisce dentro un numero e ne manda metà nella cella
-accanto. Su pagina `B` succedeva sul 10% dei tagli.
+**Boundaries bend.** A column in these registers does not stay put: hand-set and photographed
+from a curved page, it drifts horizontally going down. Measured on the sample, every inner
+boundary moves 25–77 px from top to bottom, i.e. 0.6–2.0 line pitches, while a digit is about
+twenty pixels wide — so **no straight line can describe the table**: a straight cut at the
+median lands inside a number and sends half of it to the next cell. On page `B` this happened on
+10% of cuts.
 
-`snap_boundaries()` porta perciò ogni confine, riga per riga, nel varco di bianco migliore
-entro 1,5 passi, pesando la larghezza del varco contro la distanza dalla retta. Dove un varco
-esiste — l'86–96% dei tagli sul campione — **nessuno dei tagli spezza un valore**; dove non
-esiste, la retta resta e il taglio è marcato non provato. Complessivamente da 5,7% a 0,5% di
-valori spezzati.
+`snap_boundaries()` therefore moves each boundary, row by row, into the best whitespace gap
+within 1.5 pitches, weighing gap width against distance from the line. Where a gap exists — 86–96%
+of cuts on the sample — **no cut splits a value**; where none exists, the line stays and the cut is
+marked unproven. Overall, split values went from 5.7% to 0.5%.
 
-Due conseguenze di contratto:
-- `diagnostics.row_columns` porta i confini piegati (0–1, per riga) e `row_columns_proven` dice
-  quali sono attestati da un varco; `row_columns_unproven` li conta. Servono a **disegnarli** e
-  a riempire le celle, e non sono ancora persistiti: il grid salvato porta solo le rette.
-- `fill_cells(..., snap=True)` usa i confini piegati e marca `uncertain` le celle il cui
-  confine non è provato. Vanno passati anche `shear`, altrimenti i varchi si cercano nel
-  sistema di riferimento sbagliato.
+Two contract consequences:
+- `diagnostics.row_columns` carries the bent boundaries (0–1, per row) and `row_columns_proven`
+  says which ones a gap attests; `row_columns_unproven` counts them. They are used to **draw** them
+  and to fill cells, and are not persisted yet: the saved grid carries only the straight lines.
+- `fill_cells(..., snap=True)` uses the bent boundaries and marks `uncertain` the cells whose
+  boundary is unproven. `shear` must be passed too, otherwise gaps are searched in the wrong frame.
 
-Non c'è un avviso «la colonna deriva»: deriva su tutte e quattro le pagine del campione (dal 7%
-al 41% di tagli non provati), quindi scatterebbe sempre. La deriva non è una condizione della
-scansione ma una proprietà per cella, e come tale viene contata e marcata.
+There is no "the column drifts" warning: drift happens on all four sample pages (7% to 41% of
+cuts unproven), so it would always fire. Drift is not a condition of the scan but a per-cell
+property, and it is counted and marked as such.
 
-**Dominio d'uso.** Vale su un ritaglio che è **una sola tabella allineata a spazi**. Su una pagina
-a più colonne di giornale (pagina `D`, supplemento a cinque colonne) restituisce una griglia
-priva di senso, e **non sa accorgersene**: entrambe le ipotesi verificabili sono state misurate e
-respinte — la larghezza dei gutter è invertita rispetto all'attesa (0,62 passi lì contro 1,07 del
-gutter *interno* più largo di una tabella singola) e le linee di base non si disallineano, perché
-le cinque colonne sono composte sulla stessa griglia tipografica. Un avviso che scatta sulle pagine
-sbagliate insegna a ignorare gli avvisi, quindi non ce n'è uno. Il caso è risolto dal flusso: su una
-pagina simile l'utente disegna cinque blocchi `Column`, non un blocco `Table`.
+**Domain.** Valid on a crop that is **a single space-aligned table**. On a multi-column newspaper
+page (page `D`, a five-column supplement) it returns a meaningless grid and **cannot tell**: both
+testable hypotheses were measured and rejected — gutter width is inverted relative to expectations
+(0.62 pitches there against 1.07 for the widest *inner* gutter of a single table) and baselines do
+not misalign, because the five columns are set on the same typographic grid. A warning that fires
+on the wrong pages teaches people to ignore warnings, so there is none. The workflow solves it: on
+such a page the user draws five `Column` blocks, not one `Table` block.
 
-**Dipendenze.** Solo `numpy` e `Pillow`, come tutto il backend: le componenti connesse sono
-implementate nel modulo (run + union-find) e verificate contro `cv2` nei test, senza che `cv2`
-diventi una dipendenza dichiarata.
+**Dependencies.** Only `numpy` and `Pillow`, like the rest of the backend: connected components
+are implemented in the module (runs + union-find) and checked against `cv2` in tests, without
+making `cv2` a declared dependency.
 
-### 2.4 Coordinate (CRITICO — verificato in `core_runner.py::_map_bbox_to_image`)
-- Il modello emette i bbox **normalizzati in scala 0–1000 per asse** (x e y indipendentemente).
-- A inferenza i valori sono riportati ai pixel con `x / 1000 * width`, `y / 1000 * height`.
-- **Quindi**: le annotazioni si memorizzano in pixel della sorgente, e l'export converte in 0–1000:
+### 2.4 Coordinates (CRITICAL — verified in `core_runner.py::_map_bbox_to_image`)
+- The model emits bboxes **normalized to 0–1000 per axis** (x and y independently).
+- At inference, values are mapped back to pixels with `x / 1000 * width`, `y / 1000 * height`.
+- **Therefore**: annotations are stored in source pixels, and export converts to 0–1000:
   `round(px / width * 1000)`, `round(py / height * 1000)`.
-- Coordinate integer; `x1<x2`, `y1<y2` sempre (l'ordine dei punti è top-left/bottom-right).
+- Integer coordinates; always `x1<x2`, `y1<y2` (points are top-left/bottom-right).
 
-### 2.5 OTSL (sintassi estratta da `core_runner.py::otsl_to_html`)
-- Token per cella: `<fcel>testo</fcel>` (cella piena), `<ecel></ecel>` (cella vuota ma *valida*),
-  `<lcel></lcel>` (estende di 1 il `colspan` della cella valida a sinistra),
-  `<ucel></ucel>` (estende di 1 il `rowspan` della cella valida sopra),
-  `<xcel></xcel>` (cella invalida).
-- Separatore di riga: `<nl>`.
-- Encoding di un grid (= matrice fisica): visita **row-major**; la prima cella di una regione
-  unita è `fcel`/`ecel`, le celle coperte a destra sono `lcel`, quelle sotto sono `ucel`.
-- Le celle fisiche non coperte e parte di un merge 2D (sia lato che sopra) richiedono attenzione
-  → modulo `otsl.py` dedicato con test contro `otsl_to_html` ufficiale.
+### 2.5 OTSL (syntax taken from `core_runner.py::otsl_to_html`)
+- Cell tokens: `<fcel>` + text (filled cell), `<ecel>` (empty but *valid* cell),
+  `<lcel>` (extends the `colspan` of the valid cell on the left by 1),
+  `<ucel>` (extends the `rowspan` of the valid cell above by 1), `<xcel>` (invalid cell).
+- Row separator: `<nl>`. Official OTSL has **no closing tags** (`<fcel>text<lcel><nl>…`).
+- Encoding a grid (= physical matrix): **row-major** traversal; the first cell of a merged region
+  is `fcel`/`ecel`, covered cells to the right are `lcel`, those below are `ucel`.
+- Physical cells covered by a 2D merge (both left and above) need care → dedicated `otsl.py`
+  module, tested against the official `otsl_to_html`.
 
-### 2.6 Iperparametri ufficiali (default canonicali — da template `parsing/train/scripts/*.sh`)
+### 2.6 Official hyperparameters (canonical defaults — from `parsing/train/scripts/*.sh`)
 ```
 max_length 16384 | max_pixels 1003520 | num_train_epochs 1 | learning_rate 1e-5
 lr_scheduler cosine | warmup_ratio 0.05 | deepspeed zero1 | torch_dtype bfloat16
 gradient_checkpointing True | train_type lora (rank 8, alpha 32, target all-linear) | freeze_vit True
 per_device_train_batch_size 4 | gradient_accumulation_steps 1 | save_steps 500 | save_total_limit 2
 ```
-- `eval_steps` ufficiale è enorme (= non si valuta in training); noi aggiungeremo un val split.
-- Lo script di resume (ricerca ultimo `checkpoint-N` in `output_dir`) va preservato.
+- The official `eval_steps` is huge (= no evaluation during training); we add a val split.
+- The resume logic (finding the latest `checkpoint-N` in `output_dir`) must be preserved.
 
-### 2.6.1 Quanta VRAM chiede davvero (e perché il preset ufficiale non basta)
-Gli iperparametri di §2.6 sono quelli canonici del repo e restano il riferimento, ma sono
-scritti per la scheda su cui è stato addestrato il modello, non per una qualunque. Il conto,
-implementato e testato in `services/vram.py`:
+### 2.6.1 How much VRAM it really needs (and why the official preset does not fit)
+The §2.6 hyperparameters are the repository's canonical ones and remain the reference, but they
+are written for the card the model was trained on, not for any card. The estimate, implemented and
+tested in `services/vram.py`:
 
-| Termine | Formula | batch 1, 16384 token |
+| Term | Formula | batch 1, 16384 tokens |
 |---|---|---|
-| **Logit** | `B × S × vocab × 2` | **4,6 GiB** |
-| Pesi (bf16, dal disco) | — | 2,0 GiB |
-| Attivazioni salvate (checkpointing) | `L × B × S × H × 2` | 0,9 GiB |
-| Ricalcolo di uno strato | `B × S × (H + 3·I) × 2` | 0,3 GiB |
-| LoRA + Adam (rank 8) | fp32 sugli adattatori | ~0,1 GiB |
+| **Logits** | `B × S × vocab × 2` | **4.6 GiB** |
+| Weights (bf16, from disk) | — | 2.0 GiB |
+| Saved activations (checkpointing) | `L × B × S × H × 2` | 0.9 GiB |
+| Recomputing one layer | `B × S × (H + 3·I) × 2` | 0.3 GiB |
+| LoRA + Adam (rank 8) | fp32 on adapters | ~0.1 GiB |
 
-Il termine dominante è il **vocabolario**, non i pesi: `MonkeyOCRv2-B-Parsing` ha
-`vocab_size` 151936 su `hidden_size` 1024, quindi la matrice dei logit è 148 volte più larga
-dello stato nascosto. «È un modello da 0,7B, ci sta comodo» è quindi un'intuizione sbagliata:
-ci stanno comodi i pesi, non la testa di uscita a lunghezza piena.
+The dominant term is the **vocabulary**, not the weights: `MonkeyOCRv2-B-Parsing` has
+`vocab_size` 151936 for `hidden_size` 1024, so the logits matrix is 148 times wider than the
+hidden state. "It's a 0.7B model, it fits easily" is a wrong intuition: the weights fit easily,
+not the output head at full length.
 
-Conseguenza su una GPU da 8 GB (RTX 4060 Laptop, il caso di riferimento):
+Consequence on an 8 GB GPU (RTX 4060 Laptop, the reference case):
 
-| Configurazione | Stima | Esito |
+| Configuration | Estimate | Outcome |
 |---|---|---|
-| Ufficiale: batch 4, 16384 | 26,2 GiB | non entra |
-| batch 1, 16384 | 8,3 GiB | non entra |
-| **batch 1, 8192, grad_accum 4** | **5,4 GiB** | **entra** (preset `gpu8`) |
-| batch 1, 4096 | 3,9 GiB | entra |
-| Full-SFT, batch 1, 4096 | 15,5 GiB | non entra |
+| Official: batch 4, 16384 | 26.2 GiB | does not fit |
+| batch 1, 16384 | 8.3 GiB | does not fit |
+| **batch 1, 8192, grad_accum 4** | **5.4 GiB** | **fits** (`gpu8` preset) |
+| batch 1, 4096 | 3.9 GiB | fits |
+| Full SFT, batch 1, 4096 | 15.5 GiB | does not fit |
 
-Full-SFT non è una strada su 8 GB e non lo diventa accorciando la sequenza: sono gli stati
-dell'ottimizzatore su tutti i pesi a non entrare. LoRA resta comunque la scelta giusta ai
-volumi di dati previsti.
+Full SFT is not an option on 8 GB and shortening the sequence does not change that: the
+optimizer states on all weights are what does not fit. LoRA is the right choice anyway at the
+expected data volumes.
 
-`trainer.preflight()` calcola la stima e **blocca** la run quando non entra, indicando la
-`max_length` più grande che entra davvero (bisezione sulla stessa stima, così il consiglio non
-può contraddirla). La stima è deliberatamente un **limite inferiore**: ignora frammentazione
-dell'allocatore, buffer DeepSpeed, il picco fp32 della cross-entropy e il contesto CUDA. Serve
-a dire «non ci sta» con sicurezza, non «ci sta» con sicurezza — perciò c'è un margine del 25%
-prima di dichiarare che va bene.
+`trainer.preflight()` computes the estimate and **blocks** the run when it does not fit,
+suggesting the largest `max_length` that does (bisection on the same estimate, so the advice
+cannot contradict it). The estimate is deliberately a **lower bound**: it ignores allocator
+fragmentation, DeepSpeed buffers, the fp32 cross-entropy peak and the CUDA context. It is meant
+to say "it does not fit" with certainty, not "it fits" with certainty — hence a 25% margin
+before declaring a run fine.
 
-Nota su `--deepspeed zero1`: su una sola GPU non partiziona niente e aggiunge dipendenza e
-buffer. Resta nello script per fedeltà al repo ufficiale, ma non è ciò che rende eseguibile
-una run da 8 GB.
+On `--deepspeed zero1`: on a single GPU it partitions nothing and adds a dependency and buffers.
+It stays in the script for fidelity to the official repository, but it is not what makes an
+8 GB run possible.
 
-### 2.7 Label pubbliche del parsing
+### 2.7 Public parsing labels
 `Caption, Footnote, List-item, Page-footer, Page-header, Section-header, Text, Title, Formula, Table, Picture`
-→ estese con classi custom giornale (v. §8): `Issue-number, Issue-date, Column, Headline, Byline, Advertisement, Note`.
-Le classi custom sono token: il modello le impara durante il fine-tuning. Ogni classe non-testo
-richiede un prompt di riconoscimento definito nella config di progetto.
+→ extended with newspaper custom classes (see §8): `Issue-number, Issue-date, Column, Headline, Byline, Advertisement, Note`.
+Custom classes are tokens the model learns during fine-tuning. Every non-text class needs a
+recognition prompt defined in the project configuration.
 
-**Preferire sempre la label pubblica quando descrive la stessa cosa fisica**: il modello base la
-conosce già, quindi è transfer gratuito, mentre una classe custom parte da zero e sottrae esempi
-alle altre. `Title`, `Page-header`, `Section-header` e `List-item` sono entrate in tassonomia per
-questo motivo.
-
----
-
-## 3. Requisiti funzionali (vista utente)
-
-1. **Progetti**: crea progetto, importa immagini/PDF dal browser oppure scegli una cartella sorgente sul server, registra pagine,
-   metadati data/annata/pagina/tipo di pagina, anteprima.
-2. **Studio di annotazione** (cuore del prodotto):
-   - **rettifica geometrica revisionabile**: *Allinea e confronta* genera una proposta senza
-     toccare annotazioni o master attivo; l'unica rettifica neurale è `monkeyocr`, il
-     preprocessore ufficiale del modello (§2.3.4), affiancato dal solo `deskew` rotazionale
-     e dalle correzioni manuali prospettiva a quattro angoli e mesh. Originale e proposta restano affiancati
-     fino ad *Accetta come master*; solo l'accettazione, previa conferma, elimina eventuali blocchi
-     le cui coordinate diventerebbero invalide. Il master è PNG lossless e diventa l'unica sorgente
-     per canvas, Prefill, crop ed export; JPEG solo per preview/tile. Metadati e API dichiarano
-     motore richiesto/reale, fallback, warning ed errore diagnostico. Il Prefill non riesegue mai
-     il deskew sull'originale quando esiste un master accettato;
-   - zoom/pan fluido su scansioni ad alta risoluzione (server serve tile/anteprime downsampled).
-     Convenzioni gesto (allineate ai visualizzatori di documenti): rotella/due dita = pan,
-     Ctrl/Cmd+rotella (e pinch) = zoom centrato sul puntatore, Space/middle-drag = pan
-     temporaneo, Ctrl+0 = adatta, Ctrl± = zoom. I delta wheel sono normalizzati a pixel
-     (`wheelDeltaPixels`) e il fattore zoom è esponenziale con clamp (`wheelZoomFactor`,
-     testati in `canvasGeometry.test.ts`);
-   - le tre colonne dello studio (pagine | canvas | contenuti) sono ridimensionabili tramite
-     `Splitter` (drag, frecce ±16px, doppio click = reset); le larghezze sono persistite in
-     `localStorage['tabularium.studio.split']`;
-   - strumenti blocco: rettangolo e poligono; palette classi con colori; edit/resize/delete;
-   - **editor tabellare**: righe/colonne, **celle unite (merge)**, colonne "fantasma" dove i
-     filetti sono sbiaditi, trascrizione cella-cella via tastiera, anteprima HTML live;
-   - **reading order**: numerazione dei blocchi di pagina + ordine interno alle tabelle;
-     preview "a fiume" (frecce) che segue l'ordine per validazione visiva;
-   - **trascrizione** dei blocchi testo con checklist convenzioni attiva;
-   - **prefill via pseudo-labeling**, motori/modalità distinti e non intercambiabili:
-     - `ocr` (RapidOCR/PaddleOCR): rileva **righe di testo** e le etichetta `Text`. Non ha alcuna
-       nozione di tabella, ma con `table_promote=True` (default) il più grande cluster di righe
-       consecutive la cui geometria dimostra una griglia viene **promosso a blocco `Table`** con
-       griglia e celle precompilate cella per cella (le colonne fuse non servono); le righe fuori
-       dal cluster (testata, numero del fascicolo) restano `Text`. Le celle con testo nascono
-       `source=ocr`, `verified=false`. Utile sulle pagine di prosa e, con la promozione, anche sui
-       registri; disattivabile per richiesta.
-     - `model/two_stage` (MonkeyOCRv2 via vLLM): layout, poi riconoscimento per blocco;
-     - `model/end2end`: una generazione ufficiale bbox+label+content. Se il contenuto `Table` è OTSL
-       valido viene salvato direttamente; altrimenti ricade esplicitamente sul crop tabella.
-     In tutti i casi il dato di training sono le **correzioni** dell'utente, non l'output grezzo:
-     ogni cella/blocco precompilato nasce non verificato, e il report d'export distingue le due
-     cose (`table_cells.verified` / `prefill_unverified`). Reimmettere il predetto senza correggerlo
-     insegna al modello i suoi stessi errori;
-     - **modalità di sostituzione esplicite**: il prefill non cancella mai senza che l'utente
-       scelga. `merge` aggiunge; `replace_drafts` rimuove solo le bozze non confermate
-       (`prefill_source` non nullo **e** `confirmed=0`), mai il lavoro umano; `replace_all`
-       cancella tutto, griglie comprese, e richiede conferma nella UI (`replace` resta come
-       alias storico di `replace_all`). La risposta dichiara `replaced_blocks`/`replaced_grids`;
-       su pagina piena il pulsante Prefill apre un dialog di conferma (`PrefillDialog`);
-     - **dove vivono le bozze**: nel pannello contenuti, non sull'immagine — sul canvas non
-       compare nulla di generato finché qualcuno non lo verifica. La **classe** di una bozza si
-       cambia dal pannello (`onDraftLabel` → `PATCH /blocks/{id}`): non essendo sul canvas,
-       è lì che si ri-etichetta, per esempio quando una data finisce dentro `Page-header` e va
-       promossa a `Issue-date`. Le **tabelle** fanno
-       eccezione, e la ragione è misurata: la regione è ciò che il layout sbaglia più spesso
-       (sulla pagina `index` da 11,3 MP del campione, PaddleOCR-VL propone come `Table` la sola colonna di sinistra e
-       lascia *From/For/Latest Report* fuori, come `Text`), e i confini della griglia si
-       muovono solo **dentro** il ritaglio, che è il bbox del blocco: senza riquadro
-       sull'immagine la correzione è impossibile. Una bozza di tabella sta quindi sul canvas,
-       tratteggiata e più chiara di un'annotazione, e si ridimensiona come qualsiasi blocco.
-       Al ridimensionamento la griglia **si rifà** sulla regione nuova (`/table/detect`,
-       riempimento OCR quando c'è un motore locale): conservarla sarebbe peggio che
-       perderla, perché `vlines`/`hlines` sono normalizzate sul ritaglio e su un ritaglio
-       diverso indicano un altro punto dell'inchiostro. Se una cella trascritta è già
-       `verified` il rifacimento non parte da solo: l'avviso chiede il permesso;
-     - **le bozze non si cancellano da sole**: non essendo sul canvas non arrivano mai nel
-       payload dell'autosave, quindi `sync_annotations` non può dedurne la cancellazione
-       dall'assenza (lo faceva, e la prima modifica al canvas dopo una run di prefill
-       distruggeva tutte le bozze con le loro griglie). Si scartano con `DELETE
-       /blocks/{id}`, con `replace_drafts`, o dichiarandole in `deleted_ids` nel salvataggio
-       bulk — è così che il canvas cancella una tabella: chi cancella lo dice, e un id
-       tornato fra gli `items` (annullamento) vince sulla cancellazione;
-     - **revisione della pagina**: ogni scrittura che non passa dall'autosave —
-       `PUT /blocks/{id}/table`, `PATCH /blocks/{id}` — fa avanzare `annotation_revision` e
-       la restituisce nella risposta (`TableSaveOut.annotation_revision`,
-       `BlockOut.annotation_revision`). Il client la riallinea con
-       `useAnnotationState.syncRevision`: senza, il primo autosave successivo si vedrebbe
-       respingere con 409 un conflitto che non esiste;
-     - **hint di schema tabella**: il progetto può dichiarare l'intestazione del registro (es.
-       «Year e Tons sono unite su una riga sopra») in `settings_json["table_hint"]`
-       (`GET/PUT /api/projects/{id}/table-hint`; nell'apposita modale dello Studio). Il testo è
-       accodato al prompt di riconoscimento tabella **solo** dai modelli che lo dichiarano
-       accettabile (`ModelCapabilities.accepts_prompt_hint`): oggi il solo Qwen3-VL, l'unico
-       eseguibile in locale su Apple Silicon con questa proprietà e quindi l'unico verificabile
-       senza un endpoint remoto. La famiglia a prompt in linguaggio naturale
-       (MonkeyOCRv2/GLM-OCR/TeleOCR) è il candidato naturale, ma resta spenta finché non
-       misurata: i motori a prompt di protocollo o pipeline nativa (PaddleOCR-VL, MinerU2.5,
-       DeepSeek-OCR-2, Unlimited-OCR) invece lo ignorano per costruzione, e un gate errato
-       avrebbe mandato testo fuori distribuzione a un modello che non lo capisce. Il hint è un
-       suggerimento, non una verità: resta affiancato dalla riparazione deterministica
-       dell'intestazione (`services/table_headers.py::repair_flat_header`), che non dipende
-       dall'obbedienza del modello. Sperimentale: da misurare su una pagina `index` prima di
-       considerarlo utile.
-    - autosave, stato avanzamento per pagina, scorciatoie da tastiera;
-   - **autosave e navigazione**: il cambio pagina/progetto attende `flush()` dello store
-     (`useAnnotationState` espone `dirty`/`getDirty`/`flush`); lo smontaggio con lavoro
-     sporco salva in emergenza. Il debounce da solo protegge solo la chiusura del browser.
-3. **Dataset builder**: genera le 3 famiglie JSONL (§7), split **per pagina** e mai per ritaglio,
-   normalizzazione 0–1000, mappa classi, stat e validazioni (box fuori pagina, classi senza prompt, ecc.).
-4. **Training center**: wizard che genera `full.sh`/`lora.sh` dalle template ufficiali, check
-   sistema (GPU/VRAM/CUDA), lancio, **log streaming (SSE) + grafico loss + uso GPU**, stop,
-   resume dai checkpoint.
-5. **Valutazione & iterazione**: layout GT vs predetto overlay, metriche §11, analisi fallimenti.
-6. **Prova modello** (`/playground`): prova temporanea del modello in uso oppure OCR locale su una pagina; per salvare, correggere ed esportare si passa a Riconosci.
-7. **Istanza self-hosted** (auth/utenti/impostazioni):
-   - **primo avvio**: schermata di setup che crea l'amministratore dell'istanza
-     (un solo account, poi login normali); registrazione **chiusa di default**
-     (`TABULARIUM_REGISTRATION_OPEN=0`), apribile dall'admin nelle Impostazioni;
-   - **login/logout**: sessioni via cookie HttpOnly + SameSite=Strict
-     (`tab_session`) con fallback `Authorization: Bearer`; reset password di un
-     utente invalida tutte le sue sessioni aperte;
-   - **ruoli globali**: `admin` (governa tutto, anche utenti/impostazioni),
-     `editor` (crea e lavora sui progetti), `viewer` (legge). Il backend è la
-     fonte di verità: la UI disabilita solo i comandi che finirebbero in un 400;
-   - **accesso ai progetti**: `projects.owner_id` + `project_members` per
-     condividere un progetto con altri utenti (editor/viewer). Regole sensibili
-     protette lato server: niente auto-declassamento, niente eliminazione
-     dell'ultimo admin, 404 per i progetti altrui (esistenza nascosta);
-   - **Impostazioni istanza** (solo admin): nome, registrazione aperta/chiusa,
-     ruolo predefinito per i nuovi account;
-   - **gestione utenti** (solo admin): creazione, cambio ruolo/attivazione,
-     reset password, eliminazione.
+**Always prefer the public label when it describes the same physical thing**: the base model
+already knows it, so transfer is free, while a custom class starts from zero and takes examples
+away from the others. `Title`, `Page-header`, `Section-header` and `List-item` entered the
+taxonomy for this reason.
 
 ---
 
-## 4. Stack & architettura
+## 3. Functional requirements (user view)
 
-Studio scelto: **web app locale** = backend Python **FastAPI** + frontend **React/Vite/TS**.
-Il backend è l'unico processo che l'utente avvia; serve la UI e orchestra tutto. Nessuna dipendenza
-PyTorch nel processo dashboard (il training gira in env separati).
+1. **Projects**: create a project, import images/PDFs from the browser or pick a source folder on
+   the server (native folder dialog when the server runs locally), register pages, metadata
+   date/issue/page/page type, preview.
+2. **Annotation studio** (the core of the product):
+   - **reviewable geometric rectification**: *Align and compare* produces a proposal without
+     touching annotations or the active master; the only neural rectifier is `monkeyocr`, the
+     model's official preprocessor (§2.3.3), alongside rotation-only `deskew` and manual
+     four-corner perspective and mesh corrections. Original and proposal stay side by side until
+     *Accept as master*; only acceptance, after confirmation, removes blocks whose coordinates
+     would become invalid. The master is a lossless PNG and becomes the single source for canvas,
+     prefill, crops and export; JPEG only for previews/tiles. Metadata and API declare requested
+     and actual engine, fallback, warnings and diagnostic errors. Prefill never re-runs deskew on
+     the original when an accepted master exists;
+   - smooth zoom/pan on high-resolution scans (the server serves downsampled tiles/previews).
+     Gesture conventions (as in document viewers): wheel/two fingers = pan, Ctrl/Cmd+wheel (and
+     pinch) = zoom around the pointer, Space/middle-drag = temporary pan, Ctrl+0 = fit, Ctrl± =
+     zoom. Wheel deltas are normalized to pixels (`wheelDeltaPixels`) and the zoom factor is
+     exponential with a clamp (`wheelZoomFactor`, tested in `canvasGeometry.test.ts`);
+   - the three studio columns (pages | canvas | content) are resizable with `Splitter` (drag,
+     arrows ±16px, double click = reset); widths persist in
+     `localStorage['tabularium.studio.split']`. Views (all / canvas only / transcription only) are
+     always reachable from a selector;
+   - block tools: rectangle and polygon; colored class palette; edit/resize/delete;
+   - **table workspace**: rows/columns, **merged cells**, "phantom" columns where rules have faded,
+     cell-by-cell transcription from the keyboard, column actions (trim, fill down, split, join…),
+     arithmetic checks on column sums, live HTML preview — in the studio or on a second screen
+     (`/tabella/:blockId`);
+   - **reading order**: numbering of page blocks + order inside tables; a "flow" preview (arrows)
+     that follows the order for visual validation;
+   - **transcription** of text blocks with the conventions checklist in view;
+   - **prefill via pseudo-labeling**, distinct and non-interchangeable engines/modes:
+     - `ocr` (RapidOCR/PaddleOCR): detects **text lines** and labels them `Text`. It has no notion
+       of tables, but with `table_promote=True` (default) the largest cluster of consecutive lines
+       whose geometry proves a grid is **promoted to a `Table` block** with the grid and cells
+       prefilled cell by cell (merged columns are not needed); lines outside the cluster
+       (masthead, issue number) stay `Text`. Cells with text start as `source=ocr`,
+       `verified=false`. Useful on prose pages and, with promotion, on registers too; can be
+       turned off per request.
+     - `model/two_stage` (e.g. MonkeyOCRv2 via vLLM): layout, then recognition per block;
+     - `model/end2end`: one official bbox+label+content generation. If the `Table` content is
+       valid OTSL it is saved as is; otherwise it explicitly falls back to the table crop;
+     - `model/native`: adapters with an official vendor pipeline (Qwen3-VL, PaddleOCR-VL,
+       MinerU2.5, GLM-OCR, TeleOCR) run that pipeline (`prefill.native_page_items`).
+     In every case the training data are the user's **corrections**, not the raw output: every
+     prefilled cell/block starts unverified, and the export report tells the two apart
+     (`table_cells.verified` / `prefill_unverified`). Feeding predictions back without correcting
+     them teaches the model its own mistakes;
+     - **explicit replacement modes**: prefill never deletes without the user choosing. `merge`
+       adds; `replace_drafts` removes only unconfirmed drafts (`prefill_source` not null **and**
+       `confirmed=0`), never human work; `replace_all` deletes everything, grids included, and
+       requires confirmation in the UI (`replace` remains as a legacy alias of `replace_all`). The
+       response declares `replaced_blocks`/`replaced_grids`; on a non-empty page the Prefill button
+       opens a confirmation dialog (`PrefillDialog`);
+     - **where drafts live**: in the content panel, not on the image — nothing generated appears on
+       the canvas until someone verifies it. A draft's **class** is changed from the panel
+       (`onDraftLabel` → `PATCH /blocks/{id}`): since it is not on the canvas, that is where it is
+       relabelled, for example when a date ends up inside `Page-header` and must become
+       `Issue-date`. **Tables** are the exception, for a measured reason: the region is what layout
+       gets wrong most often (on the 11.3 MP sample `index` page, PaddleOCR-VL proposes only the
+       left column as `Table` and leaves *From/For/Latest Report* out as `Text`), and the grid lives
+       **inside** the crop, which is the block's bbox: without a box on the image the correction is
+       impossible. A table draft therefore sits on the canvas, dashed and lighter than an
+       annotation, and is resized like any block. On resize the grid **is redone** on the new region
+       (`/table/detect`, OCR fill when a local engine exists): keeping it would be worse than losing
+       it, because `vlines`/`hlines` are normalized to the crop and on a different crop point at
+       different ink. If a transcribed cell is already `verified`, the redo does not start by
+       itself: a notice asks for permission;
+     - **drafts never delete themselves**: since they are not on the canvas they never reach the
+       autosave payload, so `sync_annotations` cannot infer their deletion from their absence (it
+       used to, and the first canvas edit after a prefill run destroyed every draft with its grid).
+       They are discarded with `DELETE /blocks/{id}`, with `replace_drafts`, or by listing them in
+       `deleted_ids` in the bulk save — this is how the canvas deletes a table: whoever deletes says
+       so, and an id that comes back among the `items` (undo) wins over the deletion;
+     - **page revision**: every write that does not go through autosave — `PUT /blocks/{id}/table`,
+       `PATCH /blocks/{id}` — advances `annotation_revision` and returns it
+       (`TableSaveOut.annotation_revision`, `BlockOut.annotation_revision`). The client realigns
+       with `useAnnotationState.syncRevision`: without it, the next autosave would be rejected with
+       a 409 for a conflict that does not exist;
+     - **table schema hint**: a project can describe the register header (e.g. "Year and Tons are
+       merged on a row above") in `settings_json["table_hint"]` (`GET/PUT
+       /api/projects/{id}/table-hint`; in the Studio's dedicated dialog). The text is appended to
+       the table recognition prompt **only** by models that declare it acceptable
+       (`ModelCapabilities.accepts_prompt_hint`): today only Qwen3-VL, the only one runnable
+       locally on Apple Silicon with this property and therefore the only one verifiable without a
+       remote endpoint. The natural-language prompt family (MonkeyOCRv2/GLM-OCR/TeleOCR) is the
+       natural candidate but stays off until measured; protocol-prompt or native-pipeline engines
+       (PaddleOCR-VL, MinerU2.5, DeepSeek-OCR-2, Unlimited-OCR) ignore it by construction, and a
+       wrong gate would have sent out-of-distribution text to a model that does not understand it.
+       The hint is a suggestion, not a truth: it sits alongside the deterministic header repair
+       (`services/table_headers.py::repair_flat_header`), which does not depend on the model
+       obeying. Experimental: to be measured on an `index` page before calling it useful;
+   - autosave, per-page progress, keyboard shortcuts;
+   - **autosave and navigation**: changing page/project waits for the store's `flush()`
+     (`useAnnotationState` exposes `dirty`/`getDirty`/`flush`); a failed flush blocks the change.
+     Unmounting with dirty work triggers an emergency save. Debounce alone only protects closing the
+     browser.
+3. **Dataset builder**: generates the JSONL families (§7), split **by page** and never by crop,
+   0–1000 normalization, class map, stats and validations (boxes outside the page, classes without
+   a prompt, etc.).
+4. **Training center**: a wizard that generates the training script from the selected model's
+   recipe (§10), system checks (GPU/VRAM/CUDA), launch on this machine or a remote GPU, **log
+   streaming (SSE) + loss chart + GPU usage**, stop, resume from checkpoints.
+5. **Evaluation & iteration**: GT vs prediction overlay, §11 metrics, failure analysis; a
+   **benchmark** compares several models or checkpoints on the same gold pages (M17).
+6. **Try a model** (`/playground`): a temporary test of the active model or local OCR on one page;
+   to save, correct and export, use Recognize.
+7. **Self-hosted instance** (auth/users/settings):
+   - **first start**: a setup screen creates the instance administrator (one account, then normal
+     logins); registration **closed by default** (`TABULARIUM_REGISTRATION_OPEN=0`), which the admin
+     can open in Settings;
+   - **login/logout**: HttpOnly + SameSite=Strict cookie sessions (`tab_session`) with an
+     `Authorization: Bearer` fallback; resetting a user's password invalidates all their sessions;
+   - **global roles**: `admin` (governs everything, users/settings included), `editor` (creates and
+     works on projects), `viewer` (reads). The backend is the source of truth: the UI only disables
+     commands that would end in an error;
+   - **project access**: `projects.owner_id` + `project_members` to share a project with other users
+     (editor/viewer). Sensitive rules enforced server-side: no self-demotion, no deleting the last
+     admin, 404 for other people's projects (existence hidden);
+   - **invitations and onboarding** (M13), **per-page annotator/reviewer workflow** (M19), **live
+     presence** (M11);
+   - **instance settings** (admin only): name, open/closed registration, default role for new
+     accounts;
+   - **user management** (admin only): create, change role/activation, reset password, delete.
+
+---
+
+## 4. Stack & architecture
+
+Chosen design: a **local web app** = Python **FastAPI** backend + **React/Vite/TS** frontend.
+The backend is the only process the user starts; it serves the UI and orchestrates everything.
+No PyTorch in the dashboard process: model serving and training run in separate environments
+(`<root>/vllm-runtime`, `<root>/mlx-runtime`, `<root>/paddle-runtime`, remote GPUs) that
+Tabularium prepares itself.
+
+### Distribution
+- Installed with **`uv tool install tabularium`** (PyPI) or from a GitHub release archive; from
+  source with `scripts/setup_backend.sh` + `scripts/run.sh` (§13.6).
+- `pyproject.toml` (repository root) builds a wheel with the `app` package and, in
+  `app/_bundle/`, the resources a checkout keeps at the repository root: `VERSION`, the prebuilt
+  `frontend/dist`, `conf/`, `scripts/cloud/`, `scripts/local/`, `scripts/serve_model.sh`.
+- `config.py` resolves them through `config.RESOURCE_DIR` (`config.INSTALLED` tells the two modes
+  apart). Installed, the data root defaults to `~/Tabularium`, `.env` lives there, and the vault key
+  is generated on first start (never over credentials saved with another key). Any code that reads
+  a repository file at runtime **must** go through `RESOURCE_DIR` and be listed in the wheel's
+  `force-include` (checked by `tests/test_packaging.py`).
+- The `tabularium` command (`app/cli.py`) starts the server and opens the browser
+  (`--port`, `--host`, `--data`, `--no-browser`, `--version`).
 
 ### Backend
-- Python ≥3.11, FastAPI, Uvicorn, Pydantic v2.
-- Storage: **SQLite** (modello §6) per progetti/annotazioni; filesystem per immagini e dataset.
-- Pillow + numpy per elaborazione immagini (thumbnails, tiles, crop, deskew placeholder).
-- `subprocess` per orchestrazione training/valutazione; `nvidia-smi`/`psutil` per telemetria GPU.
-- Client HTTP (requests/httpx) verso server **vLLM** (inferenza/prefill/eval).
-- Librerie opzionali (import lazy): `rapidocr-onnxruntime` o `paddleocr` per il prefill.
-- **Autenticazione** (solo stdlib, nessuna dipendenza): PBKDF2-HMAC-SHA256 per le
-  password, token di sessione conservati come hash SHA-256 in SQLite, cookie
-  HttpOnly + SameSite=Strict. Modalità locale `TABULARIUM_AUTH=off` per i test.
-  Permessi per ruolo globale e per progetto in `services/auth.py` +
-  `api/deps.py::require_resource`; routing protetto a livello router.
+- Python 3.11–3.13, FastAPI, Uvicorn, Pydantic v2.
+- Storage: **SQLite** (§6) for projects/annotations; filesystem for images and datasets.
+- Pillow + numpy for image processing (thumbnails, tiles, crops, deskew).
+- `subprocess` to orchestrate serving, training and evaluation; `nvidia-smi` for GPU telemetry.
+- HTTP clients (requests/httpx) towards OpenAI-compatible servers (**vLLM**, `mlx-vlm`) and
+  provider APIs (Vast.ai, RunPod, Modal).
+- OCR engine: `rapidocr` 3.x + `onnxruntime` (core dependency); `paddleocr` optional
+  (`requirements-uvdoc.txt`).
+- **Authentication** (stdlib only): PBKDF2-HMAC-SHA256 for passwords, session tokens stored as
+  SHA-256 hashes in SQLite, HttpOnly + SameSite=Strict cookies. Local mode `TABULARIUM_AUTH=off`
+  for tests. Global-role and per-project permissions in `services/auth.py` +
+  `api/deps.py::require_resource`; routes protected at router level.
+- Provider credentials are encrypted at rest (`services/vault.py`, Fernet key
+  `TABULARIUM_VAULT_KEY` in `.env`).
 
 ### Frontend
-- React 19 + Vite + TypeScript + Tailwind CSS 4 + React Router 7 + Recharts (grafici).
-  Stato globale via **piccoli store modulari** (`useSyncExternalStore`, senza
-  Zustand): `app/i18n`, `app/auth` — il pattern `useSyncExternalStore` è quello
-  canonico del progetto.
-- Canvas di annotazione: **Konva.js** (shape editing, transformer) per i blocchi.
-- Editor tabellare: **Jspreadsheet CE** (MIT) — `studio/components/JspreadsheetSheet.tsx`.
-  Porta le interazioni Excel-like che mancavano (menù contestuale con inserisci/togli riga e
-  colonna, selezione a intervallo, copia/incolla multi-cella, fill handle) senza che il modello
-  dati diventi suo: `lib/gridSheet.ts` traduce `TableGrid` ↔ foglio nei due sensi, l'OTSL lo
-  genera il server dal nostro modello, e i metadati per cella (`source`/`verified`) vivono nei
-  `meta` della libreria. Le modifiche **strutturali** non passano dall'API della libreria: la
-  struttura nuova la calcola `lib/grid.ts` e il foglio si rimonta — v. M3.
-- Nessun framework "tutto pronto": UI costruita su componenti nostri.
-- **Auth lato UI**: `AuthGate` decide cosa mostrare all'avvio (setup admin,
-  login o app), `api.ts` reagisce ai 401 azzerando l'utente, `Layout` espone
-  menu utente (nome + ruolo + logout, Impostazioni/Utenti solo per l'admin).
+- React 19 + Vite + TypeScript + Tailwind CSS 4 + React Router 7 + TanStack Query + Recharts.
+  Global state via **small modular stores** (`useSyncExternalStore`, no Zustand): `i18n`,
+  `app/auth` — `useSyncExternalStore` is the project's canonical pattern.
+- Annotation canvas: **Konva.js** (`react-konva`; shape editing, transformer) for blocks.
+- Table workspace: **Univer** (`@univerjs/presets`, sheets core) —
+  `studio/components/UniverSheet.tsx` + `TableWorkspacePanel.tsx`. The data model is not Univer's:
+  `lib/univerGrid.ts` translates `TableGrid` ↔ sheet both ways, `lib/univerEvents.ts` serializes
+  only data mutations, the server generates OTSL from our model, and per-cell metadata
+  (`source`/`verified`) stay ours. **Structural** changes do not go through the library: the new
+  structure is computed by `lib/grid.ts` (`insertTrack`/`deleteTrack`, which know what happens to a
+  merged cell crossing the insertion point) and the sheet is remounted; the duplicated native
+  structural commands are hidden.
+- No all-in-one UI framework: the UI is built from our own components.
+- **Auth in the UI**: `AuthGate` decides what to show at start (admin setup, login, forced password
+  change, app), `api.ts` resets the user on 401, `Layout` exposes the user menu (name + role +
+  logout, Settings/Users for admins only).
 
-### Componenti riusati (non fork)
-- `ms-swift` + script `full.sh` / `lora.sh` ufficiali (template; l'app le genera parametrizzate).
-- `html2otsl.py` ufficiale (converter HTML→OTSL, richiamabile).
-- Convenzioni dati ufficiali §2 (JSONL, OTSL, coordinate).
+### Reused components (not forks)
+- `ms-swift` and each model's official training scripts and tools (the app generates
+  parametrized scripts; the official repositories stay external checkouts).
+- The official `html2otsl.py` (HTML→OTSL converter).
+- Official data conventions §2 (JSONL, OTSL, coordinates).
 
 ---
 
-## 5. Struttura repository (obiettivo finale)
+## 5. Repository structure
 
 ```
 tabularium/
-  AGENTS.md
-  README.md
+  AGENTS.md  README.md  CHANGELOG.md  DESIGN.md  PRODUCT.md  VERSION
+  pyproject.toml            # installable package (wheel with app/_bundle, `tabularium` command)
+  mkdocs.yml                # documentation site (docs/ → GitHub Pages)
   backend/
     app/
-      main.py               # entry FastAPI, mount static frontend, health
-      config.py             # settings (paths host, env names, repo checkout path, HF cache)
-      db.py                 # schema SQLite + DAO
+      main.py               # FastAPI entry, serves the built frontend, health
+      cli.py                # `tabularium` command
+      config.py             # settings, RESOURCE_DIR, data root, .env, vault key
+      db.py                 # SQLite schema, versioned migrations
       schemas.py            # Pydantic models
-      api/
-        deps.py             # require_resource(write=...) path-based, permessi progetto
-        auth.py             # setup, login, logout, me, register, status
-        users.py            # CRUD utenti (admin) + reset password
-        settings.py         # impostazioni istanza (PUT admin)
-        projects.py
-        pages.py
-        blocks.py           # annotazioni (blocchi) + tassonomia label
-        prelabel.py
-        datasets.py         # export JSONL famiglie + split + stats
-        training.py         # wizard scripts, run, SSE log, stop, resume
-        evaluate.py
-        playground.py
-      services/
-        security.py         # hash password (PBKDF2), token di sessione (SHA-256)
-        auth.py             # login/sessioni + require_role/require_project_access
-        images.py           # thumbnails/tiles/EXIF/deskew
-        pages.py            # anteprime/thumbnail on-demand per pagina
-        scan.py             # scansione archivio (immagini + PDF lazy)
-        labeling.py         # tassonomia label Historic Shipping Index + prompt
-        blocks.py           # CRUD blocchi + reading order
-        tables.py           # CRUD grid tabelle (cells/merges) + HTML preview
-        otsl.py             # grid → OTSL (+ test contro otsl_to_html)
-        dataset_builder.py  # annotazioni → 3 JSONL (regole §7)
-        trainer.py          # subprocess, log tail, telemetria, resume
-        inference.py        # client vLLM OpenAI-compatibile
-      tests/
-    requirements.txt        # core; varianti opzionali: requirements-dev.txt,
-                            # requirements-uvdoc.txt (PaddleOCR: motore OCR e
-                            # runtime PaddleOCR-VL, non più il dewarp)
+      api/                  # auth, users, settings, projects, pages, blocks, page_work, prelabel,
+                            # recognition, datasets, training, evaluate, benchmark, playground,
+                            # models, cloud, system, live (WebSocket), deps (permissions)
+      services/             # one module per concern; the main ones:
+        model_adapters.py   #   per-model prompts, parsers, capabilities, serve commands
+        model_labels.py     #   native → canonical label bridge
+        model_registry.py   #   catalog, downloads, local runnability
+        serve_recipes.py / serve_manager.py / local_runtime.py / mlx_runtime.py / paddle_runtime.py
+        train_recipes.py / trainer.py / trainer_script.py / training_executor.py / vram.py
+        cloud_manager.py / modal_manager.py   # Vast.ai, RunPod, SSH tunnels, Modal
+        inference.py        #   OpenAI-compatible client (+ Gemini generateContent)
+        prefill.py / recognition.py / ocr.py / table_detect.py (deprecated, §2.3.5)
+        otsl.py / table_checks.py / table_headers.py / dataset_builder.py / paddle_dataset.py
+        evaluate.py / benchmark.py
+        auth.py / security.py / users.py / vault.py / live.py / page_work.py / i18n.py
+    tests/                  # pytest
+    requirements.txt        # runtime deps (mirrored in pyproject.toml);
+                            # requirements-dev.txt, requirements-uvdoc.txt (PaddleOCR)
   frontend/
     src/
-      app/                  # routes, layout, shell (Layout, AuthGate, auth, i18n, ui)
-      pages/                # Home, Projects, Annotation, Dataset, Training, Evaluation,
-                            # Playground, Login, Setup, Settings, Users
-      studio/
-        canvas/             # zoom-pan-canvas, tools (Block/Table/Order/Transcribe)
-        components/         # ContentPane, JspreadsheetSheet (foglio tabella), LiveStream, ConventionsChecklist, Splitter, PrefillDialog
-        state/              # store annotazioni + history (undo/redo)
-      lib/                  # api.ts, coords.ts (coordinate 0-1000), otsl.ts (preview), types.ts
-    package.json
-  conf/                     # template full.sh/lora.sh, conventions.yaml
+      app/                  # shell: Layout, AuthGate, auth, ui, models hub logic, live, share dialog
+      pages/                # one per route (Recognize, Results, Projects, Annotation, Dataset,
+                            # Training, Evaluation, Benchmark, Models, Playground, Settings, Users…)
+      studio/               # canvas, annotation state + history, components (ContentPane,
+                            # UniverSheet, TableWorkspacePanel, PageSidebar, PrefillDialog…)
+      lib/                  # api.ts, grid.ts, univerGrid.ts, coords, labels, dates, avatar…
+      i18n/                 # it.ts (structure source of truth), en.ts, fr.ts
+  conf/profiles/            # domain profiles
+  docs/                     # documentation site (docs/guide/*), screenshots, internal notes
   scripts/
-    setup_backend.sh / .ps1 # env + dipendenze
-    setup_frontend.sh / .ps1
-    run.sh / run.ps1        # avvio locale (backend+frontend build/preview)
-    train_on_gpu.sh         # helper per lanciare training in env GPU dedicato
-    cloud/                  # offloading inferenza su GPU remota: setup_cloud_vllm.sh,
-                            # ssh_tunnel.sh, vast_onstart.sh, test_cloud_connection.py,
-                            # modal_vllm.py (deployment Modal serverless, vLLM >= 0.25,
-                            # GPU Ampere+ per il bf16 — la T4 non è servibile)
-  data/                     # (gitignored) progetti locali
+    setup_backend.sh/.ps1  setup_frontend.sh/.ps1  run.sh/.ps1  build_frontend.sh/.ps1
+    serve_model.sh          # MonkeyOCRv2 serving wrapper
+    version.py              # VERSION bump, synced to frontend/package.json
+    cloud/                  # scripts sent to remote GPUs (vLLM/training setup, Modal apps…)
+    local/                  # local runtime helpers (MinerU MLX gateway)
+    e2e_*.py / e2e_smoke.sh # browser end-to-end tests
+  .github/workflows/        # ci.yml, docs.yml (GitHub Pages), release.yml (GitHub + PyPI)
+  data/                     # (gitignored) local data root when running from source
 ```
 
 ---
 
-## 6. Modello dati (SQLite)
+## 6. Data model (SQLite)
 
-- `projects(id, name, root_dir, owner_id, created_at, settings_json)` — settings: classi+colori+prompt map,
-  convenzioni trascrizione, modello base, max_pixels/max_length, split ratio, py/conda env names;
-  `owner_id` = chi ha creato il progetto (vedi permessi sotto).
+- `projects(id, name, root_dir, owner_id, created_at, settings_json)` — settings: classes + colors +
+  prompt map, transcription conventions, base model, max_pixels/max_length, split ratio, table hint;
+  `owner_id` = who created the project (see permissions below).
 - `pages(id, project_id, rel_path, abs_path, width, height, issue_date, issue_no, page_no,
   page_type, status, meta_json)`.
-- `blocks(id, page_id, label, bbox_px_json [x1,y1,x2,y2 pixel], content, order_idx, kind
+- `blocks(id, page_id, label, bbox_px_json [x1,y1,x2,y2 pixels], content, order_idx, kind
   ['text','table','formula','picture','custom'], prefill_source, confirmed, updated_at)`.
 - `tables(id, block_id, grid_json)` — `grid_json`: `{rows: n, cols: m, cells:[{r,c,rowspan,colspan,
-  text, source, verified}], vlines:[...], hlines:[...]}` (griglia fisica; gli span sono i merge;
-  `source` = chi ha scritto il testo della cella, `verified` = conferma umana — solo le celle con
-  testo sono interessate).
-- Coordinate **memorizzate in pixel sorgente**; normalizzazione a 0–1000 **solo in export** (§7).
-- `annotation_state(id, page_id, user, ...)` per avanzamento multi-pagina.
-- **Auth (SCHEMA_VERSION 6)**:
-  - `users(id, username UNIQUE, password_hash, email, role ['admin','editor','viewer'],
-    active, created_at, last_login_at)`;
-  - `sessions(id, user_id, token_hash, expires_at)` — token casuale a 32 byte,
-    conservato **solo hashato**; cookie `tab_session` (HttpOnly, SameSite=Strict);
-  - `project_members(project_id, user_id, role ['editor','viewer'])` — accesso
-    condiviso ai progetti; `projects.owner_id` è l'altro lato (solo l'owner elimina);
-  - `settings(id, instance_name, allow_registration, default_new_user_role)` — singola riga;
-  - migrazioni: le versioni fino alla **baseline 6** restano additive per
-    presenza di colonna (`db.py::_ensure_columns`); da lì in poi ogni cambiamento
-    di schema è una migrazione **versionata e ordinata** in `db.py::_MIGRATIONS`
-    (versione → DDL), applicata una sola volta alle sole basi più indietro,
-    con versione registrata in `meta` e errore visibile all'avvio se la catena
-    è incompleta. Test di upgrade in `tests/test_db_migrations.py`. I test
-    auth girano su
-    `TABULARIUM_AUTH=off` per la suite storica e `on` (fixture) per `test_auth.py`.
+  text, source, verified}], vlines:[...], hlines:[...]}` (physical grid; spans are the merges;
+  `source` = who wrote the cell text, `verified` = human confirmation — only cells with text).
+- `page_work` (migration 19): per-page annotator, reviewer, state
+  (`annotation`/`pending`/`changes_requested`/`approved`) and optimistic version.
+- Coordinates **stored in source pixels**; normalization to 0–1000 **only at export** (§7).
+- **Auth**:
+  - `users(id, username UNIQUE, password_hash, email, role ['admin','editor','viewer'], active,
+    created_at, last_login_at, must_change_password, invite_token_hash, invite_expires_at)`;
+  - `sessions(id, user_id, token_hash, expires_at)` — random 32-byte token, stored **only as a
+    hash**; cookie `tab_session` (HttpOnly, SameSite=Strict);
+  - `project_members(project_id, user_id, role ['editor','viewer'])` — shared access;
+    `projects.owner_id` is the other side (only the owner deletes);
+  - instance settings (`instance_name`, `allow_registration`, `default_new_user_role`) are a JSON
+    value in `meta` (`services/settings.py`).
+- Other tables: `compute_profiles` (active model/provider, v10+), `recognition_runs` /
+  `recognition_run_items`, `jobs`, `page_reviews`, `custom_models`, `secrets` (vault),
+  `audit_events`, `rate_limits`, `meta`.
+- **Migrations**: up to **baseline 6** they are additive by column presence
+  (`db.py::_ensure_columns`); from then on every schema change is a **versioned, ordered**
+  migration in `db.py::_MIGRATIONS` (version → DDL), applied once to databases that are behind,
+  with the version recorded in `meta` and a visible startup error if the chain is incomplete.
+  Current `SCHEMA_VERSION`: **19**. Upgrade tests in `tests/test_db_migrations.py`. The historical
+  test suite runs with `TABULARIUM_AUTH=off`; `test_auth.py` turns it `on` with a fixture.
 
 ---
 
-## 7. Dataset export — 3 famiglie JSONL
+## 7. Dataset export — JSONL families
 
-Export atomico per progetto; split train/val **per pagina** (default 90/10, seed fisso).
+Atomic per-project export; train/val split **by page** (default 90/10, fixed seed).
 
-1. **`layout_train.jsonl` / `_val`** — immagine pagina intera + prompt LAYOUT. CONTENT =
-   lista dict in ordine di lettura: `[{'bbox': [x1,y1,x2,y2], 'label': '...'}, ...]` con coord 0–1000.
-2. **`text_rec.jsonl`** — un campione per blocco di testo/headline/etc.: crop del blocco (PNG/JPEG
-   salvato in `data/<project>/crops/`) + prompt testo + trascrizione.
-3. **`table_otsl.jsonl`** — crop completo della tabella + prompt OTSL + OTSL generato dal grid.
-   In modalità sperimentale si aggiungono crop per bande di righe logiche, mai al posto del crop
-   completo e solo con `hlines` verificate; report e conteggi distinguono `full` e `bands`.
-4. (opzionale) `formula.jsonl`, `end2end.jsonl`.
+1. **`layout_train.jsonl` / `_val`** — full page image + LAYOUT prompt. CONTENT = list of dicts in
+   reading order: `[{'bbox': [x1,y1,x2,y2], 'label': '...'}, ...]` with 0–1000 coordinates.
+2. **`text_rec.jsonl`** — one sample per text/headline/etc. block: block crop (PNG/JPEG saved in
+   `<root>/projects/<project>/crops/`) + text prompt + transcription.
+3. **`table_otsl.jsonl`** — full table crop + OTSL prompt + OTSL generated from the grid. In
+   experimental mode, crops of logical row bands are added, never instead of the full crop and only
+   with verified `hlines`; report and counts distinguish `full` and `bands`.
+4. (optional) `formula.jsonl`, `end2end.jsonl`.
 
-Regole:
-- I crop vanno generati una volta e cache-ati (stesso percorso assoluto nei JSONL).
-- Path immagini **assoluti**; il builder stampa un report di sanità (count per famiglia/classi,
-  box fuori pagina, blocchi senza trascrizione, classi senza prompt).
-- Celle vuote `ecel` valide incluse; blocco tabella senza cella testuale non esportato.
-- Il bulk autosave aggiorna i blocchi esistenti preservandone gli ID: eliminare e reinserire farebbe
-  scattare `ON DELETE CASCADE` e perderebbe le griglie tabellari associate.
+Rules:
+- Crops are generated once and cached (same absolute path in the JSONL).
+- **Absolute** image paths; the builder writes a sanity report (counts per family/class, boxes
+  outside the page, blocks without transcription, classes without a prompt).
+- On approved pages only confirmed blocks count: re-running recognition on an approved page must
+  not turn unconfirmed drafts into ground truth.
+- Valid empty `ecel` cells are included; a table block without any text cell is not exported.
+- Bulk autosave updates existing blocks preserving their IDs: deleting and re-inserting would
+  trigger `ON DELETE CASCADE` and lose the attached table grids.
 
-### Viste ufficiali Paddle (`services/paddle_dataset.py`)
+Other training formats are views derived from the same canonical annotations, never a second
+source of truth: ShareGPT for LLaMA-Factory (`alternative_training.py`) and the Paddle views below.
+Each training recipe (§10) points to its view; the builder never converts the target silently.
 
-Le annotazioni restano nel formato canonico; questo exporter ne deriva tre viste, una per ciascun
-modello che il progetto può addestrare — sono modelli distinti e non si sostituiscono a vicenda:
+### Official Paddle views (`services/paddle_dataset.py`)
 
-| Vista | File | Modello | Contenuto |
+| View | Files | Model | Content |
 |---|---|---|---|
-| layout | `layout_{train,val}.json` + `annotations/` | rilevatore PaddleX (COCO) | bbox + classe del blocco, ordine di lettura |
-| VLM | `vlm_{train,val}.jsonl` | PaddleOCR-VL via ERNIEKit | crop del blocco → OTSL (tabelle) o testo |
-| riga | `rec_{train,val}.txt` + `rec_dict.txt` + `cells/` | PP-OCR rec | **un campione per cella**: ritaglio → testo |
+| layout | `layout_{train,val}.json` + `annotations/` | PaddleX detector (COCO) | block bbox + class, reading order |
+| VLM | `vlm_{train,val}.jsonl` | PaddleOCR-VL via ERNIEKit | block crop → OTSL (tables) or text |
+| line | `rec_{train,val}.txt` + `rec_dict.txt` + `cells/` | PP-OCR rec | **one sample per cell**: crop → text |
 
-La vista *riga* è ciò che chiude il ciclo sul motore OCR **locale** (quello che riempie le celle in
-`table_detect.fill_cells`): una cella corretta a mano torna indietro come campione. Il ritaglio è lo
-stesso che il riconoscitore vede in esercizio — confini della griglia più un quarto di passo di
-respiro, altezza nativa (la normalizzazione a 32/48 px è del trainer) — perché un dataset tagliato
-diversamente da come si legge insegna un'inquadratura che non esisterà mai. Con `approved_only`
-entrano solo le celle `verified`: il testo del prefill non è gold, e il manifest dichiara quante ne
-sono state escluse (`cells.unverified_skipped`). Il dizionario dei caratteri è quello osservato nel
-corpus, non uno generico.
+The *line* view closes the loop on the **local** OCR engine (the one that fills cells in
+`table_detect.fill_cells`): a hand-corrected cell comes back as a sample. The crop is the same the
+recognizer sees in use — grid boundaries plus a quarter pitch of padding, native height (resizing
+to 32/48 px is the trainer's job) — because a dataset cut differently from how it is read teaches a
+framing that will never exist. With `approved_only` only `verified` cells are included: prefill text
+is not gold, and the manifest declares how many were excluded (`cells.unverified_skipped`). The
+character dictionary is the one observed in the corpus, not a generic one.
 
 ---
 
-## 8. Tassonomia Historic Shipping Index & mappa prompt (default di progetto)
+## 8. Historic Shipping Index taxonomy & prompt map (project default)
 
-| Label (interna) | Esportata | Prompt riconoscimento (classe non-layout) |
+| Label (internal) | Exported | Recognition prompt (non-layout class) |
 |---|---|---|
-| Title | `Title` | testo |
-| Page-header | `Page-header` | testo |
-| Issue-number | `Issue-number` | testo |
-| Issue-date | `Issue-date` | testo |
-| Column | `Column` | — (solo layout; helper) |
-| Headline | `Headline` | testo |
-| Byline | `Byline` | testo |
-| Text | `Text` | testo |
-| Section-header | `Section-header` | testo |
-| List-item | `List-item` | testo |
-| Advertisement | `Advertisement` | testo |
-| Note/Adder | `Note` | testo |
+| Title | `Title` | text |
+| Page-header | `Page-header` | text |
+| Issue-number | `Issue-number` | text |
+| Issue-date | `Issue-date` | text |
+| Column | `Column` | — (layout only; helper) |
+| Headline | `Headline` | text |
+| Byline | `Byline` | text |
+| Text | `Text` | text |
+| Section-header | `Section-header` | text |
+| List-item | `List-item` | text |
+| Advertisement | `Advertisement` | text |
+| Note/Adder | `Note` | text |
 | Table | `Table` | OTSL |
 | Formula | `Formula` | LaTeX |
 | Picture | `Picture` | — |
 
-**Perché numero e data sono classi separate** (e perché non esiste una classe `Date`): la data del
-fascicolo è il campo più importante del corpus — ogni movimento nave è relativo a essa — e il corpus
-attraversa almeno tre formati di testata fra il 1940 e il 1973 (masthead grande con numero a sinistra
-e data al centro; riga unica «HISTORIC SHIPPING INDEX, Mon., May 20, 1940.»; Voyage Supplement con
-data a sinistra e indice a pollice + numero di pagina a destra). Etichettarla direttamente evita una
-regex di estrazione per ciascun formato. Una classe `Date` generica sarebbe invece incoerente: le
-date dentro le celle sono centinaia per pagina e nessuna label di layout può raggiungerle.
+**Why issue number and date are separate classes** (and why there is no `Date` class): the issue
+date is the most important field of the corpus — every ship movement is relative to it — and the
+corpus spans at least three masthead formats between 1940 and 1973 (large masthead with the number
+on the left and the date in the centre; a single line "HISTORIC SHIPPING INDEX, Mon., May 20,
+1940."; Voyage Supplement with the date on the left and a thumb index + page number on the right).
+Labelling it directly avoids an extraction regex per format. A generic `Date` class would be
+inconsistent: dates inside cells number in the hundreds per page and no layout label can reach them.
 
-**Regola di confine**: una classe di layout non spezza mai una riga tipografica. Dove data e testata
-sono composte sulla stessa riga (formato 1940) la data resta dentro `Title` e si recupera dalla
-trascrizione; disegnare un riquadro a metà riga su una virgola è il confine che i modelli di layout
-sbagliano di più.
+**Boundary rule**: a layout class never splits a typographic line. Where date and masthead share a
+line (1940 format) the date stays inside `Title` and is recovered from the transcription; drawing a
+box halfway through a line at a comma is the boundary layout models get wrong most often.
 
-### 8.1 Generi di pagina (`pages.page_type`)
+### 8.1 Page genres (`pages.page_type`)
 
-Il corpus non è omogeneo e i due generi vogliono ricette diverse. Il tipo si deduce dal prefisso del
-nome file (`backend/app/services/page_meta.py`) e va valorizzato **prima** di annotare.
+The corpus is not homogeneous and the two genres need different recipes. The type is inferred from
+the file name prefix (`backend/app/services/page_meta.py`) and must be set **before** annotating.
 
-| `page_type` | Prefisso | Struttura | Ricetta |
+| `page_type` | Prefix | Structure | Recipe |
 |---|---|---|---|
-| `index` | `LSI` | una tabella a piena pagina, senza filetti | `Title`, `Issue-number`, `Issue-date`, `Page-header`, `Table` + OTSL |
-| `voyage-supplement` | `LSIVS` | colonne parallele di schede-nave | `Page-header`, `Issue-date`, `Column`, `Section-header`, `List-item` — **niente OTSL** |
+| `index` | `LSI` | one full-page table, no rules | `Title`, `Issue-number`, `Issue-date`, `Page-header`, `Table` + OTSL |
+| `voyage-supplement` | `LSIVS` | parallel columns of ship entries | `Page-header`, `Issue-date`, `Column`, `Section-header`, `List-item` — **no OTSL** |
 
-`issue_date` non si deduce dal nome file e **non va mai presa dall'EXIF**: quella è la data di
-digitalizzazione. Finisce in `meta_json.scan_date`.
+`issue_date` is not inferred from the file name and **must never come from EXIF**: that is the
+digitization date. It goes into `meta_json.scan_date`.
 
-La mappa è **per progetto** e vive in `projects.settings_json["labels"]` (modello additivo: i
-default restano sempre disponibili, le custom si aggiungono/rimuovono). Le classi riconoscibili
-(teste alla `ALL_PROMPT` §2.3) compaiono nel LAYOUT e nei JSONL di crop; le classi pure-struttura
-solo nel LAYOUT.
+The map is **per project** and lives in `projects.settings_json["labels"]` (additive model: defaults
+are always available, custom classes are added/removed). Recognizable classes (with an
+`ALL_PROMPT`-style head, §2.3) appear in LAYOUT and in crop JSONL; pure-structure classes only in
+LAYOUT.
 
-### 8.2 Classi: origine, classi note per modello, vocabolario nativo
+### 8.2 Classes: origin, classes known per model, native vocabulary
 
-Una classe ha un'**origine**: `public` se appartiene alla tassonomia pubblica del parsing (§2.7,
-il modello base la conosce già → transfer gratuito) oppure `custom` (token nuovo, da insegnare).
-L'origine è calcolata da `labeling.PUBLIC_LABELS`, non salvata.
+A class has an **origin**: `public` if it belongs to the public parsing taxonomy (§2.7; the base
+model already knows it → free transfer) or `custom` (a new token to teach). The origin is computed
+from `labeling.PUBLIC_LABELS`, not stored.
 
-«Già nota» però **non è una proprietà assoluta della classe: è della coppia classe + modello.**
-Ogni adapter ha un vocabolario nativo (PP-DocLayout `number`, MinerU `doc_title`, …) che traduce
-nel canonico. Quelle mappe sono dichiarate una sola volta in `services/model_labels.py` (gli
-adapter le importano: una sola fonte) e `known_models_for(name)` dice quali modelli emettono già
-una classe. `GET /api/projects/{id}/labels` restituisce per ogni classe `origin` e `known_models`;
-`PUT` (admin/editor) sostituisce le **custom** del progetto con validazione rigida (nome unico e
-non di default, colore `#RGB`/`#RRGGBB`, tipo ammesso, prompt obbligatorio per testo/tabella/
-formula); `POST` crea **una** classe senza riscrivere la lista (il gesto rapido dallo Studio, che
-così non sovrascrive il lavoro di un'altra scheda; 409 se il nome esiste già). Il dataset builder
-costruisce `_LABEL_INFO` dal progetto (`_project_label_info`), così una classe custom entra davvero
-in text_rec invece di essere saltata in silenzio.
+"Already known", however, **is not an absolute property of the class: it belongs to the pair
+class + model.** Every adapter has a native vocabulary (PP-DocLayout `number`, MinerU `doc_title`,
+…) that it translates into the canonical one. Those maps are declared once in
+`services/model_labels.py` (adapters import them: a single source) and `known_models_for(name)`
+says which models already emit a class. `GET /api/projects/{id}/labels` returns `origin` and
+`known_models` for each class; `PUT` (admin/editor) replaces the project's **custom** classes with
+strict validation (unique non-default name, `#RGB`/`#RRGGBB` color, allowed kind, prompt required
+for text/table/formula); `POST` creates **one** class without rewriting the list (the quick gesture
+from the Studio, which therefore does not overwrite another tab's work; 409 if the name exists). The
+dataset builder builds `_LABEL_INFO` from the project (`_project_label_info`), so a custom class
+really enters text_rec instead of being skipped silently.
 
-**Il bridge nativa → canonica** (`model_labels.resolve_native_label`) traduce qualunque label di
-un modello nel vocabolario del progetto, normalizzando l'ortografia (minuscole, `spazio`/`_`/`-`
-equivalenti: `Table_document` ≡ `table document`). Ordine di risoluzione, dal più specifico al più
-generico: nome canonico esatto → **mappa nativa dell'adapter** (la semantica del modello vince sul
-generico) → **alias della classe** (sinonimi dichiarati, anche per le custom). Ogni classe porta
-`aliases` in `settings_json`; l'`LabelsEditor` li edita e il prefill li usa. La risoluzione
-**fallisce in modo rumoroso**: una label fuori tassonomia non entra mai in silenzio — il prefill
-la conta in `summary.unmapped_labels` e il blocco ricade su `Text`, così la UI avvisa e l'utente
-può aggiungere l'alias o la classe. Il prefill risolve sulle classi **del progetto** (non sul solo
-default), quindi le custom non vengono più coercizzate a `Text`.
+**The native → canonical bridge** (`model_labels.resolve_native_label`) translates any model label
+into the project vocabulary, normalizing spelling (lowercase; space/`_`/`-` equivalent:
+`Table_document` ≡ `table document`). Resolution order, from most specific to most generic: exact
+canonical name → **the adapter's native map** (the model's semantics win over the generic) →
+**class aliases** (declared synonyms, custom classes included). Every class carries `aliases` in
+`settings_json`; `LabelsEditor` edits them and prefill uses them. Resolution **fails loudly**: a label
+outside the taxonomy never enters silently — prefill counts it in `summary.unmapped_labels` and the
+block falls back to `Text`, so the UI warns and the user can add the alias or the class. Prefill
+resolves against the **project's** classes (not only the defaults), so custom classes are no longer
+coerced to `Text`. Evaluation and benchmark go through the same bridge.
 
-**Regola di coerenza per il fine-tuning**: l'addestramento insegna **sempre il vocabolario
-canonico**; le mappe native e gli alias servono solo a leggere il modello *base* prima del
-fine-tune. Aggiungere un modello = dichiarare la sua mappa in `model_labels.py`; è questo che rende
-il sistema model-agnostic.
+**Consistency rule for fine-tuning**: training **always teaches the canonical vocabulary**; native
+maps and aliases only serve to read the *base* model before fine-tuning. Adding a model = declaring
+its map in `model_labels.py`; this is what makes the system model-agnostic.
 
-**Superficie per chi annota**: nello Studio il pulsante **Classi** apre `LabelsEditor`
-(`frontend/src/studio/components/LabelsEditor.tsx`) — elenca le classi con badge di origine
-(pubblica/custom), segna quelle note al modello attivo (`knownByModel`) e permette di
-aggiungere/rimuovere le **custom** del progetto. Il PUT sostituisce solo le custom; i default
-(`builtin`) non si toccano. Accanto al selettore di classe nella barra c'è **Nuova classe**
-(`NewLabelDialog`): un gesto rapido che crea **una** classe via `POST /labels` e lo conferma con
-un avviso, perché la classe vale su tutto il progetto. I campi del form sono condivisi
-(`LabelFields`) fra le due superfici. La logica pura è in `frontend/src/lib/labels.ts`.
+**Annotator surface**: in the Studio the **Classes** button opens `LabelsEditor`
+(`frontend/src/studio/components/LabelsEditor.tsx`) — it lists classes with an origin badge
+(public/custom), marks those known to the active model (`knownByModel`) and lets users add/remove
+the project's **custom** classes. The PUT replaces only custom classes; defaults (`builtin`) are not
+touched. **New class** (`NewLabelDialog`, in the Options menu) is a quick gesture that creates
+**one** class via `POST /labels` and confirms it with a notice, because the class applies to the
+whole project. The form fields are shared (`LabelFields`) between the two surfaces. Pure logic lives
+in `frontend/src/lib/labels.ts`.
 
 ---
 
-## 9. Convenzioni di trascrizione (config per progetto)
+## 9. Transcription conventions (per-project config)
 
-Checklist sempre visibile nell'annotatore (esempio default Historic Shipping Index):
-- Espandere i *soft hyphen* di fine riga riassemblando le parole spezzate.
-- Conservare grafia/sigle originali (`inst.`, `ult.`, `barq.`, `psgr. stmr.`, maiuscoletto).
-- Nomi di navi in corsivo → segnare `*nave*` (configurabile) o testo piano.
-- Segni di colonna/colonnini sbiaditi: la colonna fantasma si annota, non si trascrive.
-- Trattini/linee di riga nelle tabelle: rappresentati dalla griglia, mai nel testo.
-Le violazioni generano warning in export. Centrali per la coerenza del dataset.
+A checklist always visible in the annotator (Historic Shipping Index default example):
+- Expand end-of-line *soft hyphens*, rejoining split words.
+- Keep original spelling/abbreviations (`inst.`, `ult.`, `barq.`, `psgr. stmr.`, small caps).
+- Ship names in italics → mark `*ship*` (configurable) or plain text.
+- Faded column marks/rules: the phantom column is annotated, not transcribed.
+- Dashes/row lines in tables: represented by the grid, never in the text.
+Violations produce export warnings. They are central to dataset consistency.
 
 ---
 
 ## 10. Training center
 
-- Il wizard genera (dalle template in `conf/`) `full.sh`/`lora.sh` con env vars, resume
-  (logica `get_latest_checkpoint` ufficiale) e i flag §2.6, puntando ai JSONL esportati e al
-  modello base scelto, con `--split_dataset_ratio` ≥ 0.05 per val loss.
-- Esecuzione in env dedicato (conda `monkeyocrv2-train` o venv) sulla macchina GPU (o remoto via
-  SSH, milestone futura). La dashboard: lancia, **streama log via SSE**, parse dei log per loss
-  e learning rate (JSONL dei run), telemetria GPU (nvidia-smi sampling), stop, resume.
-- Percorsi chiave: `output_dir = checkpoints/monkeyocrv2_lora` (o `_full_sft`),
-  `MODELSCOPE_CACHE = checkpoints/cache`, log in `lora/train_*`/`full_sft/train_*`.
-- A fine run: merge dei LoRA Adapter (ms-swift) in un checkpoint servibile da vLLM (`serve.py`).
+- Each trainable model has a **recipe** in `services/train_recipes.py`: toolchain (ms-swift,
+  erniekit+paddlex, …), official documentation, allowed types (`lora`/`full`), data view and
+  maturity (`verified` only after a documented real run; otherwise `experimental`; `planned` when
+  no runnable recipe exists). Closed models (Gemini 4 Argon) have no weights and no recipe.
+- `services/trainer_script.py` generates the script from the recipe (for MonkeyOCRv2: `swift sft`
+  with the §2.6 flags + `--val_dataset` + the official `get_latest_checkpoint` resume logic) and
+  **fails explicitly** on anything it cannot run — never a wrong script silently.
+- Execution in a dedicated environment on the GPU machine — this machine, SSH, Vast.ai or RunPod
+  (`services/training_executor.py`; `scripts/cloud/setup_cloud_train.sh` prepares a remote host and
+  writes a `.train_ready` marker). The dashboard launches, **streams logs via SSE**, parses loss and
+  learning rate, samples GPU telemetry (`nvidia-smi`), stops and resumes.
+- Run state, scripts and logs in `<root>/projects/<project>/runs/<run_id>/` (§13.10).
+- After a run, registering the checkpoint as a model (`custom_models.register_training_checkpoint`)
+  merges LoRA adapters with `swift export --merge_lora` into a checkpoint vLLM can serve.
+- Recipe matrix and real-run log: `docs/guide/training.md`.
 
 ---
 
-## 11. Valutazione
+## 11. Evaluation
 
-Su val split (pagine mai viste), serviti da vLLM con il checkpoint affinato:
-- **Layout**: mAP-like per label, IoU media per blocco, accuratezza label;
-- **Ordine di lettura**: Levenshtein normalizzato tra sequenze di label GT e predette (+
-  percentuale di ordini perfetti);
-- **Tabelle**: **TEDS** (Tree Edit Distance Similarity) GT-vs-predetto;
-- **Testo**: **CER/WER** per blocco.
-Output: report JSON + HTML, con overlay pagine GT vs predetto (risposta: `--draw-layout`) e
-tabella dei fallimenti peggiori per guidare la nuova iterazione di annotazione.
+On approved pages (§M6 on which pages), served with the base or fine-tuned checkpoint:
+- **Layout**: per-label precision/recall/F1, mean IoU per block, label accuracy;
+- **Reading order**: normalized Levenshtein between GT and predicted label sequences (+ share of
+  perfect orders);
+- **Tables**: **TEDS** (Tree Edit Distance Similarity) GT vs prediction, plus per-cell CER;
+- **Text**: **CER/WER** per block.
+Output: a JSON + HTML report, with GT vs prediction page overlays and a table of the worst failures
+to guide the next annotation round.
 
-Il layout si misura a due soglie: IoU 0.5 (`layout`) e **IoU 0.75** (`layout_strict`, la
-regola del reward di layout di LightOnOCR-3), con precision/recall/**F1** complessivi e per
-label. A 0.5 una `Table` che copre solo la colonna di sinistra passa ancora; a 0.75 no. I
-modelli **solo end2end** (LightOnOCR-3, Unlimited-OCR, DeepSeek-OCR, dots.mocr) non hanno un
-prompt di layout né di crop: si valutano sulla loro generazione nativa, e testo e tabelle
-sono il contenuto del blocco predetto abbinato a IoU 0.5 (i blocchi mancati restano fuori
-dal CER e li conta il recall).
-
----
-
-## 12. Roadmap progressiva (milestone)
-
-- **M0 — Scaffolding** ✅ — struttura repo, AGENTS.md, README, requirements/package.json, run scripts,
-  scheletro FastAPI + Vite funzionanti (health | ping | info ambiente).
-- **M1 — Progetti & pagine** ✅ — CRUD progetto, scan cartella (immagini+PDF, PDF lazy via pypdfium2),
-  registro pagine con metadati (issue_date/issue_no/page_no/page_type/status), thumbnail/preview on-demand,
-  pagina Progetti + Dettaglio progetto (griglia pagine, edit metadati inline). Test end-to-end coperti.
-  - **La lista pagine non tronca in silenzio.** `GET /api/projects/{id}/pages` restituisce `total`
-    oltre agli `items`, con `limit` di default e massimo a 10000 (il tetto di una sessione di
-    riconoscimento). Il default era 200: un corpus di 361 pagine ne mostrava 200 in ogni
-    schermata, e le altre non si potevano vedere né selezionare.
-  - **Ogni pagina porta `blocks` e `drafts`** (bozze generate e non confermate). `status` dice
-    solo cosa ne ha fatto una persona: una pagina riconosciuta e mai rivista resta `new`, e
-    senza `drafts` nessuna lista sapeva dire dove sono le bozze da verificare. Archivio, Studio
-    e Riconosci mostrano «N bozze» al posto di «Nuova» e filtrano per «Con bozze».
-  - **Le date del server sono UTC senza fuso** (`datetime('now')` di SQLite): si leggono con
-    `lib/dates.ts::parseServerDate`, mai con `new Date(...)` diretto, che le prende per ora locale.
-- **M2 — Studio annotazione core** ✅ — canvas Konva zoom/pan (zoom rotellina, pan con tool Panoramica),
-  strumenti rettangolo/poligono, palette classi, ispezione/label/trascrizione base, spostamento/ridimensionamento
-  con Transformer, **ordine di lettura** (indici con spostamento su/giù + riordino automatico), delete, undo/redo
-  (Ctrl+Z/Y), autosave (PUT bulk, debounce 700ms), scorciatoie da tastiera (V/R/P/H). API blocchi:
-  GET/PUT `/api/pages/{id}/annotations`, PATCH/DELETE `/api/blocks/{id}`, GET `/api/projects/{id}/labels`.
-  Il PUT bulk conserva gli ID ricevuti e quindi le tabelle collegate durante l'autosave.
-  Nota: modulo rinominato `blocks.py` (collisione con `from __future__ import annotations`).
-- **M3 — Tabelle + reading order + trascrizione** ✅ — editor del blocco `Table` su **Jspreadsheet CE**
-  (`studio/components/JspreadsheetSheet.tsx`): griglia righe/colonne, **celle unite** (unisci a
-  destra/sotto, separa), colonne fantasma, trascrizione cella-cella, resize delle colonne, menù
-  contestuale interamente nostro e localizzato, autosave + salvataggio esplicito; **generazione OTSL**
-  (`services/otsl.py`, round-trip testato contro l'oracolo ufficiale `otsl_to_html`), crop per blocco
-  (`GET /api/blocks/{id}/crop`), tabella per blocco (`GET/PUT /api/blocks/{id}/table` con OTSL in
-  risposta), **checklist convenzioni** (`GET/PUT /api/projects/{id}/conventions`), **preview "a fiume"**
-  dell'ordine di lettura sul canvas.
-  Nota tecnica: l'OTSL ufficiale **non usa tag di chiusura** (`<fcel>text<lcel><nl>…`).
-  - **Il foglio non è la fonte di verità.** `lib/gridSheet.ts` (funzioni pure, testate) traduce
-    `TableGrid` ↔ Jspreadsheet nei due sensi; `source`/`verified` vivono nei `meta` della libreria,
-    `vlines`/`hlines`/`row_columns`/`phantom_cols` passano attraverso intatti. L'OTSL resta generato
-    dal server sul nostro modello.
-  - **Le modifiche strutturali sono nostre.** `insertColumn`/`insertRow` della libreria chiamano
-    `destroyMerge()`, che distrugge *tutti* i merge del foglio, e poi `updateTableReferences` va in
-    eccezione su un merge già dissolto (`mergeCells[key][2]` di `undefined`). Inserire o togliere
-    righe e colonne passa quindi da `lib/grid.ts` (`insertTrack`/`deleteTrack`, che sanno cosa
-    succede a una cella unita che attraversa il punto) e il foglio si rimonta da lì.
-  - **Trappole verificate della libreria**: `jspreadsheet()` restituisce un array riempito *dopo* il
-    load (l'istanza arriva da `onload`); il menù contestuale si legge dal config dello *spreadsheet*,
-    non della worksheet; `getSelection()` restituisce un array `[x1,y1,x2,y2]` mentre i tipi
-    dichiarano un oggetto; i merge sono `[colspan, rowspan]`, l'ordine inverso del nostro;
-    `setMerge` su celle già unite è un no-op silenzioso; `removeMerge` vuole la chiave
-    dell'intervallo (`A2:B2`), non il nome della cella; `alert`/`confirm` nativi sono sostituiti
-    dalla nostra `Modal` e da una `Notice`.
-- **M4 — Dataset builder** ✅ — `services/dataset_builder.py`: genera le 3 famiglie JSONL
-  (layout pagina intera con coordinate **0–1000** e ordine di lettura, text_rec con ritagli+trascrizione,
-  table con OTSL, formula opzionale), **split per pagina** deterministico (ratio+seed), crop su disco
-  con path assoluti, crop tabella completo + bande logiche sperimentali solo con `hlines` verificate,
-  report con warning di sanità persistito in `dataset/report.json`.
-  API: `POST/GET /api/projects/{id}/datasets[/build]`. Pagina Dataset con slider split, seed,
-  statistiche, warning, file e anteprime righe JSONL.
-- **M5 — Training center** ✅ — `services/trainer.py`: generazione script `bash` dalla template
-  ufficiale (`swift sft` con flag §2.6 + `--val_dataset` + resume dai checkpoint), merge train/val
-  dalle famiglie (`prepare_training_files`), lancio in subprocess con log su file, monitoraggio
-  metriche (loss/lr parsate dal log), telemetria GPU (nvidia-smi), stop, stato persistito in
-  `runs/<run_id>/{run.json,train.sh,train.log}`. API: `POST /api/projects/{id}/training/{start,stop}`,
-  `GET …/status`, `GET …/stream` (SSE), `GET /api/system/gpu`. Pagina Training: wizard config,
-  grafico loss (Recharts), GPU cards, log live con polling.
-  - **Dove si addestra è il primo passo del form**, non l'ultimo: «Questa macchina» si spegne con
-    la causa quando nvidia-smi non trova GPU, e le istanze Vast.ai accese sull'account si scelgono
-    da una lista (host e porta compilati). `trainer.preflight()` distingue l'esecutore: in locale
-    controlla repo, Python/conda, GPU e VRAM di *questa* macchina; con `ssh`/`vast`/`runpod` chiede
-    host e repo di training remoti e non guarda la GPU locale. Prima li controllava sempre, e da un
-    Mac un training remoto non partiva mai. La UI legge il preflight **dal vivo** (debounce 400 ms)
-    accanto al pulsante, che resta spento finché qualcosa blocca. Su Vast/RunPod la chiave SSH di
-    default è quella che Tabularium registra sull'account; la host key si fissa al lancio (TOFU,
-    come il tunnel), e `UserKnownHostsFile` va fra virgolette.
-- **M6 — Valutazione & playground** ✅ — `services/inference.py` (client vLLM OpenAI-compatibile:
-  layout tollerante, riconoscimento testo/tabelle, ping), `services/evaluate.py` (metriche:
-  IoU+label layout, Levenshtein ordine di lettura, CER/WER testo, struttura+CER tabelle; split del
-  val riusato dal builder; report JSON in `eval/eval_<ts>/`). API: `POST /api/projects/{id}/evaluate`,
-  `POST /api/playground/parse`. Pagine: Valutazione (cards aggregate, per-pagina, overlay GT vs
-  predetto, errori pagine) e Playground (layout predetto overlay SVG + blocchi/contenuto, copia md).
-  Degrada con warning se il server vLLM non è attivo.
-  - **La verità di una valutazione sono le sole pagine approvate** (`approved`/`exported`),
-    qualunque cosa dica l'ultima build del dataset: una pagina con bozze mai verificate contava
-    l'output del modello come risposta giusta. Senza pagine approvate l'API risponde
-    `no_gold_pages`. La valutazione **non richiede un training**: misurare il modello di partenza
-    sul proprio corpus è il riferimento che il fine-tuning deve battere.
-  - **Quali pagine si misurano.** Finché nessun training del progetto è `finished` nessuna
-    pagina è stata vista dal modello, quindi si misurano **tutte** le pagine approvate
-    (`report.scope = "all_approved"`): col solo val split un corpus da 11 pagine ne misurava 2.
-    Dopo il primo training finito si torna al val split (`scope = "val"`), l'unico onesto.
-- **M7 — Pseudo-labeling** ✅ — `services/ocr.py` (import lazy RapidOCR/PaddleOCR, config
-  `TABULARIUM_OCR_ENGINE`), `POST /api/projects/{id}/prelabel`: rileva righe di testo su una pagina,
-  filtra per confidenza/dimensione + NMS-lite, inserisce blocchi `Text` con `prefill_source` e
-  `order_idx`, modalità replace/merge. `BlockOut` ora espone `prefill_source`. UI: pulsante
-  La modalità modello espone sia `two_stage` sia l'ufficiale `end2end`; OTSL END2END valido evita
-  una seconda chiamata, altrimenti il risultato dichiara il fallback sul crop tabella.
-- **Sessioni di riconoscimento: peso e revisione.** `GET …/recognition-runs/{id}` non porta
-  l'output grezzo delle pagine (`result: null`) salvo `?result_page=<page_id>`, che lo Studio
-  chiede per la sola pagina aperta; l'export continua a usarlo tutto. Con l'output di ogni
-  pagina una sessione da 200 pagine pesava 4,7 MB, riletta ogni 1,2 s dallo Studio: ora 60 KB.
-  Risultati distingue le pagine «completate» senza blocchi (un modello che risponde e non trova
-  niente non è un successo) e filtra per da verificare / senza blocchi / con errori. Lo Studio
-  tiene `?project=&page=` nell'URL: un refresh riapre la stessa pagina. I nomi dei modelli in UI
-  passano da `app/models/names.ts` (nome di catalogo dall'adapter), mai dal nome servito.
-- **M8 — Utilizzo reale & polish** ✅ — frontend `dist` **servito dal backend** (monoprocesso
-  `scripts/run.sh`; mount `/assets` + catch-all SPA con deep-link, API prioritarie), **lazy-loading**
-  delle pagine (bundle iniziale −63%, 257 kB), `noUnusedLocals`/`noUnusedParameters` riattivati,
-  script `build_frontend`/`run` (bash+PowerShell), guida d'uso e setup GPU nel README,
-  benchmark d'uso = flusso §README. Nota: accorpare la build di produzione (Vite) prima di
-  disinstallare `frontend/node_modules` se si ricompila.
-- **M9 — Modello, provider e destinazione** — l'hub Modelli è il solo luogo di configurazione
-  modello/provider (Impostazioni non lo duplica: v. `DESIGN.md` § Navigazione), ed è anche
-  l'unico posto in cui il corpus si configura. È un **percorso in tre passi — modello → dove →
-  configura** (`pages/ModelsHubPage.tsx` + `app/models/`), nell'ordine in cui la decisione si
-  prende: ogni passo mostra solo ciò che gli serve e la scelta fatta resta scritta nella sua
-  linguetta. Lo stato vive nell'URL (`?modello=…&dove=…&passo=…`), così Indietro torna al passo
-  precedente; senza parametri si riapre «Configura» di ciò che è in uso. La compatibilità
-  modello ↔ destinazione è **una funzione pura sola** (`app/models/registry.ts` →
-  `destinationVerdict`, testata): selettore, destinazioni e pannelli leggono la stessa
-  risposta, quindi nessuna opzione cliccabile porta a un rifiuto e un modello senza alcuna
-  destinazione non è selezionabile. Il passo 3 locale è una lista di controllo pesi → server →
-  verifica (`LocalSetup`); quello remoto è il pannello del provider reso in pagina
-  (`CloudControlModal inline onlyProvider=…`), non più una modale. Su Vast.ai il pannello è a
-  sua volta una lista di quattro tappe (account → GPU → server → collegamento) **ricavate dallo
-  stato vero**, non dai click: dopo un refresh la preparazione in corso si riprende
-  (promemoria `tabularium.vast.job` + una lettura del log remoto per istanza), e
-  `provision_log` dichiara `adapter_id` perché il log è uno per istanza — senza, il fallimento
-  di un modello veniva attribuito a quello appena scelto. Il rail espone Riconosci, Annotazione, Risultati, Progetti, Fine-tuning e Modelli.
-  Fine-tuning ha sottosezioni visibili Dataset → Addestramento → Valutazione; Prova modello
-  vive accanto alla configurazione in Modelli. Il profilo attivo
-  è la fonte di verità atomica (`compute_profiles`, DB v10+); `get_inference_config()` espone
-  anche `provider`, `resource_id` e `source_profile_id`, e il client VLLM li usa così che
-  «`is_cloud`» non si deduca dall'URL (un tunnel SSH Vast ascolta su `localhost` ma è cloud).
-  L'avvio di una
-  sessione di riconoscimento sonda l'endpoint (409 `model_endpoint_unreachable` localizzato)
-  invece di accodare pagine destinate a fallire; la VRAM locale non viene evocata per run remote;
-  lo stop con `disable_inference` arresta la risorsa **identificata** (`resource_id` +
-  credenziale del provider), mai la prima che capita nell'account.
-- **M10 — Il calcolo locale dipende dall'hardware, e l'app lo dichiara** — un solo posto prende
-  la decisione, `services/hardware.py`: piattaforma, memoria (unificata su Apple Silicon, VRAM
-  su CUDA), e quali runtime di serving la macchina può ospitare. `vllm` su Linux+CUDA (su
-  Windows via WSL2), `mlx-vlm` su Apple Silicon — dove vLLM non gira affatto, essendo
-  CUDA-first. Ogni adapter dichiara `local_runtimes` e, quando esiste, `local_mlx_repo` (più
-  `local_mlx_repo_choices` per le varianti pubblicate, es. bf16/8-bit, scelte per modello in
-  Impostazioni); il
-  registro espone per ogni modello `local: {runnable, runtime, reason, mlx_repo, mlx_repo_choices}`, con **codici
-  stabili** che la UI traduce (`cuda_required`, `no_nvidia_gpu`, `apple_silicon_required`,
-  `no_local_runtime`, `model_unsupported_locally`, `insufficient_memory`). Conseguenza di
-  prodotto: su un Mac PaddleOCR-VL ha un benchmark MLX verificato. Qwen3-VL ha avuto prove
-  MLX riuscite con il vecchio prompt, ma il suo prefill ora segue il parser nativo `qwenvl html`
-  e va ribenchmarkato su Metal (la vecchia richiesta OTSL generava Markdown invalido).
-  - **Qwen3-VL su MLX: le finestre delle penalità vanno alzate.** I parametri ufficiali
-    Instruct-VL (`temperature 0.7`, `top_p 0.8`, `top_k 20`, `repetition_penalty 1.0`,
-    `presence_penalty 1.5`) sono già in `recommended_generation`, ma `mlx-vlm` applica le due
-    penalità su una finestra di **20 token** (`DEFAULT_REPETITION_CONTEXT_SIZE`): più corta di
-    una riga di registro (~25–40 token), quindi la ripetizione resta invisibile e la
-    generazione scorre fino al tetto (misurato: pagina `index` a 16384 token / 508 s,
-    `finish_reason=length`). L'adapter dichiara ora il guard MLX
-    (`local_mlx_repetition_penalty`/`_context_size`, `local_mlx_presence_context_size`),
-    applicato per richiesta in `inference._sampling_for` solo sul serving locale Apple Silicon e
-    regolabile in Impostazioni (sezione MLX). Il valore di default è conservativo e va
-    confermato dal vivo: le penalità riducono la ripetizione degenerata, ma **non** garantiscono
-    l'EOS del checkpoint 4-bit su richieste di pagina intera.
-  MinerU2.5 ha anche il percorso nativo `MinerUClient` `mlx-engine` documentato
-  dal produttore, ma resta sperimentale finché non passa una prova live sul corpus. Gli altri
-  modelli restano remoti, ognuno per una ragione **misurata** servendolo davvero su una pagina:
-  **MonkeyOCRv2** perché `mlx-vlm` non ha quell'architettura (verificato sui moduli installati);
-  **MinerU2.5** usa il runtime nativo isolato `MinerUClient` MLX 2.0.5, verificato su
-  scansioni corpus con layout completo e output tabellare HTML valido; le tabelle dense
-  restano da valutare contro annotazioni gold. **DeepSeek-OCR-2** perché la sua ricetta verificata
-  si regge sul logits processor n-gram di vLLM, che `mlx-vlm` non ha; **Unlimited-OCR** lo era
-  fino a `mlx-vlm` 0.6.3 (via MLX produceva 12288 caratteri di `alpha.alpha.alpha…`), ma da 0.6.4
-  `mlx-vlm` porta `unlimited_ocr` con `RingSlidingKVCache` (la R-SWA di upstream) e il modello
-  gira in locale — misurato il 2026-10-13 su M5 Pro / 24 GB con `mlx_vlm 0.7.1`: 265,6 tok/s,
-  TTFT 1,2 s, 5,8 GB, output grounded-markdown con `<table>` HTML. Essendo il n-gram processor
-  ancora assente, la ricetta MLX di questo modello include una penalità di ripetizione con
-  finestra 128 (`local_mlx_repetition_penalty`/`local_mlx_repetition_context_size`): senza, la
-  generazione entra in loop (misurato: una riga ripetuta 23 volte); **dots.mocr**
-  perché la generazione END2END si chiude a 682 caratteri e la run fallisce; **GLM-OCR** perché
-  la run «riesce» con **zero** blocchi inseriti — un successo vuoto, peggio di un errore.
-  **LightOnOCR-3-1B** è remoto solo perché non è ancora stato provato: niente misura, niente
-  colonna MLX. La colonna MLX è quindi una misura, non una promessa: un checkpoint che si carica non è un
-  percorso che funziona. Verifica ripetibile: `scripts/e2e_local_inference.py`.
-  Il runtime Apple lo prepara Tabularium in `<root>/mlx-runtime`
-  (`services/mlx_runtime.py`), come fa con `<root>/vllm-runtime`: il processo dashboard resta
-  senza PyTorch. Il percorso MLX non passa dal registro pesi (li scarica `mlx-vlm` dalla cache
-  HF) e il nome servito è l'id del checkpoint MLX. La scelta del runtime è **additiva**: dove
-  vLLM funziona, il comportamento resta quello di prima. Matrice e misure in
-  `docs/guide/local-inference.md` §0.
-  - **Il percorso ufficiale di PaddleOCR-VL ha un secondo runtime.** La sua pipeline Paddle
-    (PP-DocLayout + riconoscimento) vive in `<root>/paddle-runtime`, che si installa da sé
-    alla prima messa in servizio del modello. L'installer è platform-aware: su Linux prende
-    `paddlepaddle-gpu` dall'indice CUDA, su Apple Silicon la wheel CPU arm64 da PyPI — senza
-    quel ramo il percorso ufficiale su un Mac finiva in un vicolo cieco («completa prima
-    l'installazione» di qualcosa che nessuno aveva iniziato).
-  - **Lo stato di un'installazione si scrive dopo aver creato il venv.** `EnvBuilder(clear=True)`
-    cancella il contenuto della cartella: scrivere `.install_state.json` e il log prima li
-    faceva sparire, e durante i minuti dell'installazione la UI leggeva `absent` con il log
-    vuoto. Vale per tutti e tre i runtime (`local_runtime`, `mlx_runtime`, `paddle_runtime`).
-  - **SSH verso Vast.ai: due vie, mai mescolate.** L'istanza espone l'IP della macchina
-    (`public_ipaddr` + `ports['22/tcp'][0].HostPort`, la riga «Direct SSH Connect» della
-    console) e i forwarder `ssh*.vast.ai` (`ssh_host`/`ssh_port`). `_vast_ssh_endpoint()`
-    preferisce la diretta — come `vastai ssh-url --direct` — e ripiega sul proxy solo con la
-    coppia completa: incrociare l'host di una via con la porta dell'altra produce un endpoint
-    inesistente. Vast.ai però può tenere `public_ipaddr` a `null` anche su un'istanza accesa
-    e raggiungibile (verificato sull'istanza 50434880 su rotta v0 di dettaglio e v1 di lista;
-    in quel caso nemmeno la CLI ufficiale sa costruire l'URL diretto, e nessuna rotta
-    accessibile a chi noleggia pubblica l'indirizzo — le offerte non portano `public_ipaddr`
-    e `/machines/` è dell'host). Per questo il pannello Vast ha un **override host/porta**,
-    precompilato con la mappatura della 22 che l'API pubblica comunque: all'utente resta da
-    incollare l'IP letto dalla console.
-  - **Preflight SSH prima di consegnare qualsiasi cosa** (`check_ssh_access`/`ensure_ssh_access`,
-    rotta `POST /api/system/cloud/vast/ssh-check`): apre una connessione nuda (`ssh … true`) e
-    nomina la causa del fallimento — chiave rifiutata, host key cambiata, host irrisolvibile,
-    porta muta. La chiave rifiutata risponde **409** e non più 502 indistinto: prima era
-    indistinguibile da un errore di provisioning e diagnosticarla costava un noleggio intero.
-- **M11 — Collaborazione live (prima ondata)** — presenza e riallineamento in tempo reale
-  sull'annotazione, stile editor collaborativo, senza toccare il modello dati.
-  - **Il WebSocket è solo push, non un secondo percorso di scrittura.** Le annotazioni si
-    scrivono ancora **solo** dalla REST (`PUT /pages/{id}/annotations`, `PATCH/DELETE /blocks/{id}`,
-    `PUT /blocks/{id}/table`): validazioni, audit e revisione ottimistica restano lì. Il canale
-    (`services/live.py` → `LiveHub`, `api/live.py` → `WS /api/live/pages/{page_id}`) serve a due
-    cose: dire chi è collegato alla pagina e avvisare gli *altri* che è cambiata.
-  - **Presenza**: ogni connessione porta `conn_id`, utente e un colore stabile (derivato
-    dall'identità). Lo Studio mostra gli avatar dei colleghi e «{nome} sta scrivendo…» mentre
-    qualcuno ha modifiche non salvate (`editing`). L'autenticazione passa dal cookie di sessione;
-    l'accesso al progetto è verificato prima di entrare nella stanza (pagina inesistente/estranea
-    → chiusura 4404, come il 404 delle REST). I viewer si collegano in sola lettura.
-  - **Riallineamento**: dopo ogni scrittura REST l'endpoint pubblica `annotations_changed` con la
-    nuova revisione e l'autore. Il client ignora l'**eco della propria** modifica (revisione
-    combacia) e, se non ha lavoro sporco, adotta la versione del server senza che l'utente ricarichi
-    (`adoptRemote` su `useAnnotationState`, che azzera lo storico: fondere due storie è compito di
-    un CRDT, non di questo strato). Con modifiche non salvate **non si butta nulla**: compare un
-    avviso con chi ha cambiato e un pulsante «Carica la versione remota».
-  - **Un solo processo.** L'hub vive in memoria: vale per lo scenario supportato (un processo
-    dashboard). Con più worker servirebbe un broker esterno — il confine è `LiveHub.publish`, che
-    gli endpoint sincroni (thread di lavoro) chiamano in modo thread-safe.
-  - Il proxy di sviluppo (`vite.config.ts`) inoltra i WebSocket (`ws: true`); in produzione il
-    canale è same-origin dietro la stessa CSP `connect-src 'self'`.
-  - Test: `backend/tests/test_live.py` (hub, broadcast, publish thread-safe, autorizzazione);
-    `frontend/src/app/live.test.ts` (apertura canale, presenza, notifica modifiche, riconnessione).
-- **M12 — Condivisione stile Drive** — un'unica superficie per l'accesso al progetto.
-  - **«Condividi» è una finestra, non un modulo in fondo alla pagina.** `app/ShareDialog.tsx`
-    riusa le API già esistenti (`members`, `member-candidates`, `owner`, `activity`): aggiunta
-    persone con ricerca per nome/email (il candidato entra come `editor` e il ruolo si cambia
-    inline), ruoli Editor/Viewer, rimozione con conferma, trasferimento di proprietà. Due
-    linguette: **Persone** (avatar con iniziali e colore stabile, come nello Studio) e
-    **Attività**.
-  - **Riuso, non un modello di permessi nuovo.** Il backend resta la fonte di verità: chi non è
-    proprietario né admin vede la lista in sola lettura (niente campo di aggiunta, ruoli come
-    testo) e il server respinge comunque le scritture con 403. `canManage` si calcola da
-    `useAuth`/`useCanAdminister` + `project.owner_id`.
-  - **Avatar condivisi**: `lib/avatar.ts` (`initialsOf`, `avatarColor`) è la sola fonte di
-    iniziali e colore per Studio (`AnnotationPage`) e finestra di condivisione; la tavolozza è
-    quella di `services/live.py`, così un utente ha la stessa tinta ovunque.
-  - **Il feed attività è uno** (`app/ActivityFeed.tsx`): la stessa resa nella pagina del progetto
-    e nella finestra, con un'unica tabella di traduzione delle azioni.
-  - Test: `frontend/src/app/ShareDialog.test.tsx` (membri, aggiunta con ruolo, sola lettura).
-- **M13 — Onboarding e profilo** — invito via link, password forzata al primo accesso, profilo.
-  - **Invito via link** (`POST /api/users` con `invite=true`, `POST /api/users/{id}/invite`):
-    l'admin crea l'account senza conoscerne la password; il server genera un token (conservato
-    **solo come hash** in `users.invite_token_hash`, con `invite_expires_at`, TTL 72h) e
-    restituisce il link una sola volta. L'invitato lo apre su `/invito?token=…`
-    (`AcceptInvitePage`), sceglie la password e resta connesso
-    (`GET /api/auth/invite/{token}` pubblica lo stato; `POST /api/auth/invite/accept` consuma il
-    token, a uso singolo, attiva l'account e invalida le sessioni).
-  - **Password da cambiare al primo accesso**: `users.must_change_password` è vero per gli account
-    creati dall'admin e dopo un reset (`POST /api/users/{id}/reset-password`). `get_current_user`
-    **blocca** ogni rotta tranne `/auth/me`, `/auth/change-password`, `/auth/logout` (403) finché
-    l'utente non ne sceglie una propria; `AuthGate` monta `SetPasswordPage` prima dell'app, così
-    il blocco è anche UX e non solo server. `set_password(..., must_change=False)` è l'unico punto
-    che azzera il flag.
-  - **Profilo**: `PATCH /api/auth/me` aggiorna la propria email (il nome utente è immutabile);
-    la zona Account delle Impostazioni la edita sul posto. In modalità locale non c'è profilo.
-  - **Migrazione 18** (additiva): le tre colonne su `users`; `SCHEMA_VERSION = "18"`.
-  - Test: `backend/tests/test_user_onboarding.py` (invito, scadenza, gate, reset, profilo).
-
-- **M14 — Chiarezza dei percorsi** — Progetti e Fine-tuning sono ingressi globali; le
-  sottosezioni restano visibili e mantengono attiva la sezione padre. La creazione apre
-  subito il progetto e lo rende attivo: `ProjectCreate.archive_dir` è opzionale (`null`
-  per import browser), con import di immagini/PDF singoli o cartella. Solo i progetti
-  collegati a una cartella sorgente espongono la scansione server. Protocollo, attività
-  e pilot restano richiusi per lasciare in vista l’import e il registro pagine.
-  `datasetUsable` esclude gli export vuoti; training e valutazione dipendono dai loro
-  prerequisiti reali, non dal completamento dell’intero archivio. La prova temporanea
-  è nominata Prova modello in tutte le lingue; non mostra errori dell’endpoint quando
-  si usa OCR locale e azzera il risultato cambiando pagina.
-  Verifica: `docs/UX_WORKFLOW_AUDIT.md`, test progetti/auth/dataset/i18n backend,
-  Vitest completo, typecheck e build; browser su istanza isolata con immagine sintetica.
-
-- **M15 — Orientamento e usabilità da riferimenti Mobbin** — il rail Fine-tuning
-  apre `/fine-tuning`: una panoramica con prossimo passo ricavato da workflow,
-  dataset e training; gli strumenti restano accessibili e gli errori di lettura
-  non sono presentati come assenza di dati. Progetti mostra prima elenco e ricerca;
-  `?nuovo=1` apre il dialogo di creazione, senza essere ricordato nel rail.
-  `PageHeader` non tronca più le descrizioni. Le modali tengono stabile il focus
-  durante i render e supportano `data-autofocus` sul campo iniziale.
-  Riferimenti, scelte e verifica: `docs/UX_MOBBIN_REVIEW.md` (207 test Vitest,
-  typecheck, build, browser it/en/fr). Nessuna nuova dipendenza.
-
-- **M16 — Modelli chiusi via gateway: Gemini 4 Argon** — un modello senza pesi
-  pubblici entra come endpoint esterno, non come download. L'adapter `gemini-argon`
-  dichiara il protocollo Google `generateContent` (`chat_protocol`), raggiunto dal
-  gateway OpenCode (Zen/Go) o da un endpoint Google; `services/opencode_gateway.py`
-  legge la chiave dall'archivio di opencode (`~/.local/share/opencode/auth.json`,
-  provider `opencode-go`/`opencode`) quando il vault non ne ha una, con override
-  `TABULARIUM_OPENCODE_KEY`/`TABULARIUM_OPENCODE_AUTH`. `VllmClient` instrada la
-  richiesta al ramo `generateContent` (header `x-opencode-session` obbligatorio),
-  lasciando invariati prompt, parsing e percorso a valle. Il percorso verificato è
-  **END2END**: un prompt con la tassonomia del progetto e l'OTSL vincolato restituisce
-  in una sola generazione bbox 0–1000, label e contenuto — testata (`Title`), numero
-  (`Issue-number`), data (`Issue-date`) **e** la tabella in OTSL (misurato live: 4
-  elementi su una pagina `index`). È quindi il workflow nativo (`native_mode` →
-  `end2end`), quindi **entra nel prefill/Riconosci** (`supports_native`) e nel
-  Playground. Il prompt Tabella **vincola i token canonici** (`<fcel>/<ecel>/<lcel>/`
-  `<ucel>/<xcel>/<nl>`, niente tag di chiusura): senza, il modello emette
-  `<ched>/<splt>/<uched>` che `otsl.otsl_to_grid` non riconosce (misurato live).
-  `provider` "opencode" si registra come `custom` nel profilo (il `CHECK` di
-  `compute_profiles` non lo ammette: era un 500 all'utente) e un cambio di adapter
-  azzera il tetto pixel globale, che è un residuo della ricetta MonkeyOCRv2. La
-  disponibilità del gateway è una `generateContent` **senza corpo** (≈0,7 s):
-  Argon «pensa» anche per un token (2–20 s), quindi una generazione minima come
-  probe faceva lampeggiare `available` e disabilitava l'avvio del riconoscimento.
-  Non è addestrabile (`training_types` vuoto) e non si scarica (`hf_repo` vuoto →
-  `downloadable`/`download_only` falsi). Verifica: `tests/test_opencode_gateway.py`,
-  `tests/test_model_registry.py`, `tests/test_prelabel.py` (END2END con testata+tabella),
-  `tests/test_recognition.py` (Playground), `frontend/src/app/models/registry.test.ts`;
-  typecheck, Vitest, build.
-
-- **M17 — Benchmark multi-modello sulle pagine gold** — la Valutazione (M6) misura un
-  solo modello, quello attivo, contro le pagine approvate. Il benchmark estende la stessa
-  misura a **N modelli sulle stesse pagine**, per rispondere a «quale modello — o quale
-  checkpoint — è il migliore *sul mio corpus*» e per vedere il delta del fine-tuning.
-  - **Gold = le pagine approvate/esportate**, non uno stato nuovo: la verità di una
-    valutazione resta l'annotazione umana (§M6). Una pagina «perfetta» è una pagina
-    approvata; l'elenco pagine può mostrare un filtro «gold» ma non introduce una seconda
-    verità accanto a `approved`/`exported`.
-  - **Il riferimento è l'annotazione umana, mai l'output di un altro modello.** Confrontare
-    con Argon misura l'accordo con Argon, non la correttezza: al più è uno smoke test, non
-    la definizione del benchmark.
-  - **Metriche riusate da `services/evaluate.py`** (IoU per label a 0.5 e `layout_strict`
-    0.75, Levenshtein dell'ordine di lettura, TEDS, CER/WER), invocate una volta per modello
-    sulle stesse pagine. Il benchmark non reimplementa metriche: le compone.
-  - **Il confronto passa dal bridge nativa → canonica.** Le label predette si traducono nel
-    vocabolario del progetto (`model_labels.resolve_native_label`) come fa il prefill, dentro
-    `evaluate._evaluate_page`: senza, un modello che parla i propri nomi (`header`, `table`)
-    segnava zero contro la verità canonica. La cache è versionata (`_CACHE_VERSION`) così un
-    cambio di logica di misura la invalida. (La mappa nativa di Unlimited-OCR mancava ed è
-    stata aggiunta.)
-  - **Effimero.** Report in `eval/bench_<ts>/{report.json,report.html}`; nessun blocco o
-    griglia scritto nel DB. Un benchmark non può sporcare il corpus né diventare dati di
-    training per sbaglio.
-  - **Cache per (adapter_id, model, page_id, annotation_revision)** su disco: un refresh non
-    ripaga chiamate già fatte. Il report dichiara per modello latenza, token e **costo
-    stimato** — i modelli remoti (Gemini 4 Argon via gateway) si pagano, e la spesa deve
-    essere leggibile prima di rilanciare.
-  - **Orchestrazione dei candidati.** Una lista di endpoint, non il solo profilo attivo. I
-    modelli locali il benchmark **li avvia e li spegne da sé**, uno alla volta, su una porta
-    dedicata (`_start_local`): **non passa da `serve_manager`**, che cambierebbe il profilo di
-    inferenza attivo e romperebbe una run di riconoscimento in corso (es. Argon) — verificato:
-    server locale acceso, misurato, spento, profilo intatto. Se l'endpoint locale indicato
-    risponde già, si riusa (nessun secondo modello in memoria). Il pid del server avviato
-    finisce nello stato (`serve_pid`) e `reconcile_benchmarks()` lo spegne all'avvio dopo un
-    riavvio, così non restano orfani.
-  - **Esecuzione in background con stato persistito.** Il benchmark non gira nella richiesta
-    HTTP: `POST …/benchmark` avvia un thread e risponde subito; `GET …/benchmark/status`
-    (stato su disco in `eval/bench_state.json`) dice `running`/`done`/`error` con
-    `index`/`total`/`current_adapter`. Un refresh della pagina ritrova lo stato e, se è in
-    corso, lo segue; a fine giro il report resta su disco.
-  - **Anche gli adapter a pipeline ufficiale si misurano.** Qwen3-VL, PaddleOCR-VL, MinerU2.5,
-    GLM-OCR e TeleOCR non hanno un prompt di layout: la loro misura usa la pipeline del
-    produttore (`prefill.native_page_items`), la stessa del prefill, così non restano a zero.
-  - **Si misura il percorso in esercizio** — prompt e parser dell'adapter, ciò che
-    Tabularium userebbe davvero — non la pipeline nativa del produttore. `benchmark_models.py`
-    resta lo strumento diagnostico per-fase; il benchmark di prodotto misura l'output che
-    l'utente otterrebbe.
-  - **Superficie propria, staccata dal Fine-tuning.** Il benchmark è la pagina `/benchmark`
-    (voce nel rail), non una sezione della Valutazione: lì si scelgono **modelli** (lista a
-    tick, ognuno con badge **Locale/Remoto**) e **pagine** (elenco con checkbox; una pagina è
-    selezionabile solo se tutti i blocchi sono confermati). Ogni modello scelto espone il suo
-    endpoint e il nome servito, modificabili.
-  - **Approvazione in blocco** (`POST /api/projects/{id}/pages/approve`): approva tutte le
-    pagine (o quelle scelte) in un colpo. Senza `confirm_drafts` salta quelle con bozze non
-    verificate; con il flag le conferma — scelta esplicita, perché rende il modello maestro di
-    se stesso.
-  - **Risultati man mano e modalità «solo tabelle».** Ogni modello finito viene scritto
-    nello stato (`results`), quindi la tabella si popola durante la run; l'avanzamento è per
-    modello **e per pagina** (`page_index`/`page_total`). `table_only` misura solo la struttura
-    delle tabelle (blocchi `Table` o con contenuto OTSL/HTML), ignorando layout e label: la
-    tassonomia (una testata `Title` vs `Page-header`) non abbassa il punteggio della tabella.
-  - API: `GET /api/projects/{id}/benchmark/pages` (pagine selezionabili),
-    `POST /api/projects/{id}/benchmark` (admin/editor) con `{targets[], page_ids?, limit,
-    with_text}`, `GET …/benchmark/latest`; report su disco come per l'eval.
-    Verifica: `tests/test_benchmark.py` (metriche riusate, nessuna scrittura DB, cache,
-    approvazione in blocco), pagina `/benchmark`; typecheck, Vitest, build.
-
-- **M18 — Accesso di progetto esplicito e consultazione del team** — `ProjectOut.access`
-  dichiara ruolo effettivo, fonte e capacità `can_edit`/`can_manage`, calcolate nella stessa
-  connessione della lettura/creazione. Il ruolo globale non sostituisce quello di membro.
-  L’elenco distingue propri/condivisi, proprietario e persone attive; la condivisione richiede
-  persona, ruolo e conferma, con default viewer. `AnnotationEntry` monta l’editor solo per chi
-  può scrivere; `ProjectReader` consulta scansioni, blocchi e tabelle senza autosave.
-  `TableEntry` risolve il contesto da `GET /api/blocks/{id}` protetto, mai dalla query.
-  Il revisore usa ancora editor: assegnazioni e approvazione separata non sono introdotte.
-  `PageHeader` porta le spiegazioni sotto Guida, chiusa di default; i menu non hanno attese
-  decorative e le pagine non ripetono istruzioni e animazioni globali. Pipeline richiede solo
-  gli stati usati dalla pagina. Dettagli e limiti: `docs/UX_TEAM_WORKSPACE.md`.
-  Verifica: test auth/projects/live/onboarding/annotations; frontend test, typecheck e build;
-  browser su istanza autenticata con dati sintetici, proprietà/condivisione/lettura/URL diretto.
-
-- **M18 — Training di ogni modello con la sua ricetta ufficiale** — Tabularium deve poter
-  addestrare **ogni modello a pesi aperti** seguendo le **best practice e la documentazione
-  ufficiale** di quel modello, non solo MonkeyOCRv2. I modelli chiusi (Gemini 4 Argon) restano
-  fuori: non hanno pesi, quindi non si addestrano — `training_types` vuoto lo dichiara già.
-  - **Un registro, non script sparsi.** `services/train_recipes.py` è il gemello di
-    `serve_recipes.py`: una ricetta per adapter dichiara `toolchain` (ms-swift, erniekit+paddlex,
-    llama-factory, unsloth, community), la **doc ufficiale** di riferimento, i tipi ammessi
-    (`lora`/`full`), la **vista dati** che il dataset builder deve produrre e la maturità. Il
-    training center legge la ricetta dell'adapter scelto; non conosce MonkeyOCRv2 per nome.
-  - **Le viste dati esistono già, vanno unificate.** ms-swift usa i JSONL `messages` multimodali
-    (§2.2, `dataset_builder`); Paddle ha le sue tre viste (`paddle_dataset.py`); GLM/LLaMA-Factory
-    la conversione ShareGPT (`alternative_training.py`). Ogni ricetta punta alla sua vista; il
-    builder non converte mai il target in silenzio.
-  - **Disciplina delle ricette (come serving ed eval).** Una ricetta è `verified` **solo dopo una
-    run reale** documentata; altrimenti è `experimental`. Nessuna ricetta senza una **doc
-    ufficiale** a supporto. La matrice di stato vive in `docs/guide/training.md`, non in una
-    promessa: un toolchain che non ha ancora girato lo dice.
-  - **Stato attuale (da verificare, non da assumere).** `ms-swift` copre la maggior parte dei
-    modelli OCR — valori dalla sua tabella ufficiale *Supported-models-and-datasets*:
-    MonkeyOCRv2 (`monkeyocrv2`, riferimento), Qwen3-VL (`qwen3_vl`), Unlimited-OCR
-    (`unlimited_ocr`), DeepSeek-OCR-2 (`deepseek_ocr2`), GLM-OCR (`glm_ocr`), MinerU2.5
-    (`qwen2_vl`), dots.ocr (`dots_ocr`). PaddleOCR-VL resta sul suo percorso ufficiale
-    `erniekit+paddlex` (non passa dal generatore ms-swift). Da aggiungere: TeleOCR e
-    LightOnOCR-3 (non presenti in ms-swift). La maturità è `experimental` finché una run reale
-    non la promuove a `verified`; solo MonkeyOCRv2 è `verified`.
-  - **Il fine-tuning parte dai dati del benchmark.** Il benchmark (M17) dice *dove* sta il
-    divario: qui è la **tassonomia** (le classi custom non vengono emesse: `Issue-date` 0/10,
-    `Title` 0/3) e la **struttura tabella** (TEDS basso), non la lettura (CER 0.006). La ricetta
-    di training sceglie di conseguenza: LoRA sulla testa per i modelli che leggono già bene.
-  - **Provisioning training su GPU.** `scripts/cloud/setup_cloud_train.sh` prepara un host CUDA
-    (venv, ms-swift bundlato nel repo ufficiale o wheel pip, clone MonkeyOCRv2) e scrive un
-    marcatore `$ROOT/.train_ready`: "preparato" è un fatto su disco, non un'assunzione. Su Vast.ai
-    il noleggio lo esegue da sé via `prepare_training` (onstart = curl dello script, nessuna
-    porta HTTP), distinto da `prepare_server` (serving); l'executor di training poi sincronizza il
-    dataset e lancia lo script. Dettagli e log dei test in `docs/guide/training.md`.
-  - Verifica: `tests/test_train_recipes.py` (ogni adapter addestrabile ha una ricetta con doc
-    ufficiale e vista dati; i chiusi no), `GET /api/system/train-recipes`; training wizard che
-    mostra toolchain e maturità per il modello scelto.
-
-- **M19 — Studio, assegnazioni e passaggio al revisore** — Migrazione 19 `page_work`:
-  annotatore e revisore distinti, assegnazione owner/admin senza concedere accessi, stati
-  annotation/pending/changes_requested/approved e versioni ottimistiche. Invio e revisione
-  verificano la revisione corrente; l’approvazione assegnata non passa dagli endpoint legacy.
-  Una modifica successiva invalida l’approvazione. `PageWorkControl` e filtri personali nel
-  sidebar rendono il lavoro visibile; aggiornamenti live sul passaggio di stato.
-  Salvataggi canvas/bozze/tabella serializzati, flush fallito impedisce il cambio pagina/progetto,
-  scritture dirette con revisione attesa. Selettore viste sempre accessibile, Riconosci visibile,
-  comandi secondari sotto Opzioni. Univer serializza solo mutazioni del dato, senza attese
-  decorative; i comandi strutturali nativi duplicati sono nascosti.
-  Verifica: 76 test backend mirati, 230 frontend, typecheck/build; browser con due account
-  distinti, ciclo correzioni/nuovo invio/approvazione, bozze e foglio sintetico 150×8.
-  Inventario e limiti: `docs/UX_STUDIO_REVIEW.md`. Nessun ruolo globale revisore o lock pagina.
-
-Ogni milestone termina con la sezione "Verifica": cosa lanciare per testare (vedi §13).
+Layout is measured at two thresholds: IoU 0.5 (`layout`) and **IoU 0.75** (`layout_strict`, the
+layout reward rule of LightOnOCR-3), with overall and per-label precision/recall/**F1**. At 0.5 a
+`Table` covering only the left column still passes; at 0.75 it does not. **END2END-only** models
+(LightOnOCR-3, Unlimited-OCR, DeepSeek-OCR, dots.mocr) have no layout or crop prompt: they are
+evaluated on their native generation, and text and tables are the content of the predicted block
+matched at IoU 0.5 (missed blocks stay out of CER and are counted by recall).
 
 ---
 
-## 13. Regole operative per l'agente
+## 12. Roadmap (milestones)
 
-1. **Scrivere codice nella lingua del progetto**: commenti/README in italiano, identificatori e
-   log in inglese. Documentazione in italiano.
-2. **Non alterare mai** il repo ufficiale `Yuliang-Liu/MonkeyOCRv2` (referenziarlo come checkout
-   esterno configurabile in `config.py`); copiare *template* copiandole in `conf/`, mai includerle.
-3. **Verifiche contro l'ufficiale**: coordinate 0–1000, prompt §2.3, OTSL §2.5, JSONL §2.2.
-   In caso di dubbio, ricontrollare `core_runner.py`, `parsing/train/README.md`, `scripts/*.sh`.
-4. Implementare **in ordine di milestone**; ogni MR deve aggiornare `AGENTS.md`/README se cambiano
-   convenzioni o struttura.
-5. **Test**: backend con pytest (particolare cura a `otsl.py`, `dataset_builder.py`,
-   normalizzazione coordinate); frontend con un build `tsc --noEmit` + `vite build` senza errori
-   e test Vitest (unitari + componenti con jsdom/testing-library per i flussi a rischio:
-   autosave/cambio pagina, conferma prefill). La CI (`.github/workflows/ci.yml`) esegue test
-   backend, typecheck + test + build frontend e verifica che la build non generi artefatti
-   versionati.
-6. **Esecuzione**: backend `uvicorn app.main:app --port 8787`; frontend dev `vite` con proxy verso
-   il backend; MAI far dipendere l'app dal training in esecuzione.
-7. **Percorsi**: mai hard-coded; tutto da `config.py` (env var `TABULARIUM_ROOT`).
-8. **Data safety**: i progetti creati dall'utente sono dati reali; nessuna distruzione automatica
-   di dati; ogni operazione distruttiva richiede conferma esplicita nella UI e nel codice.
-9. I merge/coordinate delle tabelle devono essere validati: fare riferimento all'algoritmo
-   `otsl_to_html` ufficiale come oracle nei test.
-10. Log e metriche dei run di training in `data/<project>/runs/<run_id>/` (JSONL + .log + plot data),
-    così la UI è always-replayable anche a training terminato.
-11. **Localizzazione (obbligatoria da ora)**: l'interfaccia è multilingue **it/en/fr**. Nessuna
-    stringa UI hardcoded: ogni testo passa dal dizionario i18n
-    (`frontend/src/i18n/it.ts` = sorgente di verità della struttura; `en.ts`/`fr.ts` identici,
-    tipati come `Dict`). Segnaposto `{var}` identici nelle tre lingue; plurali come `{one, other}`
-    (il francese usa il singolare per 0 e 1). Lo switch di lingua è nel rail (persistito in
-    `localStorage['tabularium.locale']`). Il backend localizza i messaggi che finiscono in UI
-    (dettagli HTTPException, warnings dataset/eval, errori readiness, reason della coda,
-    preflight training) tramite `Accept-Language` e `backend/app/services/i18n.py`
-    (default italiano; `localize_detail` riconosce i dettagli esistenti dal catalogo inverso).
-    Il client API manda sempre `Accept-Language: <locale>`.
-12. **Auth come difesa, non come ornamento**: ogni nuova rotta entra protetta dal
-    `require_resource` del suo path (o da un controllo esplicito quando l'id del
-    progetto è nel body). Regole che non si devono mai regalare lato client: niente
-    auto-declassamento/auto-disattivazione, niente eliminazione dell'ultimo admin,
-    niente reset password del proprio account, 404 (non 403) per i progetti altrui.
-    Password e token solo hashati in DB; sessioni con scadenza; `TABULARIUM_AUTH`
-    resta `off` **solo** per i test.
-    stringa UI hardcoded: ogni testo passa dal dizionario i18n
-    (`frontend/src/i18n/it.ts` = sorgente di verità della struttura; `en.ts`/`fr.ts` identici,
-    tipati come `Dict`). Segnaposto `{var}` identici nelle tre lingue; plurali come `{one, other}`
-    (il francese usa il singolare per 0 e 1). Lo switch di lingua è nel rail (persistito in
-    `localStorage['tabularium.locale']`). Il backend localizza i messaggi che finiscono in UI
-    (dettagli HTTPException, warnings dataset/eval, errori readiness, reason della coda,
-    preflight training) tramite `Accept-Language` e `backend/app/services/i18n.py`
-    (default italiano; `localize_detail` riconosce i dettagli esistenti dal catalogo inverso).
-    Il client API manda sempre `Accept-Language: <locale>`.
+- **M0 — Scaffolding** ✅ — repo structure, AGENTS.md, README, requirements/package.json, run
+  scripts, working FastAPI + Vite skeleton (health | ping | environment info).
+- **M1 — Projects & pages** ✅ — project CRUD, folder scan (images + PDF, lazy PDF via pypdfium2),
+  page registry with metadata (issue_date/issue_no/page_no/page_type/status), on-demand
+  thumbnails/previews, Projects + Project detail pages (page grid, inline metadata edit).
+  - **The page list never truncates silently.** `GET /api/projects/{id}/pages` returns `total`
+    besides `items`, with a default and maximum `limit` of 10000 (the cap of a recognition session).
+    The old default was 200: a 361-page corpus showed 200 on every screen, and the rest could be
+    neither seen nor selected.
+  - **Every page carries `blocks` and `drafts`** (generated, unconfirmed). `status` only says what
+    a person did with it: a recognized page never reviewed stays `new`, and without `drafts` no list
+    could tell where the drafts to verify are. Archive, Studio and Recognize show "N drafts" instead
+    of "New" and filter "With drafts".
+  - **Server dates are UTC without a timezone** (SQLite `datetime('now')`): read them with
+    `lib/dates.ts::parseServerDate`, never with a bare `new Date(...)`, which takes them as local time.
+- **M2 — Core annotation studio** ✅ — Konva canvas with zoom/pan, rectangle/polygon tools, class
+  palette, label/transcription inspection, move/resize with a Transformer, **reading order** (up/down
+  moves + automatic reordering), delete, undo/redo (Ctrl+Z/Y), autosave (bulk PUT, 700 ms debounce),
+  keyboard shortcuts (V/R/P/H). Block API: GET/PUT `/api/pages/{id}/annotations`, PATCH/DELETE
+  `/api/blocks/{id}`, GET `/api/projects/{id}/labels`. The bulk PUT keeps the received IDs and
+  therefore the attached tables during autosave. Note: the module is named `blocks.py` (a module
+  named `annotations` collides with `from __future__ import annotations`).
+- **M3 — Tables + reading order + transcription** ✅ — `Table` block editor: rows/columns,
+  **merged cells** (merge right/down, split), phantom columns, cell-by-cell transcription, column
+  resize, our own localized context menu, autosave + explicit save; **OTSL generation**
+  (`services/otsl.py`, round-trip tested against the official `otsl_to_html` oracle), per-block crop
+  (`GET /api/blocks/{id}/crop`), per-block table (`GET/PUT /api/blocks/{id}/table`, OTSL in the PUT
+  response), **conventions checklist** (`GET/PUT /api/projects/{id}/conventions`), **flow preview**
+  of the reading order on the canvas.
+  - **The sheet is not the source of truth.** The sheet library only displays and edits;
+    `TableGrid` is translated both ways by pure, tested functions, `source`/`verified` and
+    `vlines`/`hlines`/`row_columns`/`phantom_cols` pass through intact, and OTSL is generated by the
+    server from our model.
+  - **Structural changes are ours** (`lib/grid.ts`): the first sheet library (Jspreadsheet CE)
+    destroyed every merge on row/column insertion, so inserting or removing tracks is computed by us
+    and the sheet is remounted. The library was later replaced by Univer (M19); the rule stays.
+- **M4 — Dataset builder** ✅ — `services/dataset_builder.py`: the JSONL families (full-page layout
+  with **0–1000** coordinates and reading order, text_rec with crops + transcription, tables with
+  OTSL, optional formulas), deterministic **split by page** (ratio + seed), crops on disk with absolute
+  paths, full table crop + experimental logical bands only with verified `hlines`, sanity report saved
+  in `dataset/report.json`. API: `POST/GET /api/projects/{id}/datasets[/build]`. Dataset page with
+  split slider, seed, stats, warnings, files and JSONL row previews.
+- **M5 — Training center** ✅ — `services/trainer.py`: script generation (`swift sft` with §2.6 flags +
+  `--val_dataset` + checkpoint resume), train/val merge across families (`prepare_training_files`),
+  subprocess launch with a log file, metric parsing (loss/lr), GPU telemetry (nvidia-smi), stop,
+  state persisted in `runs/<run_id>/{run.json,train.sh,train.log}`. API:
+  `POST /api/projects/{id}/training/{start,stop}`, `GET …/status`, `GET …/stream` (SSE),
+  `GET /api/system/gpu`. Training page: config wizard, loss chart, GPU cards, live log.
+  - **Where to train is the first step of the form**, not the last: "This machine" is disabled with
+    the reason when nvidia-smi finds no GPU, and Vast.ai instances running on the account are picked
+    from a list (host and port filled in). `trainer.preflight()` distinguishes the executor: locally
+    it checks repo, Python/conda, GPU and VRAM of *this* machine; with `ssh`/`vast`/`runpod` it asks
+    for remote host and training repo and does not look at the local GPU. It used to check them
+    always, so remote training from a Mac never started. The UI reads the preflight **live**
+    (400 ms debounce) next to the button, which stays disabled while something blocks. On
+    Vast/RunPod the default SSH key is the one Tabularium registers on the account; the host key is
+    pinned at launch (TOFU, like the tunnel), and `UserKnownHostsFile` is quoted.
+- **M6 — Evaluation & playground** ✅ — `services/inference.py` (OpenAI-compatible client: tolerant
+  layout parsing, text/table recognition, ping), `services/evaluate.py` (metrics: layout IoU + labels,
+  reading-order Levenshtein, text CER/WER, table TEDS + CER; report JSON in `eval/eval_<ts>/`). API:
+  `POST /api/projects/{id}/evaluate`, `POST /api/playground/parse`. Pages: Evaluation (aggregate
+  cards, per page, GT vs prediction overlay, page errors) and Playground (predicted layout as SVG
+  overlay + blocks/content, copy as Markdown). Degrades with a warning if no model server is up.
+  - **The truth of an evaluation is the approved pages only** (`approved`/`exported`), whatever the
+    last dataset build says: a page with unverified drafts counted the model's output as the right
+    answer. Without approved pages the API answers `no_gold_pages`. Evaluation **does not require a
+    training run**: measuring the base model on one's corpus is the baseline fine-tuning must beat.
+  - **Which pages are measured.** Until a project training run is `finished`, the model has seen no
+    page, so **all** approved pages are measured (`report.scope = "all_approved"`): with only the val
+    split an 11-page corpus measured 2. After the first finished run it goes back to the val split
+    (`scope = "val"`), the only honest one.
+- **M7 — Pseudo-labeling** ✅ — `services/ocr.py` (lazy RapidOCR/PaddleOCR import,
+  `TABULARIUM_OCR_ENGINE`), `POST /api/projects/{id}/prelabel`: detects text lines on a page,
+  filters by confidence/size + NMS-lite, inserts `Text` blocks with `prefill_source` and `order_idx`,
+  replacement modes (§3). `BlockOut` exposes `prefill_source`. Model mode exposes both `two_stage` and
+  the official `end2end`; valid END2END OTSL avoids a second call, otherwise the result declares the
+  fallback on the table crop.
+  - **Recognition sessions: payload size and review.** `GET …/recognition-runs/{id}` omits the raw
+    per-page output (`result: null`) unless `?result_page=<page_id>`, which the Studio asks only for
+    the open page; export still uses all of it. With every page's output a 200-page session weighed
+    4.7 MB, re-read every 1.2 s by the Studio: now 60 KB. Results tells apart "completed" pages without
+    blocks (a model that answers and finds nothing is not a success) and filters to verify / without
+    blocks / with errors. The Studio keeps `?project=&page=` in the URL: a refresh reopens the same
+    page. Model names in the UI come from `app/models/names.ts` (catalog name from the adapter), never
+    from the served name.
+- **M8 — Real use & polish** ✅ — frontend `dist` **served by the backend** (single process
+  `scripts/run.sh`; `/assets` mount + SPA catch-all with deep links, API routes first), **lazy-loaded**
+  pages (initial bundle −63%), `noUnusedLocals`/`noUnusedParameters` on, `build_frontend`/`run`
+  scripts (bash + PowerShell).
+- **M9 — Model, provider and destination** — the Models hub is the only place where model and
+  provider are configured (Settings does not duplicate it: see `DESIGN.md` § Navigation). It is a
+  **three-step path — model → where → configure** (`pages/ModelsHubPage.tsx` + `app/models/`), in the
+  order the decision is made: each step shows only what it needs and the choice made stays written in
+  its tab. State lives in the URL (`?modello=…&dove=…&passo=…`), so Back returns to the previous step;
+  without parameters "Configure" reopens what is in use. Model ↔ destination compatibility is **a
+  single pure function** (`app/models/registry.ts` → `destinationVerdict`, tested): selector,
+  destinations and panels read the same answer, so no clickable option leads to a refusal and a model
+  with no destination cannot be selected. The local step 3 is a checklist weights → server → check
+  (`LocalSetup`); the remote one is the provider panel rendered in the page (`CloudControlModal
+  inline onlyProvider=…`). On Vast.ai the panel is itself a list of four stages (account → GPU →
+  server → connection) **derived from the real state**, not from clicks: after a refresh a preparation
+  in progress resumes (`tabularium.vast.job` reminder + one read of the remote log per instance), and
+  `provision_log` declares `adapter_id` because the log is one per instance — without it, one model's
+  failure was attributed to the one just chosen. The rail exposes Recognize, Annotation, Results,
+  Projects, Fine-tuning, Benchmark and Models; Fine-tuning has visible sub-sections Dataset →
+  Training → Evaluation; Try a model lives next to configuration in Models. The active profile is the
+  atomic source of truth (`compute_profiles`, DB v10+); `get_inference_config()` also exposes
+  `provider`, `resource_id` and `source_profile_id`, and the client uses them so that `is_cloud` is
+  not inferred from the URL (a Vast SSH tunnel listens on `localhost` but is cloud). Starting a
+  recognition session probes the endpoint (localized 409 `model_endpoint_unreachable`) instead of
+  queueing pages bound to fail; local VRAM is not invoked for remote runs; stopping with
+  `disable_inference` stops the **identified** resource (`resource_id` + provider credential), never
+  the first one found on the account.
+- **M10 — Local compute depends on the hardware, and the app says so** — a single module decides,
+  `services/hardware.py`: platform, memory (unified on Apple Silicon, VRAM on CUDA), and which serving
+  runtimes the machine can host. `vllm` on Linux + CUDA (Windows via WSL2), `mlx-vlm` on Apple
+  Silicon — where vLLM does not run at all, being CUDA-first. Every adapter declares
+  `local_runtimes` and, when one exists, `local_mlx_repo` (plus `local_mlx_repo_choices` for published
+  variants such as bf16/8-bit, chosen per model in Settings, each with its own weight factor
+  `local_mlx_variant_weight_factors`; without a saved choice the largest variant that fits is served).
+  The registry exposes for each model `local: {runnable, runtime, reason, mlx_repo,
+  mlx_repo_choices}`, with **stable codes** the UI translates (`cuda_required`, `no_nvidia_gpu`,
+  `apple_silicon_required`, `no_local_runtime`, `model_unsupported_locally`, `insufficient_memory`).
+  Product consequence: on a Mac, PaddleOCR-VL has a verified MLX benchmark. Qwen3-VL passed MLX tests
+  with the old prompt, but its prefill now follows the native `qwenvl html` parser and must be
+  re-benchmarked on Metal (the old OTSL request produced invalid Markdown).
+  - **Qwen3-VL on MLX: penalty windows must be raised.** The official Instruct-VL parameters
+    (`temperature 0.7`, `top_p 0.8`, `top_k 20`, `repetition_penalty 1.0`, `presence_penalty 1.5`) are
+    in `recommended_generation`, but `mlx-vlm` applies both penalties over a **20-token** window
+    (`DEFAULT_REPETITION_CONTEXT_SIZE`): shorter than a register row (~25–40 tokens), so repetition
+    stays invisible and generation runs to the cap (measured: an `index` page at 16384 tokens / 508 s,
+    `finish_reason=length`). The adapter declares an MLX guard (`local_mlx_repetition_penalty` /
+    `_context_size`, `local_mlx_presence_context_size`), applied per request in
+    `inference._sampling_for` only on local Apple Silicon serving and adjustable in Settings (MLX
+    section). The default is conservative and must be confirmed live: penalties reduce degenerate
+    repetition but do **not** guarantee EOS from the 4-bit checkpoint on full-page requests.
+  - **Which models are local, and why the others are not** — always a **measurement**, made by
+    actually serving the model on a page. MinerU2.5 uses the vendor's isolated native `MinerUClient`
+    MLX runtime (2.0.5), verified on corpus scans with a complete layout and valid HTML tables; dense
+    tables are still to be evaluated against gold annotations. **Unlimited-OCR** runs locally since
+    `mlx-vlm` 0.6.4 ships `unlimited_ocr` with `RingSlidingKVCache` (upstream R-SWA) — measured
+    2026-10-13 on an M5 Pro / 24 GB with `mlx_vlm 0.7.1`: 265.6 tok/s, TTFT 1.2 s, 5.8 GB,
+    grounded-markdown output with HTML `<table>`. Since the n-gram processor is still missing, its MLX
+    recipe includes a repetition penalty with a 128-token window (without it generation loops: one
+    line repeated 23 times), it is served by a dedicated server
+    (`services/unlimited_ocr_mlx_server.py`, because `mlx_vlm.server` does not inject the image for
+    this architecture), and on Macs up to 12 GB it starts with MLX's buffer cache off and clears it
+    after each page (otherwise the GPU timed out on the first page). Remote only: **MonkeyOCRv2**
+    (`mlx-vlm` has no such architecture), **DeepSeek-OCR-2** (its verified recipe relies on vLLM's
+    n-gram logits processor), **dots.mocr** (END2END generation stops at 682 characters and the run
+    fails), **GLM-OCR** (the run "succeeds" with **zero** blocks inserted — an empty success, worse than
+    an error). **LightOnOCR-3-1B** is remote only because it has not been tried yet. The MLX column is
+    a measurement, not a promise: a checkpoint that loads is not a path that works. Repeatable check:
+    `scripts/e2e_local_inference.py`. The Apple runtime is prepared by Tabularium in
+    `<root>/mlx-runtime` (`services/mlx_runtime.py`), like `<root>/vllm-runtime`. The MLX path does
+    not go through the weights registry (`mlx-vlm` downloads from the HF cache) and the served name is
+    the MLX checkpoint id. Matrix and measurements: `docs/guide/local-inference.md` §0.
+  - **Recognition with a local model survives a dead server**: if the server dies mid-page, the
+    session restarts it on the same port and retries that page once.
+  - **PaddleOCR-VL's official path has a second runtime.** Its Paddle pipeline (PP-DocLayout +
+    recognition) lives in `<root>/paddle-runtime`, installed by itself the first time the model is
+    served. The installer is platform-aware: on Linux `paddlepaddle-gpu` from the CUDA index, on Apple
+    Silicon the arm64 CPU wheel from PyPI.
+  - **An installation's state is written after creating the venv.** `EnvBuilder(clear=True)` empties
+    the folder: writing `.install_state.json` and the log before made them disappear, and during the
+    minutes of installation the UI read `absent` with an empty log. This applies to all three runtimes
+    (`local_runtime`, `mlx_runtime`, `paddle_runtime`).
+  - **SSH to Vast.ai: two routes, never mixed.** An instance exposes the machine IP (`public_ipaddr` +
+    `ports['22/tcp'][0].HostPort`, the console's "Direct SSH Connect" line) and the `ssh*.vast.ai`
+    forwarders (`ssh_host`/`ssh_port`). `_vast_ssh_endpoint()` prefers the direct route — like
+    `vastai ssh-url --direct` — and falls back to the proxy only with the complete pair: mixing one
+    route's host with the other's port produces a non-existent endpoint. Vast.ai can keep
+    `public_ipaddr` at `null` even on a running, reachable instance (verified on instance 50434880 on
+    the v0 detail and v1 list routes; then not even the official CLI can build the direct URL, and no
+    route available to renters publishes the address). The Vast panel therefore has a **host/port
+    override**, prefilled with the port-22 mapping the API does publish: the user only pastes the IP
+    from the console.
+  - **SSH preflight before handing anything over** (`check_ssh_access`/`ensure_ssh_access`,
+    `POST /api/system/cloud/vast/ssh-check`): opens a bare connection (`ssh … true`) and names the
+    cause of failure — key refused, host key changed, host unresolvable, port silent. A refused key
+    answers **409**, no longer a generic 502: it used to be indistinguishable from a provisioning error
+    and diagnosing it cost a whole rental.
+- **M11 — Live collaboration (first wave)** — real-time presence and resync on annotation, like a
+  collaborative editor, without touching the data model.
+  - **The WebSocket is push only, not a second write path.** Annotations are still written **only**
+    through REST (`PUT /pages/{id}/annotations`, `PATCH/DELETE /blocks/{id}`, `PUT /blocks/{id}/table`):
+    validation, audit and optimistic revision stay there. The channel (`services/live.py` → `LiveHub`,
+    `api/live.py` → `WS /api/live/pages/{page_id}`) does two things: say who is on the page and tell
+    the *others* it changed.
+  - **Presence**: each connection carries `conn_id`, user and a stable color (derived from identity).
+    The Studio shows colleagues' avatars and "{name} is editing…" while someone has unsaved changes
+    (`editing`). Authentication uses the session cookie; project access is checked before joining the
+    room (missing/foreign page → close code 4404, like the REST 404). Viewers join read-only.
+  - **Resync**: after every REST write the endpoint publishes `annotations_changed` with the new
+    revision and the author. The client ignores the **echo of its own** change (matching revision)
+    and, if it has no dirty work, adopts the server version without a reload (`adoptRemote` on
+    `useAnnotationState`, which resets history: merging two histories is a CRDT's job, not this
+    layer's). With unsaved changes **nothing is discarded**: a notice says who changed what, with a
+    "Load the remote version" button.
+  - **One process.** The hub lives in memory: valid for the supported scenario (one dashboard
+    process). Several workers would need an external broker — the boundary is `LiveHub.publish`, which
+    synchronous endpoints (worker threads) call thread-safely.
+  - The dev proxy (`vite.config.ts`) forwards WebSockets (`ws: true`); in production the channel is
+    same-origin behind the same CSP `connect-src 'self'`.
+  - Tests: `backend/tests/test_live.py`; `frontend/src/app/live.test.ts`.
+- **M12 — Drive-style sharing** — a single surface for project access.
+  - **"Share" is a dialog, not a form at the bottom of the page.** `app/ShareDialog.tsx` reuses the
+    existing APIs (`members`, `member-candidates`, `owner`, `activity`): add people by name/email,
+    Editor/Viewer roles, removal with confirmation, ownership transfer. Two tabs: **People** (avatars
+    with initials and a stable color, as in the Studio) and **Activity**.
+  - **Reuse, not a new permission model.** The backend stays the source of truth: whoever is neither
+    owner nor admin sees the list read-only, and the server rejects writes with 403 anyway.
+  - **Shared avatars**: `lib/avatar.ts` (`initialsOf`, `avatarColor`) is the single source of initials
+    and color; the palette is `services/live.py`'s, so a user has the same color everywhere.
+  - **One activity feed** (`app/ActivityFeed.tsx`) for the project page and the dialog.
+  - Tests: `frontend/src/app/ShareDialog.test.tsx`.
+- **M13 — Onboarding and profile** — invite links, forced password change at first login, profile.
+  - **Invite links** (`POST /api/users` with `invite=true`, `POST /api/users/{id}/invite`): the admin
+    creates the account without knowing its password; the server generates a token (stored **only as
+    a hash** in `users.invite_token_hash`, with `invite_expires_at`, 72 h TTL) and returns the link
+    once. The invitee opens `/invito?token=…` (`AcceptInvitePage`), chooses a password and stays
+    logged in (`GET /api/auth/invite/{token}` exposes the state; `POST /api/auth/invite/accept`
+    consumes the single-use token, activates the account and invalidates sessions).
+  - **Password to change at first login**: `users.must_change_password` is true for accounts created
+    by an admin and after a reset. `get_current_user` **blocks** every route except `/auth/me`,
+    `/auth/change-password`, `/auth/logout` (403) until the user picks their own; `AuthGate` mounts
+    `SetPasswordPage` before the app. `set_password(..., must_change=False)` is the only place that
+    clears the flag.
+  - **Profile**: `PATCH /api/auth/me` updates one's email (the username is immutable). No profile in
+    local mode.
+  - **Migration 18** (additive): the three columns on `users`.
+  - Tests: `backend/tests/test_user_onboarding.py`.
+- **M14 — Clear paths** — Projects and Fine-tuning are global entry points; sub-sections stay visible
+  and keep the parent section active. Creating a project opens it and makes it active:
+  `ProjectCreate.archive_dir` is optional (`null` for browser import), with import of single
+  images/PDFs or a folder. Only projects linked to a source folder expose the server scan. Protocol,
+  activity and pilot stay collapsed so import and the page registry stay in view. `datasetUsable`
+  excludes empty exports; training and evaluation depend on their real prerequisites, not on
+  completing the whole archive. "Try a model" is named consistently in every language, shows no
+  endpoint errors when local OCR is used, and resets its result on page change.
+  Check: `docs/UX_WORKFLOW_AUDIT.md`.
+- **M15 — Orientation and usability (Mobbin references)** — the Fine-tuning rail item opens
+  `/fine-tuning`: an overview with the next step derived from workflow, dataset and training state;
+  tools stay reachable and read errors are not presented as missing data. Projects shows list and
+  search first; `?nuovo=1` opens the creation dialog. `PageHeader` no longer truncates descriptions.
+  Modals keep focus stable across renders and support `data-autofocus`. References and choices:
+  `docs/UX_MOBBIN_REVIEW.md`.
+- **M16 — Closed models through a gateway: Gemini 4 Argon** — a model without public weights is an
+  external endpoint, not a download. The `gemini-argon` adapter declares Google's `generateContent`
+  protocol (`chat_protocol`), reached through the OpenCode gateway (Zen/Go) or a Google endpoint;
+  `services/opencode_gateway.py` reads the key from opencode's store
+  (`~/.local/share/opencode/auth.json`, provider `opencode-go`/`opencode`) when the vault has none,
+  with `TABULARIUM_OPENCODE_KEY`/`TABULARIUM_OPENCODE_AUTH` overrides. `VllmClient` routes the request
+  to the `generateContent` branch (mandatory `x-opencode-session` header), leaving prompts, parsing and
+  everything downstream unchanged. The verified path is **END2END**: a prompt with the project
+  taxonomy and constrained OTSL returns, in one generation, 0–1000 bboxes, labels and content —
+  masthead (`Title`), number (`Issue-number`), date (`Issue-date`) **and** the table in OTSL (measured
+  live: 4 elements on an `index` page). It is therefore the native workflow (`native_mode` →
+  `end2end`) and **works in prefill/Recognize** (`supports_native`) and the Playground. The Table
+  prompt **constrains the canonical tokens** (`<fcel>/<ecel>/<lcel>/<ucel>/<xcel>/<nl>`, no closing
+  tags): without that, the model emits `<ched>/<splt>/<uched>`, which `otsl.otsl_to_grid` does not
+  recognize (measured live). Provider "opencode" is stored as `custom` in the profile (the
+  `compute_profiles` `CHECK` does not allow it: it was a 500), and changing adapter resets the global
+  pixel cap, a leftover of the MonkeyOCRv2 recipe. Gateway availability is a `generateContent`
+  **without a body** (≈0.7 s): Argon "thinks" even for one token (2–20 s), so a minimal generation as
+  a probe made `available` flicker and disabled starting recognition. Not trainable
+  (`training_types` empty) and not downloadable (`hf_repo` empty).
+  Tests: `test_opencode_gateway.py`, `test_model_registry.py`, `test_prelabel.py`,
+  `test_recognition.py`, `frontend/src/app/models/registry.test.ts`.
+- **M17 — Multi-model benchmark on gold pages** — Evaluation (M6) measures one model, the active
+  one. The benchmark measures **N models on the same pages**, to answer "which model — or which
+  checkpoint — is best *on my corpus*" and to show the fine-tuning delta.
+  - **Gold = approved/exported pages**, not a new state: the truth of an evaluation stays the human
+    annotation. A "perfect" page is an approved page.
+  - **The reference is human annotation, never another model's output.** Comparing with Argon
+    measures agreement with Argon, not correctness.
+  - **Metrics reused from `services/evaluate.py`** (per-label IoU at 0.5 and `layout_strict` 0.75,
+    reading-order Levenshtein, TEDS, CER/WER), invoked once per model on the same pages. The benchmark
+    composes metrics, it does not reimplement them.
+  - **Comparison goes through the native → canonical bridge** inside `evaluate._evaluate_page`:
+    without it, a model speaking its own names (`header`, `table`) scored zero against canonical
+    truth. The cache is versioned (`_CACHE_VERSION`), so a change in measurement logic invalidates it.
+  - **Ephemeral.** Reports in `eval/bench_<ts>/{report.json,report.html}`; no block or grid is
+    written to the DB. A benchmark can neither pollute the corpus nor become training data by mistake.
+  - **Cache per (adapter_id, model, page_id, annotation_revision)** on disk: a refresh does not pay
+    again for calls already made. The report declares latency, tokens and **estimated cost** per model
+    — remote models are paid, and the cost must be readable before running again.
+  - **Candidate orchestration.** A list of endpoints, not only the active profile. Local models are
+    **started and stopped by the benchmark itself**, one at a time, on a dedicated port
+    (`_start_local`): it **does not go through `serve_manager`**, which would change the active
+    inference profile and break a recognition run in progress. If the given local endpoint already
+    answers, it is reused. The started server's pid is stored (`serve_pid`) and
+    `reconcile_benchmarks()` stops it at startup after a restart, so no orphans remain.
+  - **Background execution with persisted state.** `POST …/benchmark` starts a thread and answers at
+    once; `GET …/benchmark/status` (state on disk in `eval/bench_state.json`) reports
+    `running`/`done`/`error` with `index`/`total`/`current_adapter`. A page refresh finds the state
+    and follows it if running.
+  - **Official-pipeline adapters are measured too** (Qwen3-VL, PaddleOCR-VL, MinerU2.5, GLM-OCR,
+    TeleOCR) through the vendor pipeline used by prefill (`prefill.native_page_items`).
+  - **The path in use is measured** — the adapter's prompts and parsers, what Tabularium would really
+    use. `scripts/benchmark_models.py` stays the per-phase diagnostic tool.
+  - **Its own page**, `/benchmark` (rail item): pick **models** (ticks, each with a **Local/Remote**
+    badge, endpoint and served name editable) and **pages** (selectable only if every block is
+    confirmed).
+  - **Bulk approval** (`POST /api/projects/{id}/pages/approve`): approves all (or selected) pages.
+    Without `confirm_drafts` it skips pages with unverified drafts; with the flag it confirms them — an
+    explicit choice, because it makes the model its own teacher.
+  - **Results as they come and a "tables only" mode.** Each finished model is written to the state
+    (`results`); progress is per model **and per page** (`page_index`/`page_total`). `table_only`
+    measures only table structure, ignoring layout and labels.
+  - API: `GET /api/projects/{id}/benchmark/pages`, `POST /api/projects/{id}/benchmark`
+    (admin/editor) with `{targets[], page_ids?, limit, with_text}`, `GET …/benchmark/latest`.
+    Tests: `tests/test_benchmark.py`.
+- **M18 — Explicit project access and team reading** — `ProjectOut.access` declares effective role,
+  source and `can_edit`/`can_manage`, computed in the same connection as the read/creation. The
+  global role does not replace the member role. The list separates own/shared projects, owner and
+  active people; sharing requires person, role and confirmation, with viewer as default.
+  `AnnotationEntry` mounts the editor only for those who can write; `ProjectReader` shows scans,
+  blocks and tables without autosave. `TableEntry` resolves its context from the protected
+  `GET /api/blocks/{id}`, never from the query string. `PageHeader` puts explanations under a
+  collapsed Guide; menus have no decorative waits. Details and limits: `docs/UX_TEAM_WORKSPACE.md`.
+- **M19 — Studio, assignments and review hand-off** — Migration 19 `page_work`: distinct annotator
+  and reviewer, assignment by owner/admin without granting access, states
+  annotation/pending/changes_requested/approved and optimistic versions. Submission and review check
+  the current revision; an assigned approval does not go through the legacy endpoints. A later edit
+  invalidates the approval. `PageWorkControl` and personal filters in the sidebar make the work
+  visible; live updates on state changes. Canvas/draft/table saves are serialized, a failed flush
+  blocks page/project changes, direct writes send the expected revision. View selector always
+  reachable, Recognize visible, secondary commands under Options. The table workspace moves to
+  **Univer**, which serializes only data mutations; duplicated native structural commands are hidden.
+  Inventory and limits: `docs/UX_STUDIO_REVIEW.md`. No global reviewer role or page lock.
+- **M20 — Training every model with its official recipe** — Tabularium must be able to train
+  **every open-weight model** following that model's **official documentation and best practices**,
+  not only MonkeyOCRv2. Closed models (Gemini 4 Argon) have no weights and are out of scope —
+  `training_types` empty already says so.
+  - **A registry, not scattered scripts.** `services/train_recipes.py` is the twin of
+    `serve_recipes.py`: one recipe per adapter declares `toolchain` (ms-swift, erniekit+paddlex,
+    llama-factory, unsloth, community), the official documentation, allowed types (`lora`/`full`),
+    the **data view** the dataset builder must produce and the maturity. The training center reads
+    the selected adapter's recipe; it does not know MonkeyOCRv2 by name.
+  - **Recipe discipline (as for serving and evaluation).** A recipe is `verified` **only after a
+    documented real run**; otherwise `experimental`. No recipe without official documentation behind
+    it. The status matrix lives in `docs/guide/training.md`.
+  - **Current state (to verify, not to assume).** `ms-swift` covers most OCR models — values from its
+    official *Supported-models-and-datasets* table: MonkeyOCRv2 (`monkeyocrv2`, reference), Qwen3-VL
+    (`qwen3_vl`), Unlimited-OCR (`unlimited_ocr`), DeepSeek-OCR-2 (`deepseek_ocr2`), GLM-OCR
+    (`glm_ocr`), MinerU2.5 (`qwen2_vl`), dots.ocr (`dots_ocr`). PaddleOCR-VL stays on its official
+    `erniekit+paddlex` path. To add: TeleOCR and LightOnOCR-3 (not in ms-swift). Only MonkeyOCRv2 is
+    `verified`.
+  - **Fine-tuning starts from benchmark data.** The benchmark (M17) says *where* the gap is: here
+    the **taxonomy** (custom classes are not emitted: `Issue-date` 0/10, `Title` 0/3) and **table
+    structure** (low TEDS), not reading (CER 0.006). The training recipe chooses accordingly.
+  - **GPU provisioning for training.** `scripts/cloud/setup_cloud_train.sh` prepares a CUDA host
+    (venv, ms-swift, MonkeyOCRv2 clone) and writes a `$ROOT/.train_ready` marker: "prepared" is a fact
+    on disk, not an assumption. On Vast.ai renting runs it via `prepare_training` (onstart, no HTTP
+    port), distinct from `prepare_server` (serving).
+  - Tests: `tests/test_train_recipes.py`, `GET /api/system/train-recipes`.
+- **M21 — Distribution and public documentation** — Tabularium is installable by researchers who
+  are not developers, and documented in English.
+  - **`uv tool install tabularium`** (PyPI) installs a wheel that bundles the prebuilt interface and
+    every runtime resource (§4 Distribution); uv provides a compatible Python. Data defaults to
+    `~/Tabularium`, outside the package, so upgrades never touch it.
+  - **Releases** (`.github/workflows/release.yml`): a `vX.Y.Z` tag matching `VERSION` builds the
+    frontend, the wheel and source archives with the frontend prebuilt (a `frontend/dist/.prebuilt`
+    marker stops `run.sh`/`run.ps1` from rebuilding), installs and starts the wheel as a check,
+    publishes the GitHub release with the CHANGELOG section as notes, and publishes to PyPI through
+    trusted publishing when the repository variable `PYPI_PUBLISH` is `true`.
+  - **Documentation site** (MkDocs Material, `docs/` → GitHub Pages via `docs.yml`, built with
+    `--strict`): installation, configuration, supported models, local inference, cloud GPUs,
+    fine-tuning, teams, troubleshooting, development. Public documentation is English only; internal
+    notes (`docs/UX_*.md`) are excluded from the site.
+  - Tests: `tests/test_packaging.py` (dependencies and bundled resources stay in sync).
+
+Every milestone ends with its checks: what to run to test it (see §13).
 
 ---
 
-## 14. Riferimenti
+## 13. Operating rules for agents
 
-- Repo modello: https://github.com/Yuliang-Liu/MonkeyOCRv2
-- Fine-tune Parsing: https://github.com/Yuliang-Liu/MonkeyOCRv2/tree/main/parsing/train (README + scripts)
-- Fine-tune Und: https://github.com/Yuliang-Liu/MonkeyOCRv2/tree/main/understanding/train
-- Parsing pipeline (coordinate/prompt/OTSL): `parsing/core_runner.py`, `parsing/parse.py`
-- Modelli: https://huggingface.co/zenosai/MonkeyOCRv2-B-Parsing · `-S-Parsing`
+1. **Language**: everything new is written in **English** — documentation, README, CHANGELOG,
+   commit messages, code comments, identifiers and logs. Existing Italian comments are translated
+   when the surrounding code is touched, not in bulk. The UI stays multilingual (rule 11).
+2. **Never modify** the official repositories (`Yuliang-Liu/MonkeyOCRv2` and the other models'):
+   reference them as external checkouts configurable in `config.py` (or cloned by Tabularium into
+   `<root>/vendor/`); generate scripts from recipes, never vendor them.
+3. **Check against the official sources**: 0–1000 coordinates, §2.3 prompts, §2.5 OTSL, §2.2 JSONL —
+   and each model's own documentation for its recipe. When in doubt, re-read `core_runner.py`,
+   `parsing/train/README.md`, `scripts/*.sh` of the official repository.
+4. Work **in milestone order**; every change must update `AGENTS.md`, the README, the documentation
+   site and `CHANGELOG.md` (under `[Unreleased]`) when conventions, structure or user-facing behaviour
+   change.
+5. **Tests**: backend with pytest (special care for `otsl.py`, `dataset_builder.py`, coordinate
+   normalization, migrations, permissions); frontend with `tsc --noEmit` + `vite build` without errors
+   and Vitest (unit + components with jsdom/testing-library for risky flows: autosave/page change,
+   prefill confirmation). CI (`.github/workflows/ci.yml`) runs backend tests on Python 3.11–3.13, a
+   macOS pass, frontend typecheck + tests + build, the browser end-to-end workflow
+   (`scripts/e2e_workflow.py`), and checks that the build leaves no tracked artifacts. Keep the e2e
+   test in step with UI changes.
+6. **Running**: installed, `tabularium`; from source, `scripts/run.sh` (single process on port 8787)
+   or `uvicorn app.main:app --port 8787` from `backend/` with `vite` as dev server proxying the backend.
+   The app must NEVER depend on a training run being active.
+7. **Paths**: never hard-coded; everything from `config.py` (`TABULARIUM_ROOT` for data,
+   `config.RESOURCE_DIR` for files shipped with the app — §4 Distribution).
+8. **Data safety**: user projects are real data; no automatic destruction of data; every destructive
+   operation requires explicit confirmation in the UI and in the code.
+9. Table merges/coordinates must be validated against the official `otsl_to_html` algorithm as the
+   oracle in tests.
+10. Training run logs and metrics live in `<root>/projects/<project>/runs/<run_id>/` (JSONL + .log +
+    plot data), so the UI can replay a run after it ends.
+11. **Localization (mandatory)**: the interface is multilingual **it/en/fr**. No hard-coded UI
+    string: every text goes through the i18n dictionaries (`frontend/src/i18n/it.ts` is the source of
+    truth of the structure; `en.ts`/`fr.ts` are identical in shape, typed as `Dict`). `{var}`
+    placeholders identical in the three languages; plurals as `{one, other}` (French uses the singular
+    for 0 and 1). The language switch is in the rail (persisted in
+    `localStorage['tabularium.locale']`). The backend localizes messages that reach the UI
+    (HTTPException details, dataset/eval warnings, readiness errors, queue reasons, training
+    preflight) via `Accept-Language` and `backend/app/services/i18n.py` (default Italian;
+    `localize_detail` recognizes existing details from the reverse catalog). The API client always
+    sends `Accept-Language: <locale>`. Backend codes and logs stay English.
+12. **Auth as defence, not decoration**: every new route is protected by its path's
+    `require_resource` (or an explicit check when the project id is in the body). Rules never to be
+    left to the client: no self-demotion/self-deactivation, no deleting the last admin, no password
+    reset of one's own account, 404 (not 403) for other people's projects. Passwords and tokens only
+    hashed in the DB; sessions expire; `TABULARIUM_AUTH` is `off` **only** for tests.
+13. **Releases**: bump with `python3 scripts/version.py bump {patch|minor|major}`, move the
+    `[Unreleased]` notes under the new version in `CHANGELOG.md`, commit, wait for green CI, then push
+    the `vX.Y.Z` tag. The release workflow does the rest (GitHub release + PyPI). Never publish a
+    release whose README describes features that are not in it.
+
+---
+
+## 14. References
+
+- Model repository: https://github.com/Yuliang-Liu/MonkeyOCRv2
+- Parsing fine-tuning: https://github.com/Yuliang-Liu/MonkeyOCRv2/tree/main/parsing/train (README + scripts)
+- Understanding fine-tuning: https://github.com/Yuliang-Liu/MonkeyOCRv2/tree/main/understanding/train
+- Parsing pipeline (coordinates/prompts/OTSL): `parsing/core_runner.py`, `parsing/parse.py`
+- Models: https://huggingface.co/zenosai/MonkeyOCRv2-B-Parsing · `-S-Parsing`
 - Paper: https://arxiv.org/abs/2607.11562
+- Tabularium documentation: https://nbadino.github.io/tabularium/
