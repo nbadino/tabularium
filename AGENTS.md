@@ -945,7 +945,7 @@ dal CER e li conta il recall).
   senza PyTorch. Il percorso MLX non passa dal registro pesi (li scarica `mlx-vlm` dalla cache
   HF) e il nome servito è l'id del checkpoint MLX. La scelta del runtime è **additiva**: dove
   vLLM funziona, il comportamento resta quello di prima. Matrice e misure in
-  `docs/LOCAL_INFERENCE_GUIDE.md` §0.
+  `docs/guide/local-inference.md` §0.
   - **Il percorso ufficiale di PaddleOCR-VL ha un secondo runtime.** La sua pipeline Paddle
     (PP-DocLayout + riconoscimento) vive in `<root>/paddle-runtime`, che si installa da sé
     alla prima messa in servizio del modello. L'installer è platform-aware: su Linux prende
@@ -1182,7 +1182,7 @@ dal CER e li conta il recall).
     builder non converte mai il target in silenzio.
   - **Disciplina delle ricette (come serving ed eval).** Una ricetta è `verified` **solo dopo una
     run reale** documentata; altrimenti è `experimental`. Nessuna ricetta senza una **doc
-    ufficiale** a supporto. La matrice di stato vive in `docs/TRAINING_GUIDE.md`, non in una
+    ufficiale** a supporto. La matrice di stato vive in `docs/guide/training.md`, non in una
     promessa: un toolchain che non ha ancora girato lo dice.
   - **Stato attuale (da verificare, non da assumere).** `ms-swift` copre la maggior parte dei
     modelli OCR — valori dalla sua tabella ufficiale *Supported-models-and-datasets*:
@@ -1201,7 +1201,7 @@ dal CER e li conta il recall).
     marcatore `$ROOT/.train_ready`: "preparato" è un fatto su disco, non un'assunzione. Su Vast.ai
     il noleggio lo esegue da sé via `prepare_training` (onstart = curl dello script, nessuna
     porta HTTP), distinto da `prepare_server` (serving); l'executor di training poi sincronizza il
-    dataset e lancia lo script. Dettagli e log dei test in `docs/TRAINING_GUIDE.md`.
+    dataset e lancia lo script. Dettagli e log dei test in `docs/guide/training.md`.
   - Verifica: `tests/test_train_recipes.py` (ogni adapter addestrabile ha una ricetta con doc
     ufficiale e vista dati; i chiusi no), `GET /api/system/train-recipes`; training wizard che
     mostra toolchain e maturità per il modello scelto.

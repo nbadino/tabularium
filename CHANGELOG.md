@@ -1,100 +1,79 @@
 # Changelog
 
-Le modifiche rilevanti di Tabularium sono raccolte qui. Il formato segue
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e le versioni usano
+Notable changes to Tabularium. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions use
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-18
+
 ### Added
-- Studio: assegnazione per pagina a un annotatore e un revisore distinti, code personali,
-  invio alla revisione, richiesta di correzioni e approvazione con identità e versioni
-  controllate dal server. Le pagine assegnate non aggirano il percorso con l’approvazione
-  precedente. Vedi `docs/UX_STUDIO_REVIEW.md` per verifiche e limiti.
-- Registro delle ricette di training per adapter (M18, `services/train_recipes.py`): ogni modello a
-  pesi aperti dichiara toolchain, doc ufficiale, tipi ammessi (`lora`/`full`), vista dati e
-  maturità (`verified`/`experimental`/`planned`). `GET /api/system/train-recipes`. Il generatore
-  di script dispatcha dalla ricetta e fallisce esplicito su ciò che non sa eseguire. Cablati via
-  ms-swift (valori dalla tabella ufficiale): MonkeyOCRv2, Qwen3-VL, Unlimited-OCR, DeepSeek-OCR-2,
-  GLM-OCR, MinerU2.5, dots.ocr. I modelli chiusi (Argon) restano fuori: non hanno pesi.
-- Provisioning del training su GPU: `scripts/cloud/setup_cloud_train.sh` prepara l'ambiente ms-swift
-  (venv + repo + `swift`) con marcatore `.train_ready`; su Vast.ai il noleggio lo esegue da sé
-  (`prepare_training`, onstart dedicato, distinto da `prepare_server`). Guida e log dei test in
-  `docs/TRAINING_GUIDE.md`.
-- Benchmark multi-modello (M17): pagina dedicata `/benchmark` (staccata dal Fine-tuning) dove
-  si scelgono i modelli con dei tick (badge Locale/Remoto) e le pagine da usare come
-  riferimento, con le metriche della Valutazione (IoU 0.5/0.75, ordine di lettura, struttura
-  tabelle, CER/WER). Report su disco (`eval/bench_<ts>/`), nessuna scrittura nel DB, cache per
-  (adapter, model, page, revision). Approvazione in blocco delle pagine
-  (`POST /api/projects/{id}/pages/approve`). API `GET …/benchmark/pages`,
-  `POST …/benchmark`, `GET …/benchmark/latest`. I modelli locali il benchmark li avvia e li
-  spegne da sé (uno alla volta, porta dedicata, profilo attivo intatto; pid tracciato e orfani
-  spenti al riavvio); gli adapter a pipeline ufficiale (Qwen3-VL, PaddleOCR-VL, MinerU2.5, GLM,
-  TeleOCR) si misurano con la pipeline del produttore. L'esecuzione è in background con stato
-  persistito (`GET …/benchmark/status`): un refresh della pagina ritrova il lavoro in corso.
-  Le label predette passano dal bridge nativa→canonica (`model_labels`) come nel prefill, con
-  cache versionata; la mappa nativa di Unlimited-OCR è stata aggiunta.
-  I risultati compaiono man mano che ogni modello finisce, con avanzamento per pagina;
-  la modalità «solo tabelle» misura la struttura delle tabelle ignorando layout e label.
-- Gemini 4 Argon via gateway OpenCode: adapter `gemini-argon` (protocollo Google
-  `generateContent`), modello senza pesi pubblici servito come endpoint esterno. Percorso
-  nativo **END2END**: in una generazione restituisce testata (`Title`), numero
-  (`Issue-number`), data (`Issue-date`) e la tabella in OTSL, quindi entra nel
-  prefill/Riconosci e nel Playground; la chiave si legge dall'archivio di opencode quando
-  il vault non ne ha una. Il provider esterno si registra come `custom`
-  nel profilo di calcolo (il `CHECK` non ammetteva `opencode`: era un 500 in salvataggio).
-  Dopo il salvataggio l'hub riconosce di nuovo la destinazione «Endpoint» (provider
-  `custom` → `manual`) e lo Studio nomina il modello nella scelta del motore di prefill.
-  La disponibilità del gateway è una `generateContent` senza corpo (~0,7 s) invece di una
-  generazione minima: Argon «pensa» anche per un token (2–20 s) e il probe faceva
-  lampeggiare lo stato, disabilitando l'avvio del riconoscimento.
-- Quickstart più chiaro per macOS, Linux e Windows.
-- Versione unica per backend e frontend, aggiornata da `scripts/version.py`.
-- Unlimited-OCR ha un percorso locale su Apple Silicon: da `mlx-vlm` 0.6.4 esiste il
-  modello `unlimited_ocr` con la R-SWA di upstream. Due varianti selezionabili per
-  modello (`bf16`, `8bit`) e un guard anti-loop (`repetition_penalty` 1.1, finestra
-  128), perché il processore n-gram ufficiale non è in `mlx-vlm`.
-- Server MLX dedicato per Unlimited-OCR: il server `mlx_vlm.server` non inietta
-  l'immagine per questa architettura, quindi Tabularium espone la stessa interfaccia
-  OpenAI ma sull'API `mlx_vlm.generate` che funziona.
+- **Releases with the interface prebuilt.** Installing from a GitHub release needs
+  Python only: no Node.js, no git. Archives come with SHA-256 checksums.
+- **Documentation site** at <https://nbadino.github.io/tabularium/>, in English:
+  installation, configuration, supported models, local inference, cloud GPUs,
+  fine-tuning, teams, troubleshooting and development.
+- **Annotator / reviewer workflow.** Each page can be assigned to a distinct annotator
+  and reviewer, with personal "to annotate" and "to review" queues, submission,
+  change requests and approval checked by the server. An edit after approval
+  invalidates it.
+- **Team features.** A Share dialog for people and permissions (edit or read only),
+  a read-only project view, ownership transfer and an activity feed. Admins can
+  invite people by link; invited users choose their own password, and accounts
+  created or reset by an admin must change it at first login. Users can edit their
+  own profile.
+- **Live presence** in the studio: see who else is on the page and who is editing,
+  and load their changes without reloading. Unsaved work is never discarded.
+- **Multi-model benchmark** on a dedicated page: pick models and approved pages, and
+  compare layout (IoU 0.5 / 0.75), reading order, table structure and CER/WER side
+  by side. Local models are started and stopped one at a time without touching the
+  active inference profile; results appear as each model finishes, and a
+  tables-only mode ignores layout and labels. Reports are written to disk, never to
+  the database. Pages can be approved in bulk.
+- **Training recipes per model**: every open-weight model declares its toolchain,
+  official documentation, training types, data format and maturity. Wired through
+  ms-swift: MonkeyOCRv2, Qwen3-VL, Unlimited-OCR, DeepSeek-OCR-2, GLM-OCR,
+  MinerU2.5, dots.ocr. A setup script prepares a GPU host for training, and on
+  Vast.ai renting an instance can prepare it automatically.
+- **Gemini 4 Argon** through the OpenCode gateway, as an external endpoint: one
+  END2END generation returns header, issue number, date and the table in OTSL, so
+  it works in Recognize and in the Playground.
+- **Unlimited-OCR on Apple Silicon** through MLX (`mlx-vlm` ≥ 0.6.4), with `bf16`
+  and `8bit` variants, an anti-loop guard and a dedicated MLX server.
+- **Native folder picker**: Browse opens the system folder dialog when the server
+  runs on your computer, and falls back to the web browser otherwise.
+- Table schema hints per project, passed to models that accept them.
+- A single version for backend and frontend, managed by `scripts/version.py`.
 
 ### Changed
-- Studio: viste sempre raggiungibili, riconoscimento visibile e comandi secondari in Opzioni;
-  cambio pagina/progetto subordinato al salvataggio di canvas e bozze. Il foglio serializza
-  soltanto modifiche dei dati, senza attese decorative o comandi strutturali duplicati.
-- README riorganizzato con istruzioni di primo avvio e comandi di release.
-- Hub Modelli: scegliendo «Questo Mac» per un modello con più varianti MLX si chiede
-  quale quantizzazione usare; la scelta è editabile anche nel passo Pesi e in
-  Impostazioni → Modelli.
+- README rewritten for researchers; detailed guides moved to the documentation site.
+  Italian-only guides were replaced by English ones.
+- Studio: views always reachable, Recognize always visible, secondary commands under
+  Options; changing page or project waits for canvas and drafts to be saved. The
+  table workspace now runs on Univer.
+- Models hub: choosing "This Mac" for a model with several MLX variants asks which
+  quantization to use; the choice can also be changed later in Settings → Models.
+- Studio, Results and Projects: clearer page status at a glance; the transcription
+  view no longer traps you without a way back.
 
 ### Fixed
-- Varianti MLX e memoria: il verdetto «gira su questo Mac» guardava solo la variante
-  di default, quindi su un Mac da 8 GB Unlimited-OCR risultava «memoria insufficiente»
-  per il bf16 e «Questo Mac» restava spento, anche se l'8-bit ci sta — e la scelta
-  della variante, che viene dopo, non si raggiungeva mai. Ora ogni variante dichiara
-  il proprio peso (`local_mlx_variant_weight_factors`); senza una scelta salvata si
-  serve la più grande che entra (bf16 sui Mac grandi, 8-bit su quelli da 8 GB), e le
-  varianti che non entrano sono spente nella scelta.
-- Unlimited-OCR su Mac da 8 GB: la cache dei buffer di MLX tratteneva memoria già
-  liberata, la memoria libera scendeva al 2% e il GPU andava in timeout alla prima
-  pagina (`kIOGPUCommandBufferCallbackErrorTimeout`). Fino a 12 GB il server dedicato
-  parte con la cache spenta (`--cache-limit-gb 0`) e la svuota dopo ogni pagina;
-  misurato su M1 / 8 GB: pagina a tabella in 42 s, una da 30k caratteri in 130 s,
-  memoria libera minima 7–9%.
-- Riconoscimento con un modello locale: se il server muore a metà pagina (su un Mac da
-  8 GB il GPU può andare in timeout anche con la cache spenta), la sessione lo
-  riavvia sulla stessa porta e riprova la pagina una volta, invece di far fallire
-  quella e tutte le successive. Il server di Unlimited-OCR esce da solo al primo
-  guasto Metal, perché dopo un timeout il GPU rifiuta ogni comando finché il
-  processo vive. Provato e scartato: passi di prefill più piccoli non abbassano il
-  picco (4,90 GB contro 4,89).
-- Pagine approvate e bozze del modello: un riconoscimento rilanciato su una pagina già
-  approvata vi aggiunge bozze non confermate, e valutazione ed export le prendevano
-  per verità — il modello veniva misurato (e addestrato) sul proprio output. Ora su
-  una pagina approvata contano solo i blocchi confermati; sulle altre pagine nulla
-  cambia (il report conta le bozze come prefill non verificato).
+- MLX variants and memory: the "runs on this Mac" verdict only looked at the default
+  variant, so on an 8 GB Mac Unlimited-OCR was reported as not fitting even though
+  the 8-bit variant does. Each variant now declares its own size, and without a
+  saved choice the largest one that fits is used.
+- Unlimited-OCR on 8 GB Macs: MLX's buffer cache held on to freed memory and the GPU
+  timed out on the first page. Up to 12 GB the server now starts with the cache
+  off and clears it after each page.
+- Recognition with a local model: if the server dies mid-page, the session restarts
+  it on the same port and retries that page once, instead of failing it and every
+  page after it.
+- Approved pages and model drafts: re-running recognition on an approved page added
+  unconfirmed drafts that evaluation and export treated as ground truth. On approved
+  pages only confirmed blocks now count.
+- The backend setup script no longer warns that OCR is missing when it is installed.
 
 ## [0.1.0]
 
 ### Added
-- Flusso di riconoscimento, annotazione, esportazione dataset, training e valutazione.
+- Recognition, annotation, dataset export, training and evaluation workflow.

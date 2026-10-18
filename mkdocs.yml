@@ -59,7 +59,3 @@ nav:
   - Teams: guide/collaboration.md
   - Contributing:
       - Development: guide/development.md
-  - Italiano:
-      - Inferenza locale: LOCAL_INFERENCE_GUIDE.md
-      - GPU cloud: CLOUD_INFERENCE_GUIDE.md
-      - Training: TRAINING_GUIDE.md

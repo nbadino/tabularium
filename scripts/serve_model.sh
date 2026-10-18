@@ -23,7 +23,7 @@ fi
 cd "$REPO/parsing"
 export PATH="$ENV_DIR/bin:$PATH"
 # gcc-13 compatibile CUDA + tol a flashinfer di bloccare il JIT.
-# NOTA (v. docs/LOCAL_INFERENCE_GUIDE.md §2): queste tre variabili sono
+# NOTA (v. docs/guide/local-inference.md §2): queste tre variabili sono
 # workaround EMPIRICI di compilatore/CUDA JIT su questa installazione, non
 # requisiti documentati dal repo ufficiale MonkeyOCRv2 — il serving via vLLM
 # non richiede di per sé una compilazione manuale di flash-attn. Su una

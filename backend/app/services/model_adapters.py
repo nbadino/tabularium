@@ -544,7 +544,7 @@ class UnlimitedOcrAdapter(_StubAdapter):
         # token) e resta ben sopra il budget dell'adapter stesso
         # (`end2end_max_tokens` 8192 + ~1300 token di immagine + prompt).
         # Stessa natura dei flag empirici già documentati per MonkeyOCRv2 in
-        # docs/LOCAL_INFERENCE_GUIDE.md: taratura di macchina, non requisito
+        # docs/guide/local-inference.md: taratura di macchina, non requisito
         # del produttore — su una GPU capiente si può alzare.
         max_model_len=12288,
         served_model_name="Unlimited-OCR",

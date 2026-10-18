@@ -83,7 +83,7 @@ del pipeline.
   fallisce. Su Windows il percorso è WSL2. Il runtime locale (venv vLLM, venv MLX, pipeline
   Paddle per il percorso ufficiale di PaddleOCR-VL) lo prepara Tabularium al primo avvio:
   nessun passaggio manuale. Motore unico della decisione: `services/hardware.py`; matrice e
-  misure in `docs/LOCAL_INFERENCE_GUIDE.md`.
+  misure in `docs/guide/local-inference.md`.
 - In decisamente deciso: destinazione del rilascio pubblico (licenza, repo pubblico, momento).
 
 ## Brand Commitments

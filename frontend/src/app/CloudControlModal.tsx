@@ -273,7 +273,7 @@ const TEMPLATE_BY_ADAPTER: Record<string, string> = Object.fromEntries(
 /** Solo le template il cui adapter ha un percorso OCR verificato (prompt/
  * parsing, v. `supported_prefill_modes` in model_adapters.py) abilitano il
  * prefill pagina intera. GLM-OCR/DeepSeek-OCR-2/Qwen3-VL sono deployabili
- * (v. LOCAL_INFERENCE_GUIDE.md) ma non ancora integrati nel prefill: la GPU
+ * (v. docs/guide/local-inference.md) ma non ancora integrati nel prefill: la GPU
  * si può comunque accendere e testare via playground/valutazione. */
 export const PREFILL_MODAL_TEMPLATES = ['monkeyocrv2', 'paddleocr-vl', 'mineru', 'unlimited-ocr', 'dots-ocr']
 
