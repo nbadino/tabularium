@@ -7,6 +7,8 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Changed
+- The bundled domain profile is now `shipping-registers-1900s`, in English and without corpus
+  names. Projects that saved the old id keep working: it maps to the new one.
 - `AGENTS.md` (product spec and agent rules) is now in English and up to date: Univer table
   workspace, current repository structure and schema, distribution with uv, releases, the
   English-only rule for new code, docs and commits.

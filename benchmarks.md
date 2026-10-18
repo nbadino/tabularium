@@ -707,7 +707,7 @@ shell ma con l’`mlx_vlm 0.7.1` che Tabularium installa già in
 | `mxfp8`, base, `rep 1.1` | 122,1 | 1,1 s | ~2× più lento di gundam, loop con finestra 20 |
 
 Output valido: grounded-markdown con `<|det|>header [122,42,262,62]<|/det|>` e
-una `<table>` HTML completa con le righe reali del Lloyd’s Daily Index — lo
+una `<table>` HTML completa con le righe reali della pagina indice del campione — lo
 stesso formato che `parse_layout` già legge. Riferimento «prima»: sullo stesso
 tipo di pagina il percorso vLLM su RTX 4060 Laptop 8 GB in offload dava 13,3
 tok/s; qui non c’è cloud e si sta ~20× più veloci.

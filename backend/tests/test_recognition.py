@@ -373,7 +373,7 @@ def test_playground_reads_headers_and_table_with_end2end_model(tmp_path, monkeyp
 
         def end2end(self, _image, **kwargs):
             return [
-                {"bbox": [332, 47, 626, 61], "label": "Title", "content": "LLOYD'S DAILY INDEX"},
+                {"bbox": [332, 47, 626, 61], "label": "Title", "content": "HISTORIC SHIPPING INDEX"},
                 {"bbox": [773, 47, 902, 62], "label": "Issue-date", "content": "Nov. 2, 1925"},
                 {"bbox": [36, 75, 932, 978], "label": "Table", "content": otsl},
             ]

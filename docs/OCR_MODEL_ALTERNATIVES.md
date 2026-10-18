@@ -1,14 +1,14 @@
 # Alternative a MonkeyOCRv2 — cernita modelli OCR/VLM (agosto 2026)
 
 Ricerca esplorativa: modelli open-weight alternativi a `MonkeyOCRv2-B-Parsing` per il
-fine-tuning su Lloyd's List (layout multi-colonna denso + registri tabellari con celle
+fine-tuning sul corpus di riferimento (layout multi-colonna denso + registri tabellari con celle
 unite). Non è una decisione, è materiale per sceglierne uno o due da testare sul campione
 gold esistente prima di eventualmente cambiare stack.
 
 ## Criteri di scarto (da AGENTS.md §1–2)
 
 1. **Table recognition con celle unite** (rowspan/colspan) — requisito non negoziabile,
-   confermato: i registri Lloyd's sono tabelle dense con celle di una-due cifre.
+   confermato: i registri del corpus sono tabelle dense con celle di una-due cifre.
 2. **Fine-tunabile sui nostri dati** — pesi aperti, licenza che permetta di ridistribuire
    un checkpoint derivato, toolchain di training documentata (LoRA e/o full-SFT).
 3. **Regge pagine dense** — multi-colonna, testo piccolo, scansioni d'epoca degradate/storte.
@@ -78,14 +78,14 @@ esistente (poche pagine, stesso protocollo di valutazione TEDS/CER/IoU già in u
    il punteggio assoluto.
 
 Prima di impegnare tempo di training, vale la pena un giro di **inferenza zero-shot** di
-questi tre su 2-3 pagine gold Lloyd's (una con registro tabellare denso, una con layout
+questi tre su 2-3 pagine gold del corpus (una con registro tabellare denso, una con layout
 multi-colonna misto testo/tabella) per vedere quale regge meglio la degradazione delle
 scansioni d'epoca *prima* di scrivere adapter di dataset dedicati.
 
 ## Limiti di questa ricerca
 
-Ricerca basata su web search (agosto 2026), non su test diretti sul corpus Lloyd's.
+Ricerca basata su web search (agosto 2026), non su test diretti sul corpus.
 Punteggi benchmark aggregati (OmniDocBench, olmOCR-Bench, XDocParse) misurano documenti
 moderni multilingue, non scansioni di giornali storici anni 1900; i numeri vanno letti come
-ranking relativo, non come stima diretta delle prestazioni sul dominio Lloyd's. Licenza di
+ranking relativo, non come stima diretta delle prestazioni sul dominio del corpus. Licenza di
 PaddleOCR-VL e dettagli merged-cell di GLM-OCR non sono stati verificati alla fonte primaria.

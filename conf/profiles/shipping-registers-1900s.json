@@ -1,0 +1,37 @@
+{
+  "id": "shipping-registers-1900s",
+  "legacy_ids": ["tabularium-list-1900s"],
+  "name": "Shipping registers — 20th-century maritime newspapers",
+  "description": "Multi-column English newspapers with ship registers and dense tables. Two genres: index pages are one wide table without rules; voyage supplements are parallel columns of ship entries.",
+  "labels": [
+    "Title", "Page-header", "Issue-number", "Issue-date",
+    "Headline", "Byline", "Column", "Text", "Section-header", "List-item",
+    "Advertisement", "Note", "Table", "Formula", "Picture"
+  ],
+  "page_types": {
+    "index": {
+      "description": "Index page: one full-page table without rules.",
+      "recipe": ["Title", "Issue-number", "Issue-date", "Page-header", "Table"],
+      "table_format": "otsl"
+    },
+    "voyage-supplement": {
+      "description": "Voyage supplement: parallel columns of ship entries, not a table.",
+      "recipe": ["Page-header", "Issue-date", "Column", "Section-header", "List-item"],
+      "table_format": null
+    }
+  },
+  "default_objective": "tables",
+  "conventions": [
+    "Rejoin words split by an end-of-line soft hyphen.",
+    "Keep original spelling, abbreviations and short forms.",
+    "Annotate phantom columns without transcribing them.",
+    "Rules are represented by the grid, never in the text.",
+    "Never transcribe leader dots: they are typographic filler between two fields.",
+    "Blank lines between groups of entries are not table rows: they are typographic spacing.",
+    "A cell with «——» is empty (ecel): do not transcribe the dash.",
+    "Indented continuation lines starting with «[» belong to the previous cell: join them with a space and drop the bracket.",
+    "A layout class never splits a typographic line: when the date shares the masthead line, it stays inside the Title."
+  ],
+  "recommended_split": "issue",
+  "recommended_language": "en"
+}

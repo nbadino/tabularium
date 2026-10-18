@@ -33,6 +33,7 @@ from ..services import corpus as corpusmod
 from ..services import pilot as pilotmod
 from ..services import auth as authsvc
 from ..services import audit as auditsvc
+from ..services import domain_profiles
 from ..services import table_hint as table_hint_svc
 from ..services.i18n import msg, parse_lang
 from .deps import require_resource
@@ -436,6 +437,8 @@ def get_study_protocol(
         project = _get_project_or_404(conn, project_id)
         settings = json.loads(project["settings_json"] or "{}")
     protocol = settings.get("study_protocol") or {}
+    if protocol.get("domain_profile"):
+        protocol = {**protocol, "domain_profile": domain_profiles.canonical_id(protocol["domain_profile"])}
     return StudyProtocolOut(**protocol) if protocol else StudyProtocolOut(updated_at=datetime.now(timezone.utc).isoformat())
 
 

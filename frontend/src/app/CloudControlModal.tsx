@@ -188,22 +188,10 @@ export function writeVastJob(job: VastJob | null) {
 const MODAL_TEMPLATE_KEY = 'tabularium.modal.template'
 const MODAL_KEEP_WARM_KEY = 'tabularium.modal.keep_warm'
 
-/** Migra una preferenza innocua dal prefisso storico senza migrare segreti. */
-export function readMigratedPreference(key: string, legacyKey: string): string | null {
+/** Reads a UI preference; storage may be unavailable (private mode, blocked site data). */
+export function readPreference(key: string): string | null {
   try {
-    const current = localStorage.getItem(key)
-    if (current !== null) {
-      // Elimina anche un eventuale residuo storico: il valore corrente ha già
-      // precedenza, quindi tenere la chiave legacy può solo creare ambiguità.
-      if (localStorage.getItem(legacyKey) !== null) localStorage.removeItem(legacyKey)
-      return current
-    }
-    const legacy = localStorage.getItem(legacyKey)
-    if (legacy !== null) {
-      localStorage.setItem(key, legacy)
-      localStorage.removeItem(legacyKey)
-    }
-    return legacy
+    return localStorage.getItem(key)
   } catch {
     return null
   }
@@ -420,7 +408,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   // dalla vista a ogni refresh — riportava sempre alla template attualmente
   // in uso, nascondendo il task in corso su un'altra. Riprodotto dal vivo.
   const [modalTemplate, setModalTemplateRaw] = useState(
-    () => readMigratedPreference(MODAL_TEMPLATE_KEY, 'lloyds.modal_template') || guessModalTemplate(inf.url),
+    () => readPreference(MODAL_TEMPLATE_KEY) || guessModalTemplate(inf.url),
   )
   const setModalTemplate = (id: string) => {
     setModalTemplateRaw(id)
@@ -442,7 +430,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   const [modalStatus, setModalStatus] = useState<ModalStatus | null>(null)
   const [modalApiKey, setModalApiKey] = useState('')
   const [modalKeepWarm, setModalKeepWarm] = useState(
-    () => readMigratedPreference(MODAL_KEEP_WARM_KEY, 'lloyds.modal_keep_warm') === '1',
+    () => readPreference(MODAL_KEEP_WARM_KEY) === '1',
   )
   const [modalBusy, setModalBusy] = useState(false)
   const [modalNotice, setModalNotice] = useState<string | null>(null)

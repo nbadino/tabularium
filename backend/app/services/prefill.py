@@ -250,7 +250,7 @@ def _drop_nested_duplicates(items: list[dict], threshold: float = 0.9) -> list[d
     Il risultato ufficiale di PaddleX porta la stessa regione a due livelli —
     la lista di parsing finale e le detection grezze del layout — e il bridge
     (`paddle_official._items`) raccoglie ricorsivamente entrambi. Sul registro
-    Lloyd's la colonna di sinistra arrivava così quattro volte: una intera,
+    del campione la colonna di sinistra arrivava così quattro volte: una intera,
     con testo e griglia, più tre fasce che la ritagliano. L'IoU non le vede
     (una fascia sovrapposta al 100% con l'intero ha IoU 0,25), il contenimento
     sì.

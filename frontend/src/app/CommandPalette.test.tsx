@@ -7,7 +7,7 @@ import { CommandPalette, matchesQuery } from './CommandPalette'
 
 vi.mock('../lib/api', () => ({
   apiGet: vi.fn(async (path: string) =>
-    path === '/projects' ? { items: [{ id: 7, name: 'Lloyd 1940', pages_count: 3 }] } : { items: [] },
+    path === '/projects' ? { items: [{ id: 7, name: 'Registers 1940', pages_count: 3 }] } : { items: [] },
   ),
 }))
 vi.mock('./auth', () => ({ useAuth: () => ({ user: { username: 'a', role: 'editor' }, logout: vi.fn() }) }))
@@ -32,7 +32,7 @@ function setup() {
 
 describe('CommandPalette', () => {
   it('ogni parola deve comparire, in qualunque ordine', () => {
-    expect(matchesQuery('Lloyd 1940 apri in Annotazione', '1940 lloyd')).toBe(true)
+    expect(matchesQuery('Registers 1940 apri in Annotazione', '1940 registers')).toBe(true)
     expect(matchesQuery('Archivio', 'arch x')).toBe(false)
   })
 
@@ -51,9 +51,9 @@ describe('CommandPalette', () => {
     setup()
     fireEvent.click(screen.getByRole('button', { name: /Cerca/ }))
     const input = screen.getByRole('combobox')
-    fireEvent.change(input, { target: { value: 'lloyd' } })
-    await waitFor(() => expect(screen.getByRole('option', { name: /Lloyd 1940/ })).toBeInTheDocument())
-    expect(screen.getByRole('option', { name: /Lloyd 1940/ })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.change(input, { target: { value: 'registers' } })
+    await waitFor(() => expect(screen.getByRole('option', { name: /Registers 1940/ })).toBeInTheDocument())
+    expect(screen.getByRole('option', { name: /Registers 1940/ })).toHaveAttribute('aria-selected', 'true')
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(screen.getByTestId('where')).toHaveTextContent('/annotazione?project=7')
   })

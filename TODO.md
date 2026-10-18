@@ -211,9 +211,7 @@ aperto oppure solo parzialmente coperto.
 - Lo smoke E2E attende ora fino a 30 secondi la readiness del backend quando
   deve prima compilare il frontend, evitando falsi fallimenti su macchine
   lente e su Windows/WSL.
-- Le preferenze Modal hanno abbandonato il prefisso storico `lloyds.*` con una
-  migrazione one-shot verso `tabularium.*`; il test verifica che la migrazione
-  non conservi chiavi obsolete e non coinvolga segreti.
+- Le preferenze Modal usano solo chiavi `tabularium.*`.
 - Il tipo frontend `InferenceConfig` non dichiara più `api_key`: l’API espone
   solo `has_api_key`, impedendo che un secret possa rientrare accidentalmente
   nel contratto client durante refactoring futuri.
@@ -464,7 +462,7 @@ aperto oppure solo parzialmente coperto.
     JSONL ms-swift o prompt come verità primaria.
 
 - [x] Introdurre i **domain profiles** configurabili.
-  - `tabularium-list-1900s` iniziale: label, colori, convenzioni, campionamento,
+  - `shipping-registers-1900s` iniziale: label, colori, convenzioni, campionamento,
     prompt, regole QA e metriche preferite.
   - Profili futuri: registri, quotidiani moderni, manoscritti, fatture,
     moduli, libri, mappe o documenti tecnici.

@@ -1,8 +1,8 @@
 """Metadati di pagina dedotti dal nome file dell'archivio.
 
-Le scansioni Historic Shipping Index arrivano con un nome che codifica già testata, numero di
-fascicolo e pagina — `LSI_17186_015.tif` = Historic Shipping Index Shipping Index, n. 17.186,
-pagina 15 — cioè esattamente i campi che il registro pagine tiene in `issue_no`,
+Le scansioni del corpus di riferimento arrivano con un nome che codifica già testata,
+numero di fascicolo e pagina — `LSI_17186_015.tif` = pagina indice, n. 17.186, pagina 15 —
+cioè esattamente i campi che il registro pagine tiene in `issue_no`,
 `page_no` e `page_type`.
 
 La data del fascicolo **non** si deduce dal nome file e non va mai presa dall'EXIF:

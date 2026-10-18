@@ -360,7 +360,7 @@ def test_model_end2end_argon_keeps_header_elements_and_table(tmp_path: Path, mon
         def end2end(self, image, **kwargs):
             return [
                 {"bbox": [65, 48, 86, 61], "label": "Page-header", "content": "44"},
-                {"bbox": [332, 47, 626, 61], "label": "Title", "content": "LLOYD'S DAILY INDEX"},
+                {"bbox": [332, 47, 626, 61], "label": "Title", "content": "HISTORIC SHIPPING INDEX"},
                 {"bbox": [773, 47, 902, 62], "label": "Issue-date", "content": "Nov. 2, 1925"},
                 {"bbox": [36, 75, 932, 978], "label": "Table",
                  "content": "<fcel>Corbank<fcel>Br<nl><fcel>Corbeach<ecel><nl>"},
