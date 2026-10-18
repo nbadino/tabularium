@@ -148,6 +148,6 @@ def ensure_ready() -> None:
 def serve_argv(model_path: str, *, port: int, settings: dict | None = None) -> list[str]:
     settings = settings or {}
     return [
-        str(python_bin()), str(Path(__file__).resolve().parents[3] / "scripts" / "local" / "mineru_mlx_gateway.py"),
+        str(python_bin()), str(config.RESOURCE_DIR / "scripts" / "local" / "mineru_mlx_gateway.py"),
         "--model", model_path, "--port", str(int(port)), "--settings", json.dumps(settings, separators=(",", ":")),
     ]

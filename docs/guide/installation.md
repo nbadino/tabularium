@@ -33,7 +33,51 @@ Which models run locally depends on the pair *machine + model*, and the Models
 screen says so per model. The measured matrix is in
 [Local inference](local-inference.md) §0.
 
-## Install from a release (recommended)
+## Install with uv (recommended)
+
+[uv](https://docs.astral.sh/uv/) installs Tabularium in its own environment and
+downloads a compatible Python if your system doesn't have one, so the version
+of Python on your computer doesn't matter.
+
+1. Install uv, once:
+
+    ```bash
+    # macOS / Linux
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    ```
+
+    ```powershell
+    # Windows (PowerShell)
+    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+    ```
+
+2. Install and start Tabularium:
+
+    ```bash
+    uv tool install tabularium
+    tabularium
+    ```
+
+The browser opens on **<http://localhost:8787>**; the first visit asks you to
+create an administrator account. Keep the terminal open while using the app and
+press `Ctrl+C` to stop it.
+
+| Command | What it does |
+|---|---|
+| `tabularium` | start the app and open the browser |
+| `tabularium --no-browser` | start without opening the browser |
+| `tabularium --port 9000` | use another port |
+| `tabularium --data /path/to/folder` | keep data somewhere else than `~/Tabularium` |
+| `tabularium --host 0.0.0.0` | accept connections from other computers (for a shared lab server) |
+| `uv tool upgrade tabularium` | upgrade to the latest release |
+| `uv tool uninstall tabularium` | remove the app (your data folder is kept) |
+
+**Your data** (projects, database, models, settings) lives in `~/Tabularium`,
+outside the installed package, so upgrades never touch it. The folder also
+holds `.env` with the key that encrypts provider credentials saved from the
+interface: keep it with the data when you back up or move it.
+
+## Install from a release archive
 
 Releases ship with the web interface already built, so you only need Python.
 

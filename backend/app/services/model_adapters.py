@@ -20,6 +20,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Protocol
 
+from .. import config
+
 from .model_labels import (
     DEEPSEEK_LABELS,
     GLM_LABELS,
@@ -230,7 +232,7 @@ class MonkeyOCRv2ParsingAdapter:
         # variabili qui, deleghiamo allo script già collaudato: un adapter
         # può sempre restituire l'invocazione di un wrapper invece del
         # comando nudo, `serve_manager.py` resta generico (`Popen(argv)`).
-        script = Path(__file__).resolve().parents[3] / "scripts" / "serve_model.sh"
+        script = config.RESOURCE_DIR / "scripts" / "serve_model.sh"
         return [str(script), model_path, str(port)]
 
 

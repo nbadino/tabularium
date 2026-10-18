@@ -131,24 +131,20 @@ Missing a model? [Open an issue](https://github.com/nbadino/tabularium/issues/ne
 
 ## Quickstart
 
-You need **Python 3.11–3.13**. No GPU, no Node.js, no git.
-
-1. Download the latest release from
-   [Releases](https://github.com/nbadino/tabularium/releases/latest):
-   the `.zip` on Windows, the `.tar.gz` on macOS and Linux.
-2. Extract it and open a terminal in the extracted folder.
-3. Run:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
 
 ```bash
-./scripts/setup_backend.sh
-./scripts/run.sh
+uv tool install tabularium
+tabularium
 ```
 
-On Windows: `scripts\setup_backend.ps1`, then `scripts\run.ps1`.
+That's it: uv fetches a compatible Python by itself, and `tabularium` opens the
+app in your browser at <http://localhost:8787>, where you create the
+administrator account. Your data lives in `~/Tabularium`. No GPU, Node.js or git
+needed.
 
-Open **<http://localhost:8787>** and create the administrator account. Details,
-Linux prerequisites and installing from source are in the
-[installation guide](docs/guide/installation.md).
+To upgrade later: `uv tool upgrade tabularium`. Other ways to install (release
+archive, from source) are in the [installation guide](docs/guide/installation.md).
 
 ## Documentation
 

@@ -32,7 +32,7 @@ from pathlib import Path
 from .. import config
 from ..db import connect
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = config.RESOURCE_DIR
 
 # Pattern dell'endpoint stampato da `modal deploy`.
 URL_PREFIX = "https://"

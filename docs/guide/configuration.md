@@ -1,11 +1,12 @@
 # Configuration
 
 Everything has a working default; these environment variables are optional
-overrides.
+overrides. When Tabularium is installed with uv, they can also go in the `.env`
+file of the data folder.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `TABULARIUM_ROOT` | `<repo>/data` | data root (projects, database, crops, runs) |
+| `TABULARIUM_ROOT` | `~/Tabularium` (installed), `<repo>/data` (from source) | data root (projects, database, crops, runs) |
 | `TABULARIUM_HOST` / `TABULARIUM_PORT` | `127.0.0.1` / `8787` | server bind |
 | `TABULARIUM_AUTH` | `on` | `off` disables authentication (single-user local mode) |
 | `TABULARIUM_REGISTRATION_OPEN` | closed | `1` opens self-registration |

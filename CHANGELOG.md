@@ -6,6 +6,14 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Install with one command**: `uv tool install tabularium`, then `tabularium`.
+  uv provides a compatible Python, the interface is prebuilt, and the command
+  opens the browser. Data lives in `~/Tabularium` (or `--data`), outside the
+  package, and the credential encryption key is created on first start. Options:
+  `--port`, `--host`, `--data`, `--no-browser`, `--version`.
+- Releases also ship the wheel, checked by installing and starting it in CI.
+
 ## [0.2.0] - 2026-10-18
 
 ### Added

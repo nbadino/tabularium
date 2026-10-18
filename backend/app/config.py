@@ -3,6 +3,7 @@
 Tutti i percorsi sono derivati da env var, mai hard-coded.
 
 - TABULARIUM_ROOT: radice dei dati (progetti, db, crop, runs). Default: <repo>/data
+  da un checkout, ~/Tabularium da un'installazione (`uv tool install tabularium`)
 - TABULARIUM_HOST / TABULARIUM_PORT: bind del server API
 """
 from __future__ import annotations
@@ -12,24 +13,40 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# --- Radice del checkout ------------------------------------------------------
-# Serve agli script che il backend consegna a macchine remote
-# (`scripts/cloud/…`): il codice eseguito in cloud è quello di questo
-# checkout, non una copia scaricata altrove.
-REPO_DIR: Path = Path(__file__).resolve().parents[2]
+# --- Risorse e modalità di installazione ---------------------------------------
+# Due modi di girare, con le stesse risorse (VERSION, frontend/dist, scripts/,
+# conf/) in posti diversi:
+# - checkout della repo: le risorse sono nella radice della repo;
+# - pacchetto installato (wheel, `uv tool install`): il build le copia in
+#   `app/_bundle/`, con lo stesso layout.
+# Gli script che il backend consegna alle GPU remote (`scripts/cloud/…`) si
+# leggono sempre da qui: il codice eseguito in cloud è quello installato.
+_BUNDLE_DIR = Path(__file__).resolve().parent / "_bundle"
+_CHECKOUT_DIR = Path(__file__).resolve().parents[2]
+INSTALLED: bool = (_BUNDLE_DIR / "VERSION").is_file()
+RESOURCE_DIR: Path = _BUNDLE_DIR if INSTALLED else _CHECKOUT_DIR
+# Nome storico: resta un alias per chi legge le risorse della repo.
+REPO_DIR: Path = RESOURCE_DIR
 
 APP_NAME = "Tabularium"
-VERSION = (REPO_DIR / "VERSION").read_text(encoding="utf-8").strip()
+VERSION = (RESOURCE_DIR / "VERSION").read_text(encoding="utf-8").strip()
+
+# --- Radice dati -------------------------------------------------------------
+# Da un checkout i dati stanno accanto al codice; installato, il pacchetto vive
+# in un ambiente che un aggiornamento sostituisce, quindi i dati vanno nella
+# home dell'utente.
+_DEFAULT_ROOT = (Path.home() / "Tabularium") if INSTALLED else (_CHECKOUT_DIR / "data")
 
 # Il .env va caricato dall'app stessa, non solo dai launcher: un avvio che
 # bypassa scripts/run_backend.sh (uvicorn diretto, systemd, IDE) altrimenti
 # parte senza i segreti — il vault si spegne, ogni credential risulta
 # "assente" e la UI perde la chiave API salvata senza un errore visibile.
 # `override=False`: le variabili già in ambiente vincono su quelle del file.
-load_dotenv(REPO_DIR / ".env", override=False)
-
-# --- Radice dati -------------------------------------------------------------
-_DEFAULT_ROOT = REPO_DIR / "data"
+# Checkout: `<repo>/.env`. Installato: `.env` nella radice dati, l'unico posto
+# che sopravvive a un aggiornamento del pacchetto.
+_ENV_ROOT = Path(os.environ.get("TABULARIUM_ROOT", "").strip() or _DEFAULT_ROOT).expanduser()
+ENV_FILE: Path = (_ENV_ROOT / ".env") if INSTALLED else (_CHECKOUT_DIR / ".env")
+load_dotenv(ENV_FILE, override=False)
 
 
 def _root() -> Path:
@@ -104,7 +121,7 @@ if VLLM_MAX_PIXELS is not None and VLLM_MAX_PIXELS <= 0:
 OCR_ENGINE = os.environ.get("TABULARIUM_OCR_ENGINE", "auto").strip()
 
 # --- Frontend built --------------------------------------------------------------
-FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+FRONTEND_DIST = RESOURCE_DIR / "frontend" / "dist"
 
 # --- Autenticazione (self-hosted) ---------------------------------------------------
 # `on` (default): login richiesto per ogni API; il primo avvio mostra la schermata
@@ -124,6 +141,31 @@ SESSION_COOKIE_SECURE = os.environ.get("TABULARIUM_SESSION_COOKIE_SECURE", "0").
 SSH_KNOWN_HOSTS = Path(os.environ.get("TABULARIUM_SSH_KNOWN_HOSTS", "").strip() or (ROOT_DIR / "known_hosts"))
 BACKUP_RETENTION = max(1, int(os.environ.get("TABULARIUM_BACKUP_RETENTION", "10")))
 VAULT_KEY = os.environ.get("TABULARIUM_VAULT_KEY", "").strip()
+
+
+def ensure_vault_key() -> None:
+    """Installato, nessuno lancia `setup_backend.sh`: la chiave del vault la
+    genera il primo avvio, nel `.env` della radice dati (permessi 600).
+
+    Da un checkout non si tocca niente: la genera lo script di setup, come
+    sempre. La chiave non si rigenera mai se esiste: cambiarla renderebbe
+    illeggibili i credential già salvati.
+    """
+    global VAULT_KEY
+    if not INSTALLED or os.environ.get("TABULARIUM_VAULT_KEY", "").strip():
+        return
+    from cryptography.fernet import Fernet
+
+    key = Fernet.generate_key().decode()
+    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with ENV_FILE.open("a", encoding="utf-8") as fh:
+        fh.write(f"\n# Encrypts provider credentials saved from the UI. Keep this file.\nTABULARIUM_VAULT_KEY={key}\n")
+    try:
+        ENV_FILE.chmod(0o600)
+    except OSError:
+        pass
+    os.environ["TABULARIUM_VAULT_KEY"] = key
+    VAULT_KEY = key
 
 # Registrazione chiusa di default: un'istanza self-hosted non deve accettare
 # account da chiunque la raggiunga. L'admin la apre dalle Impostazioni.

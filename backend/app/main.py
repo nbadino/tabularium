@@ -36,6 +36,10 @@ async def lifespan(_app: FastAPI):
     # Non blocca l'avvio: chi ha perso la chiave deve poter entrare e
     # reinserire i credential. Deve però saperlo prima di cercarli nella UI.
     from .services import vault
+    # Installato non c'è uno script di setup: la chiave nasce al primo avvio,
+    # ma mai sopra credential già salvati con un'altra chiave.
+    if not vault.unreadable_names():
+        config.ensure_vault_key()
     if problem := vault.key_problem():
         logging.getLogger("uvicorn.error").warning(problem)
     trainer.reconcile_jobs()

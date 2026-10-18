@@ -1,7 +1,9 @@
 name: release
 
 # Publishes a GitHub release with the frontend already built, so installing
-# Tabularium needs Python only (no Node.js, no git).
+# Tabularium needs Python only (no Node.js, no git): source archives for
+# `scripts/run.sh` and a wheel for `uv tool install`. With the repository
+# variable PYPI_PUBLISH=true the wheel also goes to PyPI (trusted publishing).
 # Trigger: push a tag vX.Y.Z matching the VERSION file.
 # Manual runs build the archives as workflow artifacts without publishing.
 
@@ -41,6 +43,24 @@ jobs:
           npm ci
           npm run build
 
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build wheel
+        run: uv build --wheel -o out
+
+      - name: Check the wheel installs and starts
+        run: |
+          uv tool install --python 3.12 out/*.whl
+          tabularium --version
+          tabularium --no-browser --port 8790 --data "$RUNNER_TEMP/tab-data" &
+          SERVER=$!
+          for _ in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8790/api/health && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8790/ | grep -q '<div id="root">'
+          kill "$SERVER"
+
       - name: Assemble archives
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -53,7 +73,7 @@ jobs:
           # Tells run.sh / run.ps1 that this build is prebuilt: never rebuild it.
           echo "${VERSION}" > "stage/${NAME}/frontend/dist/.prebuilt"
           (cd stage && tar -czf "../out/${NAME}.tar.gz" "${NAME}" && zip -qr "../out/${NAME}.zip" "${NAME}")
-          (cd out && sha256sum * > SHA256SUMS.txt)
+          (cd out && sha256sum *.tar.gz *.zip *.whl > SHA256SUMS.txt)
           ls -l out
 
       - name: Release notes from CHANGELOG
@@ -69,7 +89,14 @@ jobs:
             echo
             echo "## Install"
             echo
-            echo "Download \`tabularium-${VERSION}.zip\` (Windows) or \`.tar.gz\` (macOS/Linux), extract it, then:"
+            echo "With [uv](https://docs.astral.sh/uv/) (installs the right Python for you):"
+            echo
+            echo '```bash'
+            echo "uv tool install https://github.com/nbadino/tabularium/releases/download/v${VERSION}/tabularium-${VERSION}-py3-none-any.whl"
+            echo "tabularium"
+            echo '```'
+            echo
+            echo "Or download \`tabularium-${VERSION}.zip\` (Windows) or \`.tar.gz\` (macOS/Linux), extract it, then:"
             echo
             echo '```bash'
             echo "cd tabularium-${VERSION}"
@@ -97,3 +124,19 @@ jobs:
             --title "Tabularium ${{ steps.version.outputs.version }}" \
             --notes-file notes.md \
             --verify-tag
+
+  pypi:
+    needs: release
+    if: github.ref_type == 'tag' && vars.PYPI_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/tabularium/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the wheel from the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" -p "*.whl" -D dist
+      - uses: pypa/gh-action-pypi-publish@release/v1

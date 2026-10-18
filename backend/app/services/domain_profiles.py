@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[3]
+from .. import config
+
+_ROOT = config.RESOURCE_DIR
 _PROFILE_DIR = _ROOT / "conf" / "profiles"
 
 
