@@ -13,8 +13,9 @@ Rifiuta la dashboard admin scura a card fluttuanti che questa categoria spedisce
 qui la densità è onesta, non gonfiata di spazio bianco, perché l'utente reale fa ~1000 edit
 discreti su 200 pagine e ha bisogno di vedere molto insieme.
 
-**Non negoziabile:** ogni zona porta il proprio nome scritto. Nessun modulo senza linguetta,
-nessun pulsante affidato alla sola icona, nessuna azione che appare solo al passaggio del mouse.
+**Gerarchia:** ogni zona di lavoro ha un nome accessibile; evitare linguette e titoli duplicati.
+I contenitori di sola impaginazione non richiedono una testata.
+Nessun pulsante affidato alla sola icona, nessuna azione che appare solo al passaggio del mouse.
 
 ## Superficie
 
@@ -158,13 +159,16 @@ vivo non è un server pronto, e finché l'endpoint tace la UI dice «caricamento
 Rail multi-riga persistente in alto, non una sidebar da sette link.
 Riga 1: identità, lingua, stato del backend. Riga 2: le sezioni come linguette bordo a bordo
 (`.navtab`), l'attiva su fondo nero con la piastra rossa da 3px sotto.
-Le destinazioni globali sono cinque. Quattro portano il percorso primario — **Riconosci,
-Risultati, Archivio, Modelli** — e la quinta, **Annotazione**, è il banco di lavoro: ci si
-arriva quasi sempre da una pagina o da una run, ma tiene la sua linguetta perché una sessione
-lunga ci rientra di continuo, e senza una pagina scelta dice quale sceglierne. Dataset,
-training, valutazione e playground **non sono percorsi globali concorrenti**: vivono dentro
-l'hub Modelli, che è il loro contesto — sono strumenti che lavorano sul modello — e restano
-raggiungibili come rotte profonde. Il rail non cresce a ogni strumento nuovo.
+Le destinazioni globali sono **Riconosci, Annotazione, Risultati, Progetti, Fine-tuning,
+Modelli**. Progetti porta all’elenco e alla creazione; la rassegna Archivio si apre dal
+progetto. Fine-tuning è raggiungibile direttamente e dichiara tre sottosezioni persistenti:
+**Panoramica → Prepara il dataset → Addestra → Valuta la qualità**.
+La panoramica (`/fine-tuning`) espone il prossimo passo dallo stato del progetto;
+non avanza per click e non scambia errori di lettura per assenza di dati. La valutazione può misurare anche un
+modello di base prima dell’addestramento. Modelli mantiene la configurazione e la sottosezione
+**Prova modello** (la rotta storica resta `/playground`): una prova temporanea su una pagina,
+con un collegamento esplicito a Riconosci per salvare i risultati. Ogni sottosezione mantiene
+attiva la sua destinazione globale, anche per gli screen reader.
 La colonna sinistra resta libera per il **contesto** (pagine, progetti), mai per i link globali.
 
 Modello e luogo di esecuzione sono sempre visibili nello stesso indicatore globale. Cambiare da
@@ -270,7 +274,7 @@ solo mentre lo stream è aperto, perché dice «la riga non è finita». Sotto `
 il testo compare e basta, e il cursore resta fermo e visibile.
 
 **Ingressi, sottili.** Ciò che arriva entra invece di comparire di colpo, sempre sotto i
-200 ms con la stessa curva: la sezione nuova (`.enter`, dissolvenza con 4px di salita), le
+200 ms con la stessa curva: i contenuti locali (`.enter`, dissolvenza con 4px di salita), le
 righe delle liste una dopo l'altra (`.cascade`, 18 ms di scarto, tutte insieme dalla
 decima), le immagini con `data-fade` quando sono davvero arrivate (e anche se falliscono,
 così nessuna resta invisibile), la scansione dello Studio sul canvas. Mentre i dati arrivano
@@ -285,12 +289,9 @@ dell'esito. I dialoghi entrano con il velo che si scurisce e il pannello che cre
 sola (`NavMark` in `Layout.tsx`) e cambiando sezione **scorre** verso la linguetta nuova
 (220 ms) invece di saltare. Le transizioni nominano sempre le proprietà, mai `all`.
 
-**Scorrimento.** I moduli affiorano mentre entrano in vista (`animation-timeline: view()`,
-legata allo scorrimento e non al tempo; ciò che è già in vista non si muove, e su Firefox i
-moduli sono semplicemente lì). I salti fatti dall'app scivolano (`.glide`: area principale,
-lista pagine e contenuto dello Studio — mai i log che seguono lo stream). La testata, a
-pagina scorsa, prende un'ombra appena accennata: è la seconda ombra del sistema, e dice
-soltanto che il contenuto le passa sotto.
+**Scorrimento.** I moduli restano visibili subito, senza comparsa legata allo scroll.
+L’area principale cambia pagina senza animazione d’ingresso o scorrimento forzato.
+La testata mantiene l’ombra quando il contenuto le passa sotto.
 
 **Cambi di forma.** Una riga del contenuto che si chiude una volta verificata (o si riapre)
 scorre dalla vecchia alla nuova altezza, e le righe che cambiano posto — una bozza confermata,
@@ -299,19 +300,19 @@ curva di sempre (`lib/motion.ts`). Niente sotto `prefers-reduced-motion`.
 
 **La vista della tabella si carica in un gesto solo** (dialogo o seconda finestra): finché i
 dati arrivano c'è uno scheletro con la forma della vista — barra, azioni, pagina, foglio —
-così nulla salta; Univer parte a dialogo già aperto (dopo 220 ms) per non far scattare
-l'ingresso; quando il foglio ha disegnato si **scopre dall'alto una riga alla volta**
-(25 ms a riga, al massimo 450 ms, solo le righe in vista) mentre il suo scheletro sfuma. È una
-maschera sul disegno già completo, non un riempimento progressivo: i dati ci sono tutti fin
-dall'inizio e l'autosave non vede mai una griglia a metà. Ai rimontaggi (una colonna in più)
-non si ripete.
+così nulla salta; Univer parte appena i dati e il contenitore sono disponibili. Il foglio
+compare quando il canvas è pronto, senza ritardo di 220 ms o maschera riga per riga.
+Selezione e scorrimento non ricostruiscono il `TableGrid`: soltanto le mutazioni dei dati
+serializzano il workbook. I comandi strutturali sono quelli di Tabularium, che conservano
+celle unite e provenienza; le voci native duplicate sono nascoste.
 
-**Eccezione dichiarata: i menu al rallentatore.** Il menu dell'account, «Altro» dello Studio
-e le tendine `Select` (progetto, classe del blocco) si srotolano in ~0,7 s con le voci che
-entrano una alla volta, e si riavvolgono in 0,45 s (`.menu-unfold`). Sono richiesti, si aprono
-di rado rispetto agli edit, e la lista di un `<select>` nativo il CSS non la raggiunge: per
-questo `Select` (`app/ui.tsx`) sostituisce il nativo dove serve l'animazione, con tastiera da
-select (frecce, Home/Fine, Invio, Escape).
+**Menu immediati.** Account, Altro e Select mostrano tutte le voci al clic e si chiudono
+subito. Nessuno srotolamento o ritardo a cascata: la richiesta di navigazione rapida prevale
+sulla precedente animazione decorativa.
+
+**Testate compatte.** Un titolo di pagina da 24 px, le azioni e Guida chiusa di default.
+Le istruzioni generali restano disponibili senza occupare l’area di lavoro a ogni ingresso.
+La panoramica Fine-tuning evita una seconda navigazione identica alle tre righe delle fasi.
 
 **Tavolozza dei comandi.** Una barra larga e bassa in alto al centro, come Spotlight: il
 campo con la lente, sotto un elenco breve (circa sei voci, poi scorre) con a destra ciò che
@@ -340,3 +341,14 @@ tecnico richiuso dietro «dettaglio tecnico».
 Densità senza gerarchia diventa rumore. Ciò che tiene la densità leggibile è la linguetta
 (ogni regione si nomina) e la disciplina del rosso (un ruolo solo). Un modulo senza linguetta,
 o un secondo rosso con un altro significato, rompe il sistema più di qualsiasi errore di spaziatura.
+
+## Progetti e orientamento
+
+L’elenco Progetti è la superficie di ritorno al lavoro: ricerca e azione Nuovo progetto
+in testata. La creazione vive in una modale, anche da link diretto `?nuovo=1`;
+il rail Progetti torna sempre all’elenco. Le descrizioni di pagina vanno a capo:
+le istruzioni essenziali restano leggibili anche senza un tooltip. L’eliminazione
+è un’azione rara nel menu del progetto, con la sua conferma già esistente.
+
+La revisione basata su schermate e flussi Mobbin è documentata in
+`docs/UX_MOBBIN_REVIEW.md`, con collegamenti ai riferimenti e schermate del risultato.

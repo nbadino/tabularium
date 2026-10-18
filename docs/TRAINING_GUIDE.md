@@ -43,6 +43,26 @@ Preparazione di un host GPU nuovo (Vast.ai o qualsiasi box CUDA) — script
 TABULARIUM_TRAIN_ROOT=$HOME/tabularium-train bash scripts/cloud/setup_cloud_train.sh
 ```
 
+Su Vast.ai il noleggio **prepara da sé** l'ambiente: `rent_vast_instance(..., prepare_training=True,
+tabularium_ref=<ref>)` mette nell'`onstart` il curl di `setup_cloud_train.sh` (non quello di
+serving) e non apre porte HTTP — al training basta SSH. Lo script scrive
+`$TABULARIUM_TRAIN_ROOT/.train_ready` a fine installazione, quindi "preparato" è un fatto su
+disco, non un'assunzione.
+
+Dal **wizard di training** (executor «Vast.ai») il pulsante **«Noleggia e prepara»** fa tutto da
+sé: `POST /api/system/cloud/vast/rent-training` cerca l'offerta più economica entro i minimi
+(`max_dph`, `min_gpu_ram_gb`), la noleggia con `prepare_training` e, quando l'istanza espone
+l'SSH, compila host/porta/python/repo. Il ref è **`main`** (ultima versione su GitHub: non ci sono
+release).
+
+Percorsi risultanti sull'host (da usare nell'executor di training):
+
+| Cosa | Percorso |
+|---|---|
+| radice ambiente | `$HOME/tabularium-train` |
+| python (venv) | `$HOME/tabularium-train/venv/bin/python` |
+| repo di training | `$HOME/tabularium-train/MonkeyOCRv2/parsing/train` |
+
 Poi, dal lato Tabularium, si esporta il dataset e si lancia lo script generato:
 
 ```bash
@@ -67,5 +87,20 @@ passa a `verified` **solo** qui.
   esplicito.
 - **Esito**: ✅ `tests/test_train_recipes.py`.
 - **Limite**: non prova che lo script *giri* su GPU.
+
+### 2026-10-18 — tentativo di smoke test su Vast.ai (bloccato dall'infrastruttura)
+- **Cosa**: noleggio di una RTX 3090 per preparare l'ambiente con
+  `scripts/cloud/setup_cloud_train.sh` e lanciare un LoRA a 1 step su MonkeyOCRv2.
+- **Istanza 56531577** (3090, immagine `pytorch/pytorch:2.4.0-cuda12.1-cudnn9-devel`): bloccata su
+  `created` per ~10 min, SSH (proxy e diretto) rifiutato. Distrutta.
+- **Istanza 56533272** (3090, immagine Vast di default): `loading` → `created` → `offline`, SSH
+  mai accettato. Distrutta.
+- **Esito**: ❌ **bloccato lato host Vast.ai**, non da Tabularium (nessuna riga di codice
+  coinvolta: l'istanza non è mai arrivata a `running`). Credito speso: ~$0.05.
+- **Conseguenza**: nessuna ricetta passa a `verified`; tutte restano `experimental`.
+- **Ripetibile**: appena un host Vast (o un'altra GPU) sale a `running`, eseguire
+  `TABULARIUM_TRAIN_ROOT=$HOME/tabularium-train bash scripts/cloud/setup_cloud_train.sh`, poi il
+  LoRA a 1 step; annotare qui l'esito.
+
 
 <!-- Prossimo test: smoke test reale su GPU (Vast.ai RTX 3090) -->

@@ -47,3 +47,6 @@ frontend/vite.config.d.ts
 # Stato locale dell'agente (preferenze, impostazioni): non è parte del prodotto
 .commandcode/
 site/
+
+# Tooling locale dell'agente
+.claude/

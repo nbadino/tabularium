@@ -142,7 +142,16 @@ END2END a 2 MP deve essere confrontato con questo fallback su pagine gold senza 
 > Quindi i dati di training devono contenere OTSL. Il builder esporterà OTSL generato dal grid
 > di annotazione (+ opzione HTML intermedio per fedeltà al flusso ufficiale).
 
-### 2.3.4 Rilevamento della griglia: contratto e dominio d'uso
+### 2.3.4 Rilevamento della griglia: contratto e dominio d'uso — **DEPRECATO**
+> **Deprecato.** L'intero percorso geometrico è in via d'uscita: Tabularium è model-agnostic e i
+> modelli non ci danno la geometria del ritaglio (`vlines`/`hlines`/`row_columns`) — su 248 griglie
+> salvate una sola la porta. La correzione della struttura passa dal foglio (unisci/separa,
+> riga/colonna), non dai confini sul pixel. Restano in servizio, marcati nel codice, solo il
+> pulsante «Rileva griglia»/ri-rilevamento al resize dello Studio e la promozione a `Table` del
+> prefill OCR. La superficie di editing dei confini sul ritaglio (`TableGridOverlay`) e le sue
+> chiavi i18n sono deprecate e non montate. Il testo sotto resta come nota storica tecnica: non
+> costruire sopra questo modulo.
+
 `services/table_detect.detect_grid()` propone la struttura di un ritaglio `Table`. Non salva
 niente e non è una verità: è una bozza che l'annotatore accetta, sposta o rifiuta.
 
@@ -294,7 +303,7 @@ questo motivo.
 
 ## 3. Requisiti funzionali (vista utente)
 
-1. **Progetti**: crea progetto, scegli cartella archivio scansioni, registra pagine (immagini/PDF),
+1. **Progetti**: crea progetto, importa immagini/PDF dal browser oppure scegli una cartella sorgente sul server, registra pagine,
    metadati data/annata/pagina/tipo di pagina, anteprima.
 2. **Studio di annotazione** (cuore del prodotto):
    - **rettifica geometrica revisionabile**: *Allinea e confronta* genera una proposta senza
@@ -371,7 +380,22 @@ questo motivo.
        `BlockOut.annotation_revision`). Il client la riallinea con
        `useAnnotationState.syncRevision`: senza, il primo autosave successivo si vedrebbe
        respingere con 409 un conflitto che non esiste;
-   - autosave, stato avanzamento per pagina, scorciatoie da tastiera;
+     - **hint di schema tabella**: il progetto può dichiarare l'intestazione del registro (es.
+       «Year e Tons sono unite su una riga sopra») in `settings_json["table_hint"]`
+       (`GET/PUT /api/projects/{id}/table-hint`; nell'apposita modale dello Studio). Il testo è
+       accodato al prompt di riconoscimento tabella **solo** dai modelli che lo dichiarano
+       accettabile (`ModelCapabilities.accepts_prompt_hint`): oggi il solo Qwen3-VL, l'unico
+       eseguibile in locale su Apple Silicon con questa proprietà e quindi l'unico verificabile
+       senza un endpoint remoto. La famiglia a prompt in linguaggio naturale
+       (MonkeyOCRv2/GLM-OCR/TeleOCR) è il candidato naturale, ma resta spenta finché non
+       misurata: i motori a prompt di protocollo o pipeline nativa (PaddleOCR-VL, MinerU2.5,
+       DeepSeek-OCR-2, Unlimited-OCR) invece lo ignorano per costruzione, e un gate errato
+       avrebbe mandato testo fuori distribuzione a un modello che non lo capisce. Il hint è un
+       suggerimento, non una verità: resta affiancato dalla riparazione deterministica
+       dell'intestazione (`services/table_headers.py::repair_flat_header`), che non dipende
+       dall'obbedienza del modello. Sperimentale: da misurare su una pagina `index` prima di
+       considerarlo utile.
+    - autosave, stato avanzamento per pagina, scorciatoie da tastiera;
    - **autosave e navigazione**: il cambio pagina/progetto attende `flush()` dello store
      (`useAnnotationState` espone `dirty`/`getDirty`/`flush`); lo smontaggio con lavoro
      sporco salva in emergenza. Il debounce da solo protegge solo la chiusura del browser.
@@ -381,7 +405,7 @@ questo motivo.
    sistema (GPU/VRAM/CUDA), lancio, **log streaming (SSE) + grafico loss + uso GPU**, stop,
    resume dai checkpoint.
 5. **Valutazione & iterazione**: layout GT vs predetto overlay, metriche §11, analisi fallimenti.
-6. **Playground**: prova del modello affinato su nuove pagine (via vLLM).
+6. **Prova modello** (`/playground`): prova temporanea del modello in uso oppure OCR locale su una pagina; per salvare, correggere ed esportare si passa a Riconosci.
 7. **Istanza self-hosted** (auth/utenti/impostazioni):
    - **primo avvio**: schermata di setup che crea l'amministratore dell'istanza
      (un solo account, poi login normali); registrazione **chiusa di default**
@@ -860,9 +884,9 @@ dal CER e li conta il recall).
   stato vero**, non dai click: dopo un refresh la preparazione in corso si riprende
   (promemoria `tabularium.vast.job` + una lettura del log remoto per istanza), e
   `provision_log` dichiara `adapter_id` perché il log è uno per istanza — senza, il fallimento
-  di un modello veniva attribuito a quello appena scelto. Dataset, fine-tuning, valutazione e
-  playground non stanno nel rail (cinque destinazioni globali: Riconosci, Annotazione, Risultati,
-  Archivio, Modelli): sono strumenti del modello e si aprono dall'hub. Il profilo attivo
+  di un modello veniva attribuito a quello appena scelto. Il rail espone Riconosci, Annotazione, Risultati, Progetti, Fine-tuning e Modelli.
+  Fine-tuning ha sottosezioni visibili Dataset → Addestramento → Valutazione; Prova modello
+  vive accanto alla configurazione in Modelli. Il profilo attivo
   è la fonte di verità atomica (`compute_profiles`, DB v10+); `get_inference_config()` espone
   anche `provider`, `resource_id` e `source_profile_id`, e il client VLLM li usa così che
   «`is_cloud`» non si deduca dall'URL (un tunnel SSH Vast ascolta su `localhost` ma è cloud).
@@ -884,6 +908,18 @@ dal CER e li conta il recall).
   prodotto: su un Mac PaddleOCR-VL ha un benchmark MLX verificato. Qwen3-VL ha avuto prove
   MLX riuscite con il vecchio prompt, ma il suo prefill ora segue il parser nativo `qwenvl html`
   e va ribenchmarkato su Metal (la vecchia richiesta OTSL generava Markdown invalido).
+  - **Qwen3-VL su MLX: le finestre delle penalità vanno alzate.** I parametri ufficiali
+    Instruct-VL (`temperature 0.7`, `top_p 0.8`, `top_k 20`, `repetition_penalty 1.0`,
+    `presence_penalty 1.5`) sono già in `recommended_generation`, ma `mlx-vlm` applica le due
+    penalità su una finestra di **20 token** (`DEFAULT_REPETITION_CONTEXT_SIZE`): più corta di
+    una riga di registro (~25–40 token), quindi la ripetizione resta invisibile e la
+    generazione scorre fino al tetto (misurato: pagina `index` a 16384 token / 508 s,
+    `finish_reason=length`). L'adapter dichiara ora il guard MLX
+    (`local_mlx_repetition_penalty`/`_context_size`, `local_mlx_presence_context_size`),
+    applicato per richiesta in `inference._sampling_for` solo sul serving locale Apple Silicon e
+    regolabile in Impostazioni (sezione MLX). Il valore di default è conservativo e va
+    confermato dal vivo: le penalità riducono la ripetizione degenerata, ma **non** garantiscono
+    l'EOS del checkpoint 4-bit su richieste di pagina intera.
   MinerU2.5 ha anche il percorso nativo `MinerUClient` `mlx-engine` documentato
   dal produttore, ma resta sperimentale finché non passa una prova live sul corpus. Gli altri
   modelli restano remoti, ognuno per una ragione **misurata** servendolo davvero su una pagina:
@@ -937,6 +973,252 @@ dal CER e li conta il recall).
     nomina la causa del fallimento — chiave rifiutata, host key cambiata, host irrisolvibile,
     porta muta. La chiave rifiutata risponde **409** e non più 502 indistinto: prima era
     indistinguibile da un errore di provisioning e diagnosticarla costava un noleggio intero.
+- **M11 — Collaborazione live (prima ondata)** — presenza e riallineamento in tempo reale
+  sull'annotazione, stile editor collaborativo, senza toccare il modello dati.
+  - **Il WebSocket è solo push, non un secondo percorso di scrittura.** Le annotazioni si
+    scrivono ancora **solo** dalla REST (`PUT /pages/{id}/annotations`, `PATCH/DELETE /blocks/{id}`,
+    `PUT /blocks/{id}/table`): validazioni, audit e revisione ottimistica restano lì. Il canale
+    (`services/live.py` → `LiveHub`, `api/live.py` → `WS /api/live/pages/{page_id}`) serve a due
+    cose: dire chi è collegato alla pagina e avvisare gli *altri* che è cambiata.
+  - **Presenza**: ogni connessione porta `conn_id`, utente e un colore stabile (derivato
+    dall'identità). Lo Studio mostra gli avatar dei colleghi e «{nome} sta scrivendo…» mentre
+    qualcuno ha modifiche non salvate (`editing`). L'autenticazione passa dal cookie di sessione;
+    l'accesso al progetto è verificato prima di entrare nella stanza (pagina inesistente/estranea
+    → chiusura 4404, come il 404 delle REST). I viewer si collegano in sola lettura.
+  - **Riallineamento**: dopo ogni scrittura REST l'endpoint pubblica `annotations_changed` con la
+    nuova revisione e l'autore. Il client ignora l'**eco della propria** modifica (revisione
+    combacia) e, se non ha lavoro sporco, adotta la versione del server senza che l'utente ricarichi
+    (`adoptRemote` su `useAnnotationState`, che azzera lo storico: fondere due storie è compito di
+    un CRDT, non di questo strato). Con modifiche non salvate **non si butta nulla**: compare un
+    avviso con chi ha cambiato e un pulsante «Carica la versione remota».
+  - **Un solo processo.** L'hub vive in memoria: vale per lo scenario supportato (un processo
+    dashboard). Con più worker servirebbe un broker esterno — il confine è `LiveHub.publish`, che
+    gli endpoint sincroni (thread di lavoro) chiamano in modo thread-safe.
+  - Il proxy di sviluppo (`vite.config.ts`) inoltra i WebSocket (`ws: true`); in produzione il
+    canale è same-origin dietro la stessa CSP `connect-src 'self'`.
+  - Test: `backend/tests/test_live.py` (hub, broadcast, publish thread-safe, autorizzazione);
+    `frontend/src/app/live.test.ts` (apertura canale, presenza, notifica modifiche, riconnessione).
+- **M12 — Condivisione stile Drive** — un'unica superficie per l'accesso al progetto.
+  - **«Condividi» è una finestra, non un modulo in fondo alla pagina.** `app/ShareDialog.tsx`
+    riusa le API già esistenti (`members`, `member-candidates`, `owner`, `activity`): aggiunta
+    persone con ricerca per nome/email (il candidato entra come `editor` e il ruolo si cambia
+    inline), ruoli Editor/Viewer, rimozione con conferma, trasferimento di proprietà. Due
+    linguette: **Persone** (avatar con iniziali e colore stabile, come nello Studio) e
+    **Attività**.
+  - **Riuso, non un modello di permessi nuovo.** Il backend resta la fonte di verità: chi non è
+    proprietario né admin vede la lista in sola lettura (niente campo di aggiunta, ruoli come
+    testo) e il server respinge comunque le scritture con 403. `canManage` si calcola da
+    `useAuth`/`useCanAdminister` + `project.owner_id`.
+  - **Avatar condivisi**: `lib/avatar.ts` (`initialsOf`, `avatarColor`) è la sola fonte di
+    iniziali e colore per Studio (`AnnotationPage`) e finestra di condivisione; la tavolozza è
+    quella di `services/live.py`, così un utente ha la stessa tinta ovunque.
+  - **Il feed attività è uno** (`app/ActivityFeed.tsx`): la stessa resa nella pagina del progetto
+    e nella finestra, con un'unica tabella di traduzione delle azioni.
+  - Test: `frontend/src/app/ShareDialog.test.tsx` (membri, aggiunta con ruolo, sola lettura).
+- **M13 — Onboarding e profilo** — invito via link, password forzata al primo accesso, profilo.
+  - **Invito via link** (`POST /api/users` con `invite=true`, `POST /api/users/{id}/invite`):
+    l'admin crea l'account senza conoscerne la password; il server genera un token (conservato
+    **solo come hash** in `users.invite_token_hash`, con `invite_expires_at`, TTL 72h) e
+    restituisce il link una sola volta. L'invitato lo apre su `/invito?token=…`
+    (`AcceptInvitePage`), sceglie la password e resta connesso
+    (`GET /api/auth/invite/{token}` pubblica lo stato; `POST /api/auth/invite/accept` consuma il
+    token, a uso singolo, attiva l'account e invalida le sessioni).
+  - **Password da cambiare al primo accesso**: `users.must_change_password` è vero per gli account
+    creati dall'admin e dopo un reset (`POST /api/users/{id}/reset-password`). `get_current_user`
+    **blocca** ogni rotta tranne `/auth/me`, `/auth/change-password`, `/auth/logout` (403) finché
+    l'utente non ne sceglie una propria; `AuthGate` monta `SetPasswordPage` prima dell'app, così
+    il blocco è anche UX e non solo server. `set_password(..., must_change=False)` è l'unico punto
+    che azzera il flag.
+  - **Profilo**: `PATCH /api/auth/me` aggiorna la propria email (il nome utente è immutabile);
+    la zona Account delle Impostazioni la edita sul posto. In modalità locale non c'è profilo.
+  - **Migrazione 18** (additiva): le tre colonne su `users`; `SCHEMA_VERSION = "18"`.
+  - Test: `backend/tests/test_user_onboarding.py` (invito, scadenza, gate, reset, profilo).
+
+- **M14 — Chiarezza dei percorsi** — Progetti e Fine-tuning sono ingressi globali; le
+  sottosezioni restano visibili e mantengono attiva la sezione padre. La creazione apre
+  subito il progetto e lo rende attivo: `ProjectCreate.archive_dir` è opzionale (`null`
+  per import browser), con import di immagini/PDF singoli o cartella. Solo i progetti
+  collegati a una cartella sorgente espongono la scansione server. Protocollo, attività
+  e pilot restano richiusi per lasciare in vista l’import e il registro pagine.
+  `datasetUsable` esclude gli export vuoti; training e valutazione dipendono dai loro
+  prerequisiti reali, non dal completamento dell’intero archivio. La prova temporanea
+  è nominata Prova modello in tutte le lingue; non mostra errori dell’endpoint quando
+  si usa OCR locale e azzera il risultato cambiando pagina.
+  Verifica: `docs/UX_WORKFLOW_AUDIT.md`, test progetti/auth/dataset/i18n backend,
+  Vitest completo, typecheck e build; browser su istanza isolata con immagine sintetica.
+
+- **M15 — Orientamento e usabilità da riferimenti Mobbin** — il rail Fine-tuning
+  apre `/fine-tuning`: una panoramica con prossimo passo ricavato da workflow,
+  dataset e training; gli strumenti restano accessibili e gli errori di lettura
+  non sono presentati come assenza di dati. Progetti mostra prima elenco e ricerca;
+  `?nuovo=1` apre il dialogo di creazione, senza essere ricordato nel rail.
+  `PageHeader` non tronca più le descrizioni. Le modali tengono stabile il focus
+  durante i render e supportano `data-autofocus` sul campo iniziale.
+  Riferimenti, scelte e verifica: `docs/UX_MOBBIN_REVIEW.md` (207 test Vitest,
+  typecheck, build, browser it/en/fr). Nessuna nuova dipendenza.
+
+- **M16 — Modelli chiusi via gateway: Gemini 4 Argon** — un modello senza pesi
+  pubblici entra come endpoint esterno, non come download. L'adapter `gemini-argon`
+  dichiara il protocollo Google `generateContent` (`chat_protocol`), raggiunto dal
+  gateway OpenCode (Zen/Go) o da un endpoint Google; `services/opencode_gateway.py`
+  legge la chiave dall'archivio di opencode (`~/.local/share/opencode/auth.json`,
+  provider `opencode-go`/`opencode`) quando il vault non ne ha una, con override
+  `TABULARIUM_OPENCODE_KEY`/`TABULARIUM_OPENCODE_AUTH`. `VllmClient` instrada la
+  richiesta al ramo `generateContent` (header `x-opencode-session` obbligatorio),
+  lasciando invariati prompt, parsing e percorso a valle. Il percorso verificato è
+  **END2END**: un prompt con la tassonomia del progetto e l'OTSL vincolato restituisce
+  in una sola generazione bbox 0–1000, label e contenuto — testata (`Title`), numero
+  (`Issue-number`), data (`Issue-date`) **e** la tabella in OTSL (misurato live: 4
+  elementi su una pagina `index`). È quindi il workflow nativo (`native_mode` →
+  `end2end`), quindi **entra nel prefill/Riconosci** (`supports_native`) e nel
+  Playground. Il prompt Tabella **vincola i token canonici** (`<fcel>/<ecel>/<lcel>/`
+  `<ucel>/<xcel>/<nl>`, niente tag di chiusura): senza, il modello emette
+  `<ched>/<splt>/<uched>` che `otsl.otsl_to_grid` non riconosce (misurato live).
+  `provider` "opencode" si registra come `custom` nel profilo (il `CHECK` di
+  `compute_profiles` non lo ammette: era un 500 all'utente) e un cambio di adapter
+  azzera il tetto pixel globale, che è un residuo della ricetta MonkeyOCRv2. La
+  disponibilità del gateway è una `generateContent` **senza corpo** (≈0,7 s):
+  Argon «pensa» anche per un token (2–20 s), quindi una generazione minima come
+  probe faceva lampeggiare `available` e disabilitava l'avvio del riconoscimento.
+  Non è addestrabile (`training_types` vuoto) e non si scarica (`hf_repo` vuoto →
+  `downloadable`/`download_only` falsi). Verifica: `tests/test_opencode_gateway.py`,
+  `tests/test_model_registry.py`, `tests/test_prelabel.py` (END2END con testata+tabella),
+  `tests/test_recognition.py` (Playground), `frontend/src/app/models/registry.test.ts`;
+  typecheck, Vitest, build.
+
+- **M17 — Benchmark multi-modello sulle pagine gold** — la Valutazione (M6) misura un
+  solo modello, quello attivo, contro le pagine approvate. Il benchmark estende la stessa
+  misura a **N modelli sulle stesse pagine**, per rispondere a «quale modello — o quale
+  checkpoint — è il migliore *sul mio corpus*» e per vedere il delta del fine-tuning.
+  - **Gold = le pagine approvate/esportate**, non uno stato nuovo: la verità di una
+    valutazione resta l'annotazione umana (§M6). Una pagina «perfetta» è una pagina
+    approvata; l'elenco pagine può mostrare un filtro «gold» ma non introduce una seconda
+    verità accanto a `approved`/`exported`.
+  - **Il riferimento è l'annotazione umana, mai l'output di un altro modello.** Confrontare
+    con Argon misura l'accordo con Argon, non la correttezza: al più è uno smoke test, non
+    la definizione del benchmark.
+  - **Metriche riusate da `services/evaluate.py`** (IoU per label a 0.5 e `layout_strict`
+    0.75, Levenshtein dell'ordine di lettura, TEDS, CER/WER), invocate una volta per modello
+    sulle stesse pagine. Il benchmark non reimplementa metriche: le compone.
+  - **Il confronto passa dal bridge nativa → canonica.** Le label predette si traducono nel
+    vocabolario del progetto (`model_labels.resolve_native_label`) come fa il prefill, dentro
+    `evaluate._evaluate_page`: senza, un modello che parla i propri nomi (`header`, `table`)
+    segnava zero contro la verità canonica. La cache è versionata (`_CACHE_VERSION`) così un
+    cambio di logica di misura la invalida. (La mappa nativa di Unlimited-OCR mancava ed è
+    stata aggiunta.)
+  - **Effimero.** Report in `eval/bench_<ts>/{report.json,report.html}`; nessun blocco o
+    griglia scritto nel DB. Un benchmark non può sporcare il corpus né diventare dati di
+    training per sbaglio.
+  - **Cache per (adapter_id, model, page_id, annotation_revision)** su disco: un refresh non
+    ripaga chiamate già fatte. Il report dichiara per modello latenza, token e **costo
+    stimato** — i modelli remoti (Gemini 4 Argon via gateway) si pagano, e la spesa deve
+    essere leggibile prima di rilanciare.
+  - **Orchestrazione dei candidati.** Una lista di endpoint, non il solo profilo attivo. I
+    modelli locali il benchmark **li avvia e li spegne da sé**, uno alla volta, su una porta
+    dedicata (`_start_local`): **non passa da `serve_manager`**, che cambierebbe il profilo di
+    inferenza attivo e romperebbe una run di riconoscimento in corso (es. Argon) — verificato:
+    server locale acceso, misurato, spento, profilo intatto. Se l'endpoint locale indicato
+    risponde già, si riusa (nessun secondo modello in memoria). Il pid del server avviato
+    finisce nello stato (`serve_pid`) e `reconcile_benchmarks()` lo spegne all'avvio dopo un
+    riavvio, così non restano orfani.
+  - **Esecuzione in background con stato persistito.** Il benchmark non gira nella richiesta
+    HTTP: `POST …/benchmark` avvia un thread e risponde subito; `GET …/benchmark/status`
+    (stato su disco in `eval/bench_state.json`) dice `running`/`done`/`error` con
+    `index`/`total`/`current_adapter`. Un refresh della pagina ritrova lo stato e, se è in
+    corso, lo segue; a fine giro il report resta su disco.
+  - **Anche gli adapter a pipeline ufficiale si misurano.** Qwen3-VL, PaddleOCR-VL, MinerU2.5,
+    GLM-OCR e TeleOCR non hanno un prompt di layout: la loro misura usa la pipeline del
+    produttore (`prefill.native_page_items`), la stessa del prefill, così non restano a zero.
+  - **Si misura il percorso in esercizio** — prompt e parser dell'adapter, ciò che
+    Tabularium userebbe davvero — non la pipeline nativa del produttore. `benchmark_models.py`
+    resta lo strumento diagnostico per-fase; il benchmark di prodotto misura l'output che
+    l'utente otterrebbe.
+  - **Superficie propria, staccata dal Fine-tuning.** Il benchmark è la pagina `/benchmark`
+    (voce nel rail), non una sezione della Valutazione: lì si scelgono **modelli** (lista a
+    tick, ognuno con badge **Locale/Remoto**) e **pagine** (elenco con checkbox; una pagina è
+    selezionabile solo se tutti i blocchi sono confermati). Ogni modello scelto espone il suo
+    endpoint e il nome servito, modificabili.
+  - **Approvazione in blocco** (`POST /api/projects/{id}/pages/approve`): approva tutte le
+    pagine (o quelle scelte) in un colpo. Senza `confirm_drafts` salta quelle con bozze non
+    verificate; con il flag le conferma — scelta esplicita, perché rende il modello maestro di
+    se stesso.
+  - **Risultati man mano e modalità «solo tabelle».** Ogni modello finito viene scritto
+    nello stato (`results`), quindi la tabella si popola durante la run; l'avanzamento è per
+    modello **e per pagina** (`page_index`/`page_total`). `table_only` misura solo la struttura
+    delle tabelle (blocchi `Table` o con contenuto OTSL/HTML), ignorando layout e label: la
+    tassonomia (una testata `Title` vs `Page-header`) non abbassa il punteggio della tabella.
+  - API: `GET /api/projects/{id}/benchmark/pages` (pagine selezionabili),
+    `POST /api/projects/{id}/benchmark` (admin/editor) con `{targets[], page_ids?, limit,
+    with_text}`, `GET …/benchmark/latest`; report su disco come per l'eval.
+    Verifica: `tests/test_benchmark.py` (metriche riusate, nessuna scrittura DB, cache,
+    approvazione in blocco), pagina `/benchmark`; typecheck, Vitest, build.
+
+- **M18 — Accesso di progetto esplicito e consultazione del team** — `ProjectOut.access`
+  dichiara ruolo effettivo, fonte e capacità `can_edit`/`can_manage`, calcolate nella stessa
+  connessione della lettura/creazione. Il ruolo globale non sostituisce quello di membro.
+  L’elenco distingue propri/condivisi, proprietario e persone attive; la condivisione richiede
+  persona, ruolo e conferma, con default viewer. `AnnotationEntry` monta l’editor solo per chi
+  può scrivere; `ProjectReader` consulta scansioni, blocchi e tabelle senza autosave.
+  `TableEntry` risolve il contesto da `GET /api/blocks/{id}` protetto, mai dalla query.
+  Il revisore usa ancora editor: assegnazioni e approvazione separata non sono introdotte.
+  `PageHeader` porta le spiegazioni sotto Guida, chiusa di default; i menu non hanno attese
+  decorative e le pagine non ripetono istruzioni e animazioni globali. Pipeline richiede solo
+  gli stati usati dalla pagina. Dettagli e limiti: `docs/UX_TEAM_WORKSPACE.md`.
+  Verifica: test auth/projects/live/onboarding/annotations; frontend test, typecheck e build;
+  browser su istanza autenticata con dati sintetici, proprietà/condivisione/lettura/URL diretto.
+
+- **M18 — Training di ogni modello con la sua ricetta ufficiale** — Tabularium deve poter
+  addestrare **ogni modello a pesi aperti** seguendo le **best practice e la documentazione
+  ufficiale** di quel modello, non solo MonkeyOCRv2. I modelli chiusi (Gemini 4 Argon) restano
+  fuori: non hanno pesi, quindi non si addestrano — `training_types` vuoto lo dichiara già.
+  - **Un registro, non script sparsi.** `services/train_recipes.py` è il gemello di
+    `serve_recipes.py`: una ricetta per adapter dichiara `toolchain` (ms-swift, erniekit+paddlex,
+    llama-factory, unsloth, community), la **doc ufficiale** di riferimento, i tipi ammessi
+    (`lora`/`full`), la **vista dati** che il dataset builder deve produrre e la maturità. Il
+    training center legge la ricetta dell'adapter scelto; non conosce MonkeyOCRv2 per nome.
+  - **Le viste dati esistono già, vanno unificate.** ms-swift usa i JSONL `messages` multimodali
+    (§2.2, `dataset_builder`); Paddle ha le sue tre viste (`paddle_dataset.py`); GLM/LLaMA-Factory
+    la conversione ShareGPT (`alternative_training.py`). Ogni ricetta punta alla sua vista; il
+    builder non converte mai il target in silenzio.
+  - **Disciplina delle ricette (come serving ed eval).** Una ricetta è `verified` **solo dopo una
+    run reale** documentata; altrimenti è `experimental`. Nessuna ricetta senza una **doc
+    ufficiale** a supporto. La matrice di stato vive in `docs/TRAINING_GUIDE.md`, non in una
+    promessa: un toolchain che non ha ancora girato lo dice.
+  - **Stato attuale (da verificare, non da assumere).** `ms-swift` copre la maggior parte dei
+    modelli OCR — valori dalla sua tabella ufficiale *Supported-models-and-datasets*:
+    MonkeyOCRv2 (`monkeyocrv2`, riferimento), Qwen3-VL (`qwen3_vl`), Unlimited-OCR
+    (`unlimited_ocr`), DeepSeek-OCR-2 (`deepseek_ocr2`), GLM-OCR (`glm_ocr`), MinerU2.5
+    (`qwen2_vl`), dots.ocr (`dots_ocr`). PaddleOCR-VL resta sul suo percorso ufficiale
+    `erniekit+paddlex` (non passa dal generatore ms-swift). Da aggiungere: TeleOCR e
+    LightOnOCR-3 (non presenti in ms-swift). La maturità è `experimental` finché una run reale
+    non la promuove a `verified`; solo MonkeyOCRv2 è `verified`.
+  - **Il fine-tuning parte dai dati del benchmark.** Il benchmark (M17) dice *dove* sta il
+    divario: qui è la **tassonomia** (le classi custom non vengono emesse: `Issue-date` 0/10,
+    `Title` 0/3) e la **struttura tabella** (TEDS basso), non la lettura (CER 0.006). La ricetta
+    di training sceglie di conseguenza: LoRA sulla testa per i modelli che leggono già bene.
+  - **Provisioning training su GPU.** `scripts/cloud/setup_cloud_train.sh` prepara un host CUDA
+    (venv, ms-swift bundlato nel repo ufficiale o wheel pip, clone MonkeyOCRv2) e scrive un
+    marcatore `$ROOT/.train_ready`: "preparato" è un fatto su disco, non un'assunzione. Su Vast.ai
+    il noleggio lo esegue da sé via `prepare_training` (onstart = curl dello script, nessuna
+    porta HTTP), distinto da `prepare_server` (serving); l'executor di training poi sincronizza il
+    dataset e lancia lo script. Dettagli e log dei test in `docs/TRAINING_GUIDE.md`.
+  - Verifica: `tests/test_train_recipes.py` (ogni adapter addestrabile ha una ricetta con doc
+    ufficiale e vista dati; i chiusi no), `GET /api/system/train-recipes`; training wizard che
+    mostra toolchain e maturità per il modello scelto.
+
+- **M19 — Studio, assegnazioni e passaggio al revisore** — Migrazione 19 `page_work`:
+  annotatore e revisore distinti, assegnazione owner/admin senza concedere accessi, stati
+  annotation/pending/changes_requested/approved e versioni ottimistiche. Invio e revisione
+  verificano la revisione corrente; l’approvazione assegnata non passa dagli endpoint legacy.
+  Una modifica successiva invalida l’approvazione. `PageWorkControl` e filtri personali nel
+  sidebar rendono il lavoro visibile; aggiornamenti live sul passaggio di stato.
+  Salvataggi canvas/bozze/tabella serializzati, flush fallito impedisce il cambio pagina/progetto,
+  scritture dirette con revisione attesa. Selettore viste sempre accessibile, Riconosci visibile,
+  comandi secondari sotto Opzioni. Univer serializza solo mutazioni del dato, senza attese
+  decorative; i comandi strutturali nativi duplicati sono nascosti.
+  Verifica: 76 test backend mirati, 230 frontend, typecheck/build; browser con due account
+  distinti, ciclo correzioni/nuovo invio/approvazione, bozze e foglio sintetico 150×8.
+  Inventario e limiti: `docs/UX_STUDIO_REVIEW.md`. Nessun ruolo globale revisore o lock pagina.
 
 Ogni milestone termina con la sezione "Verifica": cosa lanciare per testare (vedi §13).
 
