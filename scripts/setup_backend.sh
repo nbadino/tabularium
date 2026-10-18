@@ -36,7 +36,7 @@ fi
 # Il motore OCR è una funzione del prodotto (prefill «OCR (CPU)» e riempimento
 # delle celle), non un extra: se non si importa lo diciamo qui, con la cura,
 # invece di lasciarlo scoprire al primo prefill con «nessun motore disponibile».
-if ! python -c 'from rapidocr_onnxruntime import RapidOCR' 2>/dev/null; then
+if ! python -c 'from rapidocr import RapidOCR' 2>/dev/null; then
   echo "!! Motore OCR non importabile: il prefill «OCR (CPU)» non sarà disponibile." >&2
   echo "   Verifica l'installazione con: pip install -r requirements.txt" >&2
 fi
