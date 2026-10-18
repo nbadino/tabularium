@@ -131,18 +131,23 @@ Missing a model? [Open an issue](https://github.com/nbadino/tabularium/issues/ne
 
 ## Quickstart
 
-You need Python 3.11–3.13 and Node.js 22. A GPU is optional.
+You need **Python 3.11–3.13**. No GPU, no Node.js, no git.
+
+1. Download the latest release from
+   [Releases](https://github.com/nbadino/tabularium/releases/latest):
+   the `.zip` on Windows, the `.tar.gz` on macOS and Linux.
+2. Extract it and open a terminal in the extracted folder.
+3. Run:
 
 ```bash
-git clone https://github.com/nbadino/tabularium.git
-cd tabularium
-./scripts/setup_backend.sh && ./scripts/setup_frontend.sh
+./scripts/setup_backend.sh
 ./scripts/run.sh
 ```
 
-Open **<http://localhost:8787>** and create the administrator account. On
-Windows, use the `.ps1` versions of the same scripts. Platform details, Linux
-prerequisites and single-user mode are in the
+On Windows: `scripts\setup_backend.ps1`, then `scripts\run.ps1`.
+
+Open **<http://localhost:8787>** and create the administrator account. Details,
+Linux prerequisites and installing from source are in the
 [installation guide](docs/guide/installation.md).
 
 ## Documentation

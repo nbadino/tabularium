@@ -64,5 +64,17 @@ python3 scripts/version.py bump major      # 0.1.0 → 1.0.0
 ```
 
 After a bump, add user-facing notes under the new version in
-[CHANGELOG.md](https://github.com/nbadino/tabularium/blob/main/CHANGELOG.md), review the changed files, then commit and tag
-the release (`vX.Y.Z`). Release publishing is still a deliberate manual step.
+[CHANGELOG.md](https://github.com/nbadino/tabularium/blob/main/CHANGELOG.md),
+commit, then push a tag matching `VERSION`:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The `release` workflow (`.github/workflows/release.yml`) builds the frontend,
+packs the repository with `frontend/dist` included (plus a `.prebuilt` marker
+so `run.sh` never tries to rebuild it), and publishes `.tar.gz`, `.zip` and
+`SHA256SUMS.txt` with the changelog section as release notes. It refuses a tag
+that doesn't match `VERSION`. Running it manually from the Actions tab builds
+the archives as artifacts without publishing anything.

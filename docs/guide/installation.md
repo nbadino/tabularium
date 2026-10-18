@@ -11,7 +11,7 @@ remote GPU.
 |---|---|
 | OS | Linux, macOS or Windows |
 | Python | 3.11–3.13 (backend; CI-verified) |
-| Node.js | 22 (CI-verified; used by `run.sh`/`run.ps1` to build the frontend) |
+| Node.js | Only when installing from source: 22 (CI-verified) |
 | Storage | SQLite (bundled), plus disk space for your scans |
 | GPU | Only for model recognition, evaluation and fine-tuning: NVIDIA with ≥ 8 GB, Apple Silicon for MLX-ported models, or a remote GPU |
 
@@ -33,37 +33,59 @@ Which models run locally depends on the pair *machine + model*, and the Models
 screen says so per model. The measured matrix is in
 [Local inference](local-inference.md) §0.
 
-## Install from source
+## Install from a release (recommended)
 
-Prebuilt `.app` and `.exe` installers are not published yet. Clone the
-repository (or **Code → Download ZIP** on GitHub) and open a terminal in the
-`tabularium` folder.
+Releases ship with the web interface already built, so you only need Python.
+
+1. Download the latest release from
+   [GitHub Releases](https://github.com/nbadino/tabularium/releases/latest):
+   `tabularium-<version>.zip` on Windows, `tabularium-<version>.tar.gz` on
+   macOS and Linux. `SHA256SUMS.txt` lists the checksums.
+2. Extract it and open a terminal in the `tabularium-<version>` folder.
+3. Set up the backend once, then start the app:
 
 ```bash
 # macOS / Linux
 ./scripts/setup_backend.sh
-./scripts/setup_frontend.sh
 ./scripts/run.sh
 ```
 
-On Windows, run these PowerShell scripts in order:
-
 ```powershell
+# Windows (PowerShell)
 scripts\setup_backend.ps1
-scripts\setup_frontend.ps1
 scripts\run.ps1
 ```
 
 Then visit **<http://localhost:8787>**. The first visit asks you to create an
 administrator account; later sessions start at the login page. Keep the
-terminal open while using the app and press `Ctrl+C` to stop it.
+terminal open while using the app and press `Ctrl+C` to stop it. To start
+again later, run `./scripts/run.sh` (Windows: `scripts\run.ps1`).
 
-To start again later, run `./scripts/run.sh` (Windows: `scripts\run.ps1`); it
-rebuilds the frontend when needed. Project data is kept in `data/` by default
-and stays on your machine.
+Project data is kept in `data/` inside the folder by default and stays on your
+machine. To upgrade, extract the new release and point it at the same data with
+`TABULARIUM_ROOT` (see [Configuration](configuration.md)), or move `data/` and
+`.env` into the new folder. Keep `.env`: it holds the key that encrypts the
+provider credentials saved from the interface.
 
-The backend installers accept Python 3.11, 3.12 or 3.13 and explicitly refuse
+The backend installer accepts Python 3.11, 3.12 or 3.13 and explicitly refuses
 versions outside the verified matrix.
+
+## Install from source
+
+For development, or to run unreleased changes. This also needs **Node.js 22**
+to build the interface.
+
+```bash
+git clone https://github.com/nbadino/tabularium.git
+cd tabularium
+./scripts/setup_backend.sh
+./scripts/setup_frontend.sh
+./scripts/run.sh
+```
+
+On Windows, run `scripts\setup_backend.ps1`, `scripts\setup_frontend.ps1` and
+`scripts\run.ps1`. From source, `run.sh` rebuilds the interface whenever its
+sources change.
 
 ### Linux prerequisites
 

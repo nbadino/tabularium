@@ -3,8 +3,9 @@
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $distIndex = Join-Path $root "frontend\dist\index.html"
-$needsBuild = -not (Test-Path $distIndex)
-if (-not $needsBuild) {
+$prebuilt = Test-Path (Join-Path $root "frontend\dist\.prebuilt")
+$needsBuild = (-not $prebuilt) -and (-not (Test-Path $distIndex))
+if ((-not $needsBuild) -and (-not $prebuilt)) {
     $buildTime = (Get-Item $distIndex).LastWriteTimeUtc
     $inputs = @(
         (Join-Path $root "frontend\src"),

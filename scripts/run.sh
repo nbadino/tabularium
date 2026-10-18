@@ -24,7 +24,10 @@ if [ "$_port_was_set" -eq 1 ]; then export TABULARIUM_PORT="$_port_from_environm
 
 DIST_INDEX="$ROOT/frontend/dist/index.html"
 needs_build=0
-if [ ! -f "$DIST_INDEX" ]; then
+if [ -f "$ROOT/frontend/dist/.prebuilt" ]; then
+  # Release archive: the frontend ships prebuilt and Node.js is not required.
+  needs_build=0
+elif [ ! -f "$DIST_INDEX" ]; then
   needs_build=1
 elif find "$ROOT/frontend/src" "$ROOT/frontend/index.html" "$ROOT/frontend/package.json" "$ROOT/frontend/package-lock.json" \
     -type f -newer "$DIST_INDEX" -print -quit 2>/dev/null | grep -q .; then

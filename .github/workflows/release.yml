@@ -1,0 +1,99 @@
+name: release
+
+# Publishes a GitHub release with the frontend already built, so installing
+# Tabularium needs Python only (no Node.js, no git).
+# Trigger: push a tag vX.Y.Z matching the VERSION file.
+# Manual runs build the archives as workflow artifacts without publishing.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match VERSION ${VERSION}" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Assemble archives
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          NAME="tabularium-${VERSION}"
+          mkdir -p out stage
+          git archive --format=tar --prefix="${NAME}/" HEAD | tar -x -C stage
+          mkdir -p "stage/${NAME}/frontend"
+          cp -R frontend/dist "stage/${NAME}/frontend/dist"
+          # Tells run.sh / run.ps1 that this build is prebuilt: never rebuild it.
+          echo "${VERSION}" > "stage/${NAME}/frontend/dist/.prebuilt"
+          (cd stage && tar -czf "../out/${NAME}.tar.gz" "${NAME}" && zip -qr "../out/${NAME}.zip" "${NAME}")
+          (cd out && sha256sum * > SHA256SUMS.txt)
+          ls -l out
+
+      - name: Release notes from CHANGELOG
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" {on=1; next}
+            on && /^## \[/ {exit}
+            on {print}
+          ' CHANGELOG.md > notes.md
+          {
+            echo
+            echo "## Install"
+            echo
+            echo "Download \`tabularium-${VERSION}.zip\` (Windows) or \`.tar.gz\` (macOS/Linux), extract it, then:"
+            echo
+            echo '```bash'
+            echo "cd tabularium-${VERSION}"
+            echo "./scripts/setup_backend.sh   # Windows: scripts\\setup_backend.ps1"
+            echo "./scripts/run.sh             # Windows: scripts\\run.ps1"
+            echo '```'
+            echo
+            echo "Only Python 3.11–3.13 is required. See the [installation guide](https://nbadino.github.io/tabularium/guide/installation/)."
+          } >> notes.md
+          cat notes.md
+
+      - name: Upload artifacts (manual runs)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabularium-${{ steps.version.outputs.version }}
+          path: out/*
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" out/* \
+            --title "Tabularium ${{ steps.version.outputs.version }}" \
+            --notes-file notes.md \
+            --verify-tag
