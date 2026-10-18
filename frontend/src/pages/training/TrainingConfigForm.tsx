@@ -9,13 +9,13 @@
  * del backend si leggono dal vivo accanto al pulsante, non dopo.
  */
 import { useEffect, useState } from 'react'
-import type { Project, TrainConfigBody, TrainingPreflight } from '../../lib/types'
+import type { Project, TrainConfigBody, TrainRecipeInfo, TrainingPreflight } from '../../lib/types'
 import { Link } from 'react-router'
 import { apiGet, apiPost } from '../../lib/api'
 import { trainTypeLabel } from '../../lib/vocab'
 import { Badge, Collapsible, Field, Module, Notice, SkeletonLines } from '../../app/ui'
 import { IconPlayground } from '../../app/icons'
-import { BASE_CFG, matchPreset, PRESETS } from './presets'
+import { BASE_CFG, matchPreset, PRESETS, recipeDefaults } from './presets'
 import { useI18n } from '../../i18n'
 
 type Executor = NonNullable<TrainConfigBody['executor']>
@@ -178,14 +178,33 @@ export default function TrainingConfigForm({
   const { t } = useI18n()
   const set = onConfigChange
   const active = matchPreset(cfg)
-  const [recipes, setRecipes] = useState<Record<string, { toolchain: string; maturity: string; trainable: boolean; script_ready: boolean; official_doc: string }>>({})
+  const [recipes, setRecipes] = useState<TrainRecipeInfo[]>([])
   useEffect(() => {
-    apiGet<{ items: Array<{ adapter_id: string; toolchain: string; maturity: string; trainable: boolean; script_ready: boolean; official_doc: string }> }>('/system/train-recipes')
-      .then((o) => setRecipes(Object.fromEntries(o.items.map((r) => [r.adapter_id, r]))))
+    apiGet<{ items: TrainRecipeInfo[] }>('/system/train-recipes')
+      .then((o) => setRecipes(o.items))
       .catch(() => {})
   }, [])
-  const recipe = recipes[cfg.adapter_id ?? 'monkeyocrv2-parsing']
-  const recipeReady = !recipe || (recipe.trainable && recipe.script_ready)
+  const recipe =
+    recipes.find((r) => r.adapter_id === cfg.adapter_id) ??
+    recipes.find((r) => r.adapter_id === 'monkeyocrv2-parsing')
+  // `planned`/`inference-only` restano nella lista: spiegarne il motivo è
+  // meglio che nasconderli e lasciare credere che il modello non esista.
+  const recipeItems = recipes.filter((r) => r.trainable || r.maturity === 'planned')
+  const recipeReady = recipe != null && recipe.trainable && recipe.script_ready
+
+  const chooseAdapter = (adapterId: string) => {
+    const next = recipes.find((r) => r.adapter_id === adapterId)
+    if (!next) return
+    const trainType = (next.train_types.includes(cfg.train_type ?? 'lora')
+      ? cfg.train_type
+      : next.train_types[0]) ?? 'lora'
+    set(recipeDefaults(next, trainType as 'lora' | 'full'))
+  }
+
+  const chooseTrainType = (trainType: 'lora' | 'full') => {
+    if (recipe) set(recipeDefaults(recipe, trainType))
+    else set({ train_type: trainType })
+  }
   const [rentBusy, setRentBusy] = useState(false)
   const [rentNotice, setRentNotice] = useState<string | null>(null)
   const [rentDph, setRentDph] = useState('1')
@@ -348,49 +367,32 @@ export default function TrainingConfigForm({
       {/* 2 — Modello e preset */}
       <Module tab={`2 · ${t('training.corpusPreset')}`}>
         <div className="grid gap-3 sm:grid-cols-2">
+          {/* Il modello *è* la ricetta: scegliere un adapter cambia toolchain,
+              tipi di training ammessi e default. Niente più deduzione dal
+              nome del checkpoint (una stringa che sbagliava MinerU, dots.ocr
+              e PaddleOCR-VL). */}
           <Field label={t('training.baseModel')} hint={t('training.baseModelHint')}>
             <select
-              value={cfg.model}
-              onChange={(e) => {
-                const model = e.target.value
-                const adapter = model.startsWith('Qwen/')
-                  ? 'qwen3-vl-8b'
-                  : model.includes('Unlimited-OCR') ? 'unlimited-ocr'
-                  : model.includes('DeepSeek') ? 'deepseek-ocr'
-                  : model.includes('GLM') ? 'glm-ocr'
-                  : model.includes('MinerU') ? 'mineru2.5'
-                  : 'monkeyocrv2-parsing'
-                set({ model, adapter_id: adapter })
-              }}
+              value={recipe?.adapter_id ?? cfg.adapter_id ?? ''}
+              onChange={(e) => chooseAdapter(e.target.value)}
               className="fld"
             >
-              <option value="zenosai/MonkeyOCRv2-B-Parsing">MonkeyOCRv2-B-Parsing</option>
-              <option value="zenosai/MonkeyOCRv2-S-Parsing">{t('training.modelLighter')}</option>
-              <option value="Qwen/Qwen3-VL-8B-Instruct">Qwen3-VL-8B (ms-swift)</option>
-              <option value="PaddlePaddle/Unlimited-OCR">Unlimited-OCR (ms-swift)</option>
-              <option value="deepseek-ai/DeepSeek-OCR-2">DeepSeek-OCR-2 (ms-swift)</option>
-              <option value="zai-org/GLM-OCR">GLM-OCR (ms-swift)</option>
-              <option value="opendatalab/MinerU2.5-Pro-2605-1.2B">MinerU2.5 (ms-swift)</option>
+              {recipeItems.map((r) => (
+                <option key={r.adapter_id} value={r.adapter_id} disabled={!r.trainable}>
+                  {r.display_name}
+                  {!r.trainable ? ` · ${t('training.recipeNotTrainable')}` : ''}
+                </option>
+              ))}
             </select>
           </Field>
-          {recipe && (
-            <p className="mt-1 text-[11px] text-[color:var(--color-ink-3)]">
-              {recipe.toolchain} · {recipe.maturity}
-              {recipe.official_doc ? ` — ${recipe.official_doc}` : ''}
-            </p>
-          )}
-          {recipe && !recipeReady && (
-            <div className="mt-2">
-              <Notice tone="warn">{t('training.recipeNotReady', { toolchain: recipe.toolchain })}</Notice>
-            </div>
-          )}
           <Field label={t('training.trainType')}>
             <select
               value={cfg.train_type}
-              onChange={(e) => set({ train_type: e.target.value as 'lora' | 'full' })}
+              onChange={(e) => chooseTrainType(e.target.value as 'lora' | 'full')}
               className="fld"
+              disabled={!recipe || recipe.train_types.length <= 1}
             >
-              {(['lora', 'full'] as const).map((k) => (
+              {(recipe?.train_types ?? (['lora', 'full'] as const)).map((k) => (
                 <option key={k} value={k}>
                   {trainTypeLabel(k)}
                 </option>
@@ -398,6 +400,36 @@ export default function TrainingConfigForm({
             </select>
           </Field>
         </div>
+
+        {recipe && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[color:var(--color-ink-3)]">
+            <Badge tone={recipe.maturity === 'verified' ? 'ok' : 'neutral'}>{recipe.maturity}</Badge>
+            <span className="mono">{recipe.toolchain}</span>
+            {recipe.official_doc && (
+              <a href={recipe.official_doc} target="_blank" rel="noreferrer" className="underline underline-offset-2">
+                {t('training.officialDoc')}
+              </a>
+            )}
+            {recipe.verified_on && <span>{recipe.verified_on}</span>}
+          </div>
+        )}
+        {recipe && !recipeReady && (
+          <div className="mt-2">
+            <Notice tone="warn">
+              {recipe.note || t('training.recipeNotReady', { toolchain: recipe.toolchain })}
+            </Notice>
+          </div>
+        )}
+        {recipe?.official_notes?.length ? (
+          <details className="mt-2">
+            <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.04em] text-[color:var(--color-ink-2)]">
+              {t('training.officialNotes')}
+            </summary>
+            <ul className="mt-1 list-disc space-y-1 pl-4 text-[11px] text-[color:var(--color-ink-2)]">
+              {recipe.official_notes.map((note) => <li key={note}>{note}</li>)}
+            </ul>
+          </details>
+        ) : null}
 
         <fieldset className="mt-3 min-w-0">
           <legend className="lbl">{t('training.preset')}</legend>
@@ -452,12 +484,17 @@ export default function TrainingConfigForm({
           <div className="mb-3 grid gap-3 sm:grid-cols-3">
             <NumField label={t('training.loraRank')} value={cfg.lora_rank ?? 8} onChange={(v) => set({ lora_rank: v })} />
             <NumField label={t('training.loraAlpha')} value={cfg.lora_alpha ?? 32} onChange={(v) => set({ lora_alpha: v })} />
-            <div className="flex items-end pb-1.5">
-              <label className="flex cursor-pointer items-center gap-2 text-[12px]">
-                <input type="checkbox" checked={cfg.freeze_vit ?? true} onChange={(e) => set({ freeze_vit: e.target.checked })} />
-                {t('training.freezeVit')}
-              </label>
-            </div>
+            {/* `freeze_vit` esiste solo per i modelli che hanno un ViT
+                separato nel toolchain (MonkeyOCRv2). Mostrarlo per un
+                modello senza ViT sarebbe un flag che non fa nulla. */}
+            {recipe && 'freeze_vit' in recipe.flags && (
+              <div className="flex items-end pb-1.5">
+                <label className="flex cursor-pointer items-center gap-2 text-[12px]">
+                  <input type="checkbox" checked={cfg.freeze_vit ?? true} onChange={(e) => set({ freeze_vit: e.target.checked })} />
+                  {t('training.freezeVit')}
+                </label>
+              </div>
+            )}
           </div>
         )}
 
@@ -486,6 +523,17 @@ export default function TrainingConfigForm({
             />
           </Field>
         </div>
+        {/* Il checkpoint della ricetta è il default, non un vincolo: la
+            variante più piccola dello stesso modello (MonkeyOCRv2-S) o un
+            repo già scaricato si addestrano cambiando questa stringa. */}
+        <Field label={t('training.checkpoint')} hint={t('training.checkpointHint')}>
+          <input
+            value={cfg.model ?? ''}
+            onChange={(e) => set({ model: e.target.value })}
+            placeholder={recipe?.hf_repo ?? ''}
+            className="fld fld-mono"
+          />
+        </Field>
         <Field label={t('training.resumeRun')} hint={t('training.resumeRunHint')}>
           <input
             value={cfg.resume_run_id ?? ''}
@@ -560,9 +608,12 @@ export default function TrainingConfigForm({
           )}
           {stopArmed && <span className="text-[11px] text-[color:var(--color-sig-text)]">{t('training.stopNote')}</span>}
         </div>
-        {executor === 'local' && (
+        {executor === 'local' && recipe && (
           <p className="mt-2 max-w-[80ch] text-[11px] text-[color:var(--color-ink-3)]">
-            {t('training.envNote', { env: 'monkeyocrv2-train', repo: 'TABULARIUM_TRAIN_REPO' })}
+            {t(`training.envNote.${recipe.toolchain}`, {
+              env: 'monkeyocrv2-train',
+              repo: 'TABULARIUM_TRAIN_REPO',
+            })}
           </p>
         )}
       </Module>

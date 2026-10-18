@@ -24,6 +24,7 @@ from . import labeling
 from . import otsl as otslmod
 from . import pages as pagesvc
 from .model_adapters import get_adapter
+from . import train_recipes
 from .i18n import msg
 from .. import config
 from ..db import connect
@@ -34,6 +35,33 @@ TABLE_PROMPT = "Please extract the table from the image and represent it in OTSL
 FORMULA_PROMPT = (
     "Please write out the expression of the formula in the image using LaTeX format."
 )
+
+
+def _training_prompt(recipe, adapter, task: str, label: str | None = None) -> str:
+    """Prompt di training: ricetta → adapter → canonico.
+
+    Some adapters are end-to-end only (`unlimited-ocr`, `dots.mocr`) and raise on
+    a per-task prompt: they used to make the whole dataset build fail. The
+    recipe's prompts are the model-specific truth; the canonical prompts keep
+    the builder usable when a model has none. Inference prompts are a separate
+    concern and are not silently reused for training.
+    """
+    # Le chiavi dei prompt sono le famiglie (`text_rec`), i task sono
+    # `text`: due nomi per la stessa cosa, già una volta confusi.
+    key = "text_rec" if task == "text" else task
+    if recipe is not None and recipe.prompts and key in recipe.prompts:
+        return recipe.prompts[key]
+    try:
+        prompt = adapter.prompt_for(task, label)
+    except NotImplementedError:
+        prompt = None
+    return prompt or {
+        "layout": LAYOUT_PROMPT,
+        "text": TEXT_PROMPT,
+        "table": TABLE_PROMPT,
+        "formula": FORMULA_PROMPT,
+    }[task]
+
 
 def _project_label_info(project_id: int) -> dict:
     """Info per label delle classi **del progetto** (default + custom).
@@ -394,6 +422,7 @@ def build_datasets(
         adapter = get_adapter(adapter_id)
     except ValueError as exc:
         raise ValueError(str(exc)) from exc
+    recipe = train_recipes.get_recipe(adapter_id)
     label_info = _project_label_info(project_id)
     base_dir = _project_dir(project_id)
     dataset_dir = base_dir / "dataset"
@@ -469,7 +498,7 @@ def build_datasets(
                 content = json.dumps(
                     layout_items, ensure_ascii=False, separators=(",", ":")
                 )
-                families["layout"][split].append(_sample(img, adapter.prompt_for("layout") or LAYOUT_PROMPT, content))
+                families["layout"][split].append(_sample(img, _training_prompt(recipe, adapter, "layout"), content))
 
         # RITAGLI: text_rec / table / formula
         for block in data["blocks"]:
@@ -488,7 +517,7 @@ def build_datasets(
                     continue
                 img = _write_crop(page, block["id"], points, crops_dir, warnings, lang=lang)
                 if img:
-                    families["text_rec"][split].append(_sample(img, adapter.prompt_for("text", label) or TEXT_PROMPT, content))
+                    families["text_rec"][split].append(_sample(img, _training_prompt(recipe, adapter, "text", label), content))
                     crops_generated += 1
 
             elif label == "Table":
@@ -525,7 +554,7 @@ def build_datasets(
                 if include_full_tables:
                     img = _write_crop(page, block["id"], points, crops_dir, warnings, lang=lang)
                     if img:
-                        families["table"][split].append(_sample(img, adapter.prompt_for("table", label) or TABLE_PROMPT, otsl_str))
+                        families["table"][split].append(_sample(img, _training_prompt(recipe, adapter, "table", label), otsl_str))
                         crops_generated += 1
                         table_variants["full"] += 1
 
@@ -554,7 +583,7 @@ def build_datasets(
                         families["table"][split].append(
                             _sample(
                                 band_img,
-                                adapter.prompt_for("table", label) or TABLE_PROMPT,
+                                _training_prompt(recipe, adapter, "table", label),
                                 band_otsl,
                             )
                         )
@@ -570,7 +599,7 @@ def build_datasets(
                     content = f"${content}$"
                 img = _write_crop(page, block["id"], points, crops_dir, warnings, lang=lang)
                 if img:
-                    families["formula"][split].append(_sample(img, adapter.prompt_for("formula", label) or FORMULA_PROMPT, content))
+                    families["formula"][split].append(_sample(img, _training_prompt(recipe, adapter, "formula", label), content))
                     crops_generated += 1
 
     # --- scrittura atomica (un file per famiglia e per split) -----------------

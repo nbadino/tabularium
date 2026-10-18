@@ -17,14 +17,16 @@ def test_generate_script_lora(tmp_path: Path):
         train_file,
         val_file,
     )
-    assert "--model \"/mnt/model\"" in script
+    assert "--model /mnt/model" in script
     assert f'--dataset "{train_file}"' in script
     assert f'--val_dataset "{val_file}"' in script
-    assert "--train_type 'lora'" in script
+    assert "--train_type lora" in script
     assert "--lora_rank 8" in script
-    assert "--freeze_vit true" in script
+    assert "--freeze_vit True" in script
     assert "CUDA_VISIBLE_DEVICES=\"1\"" in script
     assert "NPROC_PER_NODE=2" in script
+    # DeepSpeed + worker del DataLoader = pickle dell'hook del motore.
+    assert "--dataloader_num_workers 0" in script
 
 
 def test_generate_script_full_omits_lora(tmp_path: Path):
@@ -34,7 +36,7 @@ def test_generate_script_full_omits_lora(tmp_path: Path):
         tmp_path / "train.jsonl",
         tmp_path / "val.jsonl",
     )
-    assert "--train_type 'full'" in script
+    assert "--train_type full" in script
 
 
 def test_generate_script_qwen_uses_qwen_template(tmp_path: Path):
@@ -55,7 +57,10 @@ def test_generate_script_qwen_uses_qwen_template(tmp_path: Path):
     assert "--tuner_type lora" in script
     assert "--model_type monkeyocrv2" not in script
     assert "--lora_rank 8" in script
-    assert "--freeze_vit" not in script
+    # La Best Practice Qwen3-VL congela ViT e aligner (entrambi a true).
+    assert "--freeze_vit True" in script
+    assert "--freeze_aligner True" in script
+    assert "IMAGE_MAX_TOKEN_NUM=1024" in script
 
 
 def test_generate_script_remote_uses_recipe_paths_and_remote_runtime(tmp_path: Path):
@@ -71,10 +76,10 @@ def test_generate_script_remote_uses_recipe_paths_and_remote_runtime(tmp_path: P
         run_dir / "dataset" / "train.jsonl",
         run_dir / "dataset" / "val.jsonl",
     )
-    assert '--dataset "dataset/train.jsonl"' in script
-    assert '--val_dataset "dataset/val.jsonl"' in script
-    assert 'output_dir="checkpoints/monkeyocrv2_lora"' in script
-    assert 'cd "/opt/MonkeyOCRv2/parsing/train"' in script
+    assert '--dataset "$RUN_DIR/dataset/train.jsonl"' in script
+    assert '--val_dataset "$RUN_DIR/dataset/val.jsonl"' in script
+    assert 'output_dir="$RUN_DIR/checkpoints/monkeyocrv2-parsing_lora"' in script
+    assert 'cd /opt/MonkeyOCRv2/parsing/train' in script
     assert 'dirname /opt/venv/bin/python' in script
     assert f'MODELSCOPE_CACHE="{run_dir}' not in script
     assert str(run_dir) not in script
@@ -123,8 +128,8 @@ def test_prepare_training_files_uses_immutable_snapshot(tmp_path: Path):
     run_dataset = tmp_path / "run" / "dataset"
     train_f, val_f = trainer.prepare_training_files(997, run_dataset)
     assert train_f.parent == run_dataset
-    assert train_f.read_text(encoding="utf-8") == '{"snapshot":1}\n'
-    assert val_f.read_text(encoding="utf-8") == '{"snapshot":2}\n'
+    assert json.loads(train_f.read_text(encoding="utf-8")) == {"snapshot": 1}
+    assert json.loads(val_f.read_text(encoding="utf-8")) == {"snapshot": 2}
 
 
 def test_preflight_counts_families_and_blocks_busy_gpu(monkeypatch):
@@ -209,6 +214,18 @@ def test_batch_one_at_half_length_fits_an_eight_gigabyte_card():
     """La configurazione che ci sta esiste, ed è quella da consigliare."""
     estimate = vram.estimate({"batch_size": 1, "max_length": 8192})
     assert vram.fits(estimate.total_mib, 8188)
+
+
+def test_the_estimate_uses_the_selected_model_geometry():
+    """Prima ogni modello veniva stimato con la geometria di MonkeyOCRv2."""
+    monkey = {"hidden_size": 1024, "intermediate_size": 3072, "num_hidden_layers": 28, "vocab_size": 151936, "weights_mib": 2048}
+    qwen = {"hidden_size": 4096, "intermediate_size": 12288, "num_hidden_layers": 36, "vocab_size": 151936, "weights_mib": 16300}
+    cfg = {"batch_size": 1, "max_length": 4096}
+    small = vram.estimate(cfg, architecture=monkey)
+    large = vram.estimate(cfg, architecture=qwen)
+    assert large.terms["weights"] > small.terms["weights"]
+    assert large.assumptions["hidden_size"] == 4096
+    assert small.assumptions["hidden_size"] == 1024
 
 
 def test_full_sft_does_not_fit_an_eight_gigabyte_card_even_short():

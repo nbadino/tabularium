@@ -53,6 +53,12 @@ def _project_with_table(tmp_path: Path, *, verified: bool) -> int:
                 },
             )
             block_id = res.json()["items"][0]["id"]
+            # `approved_only` è la verità delle pagine approvate (AGENTS §7):
+            # senza questo passaggio l'export deve essere vuoto, non ripiegare
+            # sulle pagine non revisionate. Lo stato `approved` è protetto
+            # dall'API (passa dalla revisione QA), quindi il fixture lo scrive.
+            with connect() as conn:
+                conn.execute("UPDATE pages SET status='approved' WHERE id=?", (page["id"],))
             client.put(
                 f"/api/blocks/{block_id}/table",
                 json={

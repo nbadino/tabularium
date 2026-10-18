@@ -23,31 +23,105 @@ from ..db import connect
 _ID_PREFIX = "custom-"
 
 
-def _merged_checkpoint(adapter_path: Path) -> Path:
-    """Unisce un adapter LoRA in un checkpoint HF servibile da vLLM."""
+def _toolchain_cli(directory: str, command: str) -> str | None:
+    """Il comando del toolchain: prima il `.venv` del checkout, poi il PATH."""
+    if directory:
+        candidate = Path(directory) / '.venv' / 'bin' / command
+        if candidate.exists():
+            return str(candidate)
+    return shutil.which(command)
+
+
+def _has_weights(directory: Path) -> bool:
+    return (directory / 'config.json').exists() and any(
+        path.is_file()
+        for pattern in ('*.safetensors', '*.bin')
+        for path in directory.glob(pattern)
+    )
+
+
+def _merged_checkpoint(adapter_path: Path, recipe, cfg: dict) -> Path:
+    """Unisce un adapter LoRA in un checkpoint HF servibile da vLLM.
+
+    Ogni toolchain ha il *proprio* comando di merge: `swift export` non sa
+    leggere un adapter LLaMA-Factory e `llamafactory-cli export` non sa leggere
+    uno ms-swift. Usare il comando sbagliato produce un errore oscuro al
+    momento di servire il modello, quindi il merge è per ricetta.
+    """
     output = adapter_path.parent.parent / f"{adapter_path.name}-merged"
-    if (output / 'config.json').exists() and (
-        list(output.glob('*.safetensors')) or list(output.glob('*.bin'))
-    ):
+    if _has_weights(output):
         return output
-    swift = shutil.which('swift')
-    if not swift:
-        python = str(config.TRAIN_PYTHON or '').strip()
-        candidate = Path(python).with_name('swift') if python else None
-        swift = str(candidate) if candidate and candidate.exists() else None
-    if not swift:
-        raise ValueError('swift non disponibile: impossibile unire il checkpoint LoRA')
-    output.mkdir(parents=True, exist_ok=True)
-    command = [
-        swift, 'export', '--adapters', str(adapter_path),
-        '--merge_lora', 'true', '--output_dir', str(output),
-    ]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=3600, check=False)
-    if result.returncode != 0 or not (output / 'config.json').exists() or not (
-        list(output.glob('*.safetensors')) or list(output.glob('*.bin'))
-    ):
+    toolchain = getattr(recipe, 'toolchain', 'ms-swift')
+    base_model = str(cfg.get('model_path') or cfg.get('model') or getattr(recipe, 'hf_repo', '') or '')
+
+    if toolchain == 'llama-factory':
+        cli = _toolchain_cli(config.LLAMAFACTORY_DIR, 'llamafactory-cli')
+        if not cli:
+            raise ValueError(
+                'llamafactory-cli non disponibile: imposta TABULARIUM_LLAMAFACTORY_DIR '
+                'sul checkout usato per il training, per unire l’adapter'
+            )
+        output.mkdir(parents=True, exist_ok=True)
+        command = [
+            cli, 'export',
+            '--model_name_or_path', base_model,
+            '--adapter_name_or_path', str(adapter_path),
+            '--template', getattr(recipe, 'llamafactory_template', '') or 'glm_ocr',
+            '--export_dir', str(output),
+            '--trust_remote_code', 'true',
+        ]
+        cwd = config.LLAMAFACTORY_DIR or None
+    elif toolchain == 'paddleformers':
+        # La config di export è un percorso relativo al checkout: senza la
+        # cartella il comando non può funzionare.
+        if not config.PADDLEFORMERS_DIR:
+            raise ValueError(
+                'TABULARIUM_PADDLEFORMERS_DIR non impostato: serve il checkout '
+                'PaddleFormers usato per il training, per unire l’adapter'
+            )
+        cli = _toolchain_cli(config.PADDLEFORMERS_DIR, 'paddleformers-cli')
+        if not cli:
+            raise ValueError(
+                'paddleformers-cli non disponibile: installa PaddleFormers nel checkout '
+                'indicato da TABULARIUM_PADDLEFORMERS_DIR'
+            )
+        export_config = getattr(recipe, 'paddleformers_export', '') or ''
+        if not export_config:
+            raise ValueError('ricetta PaddleFormers senza config ufficiale di export')
+        # L'export ufficiale legge il checkpoint dalla `output_dir`: passiamo la
+        # cartella che contiene `checkpoint-N`, e il risultato unito finisce in
+        # `<output_dir>/export`.
+        merged_root = adapter_path.parent
+        command = [
+            cli, 'export', export_config,
+            f'model_name_or_path={base_model}',
+            f'output_dir={merged_root}',
+        ]
+        output = merged_root / 'export'
+        cwd = config.PADDLEFORMERS_DIR or None
+    else:
+        swift = _toolchain_cli('', 'swift')
+        if not swift:
+            python = str(config.TRAIN_PYTHON or '').strip()
+            candidate = Path(python).with_name('swift') if python else None
+            swift = str(candidate) if candidate and candidate.exists() else None
+        if not swift:
+            raise ValueError('swift non disponibile: impossibile unire il checkpoint LoRA')
+        output.mkdir(parents=True, exist_ok=True)
+        command = [
+            swift, 'export', '--adapters', str(adapter_path),
+            '--merge_lora', 'true', '--output_dir', str(output),
+        ]
+        cwd = None
+
+    result = subprocess.run(
+        command, capture_output=True, text=True, timeout=3600, check=False, cwd=cwd
+    )
+    if result.returncode != 0 or not _has_weights(output):
         detail = (result.stderr or result.stdout).strip()[-600:]
-        raise ValueError(f'unione LoRA fallita{": " + detail if detail else ""}')
+        raise ValueError(
+            f'unione LoRA fallita ({toolchain}){": " + detail if detail else ""}'
+        )
     return output
 
 
@@ -101,8 +175,11 @@ def register_training_checkpoint(project_id: int, run_id: str) -> dict:
     except ValueError as exc:
         raise ValueError('adapter base della run non riconosciuto') from exc
     checkpoint_root = (run_dir / 'checkpoints').resolve()
+    # LLaMA-Factory e PaddleFormers scrivono i checkpoint in una sottocartella
+    # (`<output_dir>/<run>`), ms-swift con `--no_add_version` direttamente:
+    # la ricerca è ricorsiva perché la struttura la decide il toolchain.
     candidates = [
-        path for path in checkpoint_root.glob('checkpoint-*')
+        path for path in checkpoint_root.rglob('checkpoint-*')
         if path.is_dir()
         and (
             (path / 'adapter_config.json').exists()
@@ -118,7 +195,15 @@ def register_training_checkpoint(project_id: int, run_id: str) -> dict:
     source_path = checkpoint
     registered_type = train_type
     if train_type == 'lora':
-        source_path = _merged_checkpoint(checkpoint)
+        from . import train_recipes
+
+        recipe = train_recipes.get_recipe(base_id)
+        if recipe is not None and not recipe.merge_supported:
+            raise ValueError(
+                f"la ricetta {recipe.toolchain} non documenta un merge LoRA: "
+                "serve un checkpoint full-SFT"
+            )
+        source_path = _merged_checkpoint(checkpoint, recipe, cfg)
         # Dopo il merge il file registrato è un modello completo: il serving
         # non deve tentare di applicare di nuovo l'adapter.
         registered_type = 'full'

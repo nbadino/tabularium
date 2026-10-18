@@ -81,6 +81,12 @@ TRAIN_REPO = os.environ.get("TABULARIUM_TRAIN_REPO", "").strip()
 # Environment dedicato al training (conda) o python eseguibile esplicito.
 TRAIN_ENV = os.environ.get("TABULARIUM_TRAIN_ENV", "monkeyocrv2-train").strip()
 TRAIN_PYTHON = os.environ.get("TABULARIUM_TRAIN_PYTHON", "").strip()
+# Checkout di LLaMA-Factory e PaddleFormers, ognuno con il proprio ambiente:
+# sono i toolchain ufficiali di GLM-OCR e PaddleOCR-VL (v. train_recipes.py).
+# Un modello non si addestra con il toolchain di un altro: se la cartella
+# manca, il preflight lo dice e non genera uno script che fallirà.
+LLAMAFACTORY_DIR = os.environ.get("TABULARIUM_LLAMAFACTORY_DIR", "").strip()
+PADDLEFORMERS_DIR = os.environ.get("TABULARIUM_PADDLEFORMERS_DIR", "").strip()
 
 # --- Serving locale (model_registry.py / serve_manager.py) --------------------
 # Python esplicito per servire i modelli generici via `vllm serve` (MinerU2.5,

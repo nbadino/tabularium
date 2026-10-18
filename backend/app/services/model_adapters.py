@@ -790,7 +790,9 @@ class GlmOcrAdapter(_StubAdapter):
         hf_repo="zai-org/GLM-OCR",
         approx_size_gb=2.7,
         license_note="Codice Apache-2.0, pesi MIT.",
-        train_toolchain="ms-swift",
+        # La doc ufficiale del modello (`examples/finetune/README.md`) usa
+        # LLaMA-Factory, non ms-swift: il training center segue il vendor.
+        train_toolchain="llama-factory",
         serve_backend="vllm-openai",
         served_model_name="glm-ocr",
         local_runtimes=("vllm",),
@@ -1039,15 +1041,16 @@ class PaddleOcrVlAdapter(_StubAdapter):
         coordinate_system="unverified",
         table_format="html",
         # Dataset e recipe sono integrati; l'esecuzione richiede checkout e
-        # config ufficiali forniti dall'utente.
-        training_types=("full",),
+        # config ufficiali forniti dall'utente. PaddleFormers (2026) documenta
+        # sia full-SFT sia LoRA per PaddleOCR-VL.
+        training_types=("lora", "full"),
         inference_modes=("vllm",),
         hardware=("cuda",),
         languages=("en", "zh") + tuple(f"lang-{i}" for i in range(1)),  # 100+ lingue dichiarate, non enumerate qui
         hf_repo="PaddlePaddle/PaddleOCR-VL-1.6",
         approx_size_gb=1.8,
         license_note="",
-        train_toolchain="erniekit+paddlex",
+        train_toolchain="paddleformers",
         serve_backend="vllm-openai",
         served_model_name="PaddleOCR-VL-1.6",
         max_model_len=12288,

@@ -5,10 +5,11 @@
  * decisione che quasi tutti prendono davvero — quanto tempo di GPU spendere —
  * e i valori restano visibili e modificabili sotto «Parametri avanzati».
  *
- * I valori partono dagli iperparametri canonici del repo ufficiale
- * MonkeyOCRv2 (AGENTS.md): nessuna reinvenzione del pipeline.
+ * I preset NON toccano il learning rate: quello lo detta la ricetta
+ * ufficiale del modello scelto (`train_recipes.py`). Un preset è un budget
+ * di GPU, non una ricetta.
  */
-import type { TrainConfigBody } from '../../lib/types'
+import type { TrainConfigBody, TrainRecipeInfo } from '../../lib/types'
 
 export const BASE_CFG: TrainConfigBody = {
   executor: 'local',
@@ -58,7 +59,6 @@ export const PRESETS: Preset[] = [
     cfg: {
       train_type: 'lora',
       epochs: 1,
-      learning_rate: 1e-5,
       batch_size: 1,
       grad_accum: 4,
       lora_rank: 8,
@@ -74,7 +74,6 @@ export const PRESETS: Preset[] = [
     cfg: {
       train_type: 'lora',
       epochs: 1,
-      learning_rate: 1e-5,
       batch_size: 2,
       grad_accum: 2,
       lora_rank: 8,
@@ -90,7 +89,6 @@ export const PRESETS: Preset[] = [
     cfg: {
       train_type: 'lora',
       epochs: 1,
-      learning_rate: 1e-5,
       batch_size: 4,
       grad_accum: 1,
       lora_rank: 8,
@@ -106,7 +104,6 @@ export const PRESETS: Preset[] = [
     cfg: {
       train_type: 'lora',
       epochs: 3,
-      learning_rate: 5e-6,
       batch_size: 2,
       grad_accum: 4,
       lora_rank: 16,
@@ -125,4 +122,25 @@ export function matchPreset(cfg: TrainConfigBody): string | null {
     ),
   )
   return p?.id ?? null
+}
+
+/**
+ * I default ufficiali del modello scelto, per il tipo di training scelto.
+ *
+ * Vive fuori dal componente perché è la regola che decide cosa viene
+ * addestrato: `type_defaults` specializza il learning rate per LoRA/full
+ * (GLM 1e-4/1e-5, PaddleFormers 5e-4/5e-6). Il preset non la sovrascrive.
+ */
+export function recipeDefaults(
+  recipe: TrainRecipeInfo | undefined,
+  trainType: 'lora' | 'full',
+): Partial<TrainConfigBody> {
+  if (!recipe) return { train_type: trainType }
+  return {
+    adapter_id: recipe.adapter_id,
+    model: recipe.hf_repo,
+    train_type: trainType,
+    ...recipe.defaults,
+    ...(recipe.type_defaults?.[trainType] ?? {}),
+  }
 }

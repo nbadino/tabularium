@@ -10,8 +10,6 @@ from ..db import connect
 from ..services import dataset_builder as builder
 from ..services import export_formats
 from ..services import paddle_dataset
-from ..services import paddle_training
-from ..services import alternative_training
 from ..services.i18n import parse_lang
 from ..services import auth as authsvc
 from .deps import require_resource
@@ -96,12 +94,12 @@ def build_paddle_dataset(
     payload: PaddleBuildRequest,
     _auth: dict = Depends(require_resource(write=True)),
 ) -> dict:
-    """Crea le viste ufficiali Paddle: layout COCO, VLM ERNIEKit, celle PP-OCR rec.
+    """Crea le viste PaddleX (layout COCO) e PP-OCR rec (una cella per riga).
 
-    Le tre servono modelli diversi: il rilevatore di layout impara dove sta una
-    tabella, il VLM impara a leggerla intera, il riconoscitore di riga impara la
-    singola cella. Quest'ultimo è il motore locale usato dal prefill OCR, e il
-    suo dataset è fatto di celle con testo *verificato* da un umano.
+    Sono due modelli *diversi* da PaddleOCR-VL: il rilevatore impara dove sta
+    una tabella, il riconoscitore di riga impara la singola cella ed è il
+    motore locale usato dal prefill OCR. Il VLM (PaddleOCR-VL) si addestra
+    invece dal Training Center, che scrive la vista `messages` del suo run.
     """
     _require_project(project_id)
     try:
@@ -109,94 +107,6 @@ def build_paddle_dataset(
             project_id, payload.split_ratio, payload.seed, payload.approved_only
         )
     except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.post("/api/projects/{project_id}/datasets/paddle-training")
-def prepare_paddle_training(
-    project_id: int,
-    payload: dict | None = None,
-    _auth: dict = Depends(require_resource(write=True)),
-) -> dict:
-    """Prepara le recipe ufficiali ERNIEKit e PaddleX, senza lanciarle."""
-    _require_project(project_id)
-    payload = payload or {}
-    try:
-        return paddle_training.prepare(
-            project_id,
-            str(payload.get("vlm_model") or "PaddlePaddle/PaddleOCR-VL"),
-            str(payload.get("ernie_dir") or ""),
-        )
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.post("/api/projects/{project_id}/datasets/paddle-training/preflight")
-def paddle_training_preflight(
-    project_id: int,
-    payload: dict | None = None,
-    _auth: dict = Depends(require_resource(write=False)),
-) -> dict:
-    """Verifica dataset e ambienti Paddle/ERNIEKit senza avviare processi."""
-    _require_project(project_id)
-    payload = payload or {}
-    return paddle_training.preflight(
-        project_id,
-        str(payload.get("ernie_dir") or ""),
-        str(payload.get("paddlex_dir") or ""),
-    )
-
-
-@router.post("/api/projects/{project_id}/datasets/glm-training")
-def prepare_glm_training(
-    project_id: int,
-    payload: dict | None = None,
-    _auth: dict = Depends(require_resource(write=True)),
-) -> dict:
-    """Prepara la vista ShareGPT e la config LLaMA-Factory per GLM-OCR."""
-    _require_project(project_id)
-    try:
-        return alternative_training.prepare_glm(
-            project_id, bool((payload or {}).get("approved_only", True))
-        )
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.post("/api/projects/{project_id}/datasets/deepseek-training")
-def prepare_deepseek_training(
-    project_id: int,
-    payload: dict | None = None,
-    _auth: dict = Depends(require_resource(write=True)),
-) -> dict:
-    """Prepara il dataset Unsloth DeepSeek-OCR-2 e il launcher del runner."""
-    _require_project(project_id)
-    try:
-        return alternative_training.prepare_deepseek(
-            project_id, bool((payload or {}).get("approved_only", True))
-        )
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.post("/api/projects/{project_id}/datasets/{adapter_id}-training")
-def prepare_grounded_training(
-    project_id: int,
-    adapter_id: str,
-    payload: dict | None = None,
-    _auth: dict = Depends(require_resource(write=True)),
-) -> dict:
-    """Prepara il dataset end-to-end per dots.ocr o Unlimited-OCR."""
-    _require_project(project_id)
-    try:
-        if adapter_id == "mineru2.5":
-            return alternative_training.prepare_mineru(
-                project_id, bool((payload or {}).get("approved_only", True))
-            )
-        return alternative_training.prepare_grounded_end2end(
-            project_id, adapter_id, bool((payload or {}).get("approved_only", True))
-        )
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

@@ -32,11 +32,7 @@ export default function DatasetPage() {
   const [adapters, setAdapters] = useState<Array<{ adapter_id: string; display_name: string; tasks: string[]; training_types: string[]; export_ready?: boolean }>>([])
   const [building, setBuilding] = useState(false)
   const [paddleBuilding, setPaddleBuilding] = useState(false)
-  const [paddleTraining, setPaddleTraining] = useState(false)
-  const [paddleRecipe, setPaddleRecipe] = useState<{ files?: Record<string, string>; preflight?: { ready: boolean; errors?: string[]; warnings?: string[] } } | null>(null)
-  const [alternativeRecipe, setAlternativeRecipe] = useState<{ adapter_id?: string; status?: string; files?: Record<string, string> } | null>(null)
-  const [alternativeBuilding, setAlternativeBuilding] = useState(false)
-  const [paddleManifest, setPaddleManifest] = useState<{ counts?: { layout?: Record<string, number>; vlm?: Record<string, number> }; files?: Record<string, string>; warnings?: string[] } | null>(null)
+  const [paddleManifest, setPaddleManifest] = useState<{ counts?: { layout?: Record<string, number>; rec?: Record<string, number> }; files?: Record<string, string>; warnings?: string[] } | null>(null)
   const [status, setStatus] = useState<DatasetStatus>({ built: false, report: null })
   /** Pagine con sole bozze generate: non sono dati di training finché
    *  qualcuno non le verifica, e il dataset deve dirlo. */
@@ -133,32 +129,6 @@ export default function DatasetPage() {
       setError(e)
     } finally {
       setPaddleBuilding(false)
-    }
-  }
-
-  const preparePaddleTraining = async () => {
-    if (projectId === '') return
-    setPaddleTraining(true)
-    setError(null)
-    try {
-      setPaddleRecipe(await apiPost(`/projects/${projectId}/datasets/paddle-training`, {}))
-    } catch (e) {
-      setError(e)
-    } finally {
-      setPaddleTraining(false)
-    }
-  }
-
-  const prepareAlternativeTraining = async (adapter: 'glm' | 'deepseek' | 'dots-ocr' | 'unlimited-ocr' | 'mineru2.5') => {
-    if (projectId === '') return
-    setAlternativeBuilding(true)
-    setError(null)
-    try {
-      setAlternativeRecipe(await apiPost(`/projects/${projectId}/datasets/${adapter}-training`, { approved_only: approvedOnly }))
-    } catch (e) {
-      setError(e)
-    } finally {
-      setAlternativeBuilding(false)
     }
   }
 
@@ -326,27 +296,21 @@ export default function DatasetPage() {
             <Collapsible tab={t('dataset.alternatives')} quiet aux={t('dataset.optional')}>
               <p className="mb-2 max-w-[75ch] text-[12px] text-[color:var(--color-ink-2)]">{t('dataset.alternativesHint')}</p>
               <div className="flex flex-wrap items-center gap-2">
+                {/* Solo le viste di *altri modelli* (PaddleX layout, PP-OCR
+                    rec): il dataset del training si prepara nel Training
+                    Center, che sa quale toolchain e quali prompt servono. */}
                 <button onClick={() => void buildPaddle()} disabled={paddleBuilding || projectId === ''} className="btn">
                   {paddleBuilding ? t('dataset.paddleBuilding') : t('dataset.paddleBuild')}
                 </button>
-                <button onClick={() => void preparePaddleTraining()} disabled={paddleTraining || projectId === '' || !paddleManifest} className="btn">
-                  {paddleTraining ? t('dataset.paddleTraining') : t('dataset.paddlePrepareTraining')}
-                </button>
-                <button onClick={() => void prepareAlternativeTraining('glm')} disabled={alternativeBuilding || projectId === ''} className="btn">{t('dataset.glmPrepareTraining')}</button>
-                <button onClick={() => void prepareAlternativeTraining('deepseek')} disabled={alternativeBuilding || projectId === ''} className="btn">{t('dataset.deepseekPrepareTraining')}</button>
-                <button onClick={() => void prepareAlternativeTraining('dots-ocr')} disabled={alternativeBuilding || projectId === ''} className="btn">{t('dataset.dotsPrepareTraining')}</button>
-                <button onClick={() => void prepareAlternativeTraining('unlimited-ocr')} disabled={alternativeBuilding || projectId === ''} className="btn">{t('dataset.unlimitedPrepareTraining')}</button>
-                <button onClick={() => void prepareAlternativeTraining('mineru2.5')} disabled={alternativeBuilding || projectId === ''} className="btn">{t('dataset.mineruPrepareTraining')}</button>
               </div>
-              {paddleManifest && <p className="mt-2 mono text-[11px] text-[color:var(--color-ok)]">{t('dataset.paddleReady', { train: paddleManifest.counts?.vlm?.train ?? 0, val: paddleManifest.counts?.vlm?.val ?? 0 })}</p>}
-              {paddleRecipe && (
-                <div className="mt-2 border-l-2 border-[color:var(--color-rule-strong)] pl-2 text-[11px]">
-                  <p className="mono text-[color:var(--color-ok)]">{t('dataset.paddleRecipeReady')}</p>
-                  {!paddleRecipe.preflight?.ready && <p className="mt-1 text-[color:var(--color-sig-text)]">{(paddleRecipe.preflight?.errors ?? []).join(' · ')}</p>}
-                  {paddleRecipe.files && <p className="mt-1 mono text-[color:var(--color-ink-2)]">{Object.values(paddleRecipe.files).join(' · ')}</p>}
-                </div>
+              {paddleManifest && (
+                <p className="mt-2 mono text-[11px] text-[color:var(--color-ok)]">
+                  {t('dataset.paddleReady', {
+                    rec: (paddleManifest.counts?.rec?.train ?? 0) + (paddleManifest.counts?.rec?.val ?? 0),
+                    layout: paddleManifest.counts?.layout?.train ?? 0,
+                  })}
+                </p>
               )}
-              {alternativeRecipe && <p className="mt-2 mono text-[11px] text-[color:var(--color-ok)]">{alternativeRecipe.adapter_id}: {alternativeRecipe.status ?? t('dataset.recipeReady')}</p>}
             </Collapsible>
           </div>
         </Module>

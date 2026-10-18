@@ -33,6 +33,8 @@ def test_ssh_executor_uses_checksum_and_strict_host_key(tmp_path: Path):
     launch = executor.launch_argv(recipe)
     assert "--checksum" in sync
     assert "StrictHostKeyChecking=yes" in sync[sync.index("-e") + 1]
+    # rsync non crea le directory padre: il launch deve fare mkdir prima.
+    assert "mkdir -p" in executor.mkdir_argv(recipe)[-1]
     assert any("UserKnownHostsFile=" in item for item in launch)
     assert "bash train.sh" in launch[-1]
 

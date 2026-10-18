@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -25,7 +26,9 @@ from .trainer_script import (
     _now,
     generate_script,
     prepare_training_files,
+    resolve_config,
 )
+from . import train_recipes
 from .training_executor import RemoteProcess, SshExecutor, TrainingRecipe, executor_from_config
 from .artifacts import write_manifest, verify_manifest
 from .i18n import msg
@@ -55,6 +58,114 @@ def runs_dir(project_id: int) -> Path:
 REMOTE_EXECUTORS = {"ssh", "vast", "runpod"}
 
 
+def _remote_train_ready(cfg: dict, *, require_marker: bool = True) -> dict | None:
+    """Sonda l'host di training remoto: ambiente pronto (`.train_ready`) e GPU.
+
+    Ritorna `{"ready": bool, "cuda": bool}` oppure `None` quando non si riesce a
+    contattare l'host (SSH assente o non ancora salito): in quel caso il
+    preflight non blocca, perché potrebbe essere solo l'inizio del provisioning.
+    """
+    host = str(cfg.get("ssh_host") or "").strip()
+    if not host:
+        return None
+    user = str(cfg.get("ssh_user") or "root").strip() or "root"
+    try:
+        port = int(cfg.get("ssh_port") or 22)
+    except (TypeError, ValueError):
+        port = 22
+    key = str(cfg.get("ssh_key_path") or "").strip()
+    if not key and str(cfg.get("executor") or "").lower() in {"vast", "runpod"}:
+        from .cloud_manager import ssh_key_path
+
+        if ssh_key_path().exists():
+            key = str(ssh_key_path())
+    marker = (
+        'test -f "$HOME/tabularium-train/.train_ready" && echo READY; '
+        if require_marker
+        else "echo READY; "
+    )
+    interpreter = str(cfg.get("ssh_python") or "").strip() or "python3"
+    command = (
+        marker
+        + f"{shlex.quote(interpreter)} -c 'import torch;print(torch.cuda.is_available())' 2>/dev/null"
+    )
+    argv = [
+        "ssh", "-p", str(port),
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "ConnectTimeout=8", "-o", "BatchMode=yes",
+    ]
+    if key:
+        argv += ["-i", key]
+    argv += [f"{user}@{host}", command]
+    try:
+        res = subprocess.run(argv, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = res.stdout or ""
+    return {"ready": "READY" in out, "cuda": "True" in out}
+
+
+def _cli_available(directory: str, command: str) -> bool:
+    """Il comando del toolchain esiste nel checkout o nel PATH corrente."""
+    candidate = Path(directory) / ".venv" / "bin" / command if directory else None
+    if candidate and candidate.exists():
+        return True
+    return shutil.which(command) is not None
+
+
+def _check_local_toolchain(
+    toolchain: str,
+    adapter_id: str,
+    errors: list[str],
+    warnings: list[str],
+    lang: str,
+) -> None:
+    """Controlla il *toolchain della ricetta*, non quello di MonkeyOCRv2.
+
+    Prima ogni modello veniva validato contro `TABULARIUM_TRAIN_REPO` e
+    l'ambiente conda `monkeyocrv2-train`: un training GLM-OCR (LLaMA-Factory)
+    o PaddleOCR-VL (PaddleFormers) veniva respinto per una cartella che non
+    gli serve.
+    """
+    if config.TRAIN_PYTHON and not Path(config.TRAIN_PYTHON).exists():
+        errors.append(msg("python_not_found", lang, path=config.TRAIN_PYTHON))
+        return
+    if toolchain == "ms-swift" and adapter_id == "monkeyocrv2-parsing":
+        repo_train = Path(config.TRAIN_REPO) / "parsing" / "train" if config.TRAIN_REPO else None
+        if not config.TRAIN_REPO:
+            errors.append(msg("repo_not_configured", lang))
+        elif not repo_train.is_dir():
+            errors.append(msg("repo_invalid", lang, path=repo_train))
+        elif not (repo_train / "ms-swift").is_dir():
+            # Il fork ufficiale è un submodule: senza, `pip install -e
+            # ./ms-swift` non esiste e un ms-swift upstream userebbe il
+            # template *encoder*, non quello di Parsing.
+            errors.append(msg("monkey_swift_submodule_missing", lang, path=repo_train))
+        if not config.TRAIN_PYTHON and not shutil.which("conda"):
+            errors.append(msg("conda_not_found", lang))
+        return
+    if toolchain == "ms-swift":
+        # Il comando deve esistere *dove* girerà lo script: il PATH del
+        # backend non è l'ambiente di training. Se è indicato un interprete,
+        # il suo `swift` è quello che conta.
+        candidate = Path(config.TRAIN_PYTHON).with_name("swift") if config.TRAIN_PYTHON else None
+        if not (shutil.which("swift") or (candidate is not None and candidate.exists())):
+            errors.append(msg("swift_not_found", lang))
+        return
+    if toolchain == "llama-factory":
+        if not config.LLAMAFACTORY_DIR:
+            errors.append(msg("toolchain_dir_missing", lang, toolchain="LLaMA-Factory", env="TABULARIUM_LLAMAFACTORY_DIR"))
+        elif not _cli_available(config.LLAMAFACTORY_DIR, "llamafactory-cli"):
+            errors.append(msg("toolchain_cli_missing", lang, toolchain="LLaMA-Factory", command="llamafactory-cli"))
+        return
+    if toolchain == "paddleformers":
+        if not config.PADDLEFORMERS_DIR:
+            errors.append(msg("toolchain_dir_missing", lang, toolchain="PaddleFormers", env="TABULARIUM_PADDLEFORMERS_DIR"))
+        elif not _cli_available(config.PADDLEFORMERS_DIR, "paddleformers-cli"):
+            errors.append(msg("toolchain_cli_missing", lang, toolchain="PaddleFormers", command="paddleformers-cli"))
+        return
+
+
 def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dict:
     """Controlli non distruttivi prima di avviare un run.
 
@@ -70,10 +181,48 @@ def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dic
     except FileNotFoundError:
         dataset_source, snapshot_id = dataset_dir, None
 
+    # La ricetta decide quali famiglie entrano, con quale toolchain e con
+    # quali iperparametri. Un adapter non addestrabile non deve arrivare al
+    # clic: l'errore si legge qui, con la doc ufficiale da consultare.
+    adapter_id = str(cfg.get("adapter_id") or "monkeyocrv2-parsing")
+    recipe = train_recipes.get_recipe(adapter_id)
+    train_type = str(
+        cfg.get("train_type")
+        or (recipe.train_types[0] if recipe is not None and recipe.train_types else "lora")
+    )
+    if recipe is None or not recipe.trainable:
+        reason = (recipe.note if recipe else "") or "nessuna ricetta di training"
+        errors.append(msg("train_recipe_unavailable", lang, id=adapter_id, reason=reason))
+        recipe_families = FAMILIES
+    elif not recipe.script_ready:
+        errors.append(
+            msg(
+                "train_recipe_not_ready",
+                lang,
+                id=adapter_id,
+                toolchain=recipe.toolchain,
+                doc=recipe.official_doc,
+            )
+        )
+        recipe_families = recipe.families or FAMILIES
+    elif train_type not in recipe.train_types:
+        errors.append(
+            msg(
+                "train_type_unsupported",
+                lang,
+                type=train_type,
+                allowed=", ".join(recipe.train_types),
+                doc=recipe.official_doc,
+            )
+        )
+        recipe_families = recipe.families or FAMILIES
+    else:
+        recipe_families = recipe.families or FAMILIES
+
     family_counts: dict[str, dict[str, int]] = {}
     counts = {"train.jsonl": 0, "val.jsonl": 0}
     found_any = False
-    for family in FAMILIES:
+    for family in recipe_families:
         family_counts[family] = {}
         for split in ("train", "val"):
             name = f"{family}_{split}.jsonl"
@@ -107,6 +256,7 @@ def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dic
     executor_kind = str(cfg.get("executor") or "local").strip().lower()
     remote = executor_kind in REMOTE_EXECUTORS
     repo_train = Path(config.TRAIN_REPO) / "parsing" / "train" if config.TRAIN_REPO else None
+    toolchain = recipe.toolchain if recipe is not None else "none"
     gpus: list[dict] = []
     if remote:
         if not str(cfg.get("ssh_host") or "").strip():
@@ -115,16 +265,23 @@ def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dic
             errors.append(msg("ssh_repo_missing", lang))
         if not str(cfg.get("ssh_python") or "").strip():
             warnings.append(msg("ssh_python_missing_w", lang))
+        # "Preparato" è un fatto su disco, non un'assunzione: l'host deve avere
+        # il marcatore `.train_ready` (installazione finita) e una GPU visibile.
+        # Se l'host non risponde ancora, non si blocca: il provisioning è in corso.
+        # Il marcatore `.train_ready` è del provisioning MonkeyOCRv2; un host
+        # preparato a mano per LLaMA-Factory/PaddleFormers non ce l'ha, e non
+        # deve essere respinto per questo. La GPU, invece, serve sempre.
+        probe = _remote_train_ready(
+            cfg,
+            require_marker=(toolchain == "ms-swift" and adapter_id == "monkeyocrv2-parsing"),
+        )
+        if probe is not None:
+            if not probe["ready"]:
+                errors.append(msg("train_env_not_ready", lang))
+            elif not probe["cuda"]:
+                errors.append(msg("train_gpu_not_visible", lang))
     else:
-        if not config.TRAIN_REPO:
-            errors.append(msg("repo_not_configured", lang))
-        elif not repo_train.is_dir():
-            errors.append(msg("repo_invalid", lang, path=repo_train))
-        if config.TRAIN_PYTHON:
-            if not Path(config.TRAIN_PYTHON).exists():
-                errors.append(msg("python_not_found", lang, path=config.TRAIN_PYTHON))
-        elif not shutil.which("conda"):
-            errors.append(msg("conda_not_found", lang))
+        _check_local_toolchain(toolchain, adapter_id, errors, warnings, lang)
         gpus = gpu_snapshot()
         if not gpus:
             errors.append(msg("no_gpu_w", lang))
@@ -164,12 +321,37 @@ def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dic
             # *configurazione* ci sta. Il preset ufficiale (batch 4, 16384
             # token) chiede ~26 GB perché i logit sono B×S×151936×2 byte, e su
             # una scheda da 8 GB va in OOM dopo aver scaricato i pesi e
-            # costruito il dataset. Meglio saperlo adesso.
-            need = vram.estimate(cfg, model_path=str(cfg.get("model_path") or ""))
+            # costruito il dataset. Meglio saperlo adesso. La geometria è
+            # quella del modello scelto: prima si stimava sempre MonkeyOCRv2.
+            # PaddleFormers non stima: *riserva* (`pre_alloc_memory`). Se la
+            # riserva ufficiale supera la memoria libera, il run muore subito.
+            prealloc = (recipe.flags.get("pre_alloc_memory") if recipe is not None else None) or {}
+            prealloc_gb = prealloc.get(train_type) if isinstance(prealloc, dict) else prealloc
+            if prealloc_gb and int(prealloc_gb) * 1024 > free_mb:
+                errors.append(
+                    msg(
+                        "vram_prealloc_too_small",
+                        lang,
+                        index=gpu["index"],
+                        need=int(prealloc_gb),
+                        free=f"{free_mb / 1024:.1f}",
+                    )
+                )
+                continue
+
+            model_path = str(cfg.get("model_path") or "")
+            known_arch = recipe.architecture if recipe is not None else None
+            if not known_arch and not model_path:
+                warnings.append(msg("vram_unknown_w", lang, model=adapter_id))
+                gpu["vram_estimate"] = None
+                continue
+            effective = dict(recipe.defaults_for(train_type)) if recipe is not None else {}
+            effective.update(cfg)
+            need = vram.estimate(effective, model_path=model_path, architecture=known_arch)
             gpu["vram_estimate"] = need.to_dict()
             if not vram.fits(need.total_mib, free_mb):
                 suggested = vram.largest_fitting_length(
-                    cfg, free_mb, model_path=str(cfg.get("model_path") or "")
+                    effective, free_mb, model_path=model_path, architecture=known_arch
                 )
                 if suggested <= 0:
                     warnings.append(
@@ -225,7 +407,19 @@ def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dic
         },
         "executor": executor_kind,
         "remote": remote,
-        "training_repo": str(cfg.get("ssh_train_repo") or "") if remote else (str(repo_train) if repo_train else None),
+        "adapter_id": adapter_id,
+        "toolchain": toolchain,
+        "recipe": {
+            "maturity": recipe.maturity,
+            "script_ready": recipe.script_ready,
+            "data_view": recipe.data_view,
+            "official_doc": recipe.official_doc,
+        } if recipe is not None else None,
+        "training_repo": str(cfg.get("ssh_train_repo") or "") if remote else (
+            config.LLAMAFACTORY_DIR if toolchain == "llama-factory"
+            else config.PADDLEFORMERS_DIR if toolchain == "paddleformers"
+            else str(repo_train) if repo_train else None
+        ),
         "python": str(cfg.get("ssh_python") or "") if remote else (config.TRAIN_PYTHON or config.TRAIN_ENV),
         "gpus": gpus,
         "output_dir": str(output_dir),
@@ -252,13 +446,29 @@ def _read_run_meta(run_dir: Path) -> dict | None:
 _ACTIVE: dict[int, dict] = {}
 
 
-def start_run(project_id: int, cfg: dict, *, owner_id: int | None = None) -> dict:
-    check = preflight(project_id, cfg)
+def start_run(
+    project_id: int, cfg: dict, *, owner_id: int | None = None, lang: str = "it"
+) -> dict:
+    check = preflight(project_id, cfg, lang=lang)
     if not check["ready"]:
         raise ValueError("; ".join(check["errors"]))
+    # Ricetta risolta una volta sola: decide vista dati, script e metadati.
+    recipe, _effective, train_type = resolve_config(cfg)
     run_dir = runs_dir(project_id) / f"run_{int(time.time() * 1000)}"
     run_dir.mkdir(parents=True, exist_ok=True)
-    train_file, val_file = prepare_training_files(project_id, run_dir / "dataset")
+    train_file, val_file = prepare_training_files(
+        project_id,
+        run_dir / "dataset",
+        adapter_id=recipe.adapter_id,
+        train_type=train_type,
+    )
+    view_manifest: dict | None = None
+    view_path = run_dir / "dataset" / "view.json"
+    if view_path.is_file():
+        try:
+            view_manifest = json.loads(view_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            view_manifest = None
 
     resume_run_id = str(cfg.get("resume_run_id") or "").strip()
     if resume_run_id:
@@ -295,6 +505,10 @@ def start_run(project_id: int, cfg: dict, *, owner_id: int | None = None) -> dic
         "state": "running",
         "started_at": _now(),
         "config": cfg,
+        "adapter_id": recipe.adapter_id,
+        "toolchain": recipe.toolchain,
+        "data_view": recipe.data_view,
+        "data_view_manifest": view_manifest,
         "dataset_snapshot_id": snapshot_id,
     }
     if resume_run_id:

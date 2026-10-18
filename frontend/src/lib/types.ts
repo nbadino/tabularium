@@ -570,6 +570,35 @@ export interface TrainConfigBody {
   output_dir?: string
 }
 
+/**
+ * La ricetta ufficiale di un modello (`/system/train-recipes`).
+ *
+ * Il form non conosce nessun modello per nome: nomi, tipi di training
+ * ammessi e default arrivano da qui. Un modello senza `script_ready` non è
+ * avviabile, e la UI lo dice invece di lasciare il pulsante acceso.
+ */
+export interface TrainRecipeInfo {
+  adapter_id: string
+  display_name: string
+  hf_repo: string
+  toolchain: string
+  train_types: Array<'lora' | 'full'>
+  data_view: string
+  families: string[]
+  official_doc: string
+  maturity: 'verified' | 'experimental' | 'planned' | 'inference-only'
+  note: string
+  defaults: Partial<TrainConfigBody>
+  type_defaults: Record<string, Partial<TrainConfigBody>>
+  flags: Record<string, unknown>
+  prompts: Record<string, string> | null
+  trainable: boolean
+  script_ready: boolean
+  merge_supported: boolean
+  official_notes: string[]
+  verified_on: string
+}
+
 // --- Valutazione (M6) ------------------------------------------------------------
 
 export interface LabelLayoutMetrics {

@@ -39,15 +39,22 @@ def system_gpu() -> dict:
 def training_start(
     project_id: int,
     payload: TrainConfig,
+    request: Request,
     user: dict = Depends(require_resource(write=True)),
 ) -> dict:
     _require_project(project_id)
+    lang = parse_lang(request.headers.get("accept-language"))
     try:
-        result = trainer.start_run(project_id, payload.model_dump(exclude_unset=True), owner_id=user.get("id"))
+        result = trainer.start_run(
+            project_id,
+            payload.model_dump(exclude_unset=True),
+            owner_id=user.get("id"),
+            lang=lang,
+        )
         with connect() as conn:
             auditsvc.record(conn, user, "training.started", resource_type="project", resource_id=project_id, payload={"run_id": result.get("run", {}).get("run_id")})
         return result
-    except (FileNotFoundError, ValueError) as exc:
+    except (FileNotFoundError, ValueError, NotImplementedError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

@@ -81,9 +81,15 @@ class VramEstimate:
         }
 
 
-def _architecture(model_path: str | None) -> dict[str, Any]:
-    """Geometria del modello dal `config.json` ufficiale, se raggiungibile."""
-    arch = dict(_DEFAULT_ARCH)
+def _architecture(model_path: str | None, known: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Geometria del modello: `config.json` locale, poi la ricetta, poi il default.
+
+    La ricetta (`train_recipes.TrainRecipe.architecture`) è autorevole quanto
+    il disco: se il checkpoint non è ancora stato scaricato si usa la geometria
+    dichiarata lì, invece di stimare un modello diverso (prima si usava sempre
+    quella di MonkeyOCRv2, anche per Qwen3-VL da 8B).
+    """
+    arch = dict(known or _DEFAULT_ARCH)
     if not model_path:
         return arch
     config_file = Path(model_path) / "config.json"
@@ -108,9 +114,14 @@ def _architecture(model_path: str | None) -> dict[str, Any]:
     return arch
 
 
-def estimate(cfg: dict[str, Any], *, model_path: str | None = None) -> VramEstimate:
+def estimate(
+    cfg: dict[str, Any],
+    *,
+    model_path: str | None = None,
+    architecture: dict[str, Any] | None = None,
+) -> VramEstimate:
     """VRAM richiesta, in MiB, per la configurazione `cfg` su **una** GPU."""
-    arch = _architecture(model_path)
+    arch = _architecture(model_path, architecture)
     hidden = int(arch["hidden_size"])
     inter = int(arch["intermediate_size"])
     layers = int(arch["num_hidden_layers"])
@@ -163,7 +174,11 @@ def estimate(cfg: dict[str, Any], *, model_path: str | None = None) -> VramEstim
 
 
 def largest_fitting_length(
-    cfg: dict[str, Any], free_mib: int, *, model_path: str | None = None
+    cfg: dict[str, Any],
+    free_mib: int,
+    *,
+    model_path: str | None = None,
+    architecture: dict[str, Any] | None = None,
 ) -> int:
     """La `max_length` più grande che entra in `free_mib` a batch 1.
 
@@ -174,12 +189,12 @@ def largest_fitting_length(
     probe["batch_size"] = 1
     low, high = 256, max(512, int(cfg.get("max_length", 16384) or 16384))
     probe["max_length"] = low
-    if estimate(probe, model_path=model_path).total_mib * _HEADROOM > free_mib:
+    if estimate(probe, model_path=model_path, architecture=architecture).total_mib * _HEADROOM > free_mib:
         return 0
     while low < high:
         middle = (low + high + 256) // 2
         probe["max_length"] = middle
-        if estimate(probe, model_path=model_path).total_mib * _HEADROOM <= free_mib:
+        if estimate(probe, model_path=model_path, architecture=architecture).total_mib * _HEADROOM <= free_mib:
             low = middle
         else:
             high = middle - 256

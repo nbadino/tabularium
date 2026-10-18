@@ -6,18 +6,12 @@ solo viste derivate, con split per pagina, e non modifica né corregge il gold.
 from __future__ import annotations
 
 import json
-import random
 import shutil
 from pathlib import Path
 
-from ..db import connect
 from . import dataset_builder as builder
-from . import otsl
 from . import pages as pagesvc
 
-
-TABLE_PROMPT = "Table Recognition:"
-TEXT_PROMPT = "OCR:"
 
 # Sotto questa misura in pixel non c'è una riga di testo da leggere: la cella è
 # un artefatto della griglia, non un campione.
@@ -90,22 +84,21 @@ def _cell_samples(grid: dict, bbox: tuple[int, int, int, int]) -> list[dict]:
     return samples
 
 
-def _split(page_ids: list[int], ratio: float, seed: int) -> tuple[set[int], set[int]]:
-    ids = list(page_ids)
-    random.Random(seed).shuffle(ids)
-    cut = max(1, min(len(ids) - 1, round(len(ids) * ratio))) if len(ids) > 1 else len(ids)
-    return set(ids[:cut]), set(ids[cut:])
+def _split(
+    project_id: int, page_ids: list[int], ratio: float, seed: int, approved_only: bool
+) -> tuple[set[int], set[int]]:
+    """Lo stesso split del dataset canonico, non una seconda regola.
 
-
-def _erniekit(image: str, prompt: str, target: str) -> dict:
-    # ERNIEKit SFT-VL: prompt mascherato, risposta inclusa nella loss.
-    return {
-        "image_info": [{"matched_text_index": 0, "image_url": image}],
-        "text_info": [
-            {"text": prompt, "tag": "mask"},
-            {"text": target, "tag": "no_mask"},
-        ],
-    }
+    Il layout PaddleX e le celle PP-OCR devono vedere le stesse pagine di
+    training/validation del VLM: un export con uno split diverso rende i
+    numeri dei due modelli non confrontabili. `compute_split` esclude anche
+    il gold protetto; quelle pagine non entrano in nessuna delle due viste.
+    """
+    train_ids, val_ids = builder.compute_split(
+        project_id, ratio, seed, "page", approved_only=approved_only
+    )
+    known = set(page_ids)
+    return train_ids & known, val_ids & known
 
 
 def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_only: bool = True) -> dict:
@@ -116,13 +109,12 @@ def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_on
     crops = out / "crops"
     out.mkdir(parents=True, exist_ok=True)
     crops.mkdir(parents=True, exist_ok=True)
-    train_ids, val_ids = _split(list(data), split_ratio, seed)
+    train_ids, val_ids = _split(project_id, list(data), split_ratio, seed, approved_only)
     warnings: list[str] = []
     layout: dict[str, dict] = {
         "train": {"images": [], "annotations": []},
         "val": {"images": [], "annotations": []},
     }
-    vlm: dict[str, list] = {"train": [], "val": []}
     # Riconoscitore di riga (PP-OCR rec): un campione per cella trascritta.
     # È un modello diverso dal VLM — quello che gira in locale dentro
     # `table_detect.fill_cells` — e vuole il suo formato: `percorso\ttesto`.
@@ -134,12 +126,17 @@ def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_on
     ann_id = 1
     counts = {
         "layout": {"train": 0, "val": 0},
-        "vlm": {"train": 0, "val": 0},
         "rec": {"train": 0, "val": 0},
     }
 
     for page_id, item in data.items():
         page = item["page"]
+        if approved_only and page["status"] not in {"approved", "exported"}:
+            continue
+        if page_id not in train_ids and page_id not in val_ids:
+            # Gold protetto o pagina non scelta dallo split: non si inventa
+            # una validation con ciò che il training non può vedere.
+            continue
         split = "train" if page_id in train_ids else "val"
         page_image = builder._page_image_path(page, crops, warnings)
         if not page_image:
@@ -165,36 +162,6 @@ def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_on
                 "reading_order": block["order_idx"],
             })
             ann_id += 1
-            label_kind = "table" if label == "Table" else "text" if label in {"Text", "Title", "Headline", "Byline", "Caption", "Section-header"} else None
-            if not label_kind or not str(block["content"] or "").strip() and label_kind == "text":
-                continue
-            crop = builder._write_crop(page, int(block["id"]), points, crops, warnings)
-            if not crop:
-                continue
-            target = str(block["content"] or "")
-            if label_kind == "table":
-                grid = item["tables"].get(int(block["id"]))
-                if not grid:
-                    warnings.append(f"tabella {block['id']} senza griglia")
-                    continue
-                try:
-                    target = otsl.grid_to_otsl(grid)
-                except ValueError as exc:
-                    warnings.append(f"tabella {block['id']} non esportata: {exc}")
-                    continue
-                if not any(str(cell.get("text", "")).strip() for cell in grid.get("cells", [])):
-                    continue
-                if approved_only and any(
-                    str(cell.get("text", "")).strip() and not bool(cell.get("verified"))
-                    for cell in grid.get("cells", [])
-                ):
-                    warnings.append(f"tabella {block['id']} non esportata: celle non verificate")
-                    continue
-                prompt = TABLE_PROMPT
-            else:
-                prompt = TEXT_PROMPT
-            vlm[split].append(_erniekit(crop, prompt, target))
-            counts["vlm"][split] += 1
         # --- celle: dataset del riconoscitore di riga -----------------------
         # Passata separata dal VLM di proposito: una tabella il cui OTSL non si
         # genera (celle unite incoerenti) ha comunque celle leggibili, e sono
@@ -233,9 +200,6 @@ def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_on
 
     written = {}
     for split in ("train", "val"):
-        path = out / f"vlm_{split}.jsonl"
-        path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in vlm[split]) + ("\n" if vlm[split] else ""), encoding="utf-8")
-        written[f"vlm_{split}"] = str(path)
         path = out / f"rec_{split}.txt"
         path.write_text(
             "".join(f"{image}\t{text}\n" for image, text in rec[split]), encoding="utf-8"
@@ -262,8 +226,6 @@ def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_on
     written["rec_dict"] = str(dict_path)
     written["rec_data_dir"] = str(out)
     written["layout_dataset_dir"] = str(out)
-    if not vlm["val"]:
-        warnings.append("validation VLM vuota: servono almeno due pagine annotate per creare uno split")
     if not layout["val"]["images"]:
         warnings.append("validation layout vuota: servono almeno due pagine annotate per creare uno split")
     if rec_cells["unverified_skipped"]:
@@ -275,6 +237,6 @@ def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_on
         warnings.append(
             "dataset di riconoscimento vuoto: servono celle con testo verificato in una tabella"
         )
-    manifest = {"format": "paddleocr-vl-erniekit-v1", "project_id": project_id, "split_ratio": split_ratio, "seed": seed, "approved_only": approved_only, "categories": categories, "counts": counts, "cells": rec_cells, "charset": len(charset), "warnings": warnings, "files": written}
+    manifest = {"format": "paddlex-layout-ppocr-rec-v1", "project_id": project_id, "split_ratio": split_ratio, "seed": seed, "approved_only": approved_only, "categories": categories, "counts": counts, "cells": rec_cells, "charset": len(charset), "warnings": warnings, "files": written}
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest

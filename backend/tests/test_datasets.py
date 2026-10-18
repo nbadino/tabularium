@@ -146,6 +146,33 @@ def test_build_datasets(tmp_path: Path):
         assert got["built"] is True
         assert got["report"]["counts"]["table"]["train"] + got["report"]["counts"]["table"]["val"] == 1
 
+        # Un adapter end2end-only non deve far fallire la build: i suoi
+        # prompt per-task vengono dalla ricetta (canonici), non da
+        # `adapter.prompt_for`, che per Unlimited-OCR/dots.mocr non esiste.
+        e2e = client.post(
+            f"/api/projects/{pid}/datasets/build",
+            json={"split_ratio": 0.5, "seed": 42, "approved_only": False, "adapter_id": "unlimited-ocr"},
+        )
+        assert e2e.status_code == 200, e2e.text
+        e2e_table = [
+            json.loads(line)
+            for line in (Path(e2e.json()["dataset_dir"]) / "table_train.jsonl").read_text().splitlines()
+            if line.strip()
+        ]
+        assert e2e_table
+        assert e2e_table[0]["messages"][0]["content"].startswith("<image>Please extract the table")
+
+        # GLM-OCR: il prompt di training è quello ufficiale del vendor, non
+        # quello generico dell'adapter.
+        glm = client.post(
+            f"/api/projects/{pid}/datasets/build",
+            json={"split_ratio": 0.5, "seed": 42, "approved_only": False, "adapter_id": "glm-ocr"},
+        )
+        assert glm.status_code == 200, glm.text
+        glm_root = Path(glm.json()["dataset_dir"])
+        text_row = json.loads((glm_root / "text_rec_train.jsonl").read_text().splitlines()[0])
+        assert text_row["messages"][0]["content"] == "<image>Text Recognition:"
+
         # Vista Paddle: stesso gold, split per pagina, ERNIEKit + COCO.
         paddle = client.post(
             f"/api/projects/{pid}/datasets/build-paddle",
@@ -153,14 +180,13 @@ def test_build_datasets(tmp_path: Path):
         )
         assert paddle.status_code == 200, paddle.text
         paddle_manifest = paddle.json()
-        paddle_root = Path(paddle_manifest["files"]["vlm_train"]).parent
-        assert paddle_manifest["format"] == "paddleocr-vl-erniekit-v1"
+        paddle_root = Path(paddle_manifest["files"]["layout_dataset_dir"])
+        assert paddle_manifest["format"] == "paddlex-layout-ppocr-rec-v1"
         assert (paddle_root / "annotations/train.json").exists()
-        assert (paddle_root / "vlm_train.jsonl").exists()
-        row = json.loads((paddle_root / "vlm_train.jsonl").read_text().splitlines()[0])
-        assert row["image_info"][0]["image_url"]
-        assert row["text_info"][0]["tag"] == "mask"
-        assert row["text_info"][1]["tag"] == "no_mask"
+        assert (paddle_root / "rec_train.txt").exists()
+        # Il VLM PaddleOCR-VL non passa più da qui: PaddleFormers consuma la
+        # vista `messages` del run (v. training_views.py).
+        assert "vlm" not in paddle_manifest["counts"]
 
         # Il campione pilot salvato può produrre uno snapshot isolato, senza
         # includere le altre pagine annotate del progetto.

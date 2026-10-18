@@ -249,6 +249,9 @@ per_device_train_batch_size 4 | gradient_accumulation_steps 1 | save_steps 500 |
 ```
 - The official `eval_steps` is huge (= no evaluation during training); we add a val split.
 - The resume logic (finding the latest `checkpoint-N` in `output_dir`) must be preserved.
+- These are the **reference model's** values. Every other model takes its own from its recipe
+  (§10); copying them across models is a bug (e.g. Qwen3-VL uses `--tuner_type`, packing and zero2;
+  GLM-OCR uses LLaMA-Factory hyperparameters).
 
 ### 2.6.1 How much VRAM it really needs (and why the official preset does not fit)
 The §2.6 hyperparameters are the repository's canonical ones and remain the reference, but they
@@ -520,7 +523,8 @@ tabularium/
         model_labels.py     #   native → canonical label bridge
         model_registry.py   #   catalog, downloads, local runnability
         serve_recipes.py / serve_manager.py / local_runtime.py / mlx_runtime.py / paddle_runtime.py
-        train_recipes.py / trainer.py / trainer_script.py / training_executor.py / vram.py
+        train_recipes.py / trainer.py / trainer_script.py / training_views.py
+        training_executor.py / vram.py
         cloud_manager.py / modal_manager.py   # Vast.ai, RunPod, SSH tunnels, Modal
         inference.py        #   OpenAI-compatible client (+ Gemini generateContent)
         prefill.py / recognition.py / ocr.py / table_detect.py (deprecated, §2.3.5)
@@ -614,7 +618,8 @@ Rules:
   trigger `ON DELETE CASCADE` and lose the attached table grids.
 
 Other training formats are views derived from the same canonical annotations, never a second
-source of truth: ShareGPT for LLaMA-Factory (`alternative_training.py`) and the Paddle views below.
+source of truth: ShareGPT for LLaMA-Factory and the PaddleFormers `messages` view are written by
+`services/training_views.py` at run time, and the PaddleX/PP-OCR views below are built separately.
 Each training recipe (§10) points to its view; the builder never converts the target silently.
 
 ### Official Paddle views (`services/paddle_dataset.py`)
@@ -622,8 +627,11 @@ Each training recipe (§10) points to its view; the builder never converts the t
 | View | Files | Model | Content |
 |---|---|---|---|
 | layout | `layout_{train,val}.json` + `annotations/` | PaddleX detector (COCO) | block bbox + class, reading order |
-| VLM | `vlm_{train,val}.jsonl` | PaddleOCR-VL via ERNIEKit | block crop → OTSL (tables) or text |
 | line | `rec_{train,val}.txt` + `rec_dict.txt` + `cells/` | PP-OCR rec | **one sample per cell**: crop → text |
+
+PaddleOCR-VL itself is trained by the Training Center from the `messages` view
+(`training_views.py`), not from this module: PaddleFormers consumes the same JSONL shape as
+ms-swift, so a separate VLM exporter would be a second source of truth.
 
 The *line* view closes the loop on the **local** OCR engine (the one that fills cells in
 `table_detect.fill_cells`): a hand-corrected cell comes back as a sample. The crop is the same the
@@ -743,21 +751,44 @@ Violations produce export warnings. They are central to dataset consistency.
 
 ## 10. Training center
 
-- Each trainable model has a **recipe** in `services/train_recipes.py`: toolchain (ms-swift,
-  erniekit+paddlex, …), official documentation, allowed types (`lora`/`full`), data view and
-  maturity (`verified` only after a documented real run; otherwise `experimental`; `planned` when
-  no runnable recipe exists). Closed models (Gemini 4 Argon) have no weights and no recipe.
-- `services/trainer_script.py` generates the script from the recipe (for MonkeyOCRv2: `swift sft`
-  with the §2.6 flags + `--val_dataset` + the official `get_latest_checkpoint` resume logic) and
-  **fails explicitly** on anything it cannot run — never a wrong script silently.
+- Each trainable model has a **recipe** in `services/train_recipes.py`: the toolchain the model's
+  own vendor documentation uses, the official documentation URL, allowed types (`lora`/`full`), the
+  data view, the official hyperparameters/flags and the maturity. Closed models (Gemini 4 Argon)
+  have no weights and no recipe; `inference-only` models (TeleOCR, LightOnOCR-3) declare why they
+  cannot be trained instead of disappearing.
+- **The toolchain is per model, not one global choice**:
+  - `ms-swift` — MonkeyOCRv2 (the **bundled fork** in `parsing/train/ms-swift`, where the flag is
+    `--train_type`; upstream uses `--tuner_type`), Qwen3-VL, Unlimited-OCR, DeepSeek-OCR-2,
+    dots.ocr. The other four use upstream ms-swift; MonkeyOCRv2 must use its fork, whose
+    `<|image_pad|>` template is not upstream's `<|IMAGE|>` encoder template.
+  - `llama-factory` — GLM-OCR, as `examples/finetune/README.md` documents; ShareGPT view + the
+    official prompts `Text Recognition:` / `Table Recognition:` / `Formula Recognition:`.
+  - `paddleformers` — PaddleOCR-VL, `paddleformers-cli train <config> key=value`, full **and**
+    LoRA; the `messages` dataset is the same shape as ms-swift.
+  - `mineru-sft` — MinerU2.5: its lesson explicitly forbids `swift sft` and ships the config only
+    inside `mineru_sft_code.zip`; the recipe is `planned` and blocks with the documentation link.
+- `services/training_views.py` materialises the run's data view from the immutable dataset
+  snapshot. Views reshape containers/prompts, never the target: `ms-swift-jsonl`,
+  `paddleformers-messages`, `llamafactory-sharegpt`. Each run writes `dataset/view.json` (families,
+  prompts, counts, empty families) and embeds it in `run.json`; the view also realigns the
+  prompts to the model being trained, whatever adapter built the snapshot. Recognition-only models
+  (GLM-OCR, PaddleOCR-VL) do not get the layout family: their protocol has no bbox.
+- `services/trainer_script.py` generates the script from the recipe and **fails explicitly** on
+  anything it cannot run — never a wrong script silently. The VRAM estimate uses the recipe's own
+  geometry (`TrainRecipe.architecture`); an unknown geometry is not blocked on a guessed number.
 - Execution in a dedicated environment on the GPU machine — this machine, SSH, Vast.ai or RunPod
   (`services/training_executor.py`; `scripts/cloud/setup_cloud_train.sh` prepares a remote host and
-  writes a `.train_ready` marker). The dashboard launches, **streams logs via SSE**, parses loss and
-  learning rate, samples GPU telemetry (`nvidia-smi`), stops and resumes.
+  writes a `.train_ready` marker). The preflight checks **the recipe's** toolchain, not always
+  MonkeyOCRv2: `TABULARIUM_TRAIN_REPO` for MonkeyOCRv2, `TABULARIUM_LLAMAFACTORY_DIR` for GLM-OCR,
+  `TABULARIUM_PADDLEFORMERS_DIR` for PaddleOCR-VL. The dashboard launches, **streams logs via
+  SSE**, parses loss and learning rate, samples GPU telemetry (`nvidia-smi`), stops and resumes.
 - Run state, scripts and logs in `<root>/projects/<project>/runs/<run_id>/` (§13.10).
 - After a run, registering the checkpoint as a model (`custom_models.register_training_checkpoint`)
-  merges LoRA adapters with `swift export --merge_lora` into a checkpoint vLLM can serve.
-- Recipe matrix and real-run log: `docs/guide/training.md`.
+  merges LoRA with the **toolchain's own** command: `swift export --merge_lora` (ms-swift),
+  `llamafactory-cli export` (GLM-OCR), `paddleformers-cli export` (PaddleOCR-VL). The output must
+  be a full checkpoint vLLM can serve.
+- Official hyperparameters, per-model notes and the real-run log: `docs/guide/training.md`; the
+  verbatim vendor commands: `docs/training-official-docs.md`.
 
 ---
 
@@ -825,8 +856,9 @@ matched at IoU 0.5 (missed blocks stay out of CER and are counted by recall).
   paths, full table crop + experimental logical bands only with verified `hlines`, sanity report saved
   in `dataset/report.json`. API: `POST/GET /api/projects/{id}/datasets[/build]`. Dataset page with
   split slider, seed, stats, warnings, files and JSONL row previews.
-- **M5 — Training center** ✅ — `services/trainer.py`: script generation (`swift sft` with §2.6 flags +
-  `--val_dataset` + checkpoint resume), train/val merge across families (`prepare_training_files`),
+- **M5 — Training center** ✅ — `services/trainer.py`: script generation from the model's recipe
+  (§10; `swift sft`, `llamafactory-cli` or `paddleformers-cli`) with `--val_dataset` and checkpoint
+  resume, the run's data view (`training_views.py`),
   subprocess launch with a log file, metric parsing (loss/lr), GPU telemetry (nvidia-smi), stop,
   state persisted in `runs/<run_id>/{run.json,train.sh,train.log}`. API:
   `POST /api/projects/{id}/training/{start,stop}`, `GET …/status`, `GET …/stream` (SSE),
@@ -1119,19 +1151,20 @@ matched at IoU 0.5 (missed blocks stay out of CER and are counted by recall).
   not only MonkeyOCRv2. Closed models (Gemini 4 Argon) have no weights and are out of scope —
   `training_types` empty already says so.
   - **A registry, not scattered scripts.** `services/train_recipes.py` is the twin of
-    `serve_recipes.py`: one recipe per adapter declares `toolchain` (ms-swift, erniekit+paddlex,
-    llama-factory, unsloth, community), the official documentation, allowed types (`lora`/`full`),
+    `serve_recipes.py`: one recipe per adapter declares `toolchain` (ms-swift, llama-factory,
+    paddleformers, mineru-sft, none), the official documentation, allowed types (`lora`/`full`),
     the **data view** the dataset builder must produce and the maturity. The training center reads
     the selected adapter's recipe; it does not know MonkeyOCRv2 by name.
   - **Recipe discipline (as for serving and evaluation).** A recipe is `verified` **only after a
     documented real run**; otherwise `experimental`. No recipe without official documentation behind
     it. The status matrix lives in `docs/guide/training.md`.
-  - **Current state (to verify, not to assume).** `ms-swift` covers most OCR models — values from its
-    official *Supported-models-and-datasets* table: MonkeyOCRv2 (`monkeyocrv2`, reference), Qwen3-VL
-    (`qwen3_vl`), Unlimited-OCR (`unlimited_ocr`), DeepSeek-OCR-2 (`deepseek_ocr2`), GLM-OCR
-    (`glm_ocr`), MinerU2.5 (`qwen2_vl`), dots.ocr (`dots_ocr`). PaddleOCR-VL stays on its official
-    `erniekit+paddlex` path. To add: TeleOCR and LightOnOCR-3 (not in ms-swift). Only MonkeyOCRv2 is
-    `verified`.
+  - **Current state (to verify, not to assume).** The toolchain is the one the vendor documents:
+    MonkeyOCRv2 uses its bundled ms-swift fork; Qwen3-VL, Unlimited-OCR, DeepSeek-OCR-2 and dots.ocr
+    use upstream ms-swift (`qwen3_vl`, `unlimited_ocr`, `deepseek_ocr2`, `dots_ocr`); GLM-OCR uses
+    LLaMA-Factory (`template: glm_ocr`); PaddleOCR-VL uses PaddleFormers (full and LoRA). MinerU2.5
+    forbids `swift sft` and its config ships only in `mineru_sft_code.zip`, so it is `planned`.
+    TeleOCR and LightOnOCR-3 ship inference only and are `inference-only`. Only MonkeyOCRv2 is
+    `verified` (generator/dispatch, not yet a GPU run).
   - **Fine-tuning starts from benchmark data.** The benchmark (M17) says *where* the gap is: here
     the **taxonomy** (custom classes are not emitted: `Issue-date` 0/10, `Title` 0/3) and **table
     structure** (low TEDS), not reading (CER 0.006). The training recipe chooses accordingly.
@@ -1139,7 +1172,8 @@ matched at IoU 0.5 (missed blocks stay out of CER and are counted by recall).
     (venv, ms-swift, MonkeyOCRv2 clone) and writes a `$ROOT/.train_ready` marker: "prepared" is a fact
     on disk, not an assumption. On Vast.ai renting runs it via `prepare_training` (onstart, no HTTP
     port), distinct from `prepare_server` (serving).
-  - Tests: `tests/test_train_recipes.py`, `GET /api/system/train-recipes`.
+  - Tests: `tests/test_train_recipes.py`, `tests/test_training_views.py`,
+    `GET /api/system/train-recipes`.
 - **M21 — Distribution and public documentation** — Tabularium is installable by researchers who
   are not developers, and documented in English.
   - **`uv tool install tabularium`** (PyPI) installs a wheel that bundles the prebuilt interface and

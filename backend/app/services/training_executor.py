@@ -131,6 +131,16 @@ class SshExecutor:
             raise ValueError("remote_root SSH non valido")
         return f"{root}/{recipe.run_id}"
 
+    def mkdir_argv(self, recipe: TrainingRecipe) -> list[str]:
+        """Crea la cartella remota della run prima del primo rsync.
+
+        `rsync` non crea le directory padre: senza questo, un `remote_root`
+        nuovo (`/tmp/tabularium-runs` di default) faceva fallire il sync con
+        `mkdir ... failed: No such file or directory` (exit 11).
+        """
+        remote_dir = shlex.quote(self._remote_dir(recipe))
+        return ["ssh", *self._options(), self._target(), f"mkdir -p {remote_dir}"]
+
     def sync_argv(self, recipe: TrainingRecipe) -> list[str]:
         remote = f"{self._target()}:{self._remote_dir(recipe)}/"
         return [
@@ -159,6 +169,7 @@ class SshExecutor:
         with log_file.open("ab") as stream:
             stream.write(f">> sync {self._target()}:{self._remote_dir(recipe)}\n".encode())
             stream.flush()
+            subprocess.run(self.mkdir_argv(recipe), check=True, stdout=stream, stderr=subprocess.STDOUT)
             subprocess.run(self.sync_argv(recipe), check=True, stdout=stream, stderr=subprocess.STDOUT)
         result = subprocess.run(self.launch_argv(recipe), check=True, capture_output=True, text=True)
         try:

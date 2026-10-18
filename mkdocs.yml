@@ -56,6 +56,7 @@ nav:
       - Local inference: guide/local-inference.md
       - Cloud GPUs: guide/cloud-gpus.md
       - Fine-tuning: guide/training.md
+      - Official training docs: training-official-docs.md
   - Teams: guide/collaboration.md
   - Contributing:
       - Development: guide/development.md

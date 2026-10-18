@@ -6,12 +6,48 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Fine-tuning follows each vendor's own recipe.** The training center now dispatches per model:
+  ms-swift (MonkeyOCRv2's bundled fork, Qwen3-VL, Unlimited-OCR, DeepSeek-OCR-2, dots.ocr),
+  LLaMA-Factory (GLM-OCR), PaddleFormers (PaddleOCR-VL). Recipes carry official ids, prompts,
+  hyperparameters, flags and the documentation URL; the generator refuses what it cannot run
+  (MinerU2.5 stays `planned`), and `docs/training-official-docs.md` keeps the vendor commands
+  verbatim.
+- **Data views per toolchain** (`services/training_views.py`): `ms-swift-jsonl`,
+  `paddleformers-messages`, `llamafactory-sharegpt`. Each run writes `dataset/view.json` with the
+  families, prompts and counts it used.
+- Per-toolchain LoRA merge on checkpoint registration (`swift export`, `llamafactory-cli export`,
+  `paddleformers-cli export`).
+- The VRAM estimate uses the selected model's geometry; unknown models are not blocked on a guess.
+- **MonkeyOCRv2 verified on a real GPU**: a generated script ran 1 LoRA step on an RTX A5000
+  (`train_loss 0.866`, `checkpoint-1`) and `swift export --merge_lora` produced a loadable merged
+  checkpoint. The full executor path was verified too (rsync, remote launch, log, 38 downloaded
+  artifacts with checksums). Remote scripts now use `$RUN_DIR` for dataset/checkpoints, the SSH
+  executor creates the remote run directory before rsync, and the provisioning installs
+  `torchvision`/`deepspeed` and the fork's missing `dataset_info.json`.
+- `TABULARIUM_LLAMAFACTORY_DIR` and `TABULARIUM_PADDLEFORMERS_DIR` for the new toolchains.
+
 ### Changed
+- The training form is recipe-driven: choosing a model applies its official defaults and allowed
+  train types; presets no longer override the learning rate.
+- The preflight checks the chosen toolchain instead of always MonkeyOCRv2.
+- Dataset page: removed the per-model "prepare training" buttons; training preparation belongs to
+  the Training Center. Removed `alternative_training.py`, `paddle_training.py` and the ERNIEKit VLM
+  export (`vlm_*`) — superseded by the recipe views.
 - The bundled domain profile is now `shipping-registers-1900s`, in English and without corpus
   names. Projects that saved the old id keep working: it maps to the new one.
 - `AGENTS.md` (product spec and agent rules) is now in English and up to date: Univer table
   workspace, current repository structure and schema, distribution with uv, releases, the
   English-only rule for new code, docs and commits.
+
+### Fixed
+- `scripts/cloud/setup_cloud_train.sh` installs torch from the index matching the host driver
+  before the pinned recipe dependencies, and **skips it when the venv already has that CUDA** so a
+  re-provisioning does not download ~800 MB again. It disables a shadowing `cuda-compat` library
+  when a real driver is present.
+- The provisioning script creates the empty `swift/llm/dataset/data/dataset_info.json` that the
+  MonkeyOCRv2 ms-swift fork omits but imports at startup; without it `swift sft` failed in
+  `register_dataset_info` with `JSONDecodeError` (local JSONL datasets need no entry).
 
 ## [0.3.0] - 2026-10-18
 
