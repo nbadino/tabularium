@@ -16,7 +16,7 @@ listed as verified only after it has been run on real pages.
 ✅ verified on real pages · 🧪 experimental · — not available locally (use a
 remote GPU). Every model also runs remotely. The measured matrix, and the
 reason behind each cell, is in
-[local inference guide](LOCAL_INFERENCE_GUIDE.md); training
-support per model is in the [training guide](TRAINING_GUIDE.md).
+[local inference guide](guide/local-inference.md); training
+support per model is in the [training guide](guide/training.md).
 Missing a model? [Open an issue](https://github.com/nbadino/tabularium/issues/new?template=feature_request.yml).
 

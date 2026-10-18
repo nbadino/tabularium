@@ -125,8 +125,8 @@ listed as verified only after it has been run on real pages.
 ✅ verified on real pages · 🧪 experimental · — not available locally (use a
 remote GPU). Every model also runs remotely. The measured matrix, and the
 reason behind each cell, is in
-[docs/LOCAL_INFERENCE_GUIDE.md](docs/LOCAL_INFERENCE_GUIDE.md); training
-support per model is in [docs/TRAINING_GUIDE.md](docs/TRAINING_GUIDE.md).
+[local inference guide](docs/guide/local-inference.md); training
+support per model is in [training guide](docs/guide/training.md).
 Missing a model? [Open an issue](https://github.com/nbadino/tabularium/issues/new?template=feature_request.yml).
 
 ## Quickstart
@@ -151,9 +151,9 @@ prerequisites and single-user mode are in the
   [Configuration](docs/guide/configuration.md) ·
   [Teams and review](docs/guide/collaboration.md) ·
   [Troubleshooting](docs/guide/troubleshooting.md)
-- [Local inference](docs/LOCAL_INFERENCE_GUIDE.md) ·
-  [Cloud GPUs](docs/CLOUD_INFERENCE_GUIDE.md) ·
-  [Training](docs/TRAINING_GUIDE.md)
+- [Local inference](docs/guide/local-inference.md) ·
+  [Cloud GPUs](docs/guide/cloud-gpus.md) ·
+  [Training](docs/guide/training.md)
 - [Development](docs/guide/development.md) ·
   [Product spec and design rationale](AGENTS.md) (Italian)
 

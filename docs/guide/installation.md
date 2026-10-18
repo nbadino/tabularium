@@ -31,7 +31,7 @@ separate environments it orchestrates.
 
 Which models run locally depends on the pair *machine + model*, and the Models
 screen says so per model. The measured matrix is in
-[LOCAL_INFERENCE_GUIDE.md](../LOCAL_INFERENCE_GUIDE.md) §0.
+[Local inference](local-inference.md) §0.
 
 ## Install from source
 
@@ -89,8 +89,8 @@ open it from **Settings**. All options are in [Configuration](configuration.md).
 3. **Recognize** → select pages and start.
 4. **Results** → check, open pages in **Annotate** to correct, export.
 
-Model serving details are in [LOCAL_INFERENCE_GUIDE.md](../LOCAL_INFERENCE_GUIDE.md);
+Model serving details are in [Local inference](local-inference.md);
 rented GPUs (Vast.ai, RunPod, Modal, SSH tunnels) in
-[CLOUD_INFERENCE_GUIDE.md](../CLOUD_INFERENCE_GUIDE.md); tested GPU profiles in
+[Cloud GPUs](cloud-gpus.md); tested GPU profiles in
 [benchmarks.md](https://github.com/nbadino/tabularium/blob/main/benchmarks.md). A catalog entry is not by itself a promise
 that every checkpoint fits an 8 GB GPU.

@@ -109,7 +109,7 @@ training set.
 
 - **[Install Tabularium](guide/installation.md)**: four commands, no GPU needed.
 - **[Supported models](models.md)**: what runs where, and how verified it is.
-- **[Rent a GPU](CLOUD_INFERENCE_GUIDE.md)**: Vast.ai, RunPod, Modal, SSH.
-- **[Fine-tune a model](TRAINING_GUIDE.md)**: official recipes per model.
+- **[Rent a GPU](guide/cloud-gpus.md)**: Vast.ai, RunPod, Modal, SSH.
+- **[Fine-tune a model](guide/training.md)**: official recipes per model.
 
 </div>

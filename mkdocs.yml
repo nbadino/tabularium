@@ -53,9 +53,13 @@ nav:
       - Troubleshooting: guide/troubleshooting.md
   - Models:
       - Supported models: models.md
-      - Local inference (IT): LOCAL_INFERENCE_GUIDE.md
-      - Cloud GPUs (IT): CLOUD_INFERENCE_GUIDE.md
-      - Fine-tuning (IT): TRAINING_GUIDE.md
+      - Local inference: guide/local-inference.md
+      - Cloud GPUs: guide/cloud-gpus.md
+      - Fine-tuning: guide/training.md
   - Teams: guide/collaboration.md
   - Contributing:
       - Development: guide/development.md
+  - Italiano:
+      - Inferenza locale: LOCAL_INFERENCE_GUIDE.md
+      - GPU cloud: CLOUD_INFERENCE_GUIDE.md
+      - Training: TRAINING_GUIDE.md
