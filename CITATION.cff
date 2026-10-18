@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use Tabularium in your research, please cite it as below."
+title: "Tabularium: state-of-the-art OCR and fine-tuning for historical documents"
+type: software
+authors:
+  - family-names: Badino
+    given-names: Nicolò
+repository-code: "https://github.com/nbadino/tabularium"
+license: MIT
+version: "0.1.0"
+keywords:
+  - OCR
+  - table recognition
+  - document layout analysis
+  - digital humanities
+  - historical documents
+  - fine-tuning

@@ -1,0 +1,39 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+  - type: input
+    id: version
+    attributes:
+      label: Tabularium version
+      description: Content of the VERSION file, or the commit hash.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Linux, macOS (Apple Silicon), macOS (Intel), Windows, Windows (WSL2)]
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model and where it runs
+      description: e.g. "MinerU2.5 on Vast.ai", "local OCR only"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      render: text
