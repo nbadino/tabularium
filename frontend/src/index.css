@@ -882,32 +882,9 @@
     }
   }
 
-  /* Il menu dell'account si apre e si chiude al rallentatore: il pannello si
-     srotola dall'alto e le voci entrano una alla volta; alla chiusura si
-     riavvolge. Eccezione voluta alla regola dei 200 ms: si apre di rado, e il
-     movimento è richiesto. Ogni regola dipende dallo stato (`:not([data-closing])`)
-     e apertura e chiusura usano keyframe distinti: un'animazione riparte solo
-     se cambia il nome, non la direzione, e riaprire durante la chiusura
-     altrimenti non animerebbe più niente. */
-  .menu-unfold[open]:not([data-closing]) > div {
-    animation: unfold 700ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
-  }
-  .menu-unfold[open]:not([data-closing]) > div > * {
-    animation: enter-up 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
-  }
-  .menu-unfold[open]:not([data-closing]) > div > :nth-child(1) { animation-delay: 150ms; }
-  .menu-unfold[open]:not([data-closing]) > div > :nth-child(2) { animation-delay: 250ms; }
-  .menu-unfold[open]:not([data-closing]) > div > :nth-child(3) { animation-delay: 350ms; }
-  .menu-unfold[open]:not([data-closing]) > div > :nth-child(4) { animation-delay: 450ms; }
-  .menu-unfold[open]:not([data-closing]) > div > :nth-child(n + 5) { animation-delay: 550ms; }
-  /* Durata = FOLD_MS in ui.tsx; `forwards` tiene il pannello nascosto finché
-     il timer non toglie `open`. */
-  .menu-unfold[data-closing] > div {
-    animation: fold 450ms cubic-bezier(0.7, 0, 0.84, 0) forwards;
-    pointer-events: none;
-  }
+  /* I menu mostrano tutte le voci al clic, senza attese o ingressi a cascata. */
   .menu-unfold > summary svg {
-    transition: transform 500ms cubic-bezier(0.16, 1, 0.3, 1);
+    transition: transform 100ms ease-out;
   }
   .menu-unfold[open]:not([data-closing]) > summary svg {
     transform: rotate(180deg);
@@ -985,20 +962,7 @@
     box-shadow: 0 6px 16px -10px rgb(17 17 17 / 0.28);
   }
 
-  /* I moduli affiorano mentre entrano in vista scorrendo: animazione legata
-     allo scorrimento, non al tempo, quindi segue la mano. Riempimento solo
-     `backwards`: finita l'entrata il modulo non porta più né trasformazione né
-     contesto di sovrapposizione, e i suoi menu restano sopra i moduli vicini.
-     Ciò che è già in vista all'apertura non si muove. Dove il browser non
-     conosce `animation-timeline` (Firefox), i moduli sono semplicemente lì. */
-  @supports (animation-timeline: view()) {
-    main .mod:not(.mod .mod) {
-      animation: reveal cubic-bezier(0.16, 1, 0.3, 1) backwards;
-      animation-timeline: view();
-      animation-range: entry 0% entry 35%;
-    }
-  }
-
+  /* I moduli sono visibili subito anche durante lo scorrimento. */
   @keyframes reveal {
     from {
       opacity: 0;

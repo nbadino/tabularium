@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import '@testing-library/jest-dom/vitest'
 import { Select } from './ui'
 
@@ -15,8 +15,7 @@ const OPTIONS = [
 ]
 
 describe('Select', () => {
-  it('sceglie una voce, ripiega e poi chiude', () => {
-    vi.useFakeTimers()
+  it('sceglie una voce e chiude subito restituendo il focus', () => {
     const onChange = vi.fn()
     render(<Select value="Text" options={OPTIONS} onChange={onChange} ariaLabel="Classe" />)
     const details = screen.getByRole('combobox').closest('details')!
@@ -25,11 +24,8 @@ describe('Select', () => {
 
     fireEvent.click(screen.getByRole('option', { name: 'Table' }))
     expect(onChange).toHaveBeenCalledWith('Table')
-    // Resta aperto mentre si ripiega, poi si chiude.
-    expect(details.dataset.closing).toBeDefined()
-    act(() => vi.advanceTimersByTime(450))
     expect(details.open).toBe(false)
-    expect(details.dataset.closing).toBeUndefined()
+    expect(screen.getByRole('combobox')).toHaveFocus()
   })
 
   it('la freccia apre, la voce già scelta non rilancia onChange', () => {

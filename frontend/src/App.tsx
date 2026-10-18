@@ -11,11 +11,13 @@ const ResultsPage = lazy(() => import('./pages/ResultsPage'))
 const ModelsHubPage = lazy(() => import('./pages/ModelsHubPage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
-const AnnotationPage = lazy(() => import('./pages/AnnotationPage'))
-const TableWorkspacePage = lazy(() => import('./pages/TableWorkspacePage'))
+const AnnotationPage = lazy(() => import('./pages/AnnotationEntry'))
+const TableWorkspacePage = lazy(() => import('./pages/TableEntry'))
+const FineTuningPage = lazy(() => import('./pages/FineTuningPage'))
 const DatasetPage = lazy(() => import('./pages/DatasetPage'))
 const TrainingPage = lazy(() => import('./pages/TrainingPage'))
 const EvaluationPage = lazy(() => import('./pages/EvaluationPage'))
+const BenchmarkPage = lazy(() => import('./pages/BenchmarkPage'))
 const PlaygroundPage = lazy(() => import('./pages/PlaygroundPage'))
 const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'))
 const UsersPage = lazy(() => import('./pages/UsersPage'))
@@ -133,9 +135,11 @@ export default function App() {
                 <Route path="progetti" element={<ProjectsPage />} />
                 <Route path="progetti/:id" element={<ProjectDetailPage />} />
                 <Route path="annotazione" element={<AnnotationPage />} />
+                <Route path="fine-tuning" element={<FineTuningPage />} />
                 <Route path="dataset" element={<DatasetPage />} />
                 <Route path="training" element={<TrainingPage />} />
                 <Route path="valutazione" element={<EvaluationPage />} />
+                <Route path="benchmark" element={<BenchmarkPage />} />
                 <Route path="playground" element={<PlaygroundPage />} />
                 <Route path="impostazioni" element={<SettingsPage />} />
                 <Route

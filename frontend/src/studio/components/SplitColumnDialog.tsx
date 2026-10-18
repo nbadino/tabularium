@@ -38,13 +38,16 @@ export default function SplitColumnDialog({ grid, column, onApply, onClose }: Sp
   const [separator, setSeparator] = useState(' ')
   const [custom, setCustom] = useState('')
   const [parts, setParts] = useState(2)
+  const [fromRight, setFromRight] = useState(false)
+  const [startRow, setStartRow] = useState(1)
+  const [endRow, setEndRow] = useState(grid.rows)
 
   const effective = custom !== '' ? custom : separator
-  const result = useMemo(() => splitColumn(grid, column, { separator: effective, maxParts: parts }), [
+  const result = useMemo(() => splitColumn(grid, column, { separator: effective, maxParts: parts, fromRight, startRow: startRow - 1, endRow: endRow - 1 }), [
     grid,
     column,
     effective,
-    parts,
+    parts, fromRight, startRow, endRow,
   ])
 
   /** Quante righe hanno davvero qualcosa da dividere: se sono zero, non c'è
@@ -62,7 +65,7 @@ export default function SplitColumnDialog({ grid, column, onApply, onClose }: Sp
 
   const preview = useMemo(() => {
     const rows: { before: string; after: string[] }[] = []
-    for (let r = 0; r < grid.rows && rows.length < PREVIEW_ROWS; r++) {
+    for (let r = startRow - 1; r < endRow && rows.length < PREVIEW_ROWS; r++) {
       const before = grid.cells.find((c) => c.r === r && c.c === column)?.text ?? ''
       if (!before) continue
       const after: string[] = []
@@ -72,7 +75,7 @@ export default function SplitColumnDialog({ grid, column, onApply, onClose }: Sp
       rows.push({ before, after })
     }
     return rows
-  }, [grid, column, parts, result])
+  }, [grid, column, parts, result, startRow, endRow])
 
   return (
     <Modal
@@ -147,6 +150,12 @@ export default function SplitColumnDialog({ grid, column, onApply, onClose }: Sp
           </div>
         </div>
 
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={fromRight} onChange={(event) => setFromRight(event.target.checked)} />{t('table.splitFromRight')}</label>
+          <label className="text-xs">{t('table.splitFirstRow')}<input aria-label={t('table.splitFirstRow')} type="number" min={1} max={grid.rows} value={startRow} onChange={(event) => setStartRow(Math.max(1, Math.min(grid.rows, Number(event.target.value) || 1)))} className="fld fld-mono ml-2 w-20" /></label>
+          <label className="text-xs">{t('table.splitLastRow')}<input aria-label={t('table.splitLastRow')} type="number" min={startRow} max={grid.rows} value={endRow} onChange={(event) => setEndRow(Math.max(1, Math.min(grid.rows, Number(event.target.value) || grid.rows)))} className="fld fld-mono ml-2 w-20" /></label>
+        </div>
+        <p className="text-[11px] text-[color:var(--color-ink-2)]">{t('table.splitRangeHint')}</p>
         {!result ? (
           <p className="border border-[color:var(--color-warn)] px-2 py-1 text-[12px] text-[color:var(--color-warn)]">
             {t('table.splitMerged')}
@@ -180,7 +189,7 @@ export default function SplitColumnDialog({ grid, column, onApply, onClose }: Sp
               </tbody>
             </table>
             <p className="text-[11px] text-[color:var(--color-ink-2)]">
-              {t('table.splitDone', { n: parts })}
+              {t('table.splitAffected', { n: affected })}
             </p>
           </>
         )}

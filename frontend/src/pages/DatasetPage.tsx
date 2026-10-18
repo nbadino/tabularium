@@ -163,7 +163,7 @@ export default function DatasetPage() {
   }
 
   const project = projects.find((p) => p.id === projectId) ?? null
-  const { workflow, training } = usePipelineState(projectId === '' ? null : projectId)
+  const { workflow, training } = usePipelineState(projectId === '' ? null : projectId, { dataset: false, runs: false })
   useEffect(() => {
     setDraftOnlyPages(null)
     if (projectId === '') return

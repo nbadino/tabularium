@@ -1,16 +1,36 @@
 import { FormEvent, useEffect, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useNavigate, useSearchParams } from 'react-router'
+import { writeActiveProject } from '../app/activeProject'
 import { ApiError, apiGet, apiPost } from '../lib/api'
 import type { Project } from '../lib/types'
 import { pages, projects } from '../lib/vocab'
-import { ErrorNotice, Field, Module, PageHeader } from '../app/ui'
+import { Badge, ErrorNotice, Field, Modal, Module, PageHeader } from '../app/ui'
 import { IconPlus, IconProjects } from '../app/icons'
-import { useI18n } from '../i18n'
-import { useCanAdminister } from '../app/auth'
+import { useI18n, tn } from '../i18n'
+import { useAuth, useCanAdminister } from '../app/auth'
+import ShareDialog from '../app/ShareDialog'
+import { accessLabel, projectAccess } from '../app/projectAccess'
 import { FolderPicker } from '../app/FolderPicker'
 
 export default function ProjectsPage() {
   const { t } = useI18n()
+  const navigate = useNavigate()
+  const auth = useAuth()
+  const canCreate = !auth.enabled || auth.user?.role === 'admin' || auth.user?.role === 'editor'
+  const [filter, setFilter] = useState<'all' | 'mine' | 'shared'>('all')
+  const [sharing, setSharing] = useState<Project | null>(null)
+  const [params, setParams] = useSearchParams()
+  const creating = params.get('nuovo') === '1'
+  const [query, setQuery] = useState('')
+  const closeCreate = () => {
+    if (busy) return
+    const next = new URLSearchParams(params)
+    next.delete('nuovo')
+    setParams(next)
+    setError(null)
+  }
+  const openCreate = () => { if (canCreate) { setError(null); setParams({ nuovo: '1' }) } }
+  const [source, setSource] = useState<'upload' | 'server'>('upload')
   const [items, setItems] = useState<Project[]>([])
   const [name, setName] = useState('')
   const [archiveDir, setArchiveDir] = useState('')
@@ -41,7 +61,7 @@ export default function ProjectsPage() {
 
   const load = () =>
     apiGet<{ items: Project[] }>('/projects')
-      .then((r) => setItems(r.items))
+      .then((r) => { setItems(r.items); setSharing((prev) => prev ? r.items.find((p) => p.id === prev.id) ?? null : null) })
       .catch(setError)
       .finally(() => setLoading(false))
 
@@ -52,15 +72,15 @@ export default function ProjectsPage() {
   const create = async (e: FormEvent) => {
     e.preventDefault()
     setDirTouched(true)
-    if (dirError) return
+    if (!canCreate || !name.trim() || (source === 'server' && (!archiveDir.trim() || dirError))) return
     setBusy(true)
     setError(null)
     try {
-      await apiPost<Project>('/projects', { name, archive_dir: archiveDir })
-      setName('')
-      setArchiveDir('')
-      setDirTouched(false)
-      await load()
+      const project = await apiPost<Project>('/projects', {
+        name: name.trim(), archive_dir: source === 'server' ? archiveDir.trim() : null,
+      })
+      writeActiveProject(project.id)
+      navigate(`/progetti/${project.id}`)
     } catch (err) {
       setError(err)
     } finally {
@@ -90,22 +110,31 @@ export default function ProjectsPage() {
     }
   }
 
+  const filtered = items.filter((p) => p.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()) && (
+    filter === 'all' || (filter === 'mine' ? p.owner_id === auth.user?.id : p.access?.source === 'member')
+  ))
+
   return (
     <div className="p-3">
-      <PageHeader title={t('projects.title')} intro={t('projects.intro')} />
+      <PageHeader title={t('projects.title')} intro={t(canCreate ? 'projects.intro' : 'team.projectsIntro')}
+        aux={canCreate && <button type="button" className="btn btn-primary" onClick={openCreate}><IconPlus size={13} />{t('projects.new')}</button>}
+      />
 
-      {error != null && (
+      {error != null && !creating && (
         <div className="mb-3">
           <ErrorNotice error={error} onDismiss={() => setError(null)} />
         </div>
       )}
 
-      <div className="mb-3">
-        <Module tab={t('projects.new')}>
+      {creating && canCreate && <Modal title={t('projects.new')} onClose={closeCreate}>
+        <div className="p-4">
+          {error != null && <div className="mb-3"><ErrorNotice error={error} onDismiss={() => setError(null)} /></div>}
+          <p className="mb-3 text-[13px] text-[color:var(--color-ink-2)]">{t('workflow.createHint')}</p>
           <form onSubmit={create}>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3">
               <Field label={t('projects.name')}>
                 <input
+                  data-autofocus
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   required
@@ -113,7 +142,13 @@ export default function ProjectsPage() {
                   className="fld"
                 />
               </Field>
-              <Field
+            <Field label={t('workflow.importSource')}>
+              <select className="fld mb-3" value={source} onChange={(e) => setSource(e.target.value as 'upload' | 'server')}>
+                <option value="upload">{t('workflow.fromComputer')}</option>
+                <option value="server">{t('workflow.fromServer')}</option>
+              </select>
+            </Field>
+              {source === 'server' && <Field
                 label={t('projects.archiveDir')}
                 error={dirTouched && dirError ? dirError : null}
               >
@@ -145,12 +180,13 @@ export default function ProjectsPage() {
                     </span>
                   )}
                 </div>
-              </Field>
+              </Field>}
             </div>
-            <button type="submit" disabled={busy} className="btn btn-primary mt-3">
+            <button type="submit" disabled={busy || !name.trim()} className="btn btn-primary mt-3">
               <IconPlus size={13} />
               {busy ? t('projects.creating') : t('projects.create')}
             </button>
+            <button type="button" className="btn ml-2" disabled={busy} onClick={closeCreate}>{t('common.cancel')}</button>
           </form>
           {picking && (
             <FolderPicker
@@ -162,34 +198,35 @@ export default function ProjectsPage() {
               }}
             />
           )}
-        </Module>
-      </div>
+        </div>
+      </Modal>}
 
+      {auth.enabled && <div className="mb-3 flex flex-wrap gap-1" role="group" aria-label={t('team.projectFilters')}>
+        {(['all', 'mine', 'shared'] as const).map((key) => <button key={key} type="button" className="btn btn-sm" aria-pressed={filter === key} onClick={() => setFilter(key)}>{t(`team.filter.${key}`)}</button>)}
+      </div>}
+      <div className="mb-3 max-w-lg">
+        <Field label={t('ux.projectsSearch')}>
+          <input type="search" className="fld" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('ux.projectsSearchHint')} />
+        </Field>
+      </div>
       <Module
         tab={t('projects.list')}
         quiet
         flush
         aux={<span>{projects(items.length)}</span>}
       >
-        {items.length > 0 ? (
+        {filtered.length > 0 ? (
           <ul className="cascade ruled">
-            {items.map((p) => (
-              <li key={p.id}>
-                <Link
-                  to={`/progetti/${p.id}`}
-                  className="flex flex-wrap items-baseline gap-x-4 gap-y-1 px-3 py-2 text-[color:var(--color-ink)] no-underline hover:bg-[color:var(--color-fill)]"
-                >
-                  <span className="text-[15px] font-semibold tracking-[-0.015em]">{p.name}</span>
-                  <span className="mono min-w-0 flex-1 truncate text-[11px] text-[color:var(--color-ink-3)]">
-                    {p.archive_dir ?? '—'}
-                  </span>
-                  <span className="mono text-[12px] text-[color:var(--color-ink-2)]">
-                    {pages(p.pages_count)}
-                  </span>
-                  <span className="mono text-[11px] text-[color:var(--color-ink-3)]">
-                    {p.created_at.slice(0, 10)}
-                  </span>
+            {filtered.map((p) => (
+              <li key={p.id} className="flex flex-wrap items-center gap-3 px-3 py-3 hover:bg-[color:var(--color-fill)]">
+                <Link to={`/progetti/${p.id}`} className="min-w-0 flex-1 basis-56 no-underline text-[color:var(--color-ink)]">
+                  <span className="block text-[15px] font-semibold">{p.name}</span>
+                  <span className="mt-1 block text-[12px] text-[color:var(--color-ink-2)]">{t('team.ownerLine', { name: p.owner_name ?? t(auth.enabled ? 'team.noOwner' : 'team.localProject') })}</span>
                 </Link>
+                <Badge tone="neutral">{accessLabel(projectAccess(p, auth))}</Badge>
+                <span className="text-[12px] text-[color:var(--color-ink-2)]">{pages(p.pages_count)}</span>
+                {p.members_count != null && <span className="text-[12px] text-[color:var(--color-ink-2)]">{tn('team.peopleCount', p.members_count)}</span>}
+                <button type="button" className="btn btn-sm" onClick={() => setSharing(p)} aria-label={t('team.accessFor', { name: p.name })}>{t('team.peopleAccess')}</button>
               </li>
             ))}
           </ul>
@@ -197,14 +234,18 @@ export default function ProjectsPage() {
           <div className="flex flex-col items-start gap-2 p-6">
             <IconProjects size={22} />
             <p className="text-[13px] font-semibold">
-              {loading ? t('common.loading') : t('projects.emptyTitle')}
+              {loading ? t('common.loading') : items.length > 0 ? t('ux.noProjectMatch') : t('projects.emptyTitle')}
             </p>
             <p className="max-w-[60ch] text-[12px] text-[color:var(--color-ink-2)]">
-              {t('projects.emptyBody')}
+              {items.length > 0 ? t('ux.noProjectMatchHint') : t(canCreate ? 'ux.firstProjectHint' : 'team.noAssignedProjects')}
             </p>
+            {!loading && (items.length > 0
+              ? <button type="button" className="btn" onClick={() => { setQuery(''); setFilter('all') }}>{t('ux.clearSearch')}</button>
+              : canCreate && <button type="button" className="btn btn-primary" onClick={openCreate}>{t('projects.new')}</button>)}
           </div>
         )}
       </Module>
+      {sharing && <ShareDialog key={sharing.id} projectId={sharing.id} projectName={sharing.name} canManage={projectAccess(sharing, auth)?.can_manage === true} onClose={() => setSharing(null)} onAccessChanged={() => void load()} />}
     </div>
   )
 }

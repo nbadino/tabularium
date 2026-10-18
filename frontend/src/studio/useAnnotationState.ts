@@ -4,6 +4,7 @@ import { bboxPoints, toPage } from '../lib/coords'
 import type { BlockBulkWrite, BlockListOut, BlockOut, LabelDef, PageItem } from '../lib/types'
 import type { DisplayBlock, SaveStatus, Tool } from './types'
 import { useHistory } from './useHistory'
+import { t } from '../i18n'
 
 let _cid = 0
 function nextId(): string {
@@ -59,10 +60,12 @@ function signature(b: {
  * Prudente per costruzione: basta un blocco nuovo, ancora senza id, perché la
  * corrispondenza non si possa dimostrare, e allora il conflitto resta.
  */
-function landedAlready(error: ApiError, sent: SentItem[]): boolean {
+function landedAlready(error: ApiError, sent: SentItem[], deleted: number[]): boolean {
   const remote = remoteOf(error)
   if (!remote?.items) return false
   const byId = new Map(remote.items.map((b) => [b.id, b]))
+  const canvas = remote.items.filter((b) => !b.prefill_source || b.confirmed || b.label === 'Table')
+  if (canvas.length !== sent.length || deleted.some((id) => byId.has(id))) return false
   return sent.every((item) => {
     if (item.id == null) return false
     const mirror = byId.get(item.id)
@@ -104,7 +107,15 @@ export interface UseAnnotationStateReturn {
    *  cambiare pagina o progetto: l'autosave con debounce non proteggerebbe
    *  la navigazione interna, solo la chiusura del browser. */
   flush: () => Promise<void>
+  runExternal: <T extends { annotation_revision?: number }>(write: () => Promise<T>) => Promise<T>
   reset: (blocks?: DisplayBlock[], annotationRevision?: number) => void
+  /** Adotta lo stato remoto senza toccare la selezione se il blocco esiste
+   *  ancora. Usato dal canale live: un altro utente ha salvato e il canvas si
+   *  riallinea alla versione del server. */
+  adoptRemote: (blocks: DisplayBlock[], annotationRevision?: number) => void
+  /** Revisione attualmente applicata: il canale live la confronta con quella
+   *  dell'evento per ignorare l'eco delle proprie modifiche. */
+  getRevision: () => number
   /** Riallinea la revisione attesa dopo una scrittura che non passa
    *  dall'autosave (salvataggio di una griglia tabellare, patch di un
    *  blocco): il server l'ha fatta avanzare e il canvas deve saperlo. */
@@ -118,6 +129,7 @@ export function useAnnotationState(
   page: PageItem | null,
   ratio: number,
   labels: LabelDef[],
+  keyboardEnabled = true,
 ): UseAnnotationStateReturn {
   const hist = useHistory<DisplayBlock[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -148,7 +160,9 @@ export function useAnnotationState(
   // aggiornarsi al render, la navigazione legge invece il ref in modo
   // sincrono (getDirty) senza attendere il ciclo di render.
   const [dirty, setDirty] = useState(false)
+  const changeVersion = useRef(0)
   const markDirty = useCallback(() => {
+    changeVersion.current += 1
     if (!dirtyRef.current) {
       dirtyRef.current = true
       setDirty(true)
@@ -193,6 +207,27 @@ export function useAnnotationState(
       annotationRevisionRef.current = annotationRevision
     }
   }, [])
+
+  /** Adotta una versione remota della pagina (canale live). Sostituisce il
+   *  presente e azzera lo storico: fondere due storie di editing è compito di
+   *  un CRDT, non di questo strato — qui la verità resta quella del server. La
+   *  selezione sopravvive se il blocco esiste ancora. */
+  const adoptRemote = useCallback(
+    (blocks: DisplayBlock[], annotationRevision?: number) => {
+      hist.reset(blocks)
+      deletedRef.current.clear()
+      conflictRef.current = false
+      if (typeof annotationRevision === 'number') {
+        annotationRevisionRef.current = annotationRevision
+      }
+      setSelectedId((cur) => (cur && blocks.some((b) => b.id === cur) ? cur : null))
+      clearDirty()
+      setSave({ state: 'idle' })
+    },
+    [hist, clearDirty],
+  )
+
+  const getRevision = useCallback(() => annotationRevisionRef.current, [])
 
   // --- operazioni blocchi ---------------------------------------------------
   const addBlock = useCallback(
@@ -309,6 +344,8 @@ export function useAnnotationState(
   /** Una singola andata al server. La serializzazione sta in `saveNow`. */
   const saveOnce = useCallback(async () => {
     if (!page) return
+    const sentVersion = changeVersion.current
+    const clientIds = hist.present.map((b) => b.id)
     setSave({ state: 'saving' })
     const r = ratio
     const deleted = [...deletedRef.current]
@@ -331,7 +368,7 @@ export function useAnnotationState(
     }
     try {
       const res = await apiPut<BlockListOut>(`/pages/${page.id}/annotations`, body)
-      clearDirty()
+      if (sentVersion === changeVersion.current) clearDirty()
       for (const id of deleted) deletedRef.current.delete(id)
       // Il mapping degli id di server non è una modifica: non deve finire
       // nello storico, altrimenti il prossimo «Annulla» sembrava un no-op.
@@ -341,8 +378,9 @@ export function useAnnotationState(
       // altro.
       const assigned = res.assigned_ids
       if (assigned) {
+        const byClient = new Map(clientIds.map((id, i) => [id, assigned[i]]))
         hist.replacePresent((prev) =>
-          prev.map((b, i) => ({ ...b, serverId: assigned[i] ?? b.serverId })),
+          prev.map((b) => ({ ...b, serverId: byClient.get(b.id) ?? b.serverId })),
         )
       }
       annotationRevisionRef.current = Number(
@@ -351,7 +389,7 @@ export function useAnnotationState(
       setSave({ state: 'saved' })
     } catch (e) {
       const conflict = e instanceof ApiError && e.status === 409
-      if (conflict && landedAlready(e, items)) {
+      if (conflict && landedAlready(e, items, deleted)) {
         // Il server ha già esattamente ciò che stavamo mandando: il conflitto
         // è con noi stessi, un salvataggio partito un istante prima. Non c'è
         // niente da risolvere, solo una revisione da riallineare.
@@ -359,7 +397,7 @@ export function useAnnotationState(
         if (remote?.annotation_revision != null) {
           annotationRevisionRef.current = remote.annotation_revision
         }
-        clearDirty()
+        if (sentVersion === changeVersion.current) clearDirty()
         for (const id of deleted) deletedRef.current.delete(id)
         setSave({ state: 'saved' })
         return
@@ -369,8 +407,10 @@ export function useAnnotationState(
     }
   }, [page, ratio, hist, clearDirty])
 
+  const latestSave = useRef(saveOnce)
+  latestSave.current = saveOnce
   const saveNow = useCallback(async () => {
-    if (!page) return
+    if (!page || !dirtyRef.current) return
     const previous = inFlightRef.current
     if (previous) {
       await previous.catch(() => undefined)
@@ -378,7 +418,7 @@ export function useAnnotationState(
       // tutto quello che avevamo da dire.
       if (!dirtyRef.current || conflictRef.current) return
     }
-    const run = saveOnce()
+    const run = latestSave.current()
     inFlightRef.current = run
     try {
       await run
@@ -395,9 +435,28 @@ export function useAnnotationState(
   }, [hist.present, page, saveNow, save.state])
 
   const flush = useCallback(async () => {
-    if (!dirtyRef.current) return
-    await saveNow()
+    if (inFlightRef.current) await inFlightRef.current
+    while (dirtyRef.current) {
+      const before = changeVersion.current
+      await saveNow()
+      if (dirtyRef.current && (conflictRef.current || before === changeVersion.current)) {
+        throw new Error(t('annotate.saveFailed'))
+      }
+    }
   }, [saveNow])
+
+  const externalQueue = useRef<Promise<unknown>>(Promise.resolve())
+  const runExternal = useCallback(<T extends { annotation_revision?: number }>(write: () => Promise<T>): Promise<T> => {
+    const operation = externalQueue.current.catch(() => {}).then(async () => {
+      await flush()
+      const writing = write().then((result) => { syncRevision(result.annotation_revision); return result })
+      const lock = writing.then(() => {}, () => {})
+      inFlightRef.current = lock
+      try { return await writing } finally { if (inFlightRef.current === lock) inFlightRef.current = null }
+    })
+    externalQueue.current = operation
+    return operation
+  }, [flush, syncRevision])
 
   // Riferimento sempre aggiornato per il cleanup allo smontaggio: la closure
   // dell'effetto non vede l'ultimo saveNow altrimenti.
@@ -428,6 +487,7 @@ export function useAnnotationState(
   // --- scorciatoie da tastiera (undo/redo + strumenti) ----------------------
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!keyboardEnabled) return
       const t = e.target as HTMLElement
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
@@ -441,13 +501,13 @@ export function useAnnotationState(
         redo()
         return
       }
-      const toolKeys: Record<string, Tool> = { v: 'select', r: 'rect' }
+      const toolKeys: Record<string, Tool> = { v: 'select', r: 'rect', p: 'polygon', h: 'pan' }
       const tk = toolKeys[e.key.toLowerCase()]
       if (tk) setTool(tk)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [undo, redo])
+  }, [undo, redo, keyboardEnabled])
 
   // --- derived --------------------------------------------------------------
   const selectedBlock = hist.present.find((b) => b.id === selectedId) ?? null
@@ -488,7 +548,10 @@ export function useAnnotationState(
     dirty,
     getDirty: () => dirtyRef.current,
     flush,
+    runExternal,
     reset,
+    adoptRemote,
+    getRevision,
     syncRevision,
     selectedBlock,
     selectedBboxPage,

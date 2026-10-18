@@ -1,14 +1,4 @@
-/**
- * Il guscio: un rail di navigazione multi-riga, persistente, in alto.
- *
- * La riga 1 porta l'identità e lo stato globale; la riga 2 le cinque
- * destinazioni globali, come linguette bordo a bordo. Il rail scorre
- * orizzontalmente al proprio interno e non cresce a ogni strumento nuovo:
- * gli strumenti contestuali entrano nel contesto che li rende sensati.
- *
- * La colonna sinistra non è sprecata su link fissi — nelle pagine che ne
- * hanno bisogno resta libera per il contesto (le pagine, i progetti).
- */
+/** Navigazione globale per attività, con sottosezioni visibili nel loro contesto. */
 import { Link, NavLink, Outlet, useLocation } from 'react-router'
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { apiGet } from '../lib/api'
@@ -31,26 +21,16 @@ interface NavItem {
   to: string
   labelKey: string
   Icon: (p: { size?: number }) => React.ReactElement
-  end?: boolean
 }
 
-/**
- * Le destinazioni globali sono cinque. Le prime quattro portano il percorso
- * primario — riconoscere, correggere, rivedere i risultati, gestire il corpus —
- * e Modelli è la quinta: il luogo unico in cui si sceglie il modello, dove
- * eseguirlo e come migliorarlo.
- *
- * Dataset, fine-tuning, valutazione e playground non stanno qui: sono
- * strumenti del modello e delle singole attività, non percorsi globali
- * concorrenti. Si aprono dal contesto che li rende sensati — il progetto, la
- * pagina dei risultati, l'hub Modelli — e restano raggiungibili come rotte.
- */
 const NAV: NavItem[] = [
-  { to: '/', labelKey: 'nav.recognize', Icon: IconPlayground, end: true },
+  { to: '/', labelKey: 'nav.recognize', Icon: IconPlayground },
   { to: '/annotazione', labelKey: 'nav.annotate', Icon: IconAnnotate },
   { to: '/risultati', labelKey: 'nav.results', Icon: IconDataset },
-  { to: '/archivio', labelKey: 'nav.archive', Icon: IconArchive },
+  { to: '/progetti', labelKey: 'nav.projects', Icon: IconArchive },
+  { to: '/fine-tuning', labelKey: 'nav.training', Icon: IconTraining },
   { to: '/modelli', labelKey: 'nav.models', Icon: IconTraining },
+  { to: '/benchmark', labelKey: 'nav.benchmark', Icon: IconDataset },
 ]
 
 /** IT · EN · FR in una riga: la lingua corrente in grassetto, il nome intero nel titolo. */
@@ -146,6 +126,14 @@ function AccountMenu() {
  */
 const lastSearch = new Map<string, string>()
 
+const REFINE_PATHS = ['/fine-tuning', '/dataset', '/training', '/valutazione']
+function sectionOf(path: string): string {
+  if (REFINE_PATHS.includes(path)) return '/fine-tuning'
+  if (path === '/playground') return '/modelli'
+  if (path === '/archivio' || path.startsWith('/progetti')) return '/progetti'
+  return path
+}
+
 /**
  * La piastra rossa sotto la linguetta viva. Una sola per tutto il rail: cambiando
  * sezione scorre dalla linguetta vecchia alla nuova invece di saltare. La
@@ -198,7 +186,7 @@ export default function Layout() {
   const location = useLocation()
   // Il contenuto è scorso sotto la testata: lei lo dice con un'ombra.
   const [scrolled, setScrolled] = useState(false)
-  if (NAV.some(({ to }) => to === location.pathname)) lastSearch.set(location.pathname, location.search)
+  if (NAV.some(({ to }) => to === location.pathname)) lastSearch.set(location.pathname, location.pathname === '/progetti' ? '' : location.search)
   // Ogni pagina legge lo stato inferenza (chip GPU, banner, motori prefill):
   // il sync all'avvio evita di mostrare disponibilità/latenza stantie da
   // localStorage, che prima si aggiornavano solo aprendo la Home.
@@ -261,30 +249,48 @@ export default function Layout() {
         {/* riga 2 — le sezioni, linguette bordo a bordo */}
         <nav aria-label={t('app.navSections')} className="nav-rail relative flex min-w-0 max-w-full overflow-x-auto">
           <span className="w-px shrink-0 bg-[color:var(--color-rule)]" />
-          {NAV.map(({ to, labelKey, Icon, end }) => (
-            <NavLink key={to} to={{ pathname: to, search: lastSearch.get(to) ?? '' }} end={end} className="shrink-0">
-              {({ isActive }) => (
-                <span className="navtab" data-active={isActive}>
+          {NAV.map(({ to, labelKey, Icon }) => (
+            <Link key={to} to={{ pathname: to, search: lastSearch.get(to) ?? '' }} aria-current={sectionOf(location.pathname) === to ? 'page' : undefined} className="shrink-0">
+                <span className="navtab" data-active={sectionOf(location.pathname) === to}>
                   <Icon size={13} />
                   {t(labelKey)}
                 </span>
-              )}
-            </NavLink>
+            </Link>
           ))}
           <NavMark pathname={location.pathname} />
         </nav>
+        {((REFINE_PATHS.includes(location.pathname) && location.pathname !== '/fine-tuning') || ['/modelli', '/playground'].includes(location.pathname)) && (
+          <nav aria-label={t(REFINE_PATHS.includes(location.pathname) ? 'workflow.refineNav' : 'workflow.modelNav')} className="flex flex-wrap gap-1 border-t border-[color:var(--color-rule)] px-3 py-2">
+            {(REFINE_PATHS.includes(location.pathname)
+              ? [
+                  { to: '/fine-tuning', key: 'ux.overview' },
+                  { to: '/dataset', key: 'workflow.dataset' },
+                  { to: '/training', key: 'workflow.train' },
+                  { to: '/valutazione', key: 'workflow.evaluate' },
+                ]
+              : [
+                  { to: '/modelli', key: 'workflow.configure' },
+                  { to: '/playground', key: 'nav.playground' },
+                ]
+            ).map(({ to, key }) => (
+              <NavLink key={to} to={to} className={({ isActive }) => `btn btn-sm no-underline ${isActive ? 'btn-primary' : ''}`}>
+                {t(key)}
+              </NavLink>
+            ))}
+          </nav>
+        )}
       </header>
 
       <main
         id="contenuto"
-        className="glide min-h-0 flex-1 overflow-y-auto"
+        className="min-h-0 flex-1 overflow-y-auto"
         onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 4)}
       >
         {/* Cambiando sezione il contenuto entra (non compare di colpo), e
             mentre il suo codice arriva resta la sua forma — la testata e le
             linguette restano dove sono. */}
         <Suspense fallback={<PageSkeleton label={t('app.loadingModule')} />}>
-          <div key={location.pathname} className="enter h-full">
+          <div key={location.pathname} className="h-full">
             <Outlet />
           </div>
         </Suspense>

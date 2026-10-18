@@ -213,6 +213,7 @@ export default function HomePage() {
       <div className="mb-3 flex flex-wrap gap-2">
         <Link to="/" className="btn btn-primary no-underline">{t('home.recognizePages')}</Link>
         <Link to={projectId == null ? '/progetti' : `/progetti/${projectId}`} className="btn no-underline">{t('home.manageArchive')}</Link>
+        <Link to="/progetti?nuovo=1" className="btn no-underline">{t('projects.new')}</Link>
       </div>
 
       {projectId != null && <div className="mb-3"><CorpusPaths branches={branches} /></div>}

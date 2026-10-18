@@ -291,6 +291,13 @@ export const MODAL_TEMPLATES = [
   { id: 'teleocr', label: 'TeleOCR' },
 ]
 
+/** Endpoint e id modello del gateway OpenCode per Gemini 4 Argon. Rispecchiano
+ *  `backend/app/services/opencode_gateway.py`: sono un precompilato comodo, non
+ *  una verità — l'endpoint resta modificabile a mano. La chiave la legge il
+ *  backend dall'archivio di opencode, quindi qui non si mostra. */
+export const OPENCODE_ARGON_URL = 'https://opencode.ai/inference/go/google/v1beta'
+export const OPENCODE_ARGON_MODEL = 'gemini-4-argon-contributor'
+
 function copyToClipboard(text: string, onDone: () => void) {
   navigator.clipboard?.writeText(text).then(onDone).catch(() => {})
 }
@@ -452,14 +459,20 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
 
   useEffect(() => {
     if (!open) return
-    setManualUrl(inf.url)
-    setManualModel(focusProvider === 'manual' && focusModelLabel ? focusModelLabel : inf.model)
-    setManualKey(inf.apiKey)
+    if (focusAdapterId === 'gemini-argon') {
+      setManualUrl(OPENCODE_ARGON_URL)
+      setManualModel(OPENCODE_ARGON_MODEL)
+      setManualKey('')
+    } else {
+      setManualUrl(inf.url)
+      setManualModel(focusProvider === 'manual' && focusModelLabel ? focusModelLabel : inf.model)
+      setManualKey(inf.apiKey)
+    }
     void pollTunnelStatus()
     void refreshVastSshKey()
     void refreshVastKeyStatus()
     void refreshVastModels()
-  }, [open, focusProvider, focusModelLabel])
+  }, [open, focusProvider, focusModelLabel, focusAdapterId])
 
   // Apertura «guidata» dalla libreria modelli: il modello è già stato scelto,
   // qui si atterra sulla scheda giusta con quel modello preselezionato.

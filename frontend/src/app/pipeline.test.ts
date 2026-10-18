@@ -6,7 +6,7 @@
  * dal fine-tuning, e i percorsi bloccati sono bloccati per una ragione detta.
  */
 import { describe, expect, it } from 'vitest'
-import { buildBranches, type BranchInput } from './pipeline'
+import { datasetUsable, buildPipeline, buildBranches, type BranchInput } from './pipeline'
 import type { Project, RecognitionRun } from '../lib/types'
 
 function project(): Project {
@@ -160,6 +160,7 @@ describe('buildBranches', () => {
           built: true,
           report: {
             built_at: '2026-01-02T10:00:00Z',
+            pages: { with_blocks: 1 },
           } as never,
         },
       }),
@@ -168,7 +169,7 @@ describe('buildBranches', () => {
 
     const trainingInCorso = buildBranches(
       input({
-        dataset: { built: true, report: { built_at: '2026-01-02T10:00:00Z' } as never },
+        dataset: { built: true, report: { built_at: '2026-01-02T10:00:00Z', pages: { with_blocks: 1 } } as never },
         training: {
           active: true,
           run: { run_id: 'r1', state: 'running' },
@@ -180,4 +181,28 @@ describe('buildBranches', () => {
     ).find((b) => b.id === 'refine')!
     expect(trainingInCorso.state).toBe('active')
   })
+})
+
+// I prerequisiti dipendono dall’attività: un corpus può essere ancora in revisione.
+describe('prerequisiti di fine-tuning', () => {
+  it('un dataset già costruito sblocca il training anche con pagine ancora nuove', () => {
+    const stages = buildPipeline(input({ dataset: { built: true, report: { pages: { with_blocks: 1 }, built_at: '2026-10-17' } as import('../lib/types').DatasetReport } }))
+    expect(stages.find((s) => s.id === 'train')?.state).toBe('current')
+  })
+
+  it('un campione approvato permette dataset e valutazione prima del training', () => {
+    const stages = buildPipeline(input({ workflow: {
+      counts: { new: 2, approved: 1 }, total_pages: 3, approved_pages: 1,
+      progress: 1 / 3, next_page: null,
+    } }))
+    expect(stages.find((s) => s.id === 'dataset')?.state).toBe('current')
+    expect(stages.find((s) => s.id === 'evaluate')?.state).toBe('current')
+    expect(stages.find((s) => s.id === 'train')?.state).toBe('blocked')
+  })
+})
+
+it('un report vuoto non sblocca il training', () => {
+  const dataset = { built: true, report: { pages: { with_blocks: 0 }, built_at: '2026-10-17' } as import('../lib/types').DatasetReport }
+  expect(datasetUsable(dataset)).toBe(false)
+  expect(buildPipeline(input({ dataset })).find((s) => s.id === 'train')?.state).toBe('blocked')
 })

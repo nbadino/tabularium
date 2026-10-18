@@ -8,8 +8,21 @@ export interface User {
   email: string | null
   role: 'admin' | 'editor' | 'viewer'
   active: boolean
+  must_change_password: boolean
   created_at: string
   last_login_at: string | null
+}
+
+/** Esito della creazione di un utente: con invito contiene il link (una volta sola). */
+export interface UserCreated extends User {
+  invite_url: string | null
+}
+
+export interface InviteStatus {
+  valid: boolean
+  username: string | null
+  email: string | null
+  expires_at: string | null
 }
 
 export interface AuthStatus {
@@ -96,6 +109,13 @@ export interface LocalCompute {
 
 // --- Progetti & pagine (M1) --------------------------------------------------
 
+export interface ProjectAccess {
+  role: 'owner' | 'editor' | 'viewer'
+  source: 'local' | 'admin' | 'owner' | 'member'
+  can_edit: boolean
+  can_manage: boolean
+}
+
 export interface Project {
   id: number
   name: string
@@ -105,6 +125,9 @@ export interface Project {
   settings_json: Record<string, unknown>
   pages_count: number
   created_at: string
+  owner_name?: string | null
+  members_count?: number
+  access?: ProjectAccess | null
 }
 
 export interface ProjectMember {
@@ -153,6 +176,7 @@ export interface PageItem {
    *  riconosciuta e mai rivista resta `new`, ma ha bozze da verificare. */
   blocks?: number
   drafts?: number
+  work?: PageWork | null
 }
 
 export type TransformEngine = 'deskew' | 'monkeyocr' | 'perspective' | 'mesh'
@@ -215,6 +239,7 @@ export const PAGE_STATUSES = [
 // --- Annotazioni (M2) --------------------------------------------------------
 
 export interface BlockOut {
+  project_id?: number | null
   id: number
   page_id: number
   label: string
@@ -359,6 +384,8 @@ export interface PrefillEngines {
     url: string
     model: string
     adapter_id?: string
+    /** L'endpoint attivo è remoto (gateway/cloud) o la macchina locale. */
+    is_cloud?: boolean
     /** Cosa sa fare DAVVERO l'adapter attivo (sondato lato backend, non
      *  dichiarativo): un modello può servire senza supportare entrambe le
      *  modalità (es. MinerU2.5 fa due-stadi ma non end2end). */
@@ -438,6 +465,12 @@ export interface ConventionItem {
 
 export interface ConventionsOut {
   conventions: ConventionItem[]
+}
+
+export interface TableHintOut {
+  hint: string
+  active_model?: string | null
+  accepts_hint: boolean
 }
 
 // --- Dataset (M4) --------------------------------------------------------------
@@ -606,7 +639,7 @@ export interface EvalReport {
     layout_strict?: LayoutMetrics
     order: OrderMetrics
     text: { n: number; mean_cer: number | null; mean_wer: number | null }
-    tables: { n: number; structure_ok_pct: number | null; mean_cell_cer: number | null }
+    tables: { n: number; structure_ok_pct: number | null; mean_cell_cer: number | null; mean_teds?: number | null }
   }
   pages: EvalPage[]
   warnings: string[]
@@ -617,6 +650,49 @@ export interface EvalReport {
     text_cer_delta: number
     order_delta: number
   }
+}
+
+export interface BenchmarkTarget {
+  adapter_id: string
+  url?: string
+  model?: string
+  provider?: string
+}
+
+export interface BenchmarkEntry {
+  adapter_id: string
+  model: string
+  url: string
+  reachable: boolean
+  pages_evaluated: number
+  seconds: number
+  aggregates: EvalReport['aggregates']
+}
+
+export interface BenchmarkReport {
+  project_id: number
+  gold_pages: number
+  scope: string
+  config: { with_text: boolean; limit: number; use_cache: boolean }
+  leaderboard: BenchmarkEntry[]
+  bench_dir?: string
+  available?: boolean
+}
+
+export interface BenchStatus {
+  state: 'idle' | 'running' | 'done' | 'error'
+  index?: number
+  total?: number
+  current_adapter?: string
+  page_index?: number
+  page_total?: number
+  /** Risultati già completati durante la run (la tabella si popola man mano). */
+  results?: BenchmarkEntry[]
+  error?: string
+  report_dir?: string | null
+  gold_pages?: number | null
+  started_at?: string
+  updated_at?: string
 }
 
 export interface PlaygroundResult {
@@ -719,4 +795,22 @@ export interface RecognitionRun {
   heartbeat_at: string | null
   ended_at: string | null
   items?: RecognitionRunItem[]
+}
+
+/** Ruoli della singola pagina, distinti dai permessi sul progetto. */
+export interface PageWork {
+  page_id: number
+  assignee_id: number | null
+  reviewer_id: number | null
+  assignee_name: string | null
+  reviewer_name: string | null
+  state: 'annotation' | 'pending' | 'changes_requested' | 'approved'
+  version: number
+  note: string
+  annotation_revision: number
+  submitted_revision: number | null
+  changed_since_submission: boolean
+  can_assign: boolean
+  can_submit: boolean
+  can_review: boolean
 }

@@ -236,6 +236,9 @@ export async function testInferenceConnection(opts: {
   apiKey?: string
   extraHeaders?: Record<string, string>
   timeout?: number
+  /** Adapter dell'endpoint: decide il protocollo della prova (OpenAI vs
+   *  Google `generateContent`). Omesso = prova OpenAI storica. */
+  adapterId?: string
 }): Promise<InferenceTestResult> {
   return apiPost<InferenceTestResult>('/system/inference/test', {
     url: opts.url.trim(),
@@ -243,6 +246,7 @@ export async function testInferenceConnection(opts: {
     api_key: opts.apiKey?.trim() || '',
     extra_headers: opts.extraHeaders ?? {},
     timeout: opts.timeout ?? 10,
+    adapter_id: opts.adapterId,
   })
 }
 

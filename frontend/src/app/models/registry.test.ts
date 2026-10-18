@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { destinationVerdict, isSelectable, recommendedDestination, resolveStep, type ModelItem } from './registry'
+import { destinationForProvider, destinationVerdict, isSelectable, recommendedDestination, resolveStep, type ModelItem } from './registry'
 
 function model(over: Partial<ModelItem> = {}): ModelItem {
   return {
@@ -65,8 +65,38 @@ describe('destinationVerdict', () => {
     expect(recommendedDestination(m)).toBeNull()
   })
 
+  it('un modello da gateway esterno si configura come endpoint', () => {
+    // Gemini 4 Argon: niente layout, niente ricette cloud, ma un protocollo
+    // proprio (Google generateContent via OpenCode) → l'endpoint è la via.
+    const argon = model({
+      adapter_id: 'gemini-argon',
+      serve_backend: 'opencode-gateway',
+      supports_native: false,
+      supports_two_stage: false,
+      supports_end2end: false,
+      local_serve_ready: false,
+      cloud_serve_ready: false,
+      cloud_template: null,
+    })
+    expect(destinationVerdict(argon, 'manual').ok).toBe(true)
+    expect(isSelectable(argon)).toBe(true)
+    expect(recommendedDestination(argon)).toBe('manual')
+  })
+
   it('raccomanda il serverless prima delle GPU a noleggio', () => {
     expect(recommendedDestination(model())).toBe('modal')
+  })
+})
+
+describe('destinationForProvider', () => {
+  it('un provider "custom" salvato è la destinazione «Endpoint»', () => {
+    // Il gateway Argon si registra come `custom` (CHECK del profilo) ma
+    // nell'hub è «Endpoint»: senza mappatura l'hub non riconosceva la scelta.
+    expect(destinationForProvider('custom')).toBe('manual')
+    expect(destinationForProvider('modal')).toBe('modal')
+    expect(destinationForProvider('local')).toBe('local')
+    expect(destinationForProvider(null)).toBeNull()
+    expect(destinationForProvider('boh')).toBeNull()
   })
 })
 

@@ -3,7 +3,7 @@ import { apiGet, apiPost } from '../lib/api'
 import type { GpuInfo, TrainConfigBody, TrainingPreflight, TrainingStatus } from '../lib/types'
 import { ErrorNotice, PageHeader } from '../app/ui'
 import { PipelineStrip } from '../app/PipelineView'
-import { buildPipeline, usePipelineState } from '../app/pipeline'
+import { buildPipeline, datasetUsable, usePipelineState } from '../app/pipeline'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import TrainingConfigForm, { effectiveExecutor } from './training/TrainingConfigForm'
 import TrainingStatusPanel from './training/TrainingStatusPanel'
@@ -98,7 +98,7 @@ export default function TrainingPage() {
 
   // I controlli preliminari si leggono mentre si compila, non al clic: ciò
   // che bloccherà il run è scritto accanto al pulsante, con la causa.
-  const { workflow, dataset } = usePipelineState(projectId === '' ? null : projectId)
+  const { workflow, dataset } = usePipelineState(projectId === '' ? null : projectId, { training: false, runs: false })
   useEffect(() => {
     if (projectId === '' || executor === null) {
       setPreflight(null)
@@ -204,7 +204,7 @@ export default function TrainingPage() {
           cfg={cfg}
           busy={busy}
           isActive={status?.active === true}
-          datasetReady={dataset?.built === true}
+          datasetReady={datasetUsable(dataset)}
           stopArmed={stopArmed}
           localGpu={localGpu}
           preflight={preflight}

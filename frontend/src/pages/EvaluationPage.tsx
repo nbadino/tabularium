@@ -81,7 +81,7 @@ export default function EvaluationPage() {
   }
 
   const project = projects.find((p) => p.id === projectId) ?? null
-  const { workflow, dataset, training } = usePipelineState(projectId === '' ? null : projectId)
+  const { workflow, dataset, training } = usePipelineState(projectId === '' ? null : projectId, { runs: false })
   const stages = buildPipeline({ project, workflow, dataset, training })
   const trainingReady = training?.run?.state === 'finished'
   const inferenceReady = inference.enabled && inference.available

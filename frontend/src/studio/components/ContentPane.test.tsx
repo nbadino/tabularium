@@ -375,6 +375,7 @@ describe('ContentPane', () => {
       />,
     )
     expect(screen.queryByText(/Ricomporre le parole spezzate/)).toBeNull()
+    await user.click(screen.getByText('Opzioni'))
     await user.click(screen.getByRole('button', { name: 'Regole' }))
     expect(await screen.findByRole('dialog', { name: /Regole di trascrizione/ })).toBeTruthy()
     expect(await screen.findByText(/Ricomporre le parole spezzate/)).toBeTruthy()

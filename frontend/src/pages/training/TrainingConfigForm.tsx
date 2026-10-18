@@ -178,10 +178,54 @@ export default function TrainingConfigForm({
   const { t } = useI18n()
   const set = onConfigChange
   const active = matchPreset(cfg)
+  const [recipes, setRecipes] = useState<Record<string, { toolchain: string; maturity: string; trainable: boolean; script_ready: boolean; official_doc: string }>>({})
+  useEffect(() => {
+    apiGet<{ items: Array<{ adapter_id: string; toolchain: string; maturity: string; trainable: boolean; script_ready: boolean; official_doc: string }> }>('/system/train-recipes')
+      .then((o) => setRecipes(Object.fromEntries(o.items.map((r) => [r.adapter_id, r]))))
+      .catch(() => {})
+  }, [])
+  const recipe = recipes[cfg.adapter_id ?? 'monkeyocrv2-parsing']
+  const recipeReady = !recipe || (recipe.trainable && recipe.script_ready)
+  const [rentBusy, setRentBusy] = useState(false)
+  const [rentNotice, setRentNotice] = useState<string | null>(null)
+  const [rentDph, setRentDph] = useState('1')
+  const [rentVram, setRentVram] = useState('16')
+
+  // Noleggia e prepara da sé un host Vast per il training (M18): cerca l'offerta
+  // più economica, la noleggia con `prepare_training`, attende l'endpoint SSH e
+  // compila i campi da sé. `main` = ultima versione su GitHub (nessuna release).
+  const rentTraining = async () => {
+    setRentBusy(true)
+    setRentNotice(null)
+    try {
+      const out = await apiPost<{ instance_id: number; ssh: { user: string; python: string; train_repo: string } }>(
+        '/system/cloud/vast/rent-training',
+        { tabularium_ref: 'main', max_dph: Number(rentDph) || 1, min_gpu_ram_gb: Number(rentVram) || 16 },
+      )
+      set({ ssh_user: out.ssh.user, ssh_python: out.ssh.python, ssh_train_repo: out.ssh.train_repo })
+      setRentNotice(t('training.where.rentWaiting'))
+      // Attende che l'istanza esponga l'SSH (può metterci qualche minuto).
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => window.setTimeout(r, 10000))
+        const list = await apiGet<{ items: Array<{ id: number; ssh_direct_host: string | null; ssh_host: string | null; ssh_port: number | null }> }>('/system/cloud/vast/instances')
+        const inst = list.items.find((x) => Number(x.id) === Number(out.instance_id))
+        const host = inst?.ssh_direct_host || inst?.ssh_host
+        if (host) {
+          set({ ssh_host: host, ssh_port: inst?.ssh_port ?? 22 })
+          setRentNotice(t('training.where.rentReady'))
+          break
+        }
+      }
+    } catch (e) {
+      setRentNotice(String(e))
+    } finally {
+      setRentBusy(false)
+    }
+  }
   const executor = effectiveExecutor(cfg, localGpu)
   const remote = executor !== null && executor !== 'local'
   const canStart =
-    !busy && projectId !== '' && !isActive && datasetReady && executor !== null && preflight?.ready === true
+    !busy && projectId !== '' && !isActive && datasetReady && executor !== null && preflight?.ready === true && recipeReady
 
   return (
     <div className="space-y-3">
@@ -245,6 +289,24 @@ export default function TrainingConfigForm({
                 />
               </div>
             )}
+            {executor === 'vast' && (
+              <div className="border border-[color:var(--color-rule)] p-2">
+                <span className="lbl">{t('training.where.rentTraining')}</span>
+                <p className="mb-2 text-[11px] text-[color:var(--color-ink-3)]">{t('training.where.rentTrainingHint')}</p>
+                <div className="flex flex-wrap items-end gap-2">
+                  <Field label={t('training.where.rentMaxDph')}>
+                    <input className="fld !w-24" value={rentDph} onChange={(e) => setRentDph(e.target.value)} />
+                  </Field>
+                  <Field label={t('training.where.rentMinVram')}>
+                    <input className="fld !w-24" value={rentVram} onChange={(e) => setRentVram(e.target.value)} />
+                  </Field>
+                  <button type="button" className="btn btn-sm" disabled={rentBusy} onClick={() => void rentTraining()}>
+                    {rentBusy ? t('training.where.rentBusy') : t('training.where.rentGo')}
+                  </button>
+                </div>
+                {rentNotice && <p className="mt-1 text-[11px] text-[color:var(--color-ink-2)]">{rentNotice}</p>}
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-3">
               <Field label={t('training.sshHost')} hint={t('training.sshHostHint')}>
                 <input value={cfg.ssh_host ?? ''} onChange={(e) => set({ ssh_host: e.target.value })} className="fld fld-mono" placeholder="gpu.example" />
@@ -291,15 +353,37 @@ export default function TrainingConfigForm({
               value={cfg.model}
               onChange={(e) => {
                 const model = e.target.value
-                set({ model, adapter_id: model.startsWith('Qwen/') ? 'qwen3-vl-8b' : 'monkeyocrv2-parsing' })
+                const adapter = model.startsWith('Qwen/')
+                  ? 'qwen3-vl-8b'
+                  : model.includes('Unlimited-OCR') ? 'unlimited-ocr'
+                  : model.includes('DeepSeek') ? 'deepseek-ocr'
+                  : model.includes('GLM') ? 'glm-ocr'
+                  : model.includes('MinerU') ? 'mineru2.5'
+                  : 'monkeyocrv2-parsing'
+                set({ model, adapter_id: adapter })
               }}
               className="fld"
             >
               <option value="zenosai/MonkeyOCRv2-B-Parsing">MonkeyOCRv2-B-Parsing</option>
               <option value="zenosai/MonkeyOCRv2-S-Parsing">{t('training.modelLighter')}</option>
               <option value="Qwen/Qwen3-VL-8B-Instruct">Qwen3-VL-8B (ms-swift)</option>
+              <option value="PaddlePaddle/Unlimited-OCR">Unlimited-OCR (ms-swift)</option>
+              <option value="deepseek-ai/DeepSeek-OCR-2">DeepSeek-OCR-2 (ms-swift)</option>
+              <option value="zai-org/GLM-OCR">GLM-OCR (ms-swift)</option>
+              <option value="opendatalab/MinerU2.5-Pro-2605-1.2B">MinerU2.5 (ms-swift)</option>
             </select>
           </Field>
+          {recipe && (
+            <p className="mt-1 text-[11px] text-[color:var(--color-ink-3)]">
+              {recipe.toolchain} · {recipe.maturity}
+              {recipe.official_doc ? ` — ${recipe.official_doc}` : ''}
+            </p>
+          )}
+          {recipe && !recipeReady && (
+            <div className="mt-2">
+              <Notice tone="warn">{t('training.recipeNotReady', { toolchain: recipe.toolchain })}</Notice>
+            </div>
+          )}
           <Field label={t('training.trainType')}>
             <select
               value={cfg.train_type}

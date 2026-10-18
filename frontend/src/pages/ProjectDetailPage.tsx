@@ -3,14 +3,18 @@ import type { InputHTMLAttributes } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
 import { PAGE_STATUSES, PAGE_TYPES } from '../lib/types'
-import type { PageItem, Project, ProjectMember, ScanReport } from '../lib/types'
+import type { PageItem, Project, ScanReport } from '../lib/types'
 import { pageTypeLabel, pages as pagesN, statusLabel, STATUS_TONE } from '../lib/vocab'
-import { Badge, Collapsible, ErrorNotice, Field, Modal, Module, WarnNotice } from '../app/ui'
+import { Badge, Collapsible, ErrorNotice, Field, Menu, Modal, Module, WarnNotice } from '../app/ui'
+import { ActivityFeed, type ProjectActivity } from '../app/ActivityFeed'
+import ShareDialog from '../app/ShareDialog'
 import { useConfirm } from '../app/confirm'
-import { IconCheck, IconPrev, IconScan, IconTrash } from '../app/icons'
+import { useAuth } from '../app/auth'
+import { IconCheck, IconPrev, IconScan, IconTrash, IconUsers } from '../app/icons'
 import { useI18n, tn } from '../i18n'
+import { writeActiveProject } from '../app/activeProject'
+import { accessLabel, projectAccess } from '../app/projectAccess'
 import { pageLabel } from '../lib/pageLabel'
-import { formatDateTime } from '../lib/dates'
 
 type StudyProtocol = {
   corpus_scope: string
@@ -22,31 +26,6 @@ type StudyProtocol = {
   gold_pages: number[]
   version: number
   updated_at: string
-}
-
-type ProjectActivity = {
-  id: number
-  action: string
-  resource_type: string | null
-  resource_id: number | null
-  payload_json?: string | null
-  created_at: string
-  username: string | null
-}
-
-/** Azioni che il registro conosce: le altre restano col codice grezzo. */
-const ACTIVITY_ACTIONS = new Set([
-  'block.deleted', 'block.updated', 'page.annotations_deleted', 'page.annotations_saved', 'page.approved',
-  'project.member_removed', 'project.member_set', 'project.owner_transferred', 'table.updated',
-  'training.started', 'training.stopped',
-])
-
-function activityPayload(event: ProjectActivity): Record<string, unknown> {
-  try {
-    return event.payload_json ? (JSON.parse(event.payload_json) as Record<string, unknown>) : {}
-  } catch {
-    return {}
-  }
 }
 
 /** Il referto di scansione sopravvive alla navigazione: è un risultato, non un lampo. */
@@ -62,7 +41,7 @@ function loadReport(id: number): ScanReport | null {
 }
 
 export default function ProjectDetailPage() {
-  const { t, locale } = useI18n()
+  const { t } = useI18n()
   const confirm = useConfirm()
   const { id } = useParams<{ id: string }>()
   const projectId = Number(id)
@@ -78,18 +57,23 @@ export default function ProjectDetailPage() {
   const [typedName, setTypedName] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [approveDrafts, setApproveDrafts] = useState(false)
+  const [approveBusy, setApproveBusy] = useState(false)
+  const [approveNotice, setApproveNotice] = useState<string | null>(null)
   const [protocol, setProtocol] = useState<StudyProtocol | null>(null)
   const [protocolBusy, setProtocolBusy] = useState(false)
   const [pilot, setPilot] = useState<{ pages: Array<{ id: number; rel_path: string }>; target: number } | null>(null)
+  const filesInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [domainProfiles, setDomainProfiles] = useState<Array<{ id: string; name: string }>>([])
   const [modelAdapters, setModelAdapters] = useState<Array<{ adapter_id: string; display_name: string }>>([])
-  const [members, setMembers] = useState<ProjectMember[]>([])
-  const [candidates, setCandidates] = useState<ProjectMember[]>([])
   const [activity, setActivity] = useState<ProjectActivity[]>([])
-  const [memberId, setMemberId] = useState('')
-  const [memberRole, setMemberRole] = useState<'editor' | 'viewer'>('editor')
+  const [shareOpen, setShareOpen] = useState(false)
+  const auth = useAuth()
+  const access = project ? projectAccess(project, auth) : null
+  const canManage = access?.can_manage === true
+  const canEdit = access?.can_edit === true
 
   useEffect(() => {
     apiGet<{ items: Array<{ id: string; name: string }> }>('/system/domain-profiles')
@@ -103,70 +87,15 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     setReport(loadReport(projectId))
     setSelected(new Set())
-    apiGet<Project>(`/projects/${projectId}`).then(setProject).catch(setError)
+    apiGet<Project>(`/projects/${projectId}`).then((p) => { setProject(p); writeActiveProject(p.id) }).catch(setError)
     apiGet<{ items: PageItem[] }>(`/projects/${projectId}/pages`)
       .then((r) => setPages(r.items))
       .catch(setError)
     apiGet<StudyProtocol>(`/projects/${projectId}/study-protocol`)
       .then(setProtocol)
       .catch(() => setProtocol(null))
-    apiGet<ProjectMember[]>(`/projects/${projectId}/members`).then(setMembers).catch(() => setMembers([]))
-    apiGet<ProjectMember[]>(`/projects/${projectId}/member-candidates`).then(setCandidates).catch(() => setCandidates([]))
     apiGet<{ items: ProjectActivity[] }>(`/projects/${projectId}/activity`).then((r) => setActivity(r.items)).catch(() => setActivity([]))
   }, [projectId])
-
-  const refreshActivity = async () => {
-    try {
-      setActivity((await apiGet<{ items: ProjectActivity[] }>(`/projects/${projectId}/activity`)).items)
-    } catch {
-      // L'attività è informativa: non deve bloccare una modifica già riuscita.
-    }
-  }
-
-  const addMember = async () => {
-    const id = Number(memberId)
-    if (!id) return
-    try {
-      const added = await apiPut<ProjectMember>(`/projects/${projectId}/members/${id}`, { user_id: id, role: memberRole })
-      setMembers((current) => [...current.filter((m) => m.user_id !== id), added])
-      setCandidates((current) => current.filter((m) => m.user_id !== id))
-      setMemberId('')
-      await refreshActivity()
-    } catch (e) { setError(e) }
-  }
-
-  const updateMemberRole = async (id: number, role: 'editor' | 'viewer') => {
-    try {
-      const updated = await apiPut<ProjectMember>(`/projects/${projectId}/members/${id}`, { user_id: id, role })
-      setMembers((current) => current.map((member) => member.user_id === id ? updated : member))
-      await refreshActivity()
-    } catch (e) { setError(e) }
-  }
-
-  const removeMember = async (id: number) => {
-    try {
-      await apiDelete(`/projects/${projectId}/members/${id}`)
-      const removed = members.find((m) => m.user_id === id)
-      setMembers((current) => current.filter((m) => m.user_id !== id))
-      if (removed) setCandidates((current) => [...current, removed].sort((a, b) => a.username.localeCompare(b.username)))
-      await refreshActivity()
-    } catch (e) { setError(e) }
-  }
-
-  const transferOwner = async (id: number) => {
-    const ok = await confirm({
-      title: t('project.transferOwnerTitle'),
-      message: t('project.transferOwnerConfirm'),
-    })
-    if (!ok) return
-    try {
-      const owner = await apiPost<ProjectMember>(`/projects/${projectId}/owner`, { user_id: id })
-      setMembers((current) => [owner, ...current.filter((m) => m.user_id !== id).map((m) => m.user_id === project?.owner_id ? { ...m, role: 'editor' as const } : m)])
-      setProject((current) => current ? { ...current, owner_id: id } : current)
-      setCandidates((current) => current.filter((m) => m.user_id !== id))
-      await refreshActivity()
-    } catch (e) { setError(e) }
-  }
 
   const scan = async () => {
     setBusy(true)
@@ -220,6 +149,7 @@ export default function ProjectDetailPage() {
     } catch (e) { setError(e) } finally {
       setUploading(false)
       if (folderInputRef.current) folderInputRef.current.value = ''
+      if (filesInputRef.current) filesInputRef.current.value = ''
     }
   }
 
@@ -262,6 +192,33 @@ export default function ProjectDetailPage() {
       setPages((cur) => cur.map((p) => (p.id === pageId ? { ...p, status: 'approved' } : p)))
     } catch (e) {
       setError(e)
+    }
+  }
+
+  const refreshPages = async () => {
+    const r = await apiGet<{ items: PageItem[] }>(`/projects/${projectId}/pages`)
+    setPages(r.items)
+  }
+
+  // Approvazione in blocco: `pageIds` null = tutte le pagine del progetto.
+  // Senza `approveDrafts` restano fuori le pagine con bozze non verificate; con
+  // il flag le bozze vengono confermate (diventano verità) e approvate.
+  const bulkApprove = async (pageIds: number[] | null) => {
+    setApproveBusy(true)
+    setError(null)
+    setApproveNotice(null)
+    try {
+      const res = await apiPost<{ approved: number; confirmed_blocks: number; skipped_count: number }>(
+        `/projects/${projectId}/pages/approve`,
+        { page_ids: pageIds, confirm_drafts: approveDrafts },
+      )
+      setApproveNotice(t('project.approveResult', { approved: res.approved, skipped: res.skipped_count }))
+      setSelected(new Set())
+      await refreshPages()
+    } catch (e) {
+      setError(e)
+    } finally {
+      setApproveBusy(false)
     }
   }
 
@@ -345,11 +302,19 @@ export default function ProjectDetailPage() {
           <span className="mono text-[12px] text-[color:var(--color-ink-2)]">
             {pagesN(pages.length)}
           </span>
-          <button onClick={() => void scan()} disabled={busy} className="btn btn-primary">
+          <button type="button" onClick={() => setShareOpen(true)} className="btn" title={t('share.buttonTitle')}>
+            <IconUsers size={13} />
+            {t(canManage ? 'share.button' : 'team.peopleAccess')}
+          </button>
+          {project?.archive_dir && <button onClick={() => project?.archive_dir ? void scan() : filesInputRef.current?.click()} disabled={!canEdit || busy || uploading} className="btn btn-primary">
             <IconScan size={13} />
             {busy ? t('project.scanBusy') : t('project.scan')}
+          </button>}
+          <button type="button" onClick={() => filesInputRef.current?.click()} disabled={!canEdit || uploading} className="btn btn-primary">
+            {uploading ? t('project.uploading') : t('workflow.importFiles')}
           </button>
-          <button type="button" onClick={() => folderInputRef.current?.click()} disabled={uploading} className="btn">
+          <input ref={filesInputRef} type="file" multiple accept=".jpg,.jpeg,.png,.bmp,.webp,.tif,.tiff,.pdf" className="hidden" onChange={(e) => void uploadFolder(e.target.files)} />
+          <button type="button" onClick={() => folderInputRef.current?.click()} disabled={!canEdit || uploading} className="btn">
             {uploading ? t('project.uploading') : t('project.chooseFolder')}
           </button>
           <input
@@ -360,25 +325,38 @@ export default function ProjectDetailPage() {
             className="hidden"
             {...({ webkitdirectory: '', directory: '' } as InputHTMLAttributes<HTMLInputElement>)}
           />
+          {canManage && <Menu label={t('ux.projectActions')}>
           <button
             onClick={() => {
               setTypedName('')
               setConfirmingDelete(true)
             }}
-            className="btn btn-danger"
+            className="menu-item text-[color:var(--color-sig-text)]"
           >
             <IconTrash size={13} />
             {t('project.delete')}
           </button>
+          </Menu>}
         </div>
       </div>
-      <p className="mb-3 -mt-2 text-[11px] text-[color:var(--color-ink-2)]">{t('project.importHint')}</p>
+      {project && <div className="mb-3 flex flex-wrap items-center gap-2 text-[13px]">
+        <Badge tone="neutral">{accessLabel(access)}</Badge>
+        <span>{t('team.ownerLine', { name: project.owner_name ?? t(auth.enabled ? 'team.noOwner' : 'team.localProject') })}</span>
+      </div>}
+      {canEdit && <p className="mb-3 -mt-2 text-[11px] text-[color:var(--color-ink-2)]">{t(project?.archive_dir ? 'workflow.serverImportHint' : 'workflow.uploadHint')}</p>}
 
       {error != null && (
         <div className="mb-3">
           <ErrorNotice error={error} onDismiss={() => setError(null)} />
         </div>
       )}
+
+      {pages.length > 0 && <div className="mb-3 flex flex-wrap gap-2">
+        {canEdit && <Link to="/" className="btn btn-primary no-underline">{t('home.recognizePages')}</Link>}
+        <Link to={`/annotazione?project=${projectId}`} className="btn no-underline">{t(canEdit ? 'pipeline.steps.annotateAction' : 'team.openReader')}</Link>
+        <Link to="/archivio" className="btn no-underline">{t('nav.archive')}</Link>
+        {canEdit && <Link to="/fine-tuning" className="btn no-underline">{t('nav.training')}</Link>}
+      </div>}
 
       {protocol && (
         <div className="mb-3">
@@ -387,7 +365,7 @@ export default function ProjectDetailPage() {
             quiet
             aux={<span>{protocolBusy ? t('project.protocolSaving') : t('project.protocolVersioned')}</span>}
           >
-            <div className="grid gap-3 sm:grid-cols-2">
+            <fieldset disabled={!canEdit} className="grid min-w-0 gap-3 sm:grid-cols-2">
               <Field label={t('project.objective')}>
                 <textarea value={protocol.objective} onChange={(e) => setProtocol((p) => p ? { ...p, objective: e.target.value } : p)} className="fld min-h-16" placeholder={t('project.objectivePlaceholder')} />
               </Field>
@@ -425,77 +403,25 @@ export default function ProjectDetailPage() {
               <div className="flex items-end justify-end">
                 <button type="button" onClick={() => void saveProtocol()} disabled={protocolBusy} className="btn btn-sm btn-primary">{t('project.saveProtocol')}</button>
               </div>
-            </div>
+            </fieldset>
           </Collapsible>
         </div>
       )}
 
       <div className="mb-3">
-        <Module tab={t('project.accessTab')} quiet>
-          <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-            <select className="fld" value={memberId} onChange={(e) => setMemberId(e.target.value)} aria-label={t('project.addMemberLabel')}>
-              <option value="">{t('project.addMemberPlaceholder')}</option>
-              {candidates.map((candidate) => <option key={candidate.user_id} value={candidate.user_id}>{candidate.username}</option>)}
-            </select>
-            <select className="fld" value={memberRole} onChange={(e) => setMemberRole(e.target.value as 'editor' | 'viewer')} aria-label={t('project.memberRoleLabel')}>
-              <option value="editor">Editor</option><option value="viewer">Viewer</option>
-            </select>
-            <button type="button" className="btn btn-primary" disabled={!memberId} onClick={() => void addMember()}>{t('project.addMember')}</button>
-          </div>
-          <div className="mt-3 divide-y divide-[color:var(--color-rule)] border-y border-[color:var(--color-rule)]">
-            {members.map((member) => <div key={member.user_id} className="flex flex-wrap items-center gap-2 py-2 text-[12px]">
-              <span className="min-w-0 max-w-full truncate font-semibold" title={member.username}>{member.username}</span>
-              {member.role === 'owner' ? <span className="badge">{t('project.ownerBadge')}</span> : <select
-                className="fld w-auto min-w-[7rem]"
-                value={member.role}
-                onChange={(e) => void updateMemberRole(member.user_id, e.target.value as 'editor' | 'viewer')}
-                aria-label={t('project.memberRoleFor', { name: member.username })}
-              ><option value="editor">Editor</option><option value="viewer">Viewer</option></select>}
-              {member.role !== 'owner' && <><button type="button" className="btn btn-sm ml-auto" onClick={() => void removeMember(member.user_id)}>{t('project.removeMember')}</button><button type="button" className="btn btn-sm" onClick={() => void transferOwner(member.user_id)}>{t('project.transferOwner')}</button></>}
-            </div>)}
-            {!members.length && <p className="py-2 text-[12px] text-[color:var(--color-ink-2)]">{t('project.noMembers')}</p>}
-          </div>
-        </Module>
+        <Collapsible tab={t('project.activityTab')} quiet>
+          <ActivityFeed items={activity} projectId={projectId} pages={pages} />
+        </Collapsible>
       </div>
 
       <div className="mb-3">
-        <Module tab={t('project.activityTab')} quiet>
-          <div className="divide-y divide-[color:var(--color-rule)] border-y border-[color:var(--color-rule)]">
-            {activity.map((event) => {
-              // Una riga dice chi, cosa e *dove*: il codice grezzo
-              // (`page.annotations_saved`) non diceva né l'azione né la pagina.
-              const payload = activityPayload(event)
-              const page = event.resource_type === 'page' ? pages.find((item) => item.id === event.resource_id) : undefined
-              const count = Number(payload.blocks ?? payload.deleted ?? NaN)
-              return <div key={event.id} className="grid gap-1 py-2 text-[12px] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-baseline sm:gap-3">
-                <span className="min-w-0 break-words">
-                  <span className="font-semibold">{event.username || t('project.localActor')}</span>
-                  {' · '}
-                  {ACTIVITY_ACTIONS.has(event.action) ? t(`project.activity.${event.action.replace('.', '_')}`) : event.action}
-                  {Number.isFinite(count) && <span className="text-[color:var(--color-ink-3)]"> ({t('project.activityBlocks', { n: count })})</span>}
-                  {page && (
-                    <>
-                      {' · '}
-                      <Link className="mono" to={`/annotazione?project=${projectId}&page=${page.id}`}>{page.rel_path}</Link>
-                    </>
-                  )}
-                </span>
-                <time className="mono text-[11px] text-[color:var(--color-ink-3)]" dateTime={event.created_at}>{formatDateTime(event.created_at, locale)}</time>
-              </div>
-            })}
-            {!activity.length && <p className="py-2 text-[12px] text-[color:var(--color-ink-2)]">{t('project.noActivity')}</p>}
-          </div>
-        </Module>
-      </div>
-
-      <div className="mb-3">
-        <Module tab={t('project.pilotTab')} quiet aux={<span>{t('project.pilotRange')}</span>}>
+        <Collapsible tab={t('project.pilotTab')} quiet aux={<span>{t('project.pilotRange')}</span>}>
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => void generatePilot()} className="btn btn-sm">{t('project.generateSample')}</button>
-            {pilot && <><span className="mono text-[12px]">{tn('project.pilotSelected', pilot.pages.length)}</span><button type="button" onClick={() => void savePilot()} className="btn btn-sm btn-primary">{t('project.saveToProtocol')}</button></>}
+            <button type="button" disabled={!canEdit} onClick={() => void generatePilot()} className="btn btn-sm">{t('project.generateSample')}</button>
+            {pilot && <><span className="mono text-[12px]">{tn('project.pilotSelected', pilot.pages.length)}</span><button type="button" disabled={!canEdit} onClick={() => void savePilot()} className="btn btn-sm btn-primary">{t('project.saveToProtocol')}</button></>}
           </div>
           {pilot && <p className="mt-2 mono truncate text-[11px] text-[color:var(--color-ink-3)]">{pilot.pages.slice(0, 5).map((p) => p.rel_path).join(' · ')}{pilot.pages.length > 5 ? ' …' : ''}</p>}
-        </Module>
+        </Collapsible>
       </div>
 
       {busy && (
@@ -647,11 +573,29 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
+      <fieldset disabled={!canEdit} className="min-w-0">
       <Module
         tab={t('project.registry')}
         quiet
         flush
-        aux={<span>{pagesN(pages.length)}</span>}
+        aux={
+          <span className="flex flex-wrap items-center gap-2">
+            {approveNotice && <span className="text-[11px] text-[color:var(--color-ink-2)]">{approveNotice}</span>}
+            <label className="flex items-center gap-1 text-[11px]" title={t('project.approveConfirmDraftsHint')}>
+              <input type="checkbox" checked={approveDrafts} onChange={(e) => setApproveDrafts(e.target.checked)} />
+              {t('project.approveConfirmDrafts')}
+            </label>
+            {selected.size > 0 && (
+              <button type="button" className="btn btn-sm" disabled={approveBusy} onClick={() => void bulkApprove([...selected])}>
+                {tn('project.approveSelected', selected.size)}
+              </button>
+            )}
+            <button type="button" className="btn btn-sm btn-primary" disabled={approveBusy || pages.length === 0} onClick={() => void bulkApprove(null)}>
+              {t('project.approveAll')}
+            </button>
+            <span>{pagesN(pages.length)}</span>
+          </span>
+        }
       >
         {pages.length > 0 ? (
           <div className="overflow-x-auto">
@@ -789,16 +733,22 @@ export default function ProjectDetailPage() {
           <div className="flex flex-col items-start gap-2 p-6">
             <IconScan size={22} />
             <p className="text-[13px] font-semibold">{t('project.emptyTitle')}</p>
-            <p className="max-w-[60ch] text-[12px] text-[color:var(--color-ink-2)]">
-              {t('project.emptyBody')}
-            </p>
-            <button onClick={() => void scan()} disabled={busy} className="btn btn-primary">
-              <IconScan size={13} />
-              {t('project.scan')}
-            </button>
+
           </div>
         )}
       </Module>
+
+      </fieldset>
+
+      {shareOpen && project && (
+        <ShareDialog
+          projectId={projectId}
+          projectName={project.name}
+          canManage={canManage}
+          onAccessChanged={() => { void apiGet<Project>(`/projects/${projectId}`).then(setProject).catch(setError) }}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
 
       {confirmingDelete && project && (
         <Modal

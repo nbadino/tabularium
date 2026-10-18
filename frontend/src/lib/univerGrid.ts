@@ -2,8 +2,7 @@
  * Il ponte fra il nostro modello di tabella e Univer.
  *
  * Funzioni pure, provabili senza browser: qui sta il rischio
- * dell'integrazione, non nel componente React. È la stessa divisione di
- * responsabilità che `gridSheet.ts` fa per Jspreadsheet CE.
+ * dell'integrazione, non nel componente React. Il ponte non importa il runtime grafico del foglio.
  *
  * Tre cose restano **nostre**, e Univer non le vede mai:
  *
@@ -198,5 +197,9 @@ export function univerGridSignature(grid: TableGrid): string {
       cell.verified ?? false,
     ]),
     grid.misprints ?? [],
+    grid.vlines ?? [],
+    grid.hlines ?? [],
+    grid.row_columns ?? [],
+    grid.row_columns_proven ?? [],
   ])
 }

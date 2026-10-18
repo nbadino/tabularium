@@ -10,7 +10,7 @@
  * disattivato) l'utente viene azzerato e il gate riporta al login.
  */
 import { useSyncExternalStore } from 'react'
-import { apiGet, apiPost } from '../lib/api'
+import { apiGet, apiPatch, apiPost } from '../lib/api'
 import type { AuthStatus, User } from '../lib/types'
 
 export interface AuthState {
@@ -111,6 +111,28 @@ export async function logout(): Promise<void> {
   set({ user: null })
 }
 
+/** Accetta un invito: sceglie la password e lascia la sessione attiva. */
+export async function acceptInvite(token: string, password: string): Promise<void> {
+  const user = await apiPost<User>('/auth/invite/accept', { token, password })
+  set({ user, needsSetup: false })
+}
+
+/** Rilegge l'utente dal server (es. dopo un cambio password forzato). */
+export async function refresh(): Promise<void> {
+  try {
+    const user = await apiGet<User>('/auth/me')
+    set({ user })
+  } catch {
+    // Un 401 verrà già gestito dall'evento globale di sessione scaduta.
+  }
+}
+
+/** Aggiorna il proprio profilo (email). */
+export async function updateProfile(email: string | null): Promise<void> {
+  const user = await apiPatch<User>('/auth/me', { email })
+  set({ user })
+}
+
 // Sessione decaduta da un'altra linguetta o per scadenza: il backend ha
 // risposto 401 a una richiesta qualsiasi → torna al login.
 if (typeof window !== 'undefined') {
@@ -124,12 +146,15 @@ export interface Auth extends AuthState {
   setup: (username: string, password: string, email?: string) => Promise<void>
   register: (username: string, password: string, email?: string) => Promise<void>
   logout: () => Promise<void>
+  acceptInvite: (token: string, password: string) => Promise<void>
+  refresh: () => Promise<void>
+  updateProfile: (email: string | null) => Promise<void>
 }
 
 /** Sottoscrive il componente allo stato di autenticazione. */
 export function useAuth(): Auth {
   const s = useSyncExternalStore(subscribe, getSnapshot)
-  return { ...s, login, setup, register, logout }
+  return { ...s, login, setup, register, logout, acceptInvite, refresh, updateProfile }
 }
 
 /**

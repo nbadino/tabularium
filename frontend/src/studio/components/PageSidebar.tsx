@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import type { PageItem, PageSums, Project } from '../../lib/types'
 import { statusLabel, STATUS_TONE } from '../../lib/vocab'
+import { useAuth } from '../../app/auth'
 import { Field, Select } from '../../app/ui'
 import { IconCheck, IconNext, IconPrev, IconWarn } from '../../app/icons'
 import { t as translate, useI18n, tn } from '../../i18n'
@@ -62,12 +63,19 @@ export default function PageSidebar({
   loading,
 }: PageSidebarProps) {
   const { t } = useI18n()
+  const { user } = useAuth()
+  const [scope, setScope] = useState<'all' | 'mine' | 'review'>('all')
   const [pageQuery, setPageQuery] = useState('')
   const [pageLimit, setPageLimit] = useState(INITIAL_PAGE_LIMIT)
+  const hasAssignments = pages.some((p) => p.work?.assignee_id || p.work?.reviewer_id)
+  const activeScope = hasAssignments ? scope : 'all'
   const needle = pageQuery.trim().toLocaleLowerCase()
-  const visiblePages = needle
-    ? pages.filter((page) => pageLabel(page).toLocaleLowerCase().includes(needle))
-    : pages
+  const visiblePages = pages.filter((page) =>
+    (!needle || pageLabel(page).toLocaleLowerCase().includes(needle)) &&
+    (activeScope === 'all' || (activeScope === 'mine'
+      ? page.work?.assignee_id === user?.id && ['annotation', 'changes_requested'].includes(page.work?.state ?? '')
+      : page.work?.reviewer_id === user?.id && page.work?.state === 'pending')))
+
   const index = currentPage ? visiblePages.findIndex((p) => p.id === currentPage.id) : -1
   const prev = index > 0 ? visiblePages[index - 1] : null
   const next = index >= 0
@@ -82,6 +90,7 @@ export default function PageSidebar({
   })()
 
   useEffect(() => {
+    setScope('all')
     setPageQuery('')
     setPageLimit(INITIAL_PAGE_LIMIT)
   }, [projectId])
@@ -148,6 +157,11 @@ export default function PageSidebar({
         )}
       </div>
 
+      {user && hasAssignments && <div className="border-b border-[color:var(--color-rule)] p-2">
+        <select className="fld" aria-label={t('work.queue')} value={activeScope} onChange={(e) => setScope(e.target.value as 'all' | 'mine' | 'review')}>
+          {(['all', 'mine', 'review'] as const).map((key) => <option key={key} value={key}>{t(`work.filter.${key}`)}</option>)}
+        </select>
+      </div>}
       {/* Scorrere l'archivio senza tornare all'elenco: il compito di Alex. */}
       {pages.length > 0 && (
         <div className="flex items-center gap-1 border-b border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-2 py-1">
@@ -181,7 +195,7 @@ export default function PageSidebar({
         </div>
       )}
 
-      <ul ref={listRef} className="glide cascade min-h-0 flex-1 overflow-y-auto">
+      <ul ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
         {projectId === '' && (
           <li className="p-2 text-[12px] text-[color:var(--color-ink-2)]">
             {t('sidebar.noProject')}
@@ -204,7 +218,7 @@ export default function PageSidebar({
         )}
         {projectId !== '' && pages.length > 0 && visiblePages.length === 0 && (
           <li className="p-2 text-[12px] text-[color:var(--color-ink-2)]">
-            {t('sidebar.noPageMatches')}
+            {t(activeScope === 'all' ? 'sidebar.noPageMatches' : 'work.emptyQueue')}
           </li>
         )}
         {renderedPages.map((p) => {
@@ -262,6 +276,7 @@ export default function PageSidebar({
                       </span>
                     ))}
                   </span>
+                  {p.work?.assignee_id && <span className="block truncate text-[10px] text-[color:var(--color-ink-2)]">{t(p.work.state === 'pending' ? 'work.reviewFor' : 'work.assignedTo', { name: (p.work.state === 'pending' ? p.work.reviewer_name : p.work.assignee_name) ?? t('work.unassigned') })}</span>}
                 </span>
               </button>
             </li>

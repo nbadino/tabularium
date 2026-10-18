@@ -12,6 +12,7 @@ import { useAnnotationState } from './useAnnotationState'
 
 const apiPut = vi.fn()
 vi.mock('../lib/api', () => ({
+  ApiError: class extends Error {},
   apiPut: (...args: unknown[]) => apiPut(...args),
 }))
 
@@ -138,4 +139,37 @@ describe('useAnnotationState — flush e cambio pagina', () => {
     })
     expect(apiPut).toHaveBeenCalledWith('/pages/3/annotations', expect.anything())
   })
+})
+
+it('flush fallito conserva il lavoro locale e segnala che non si può navigare', async () => {
+  apiPut.mockRejectedValue(new Error('offline'))
+  const { result } = renderHook(() => useAnnotationState(page(1), 1, []))
+  act(() => result.current.addBlock({ kind: 'rect', label: 'Text', points: [{ x: 0, y: 0 }, { x: 20, y: 20 }] }))
+  await act(async () => { await expect(result.current.flush()).rejects.toThrow() })
+  expect(result.current.getDirty()).toBe(true)
+  expect(result.current.blocks).toHaveLength(1)
+})
+
+it('una modifica durante una risposta lenta resta sporca e viene salvata dalla successiva flush', async () => {
+  let finish!: (value: unknown) => void
+  apiPut.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+  const { result } = renderHook(() => useAnnotationState(page(1), 1, []))
+  act(() => result.current.addBlock({ kind: 'rect', label: 'Text', points: [{ x: 0, y: 0 }, { x: 20, y: 20 }] }))
+  const id = result.current.blocks[0].id
+  let first!: Promise<void>
+  act(() => { first = result.current.saveNow() })
+  act(() => result.current.setBlockContent(id, 'Aurora corrected'))
+  await act(async () => { finish({ annotation_revision: 1, assigned_ids: [101] }); await first })
+  expect(result.current.getDirty()).toBe(true)
+  await act(async () => { await result.current.flush() })
+  expect(apiPut.mock.calls[1][1].items[0]).toMatchObject({ id: 101, content: 'Aurora corrected' })
+  expect(result.current.getDirty()).toBe(false)
+})
+
+it('le scorciatoie annunciate Poligono e Panoramica funzionano', () => {
+  const { result } = renderHook(() => useAnnotationState(page(1), 1, []))
+  act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p' })))
+  expect(result.current.tool).toBe('polygon')
+  act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h' })))
+  expect(result.current.tool).toBe('pan')
 })

@@ -16,6 +16,8 @@ import { bootstrap, useAuth } from './auth'
 
 const SetupPage = lazy(() => import('../pages/SetupPage'))
 const LoginPage = lazy(() => import('../pages/LoginPage'))
+const AcceptInvitePage = lazy(() => import('../pages/AcceptInvitePage'))
+const SetPasswordPage = lazy(() => import('../pages/SetPasswordPage'))
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
   const { t } = useI18n()
@@ -40,6 +42,17 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (!enabled) return <>{children}</>
 
+  // Accettazione invito: prioritaria su tutto, anche se un vecchio cookie di
+  // sessione è ancora presente. Chi arriva dal link deve poter scegliere la
+  // password, non finire nell'app con l'account sbagliato.
+  if (typeof window !== 'undefined' && window.location.pathname === '/invito') {
+    return (
+      <Suspense fallback={null}>
+        <AcceptInvitePage />
+      </Suspense>
+    )
+  }
+
   if (needsSetup) {
     return (
       <Suspense fallback={null}>
@@ -51,6 +64,15 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     return (
       <Suspense fallback={null}>
         <LoginPage />
+      </Suspense>
+    )
+  }
+  // Primo accesso (o password reimpostata dall'admin): prima di ogni altra cosa
+  // l'utente ne sceglie una propria.
+  if (user.must_change_password) {
+    return (
+      <Suspense fallback={null}>
+        <SetPasswordPage />
       </Suspense>
     )
   }

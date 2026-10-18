@@ -305,3 +305,13 @@ export const IconCloud = (p: IconProps) => (
     <path d="M4.5 13.5h7a3 3 0 00.5-5.96 4 4 0 00-7.78-1.04A3 3 0 004.5 13.5z" />
   </Icon>
 )
+
+/** Persone / condivisione dell'accesso: due teste e le spalle. */
+export const IconUsers = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="6" cy="5.5" r="2.5" />
+    <path d="M1.5 13.5c0-2.2 2-3.5 4.5-3.5s4.5 1.3 4.5 3.5" />
+    <path d="M10.5 3.6a2.2 2.2 0 010 3.9" />
+    <path d="M11.4 10.2c1.7.4 3.1 1.5 3.1 3.3" />
+  </Icon>
+)

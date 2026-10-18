@@ -14,6 +14,8 @@ export interface ModelItem {
   tasks: string[]
   table_format: string | null
   hf_repo: string
+  /** Nome che l'endpoint vuole sentirsi chiedere (campo `model` della richiesta). */
+  served_model_name?: string | null
   approx_size_gb: number | null
   license_note: string
   train_toolchain: string
@@ -74,6 +76,21 @@ export const isCustom = (m: Pick<ModelItem, 'adapter_id'>) => m.adapter_id.start
 export const isDestination = (v: string | null | undefined): v is Destination =>
   v != null && (DESTINATIONS as readonly string[]).includes(v)
 
+/**
+ * La destinazione che corrisponde al provider persistito.
+ *
+ * Il gateway esterno (OpenCode/Google) e ogni endpoint OpenAI-compatibile sono
+ * registrati come `custom` — è il vincolo di schema del profilo di calcolo —
+ * ma nell'hub restano «Endpoint». Senza questa mappatura l'hub rileggendo la
+ * configurazione salvata non riconosceva più la destinazione scelta e mostrava
+ * «da scegliere» subito dopo un salvataggio riuscito.
+ */
+export function destinationForProvider(provider: string | null | undefined): Destination | null {
+  if (!provider) return null
+  if (provider === 'custom') return 'manual'
+  return isDestination(provider) ? provider : null
+}
+
 export interface DestinationVerdict {
   ok: boolean
   /** Chiave i18n della causa quando `ok` è falso. */
@@ -106,7 +123,10 @@ export function destinationVerdict(model: ModelItem, dest: Destination): Destina
       return model.cloud_serve_ready ? { ok: true } : { ok: false, reasonKey: 'modelsHub.why.noCloudRecipe' }
     case 'manual':
       // Un endpoint esterno serve qualsiasi modello, ma senza un percorso di
-      // parsing il riconoscimento non saprebbe leggerne l'output.
+      // parsing il riconoscimento non saprebbe leggerne l'output. Un gateway
+      // con protocollo proprio (Google `generateContent` via OpenCode) ha il
+      // suo parser nell'adapter e almeno i prompt testo/tabella verificati.
+      if (model.serve_backend === 'opencode-gateway') return { ok: true }
       return model.supports_native ? { ok: true } : { ok: false, reasonKey: 'modelsHub.why.noParser' }
   }
 }

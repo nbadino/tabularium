@@ -1,3 +1,16 @@
+/**
+ * DEPRECATO (non montato da nessuna parte).
+ *
+ * Questa era la superficie di editing dei confini sul ritaglio: sposta, aggiungi
+ * e rifiuta un `vline`/`hline` vedendolo sull'inchiostro. Si regge sulla
+ * **geometria** della tabella (`vlines`/`hlines`/`row_columns`), che i modelli non
+ * ci danno: su 248 griglie salvate una sola la porta. Tabularium è model-agnostic,
+ * quindi la correzione della struttura passa dal foglio (unisci/separa,
+ * riga/colonna), non dai confini sul pixel.
+ *
+ * Resta solo per memoria del lavoro fatto; non aggiungere qui funzionalità.
+ * Da cancellare quando nessuno la importa (oggi: solo il suo test).
+ */
 import { useRef, useState } from 'react'
 import type { Axis } from '../../lib/grid'
 import { useI18n } from '../../i18n'
@@ -42,6 +55,7 @@ const MIN_GAP = 0.002
 
 type Selection = { axis: Axis; index: number }
 
+/** @deprecated Superficie di editing dei confini geometria-dipendente e non montata: v. l'intestazione del file. */
 export default function TableGridOverlay({
   cropUrl,
   vlines,

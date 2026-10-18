@@ -10,17 +10,20 @@ import ContentPane from '../studio/components/ContentPane'
 import NewLabelDialog from '../studio/components/NewLabelDialog'
 import Splitter from '../studio/components/Splitter'
 import { clamp } from '../studio/canvasGeometry'
+import PageWorkControl from '../studio/components/PageWorkControl'
+import { useDraftEdits } from '../studio/useDraftEdits'
 import { useAnnotationState } from '../studio/useAnnotationState'
 import { runPrelabelStream } from '../studio/prefillStream'
 import PrefillDialog from '../studio/components/PrefillDialog'
 import {
-  defaultPrefillMode,
   summarizePage,
   type PrefillMode,
 } from '../studio/prefill'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { useConfirm } from '../app/confirm'
-import type { LivePrefillOutput, PrefillDraft, Tool } from '../studio/types'
+import { connectPage, disconnectPage, notifyEditing, onAnnotationsChanged, useLive } from '../app/live'
+import { initialsOf } from '../lib/avatar'
+import type { DisplayBlock, LivePrefillOutput, PrefillDraft, Tool } from '../studio/types'
 import type { PrefillEngines, TableDetectOut, TableDetectRequest, TableGrid, TableSaveOut } from '../lib/types'
 import { useI18n, tn } from '../i18n'
 import {
@@ -40,7 +43,8 @@ import {
 } from '../app/icons'
 
 import { useInference } from '../app/inference'
-import { Menu, PageHeader } from '../app/ui'
+import { useModelNames } from '../app/models/names'
+import { ErrorNotice, Menu, PageHeader } from '../app/ui'
 import { pageLabel } from '../lib/pageLabel'
 
 // --- larghezze dei pannelli dello studio (splitter, persistite) --------------
@@ -48,7 +52,7 @@ import { pageLabel } from '../lib/pageLabel'
 // ricade sulla misura di riposo.
 const SPLIT_KEY = 'tabularium.studio.split'
 const MODE_KEY = 'tabularium.studio.mode'
-const SPLIT_DEFAULT = { sidebar: 240, content: 520 }
+const SPLIT_DEFAULT = { sidebar: 208, content: 420 }
 const SIDEBAR_MIN = 176
 const SIDEBAR_MAX = 420
 const CONTENT_MIN = 320
@@ -61,6 +65,43 @@ function loadStudioMode(): StudioMode {
   } catch {
     return 'all'
   }
+}
+
+/** Bozza di prefill: generata e non ancora confermata da un umano. */
+function isPendingDraft(b: BlockOut): boolean {
+  return Boolean(b.prefill_source) && !b.confirmed
+}
+
+/**
+ * Blocchi che stanno sul canvas.
+ *
+ * Le bozze del prefill non verificate restano fuori dall'immagine: sullo
+ * schermo non deve comparire nulla di generato. Le TABELLE sono l'eccezione,
+ * e per una ragione misurata: la regione di una tabella è ciò che il modello
+ * sbaglia più spesso, e senza riquadro sull'immagine non c'è modo di
+ * correggerla (i confini della griglia vivono DENTRO il bbox del blocco).
+ */
+function mapCanvasBlocks(items: BlockOut[], r: number): DisplayBlock[] {
+  return items
+    .filter((b) => !isPendingDraft(b) || b.label === 'Table')
+    .map((b) => ({
+      id: `srv-${b.id}`,
+      serverId: b.id,
+      label: b.label,
+      kind: b.kind,
+      points: b.points.map(([x, y]) => ({ x: x * r, y: y * r })),
+      content: b.content,
+      orderIdx: b.order_idx,
+      confirmed: b.confirmed,
+      prefill: b.prefill_source ?? null,
+    }))
+}
+
+/** Bozze di prefill che vivono nel pannello contenuti (mai sull'immagine). */
+function mapDrafts(items: BlockOut[]): PrefillDraft[] {
+  return items
+    .filter((b) => isPendingDraft(b) && b.label !== 'Table')
+    .map((b) => ({ serverId: b.id, label: b.label, content: b.content, confirmed: false, grid: null }))
 }
 
 function loadSplit(): { sidebar: number; content: number } {
@@ -85,6 +126,7 @@ export default function AnnotationPage() {
   const requestedPage = Number(searchParams.get('page')) || null
   const requestedRun = Number(searchParams.get('run')) || null
   const inf = useInference()
+  const nameOf = useModelNames()
   const [projectId, setProjectId] = useState<number | ''>('')
   // Somme che non tornano, per pagina: la lista le mostra accanto allo stato.
   // Si rileggono al cambio di progetto o di pagina e dopo ogni salvataggio
@@ -105,7 +147,7 @@ export default function AnnotationPage() {
   const [labels, setLabels] = useState<LabelDef[]>([])
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [previewSize, setPreviewSize] = useState<PixelSize>({ w: 0, h: 0 })
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   const pageIdRef = useRef<number | null>(null)
   const [prefillBusy, setPrefillBusy] = useState(false)
   const [prefillProgress, setPrefillProgress] = useState<{ blocks: number; last: string | null } | null>(
@@ -122,41 +164,38 @@ export default function AnnotationPage() {
 
   /** Modifica al testo di una bozza: aggiorna il pannello subito e il
    *  database con debounce (le bozze non sono nel canvas). */
-  const draftTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
   const onDraftContent = (serverId: number, content: string) => {
-    setPrefillDrafts((d) => d.map((x) => (x.serverId === serverId ? { ...x, content } : x)))
-    clearTimeout(draftTimers.current[serverId])
-    draftTimers.current[serverId] = setTimeout(() => {
-      void apiPatch<BlockOut>(`/blocks/${serverId}`, { content })
-        .then((out) => ann.syncRevision(out.annotation_revision))
-        .catch((e) => setError(String(e)))
-    }, 800)
+    setPrefillDrafts((d) => d.map((x) => x.serverId === serverId ? { ...x, content } : x))
+    draftEdits.schedule(serverId, content)
   }
   /** Verifica una bozza: da questo momento il blocco esiste anche sul canvas
    *  (filtro in applyBlocks) — è il gesto che trasforma output in annotazione. */
   const onDraftConfirmed = async (serverId: number, confirmed: boolean) => {
     setPrefillDrafts((d) => d.map((x) => (x.serverId === serverId ? { ...x, confirmed } : x)))
     try {
-      const out = await apiPatch<BlockOut>(`/blocks/${serverId}`, { confirmed })
+      await draftEdits.flush()
+      const out = await ann.runExternal(() => apiPatch<BlockOut>(`/blocks/${serverId}?expected_revision=${ann.getRevision()}`, { confirmed }))
       ann.syncRevision(out.annotation_revision)
       if (page) await applyBlocks(page, ratio)
     } catch (e) {
-      setError(String(e))
+      setError(e)
     }
   }
   /** Cambia la classe di una bozza: il pannello la aggiorna subito e la
    *  classe si persiste sul blocco (la bozza non è sul canvas). */
   const onDraftLabel = (serverId: number, label: string) => {
-    setPrefillDrafts((d) => d.map((x) => (x.serverId === serverId ? { ...x, label } : x)))
-    void apiPatch<BlockOut>(`/blocks/${serverId}`, { label })
-      .then((out) => ann.syncRevision(out.annotation_revision))
-      .catch((e) => setError(String(e)))
+    void (async () => {
+      await draftEdits.flush()
+      await ann.runExternal(() => apiPatch<BlockOut>(`/blocks/${serverId}?expected_revision=${ann.getRevision()}`, { label }))
+      setPrefillDrafts((d) => d.map((x) => x.serverId === serverId ? { ...x, label } : x))
+      if (label === 'Table' && page) await applyBlocks(page, ratio)
+    })().catch(setError)
   }
   const onDraftGrid = (serverId: number, grid: TableGrid) => {
     setPrefillDrafts((drafts) => drafts.map((draft) => (draft.serverId === serverId ? { ...draft, grid } : draft)))
   }
   const onSaveDraftGrid = async (serverId: number, grid: TableGrid): Promise<string> => {
-    const out = await apiPut<TableSaveOut>(`/blocks/${serverId}/table`, grid)
+    const out = await ann.runExternal(() => apiPut<TableSaveOut>(`/blocks/${serverId}/table?expected_revision=${ann.getRevision()}`, grid))
     ann.syncRevision(out.annotation_revision)
     loadSums(projectId)
     return out.otsl
@@ -164,12 +203,11 @@ export default function AnnotationPage() {
   /** Scarta una bozza non verificata: sparisce dal pannello e dal server —
    *  non è mai stata sul canvas, quindi non c'è nulla da annullare lì. */
   const onDraftReject = async (serverId: number) => {
-    setPrefillDrafts((d) => d.filter((x) => x.serverId !== serverId))
     try {
-      await apiDelete(`/blocks/${serverId}`)
-    } catch (e) {
-      setError(String(e))
-    }
+      await draftEdits.flush()
+      await ann.runExternal(() => apiDelete<{ annotation_revision: number }>(`/blocks/${serverId}?expected_revision=${ann.getRevision()}`))
+      setPrefillDrafts((d) => d.filter((x) => x.serverId !== serverId))
+    } catch (e) { setError(e) }
   }
   const [prefillEngine, setPrefillEngine] = useState<
     'off' | 'ocr' | 'model-native'
@@ -188,6 +226,14 @@ export default function AnnotationPage() {
 
   // --- larghezze pannelli ------------------------------------------------------
   const [split, setSplit] = useState(loadSplit)
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth)
+  useEffect(() => {
+    const resize = () => setViewportWidth(window.innerWidth)
+    window.addEventListener('resize', resize)
+    return () => window.removeEventListener('resize', resize)
+  }, [])
+  const sidebarWidth = Math.min(split.sidebar, Math.max(SIDEBAR_MIN, viewportWidth * 0.22))
+  const contentWidth = Math.min(split.content, Math.max(CONTENT_MIN, viewportWidth - sidebarWidth - 320))
   const [studioMode, setStudioMode] = useState<StudioMode>(loadStudioMode)
   const setMode = (mode: StudioMode) => {
     setStudioMode(mode)
@@ -209,14 +255,28 @@ export default function AnnotationPage() {
     })
   const resetSplitPane = (pane: 'sidebar' | 'content') => setSplitPane(pane, SPLIT_DEFAULT[pane])
   /** Il pannello contenuti non può mangiare più della metà della finestra. */
-  const contentMax = () => Math.max(CONTENT_MIN, Math.round(window.innerWidth * 0.6))
+  const contentMax = () => Math.max(CONTENT_MIN, Math.round(viewportWidth - sidebarWidth - 320))
 
   const ratio =
     page && previewSize.w > 0
       ? scaleRatio(previewSize, { w: page.width, h: page.height })
       : 1
 
-  const ann = useAnnotationState(page, ratio, labels)
+  const ann = useAnnotationState(page, ratio, labels, !navBusy && !prefillBusy)
+  const draftEdits = useDraftEdits((id, content) => ann.runExternal(() => apiPatch<BlockOut>(`/blocks/${id}?expected_revision=${ann.getRevision()}`, { content })), (e) => setError(e))
+  const flushEdits = async () => { await draftEdits.flush(); await ann.flush() }
+
+
+  // Collaborazione live: presenza e avviso di modifiche altrui.
+  const live = useLive()
+  const [remoteEdit, setRemoteEdit] = useState<{ username: string; revision: number } | null>(null)
+
+  const appliedRevision = ann.getRevision()
+  useEffect(() => {
+    // L'eco WebSocket può precedere la risposta HTTP: appena la risposta
+    // conferma la stessa revisione non è più un conflitto remoto.
+    if (remoteEdit?.revision === appliedRevision) setRemoteEdit(null)
+  }, [remoteEdit?.revision, appliedRevision])
 
   // «Verificata» spuntata nella finestra della tabella: è già sul server,
   // qui si riallinea solo lo stato (un blocco del canvas o una bozza).
@@ -252,32 +312,14 @@ export default function AnnotationPage() {
   // --- carica blocchi dal server e li applica allo stato -----------------------
   const applyBlocks = async (p: PageItem, r: number) => {
     const rep = await apiGet<{ items: BlockOut[]; annotation_revision?: number }>(`/pages/${p.id}/annotations`)
-    const isPendingDraft = (b: BlockOut) => Boolean(b.prefill_source) && !b.confirmed
     // Le bozze del prefill non verificate restano fuori dal canvas: sull'immagine
     // non deve comparire nulla di generato. Vivono nel pannello contenuti
     // (ContentPane → `drafts`) finché l'utente non le verifica.
     //
-    // Le TABELLE sono l'eccezione, e per una ragione misurata: la regione di
-    // una tabella è la cosa che il modello sbaglia più spesso (sul registro
-    // Lloyd's prende una colonna sola e lascia fuori metà pagina), e senza
-    // riquadro sull'immagine non c'è modo di correggerla — i confini della
-    // griglia si muovono solo DENTRO il ritaglio, che è il bbox del blocco.
-    // Una bozza di tabella è quindi sul canvas, ridimensionabile, e resta
-    // marcata «non verificata» finché qualcuno non la conferma.
+    // Le TABELLE sono l'eccezione (v. `mapCanvasBlocks`): la loro regione va
+    // corretta sull'immagine.
     ann.reset(
-      rep.items
-        .filter((b) => !isPendingDraft(b) || b.label === 'Table')
-        .map((b) => ({
-        id: `srv-${b.id}`,
-        serverId: b.id,
-        label: b.label,
-        kind: b.kind,
-        points: b.points.map(([x, y]) => ({ x: x * r, y: y * r })),
-        content: b.content,
-        orderIdx: b.order_idx,
-        confirmed: b.confirmed,
-        prefill: b.prefill_source ?? null,
-      })),
+      mapCanvasBlocks(rep.items, r),
       rep.annotation_revision ?? p.annotation_revision ?? 0,
     )
     // Il backend scrive le bozze in un thread indipendente dalla connessione:
@@ -285,12 +327,68 @@ export default function AnnotationPage() {
     // e finisce comunque. Ricaricandole qui, invece di fidarsi solo dello stream
     // dal vivo, sopravvivono alla navigazione — si ritrovano al ritorno sulla
     // pagina anche se nessuno ha guardato lo stream fino alla fine.
-    setPrefillDrafts(
-      rep.items
-        .filter((b) => isPendingDraft(b) && b.label !== 'Table')
-        .map((b) => ({ serverId: b.id, label: b.label, content: b.content, confirmed: false, grid: null })),
-    )
+    setPrefillDrafts(mapDrafts(rep.items))
   }
+
+  /** Riallinea il canvas alla versione del server (canale live). Non azzera il
+   *  lavoro locale: lo decide chi chiama (adotta solo se non ci sono modifiche
+   *  non salvate). */
+  const refreshRemote = async (p: PageItem, r: number) => {
+    const rep = await apiGet<{ items: BlockOut[]; annotation_revision?: number }>(`/pages/${p.id}/annotations`)
+    ann.adoptRemote(
+      mapCanvasBlocks(rep.items, r),
+      rep.annotation_revision ?? p.annotation_revision ?? 0,
+    )
+    setPrefillDrafts(mapDrafts(rep.items))
+    setRemoteEdit(null)
+  }
+
+  const reloadRemote = async () => {
+    if (!page) return
+    if ((ann.getDirty() || draftEdits.dirty) && !await confirm({ title: t('work.reloadTitle'), message: t('work.reloadHint') })) return
+    await draftEdits.discard()
+    try { await applyBlocks(page, ratio); setRemoteEdit(null) } catch (e) { setError(e) }
+  }
+
+  // --- canale live: presenza e riallineamento --------------------------------
+  // L'effetto si aggancia (e si stacca) al cambio pagina; il gestore sta in un
+  // ref perché dipende da stato che cambia a ogni render (revisione, sporco,
+  // rapporto di scala) e non deve far riaprire il socket a ogni modifica.
+  const liveHandlerRef = useRef<(ev: { pageId: number; revision: number; authorId: number | null; authorName: string | null }) => void>(() => {})
+  liveHandlerRef.current = (ev) => {
+    if (!page || ev.pageId !== page.id) return
+    // Eco della nostra stessa modifica: la revisione combacia, nulla da fare.
+    if (ev.revision === ann.getRevision()) return
+    if (ann.getDirty()) {
+      // C'è lavoro locale non salvato: non lo si butta. Si avvisa e si lascia
+      // scegliere — adottare la versione remota scarta ciò che non è salvato.
+      const peer = live.participants.find((p) => p.userId === ev.authorId)
+      setRemoteEdit({ username: peer?.username ?? ev.authorName ?? t('live.someone'), revision: ev.revision })
+      return
+    }
+    void refreshRemote(page, ratio).catch(() => {
+      // Un errore di rete transitorio: il prossimo evento (o un refresh) riallinea.
+    })
+  }
+
+  useEffect(() => {
+    if (!page) {
+      disconnectPage()
+      return
+    }
+    connectPage(page.id)
+    const off = onAnnotationsChanged((ev) => liveHandlerRef.current(ev))
+    return () => {
+      off()
+      disconnectPage()
+    }
+  }, [page?.id])
+
+  // «Sta scrivendo»: vero mentre ci sono modifiche non ancora salvate.
+  useEffect(() => {
+    if (!page) return
+    notifyEditing(ann.dirty)
+  }, [ann.dirty, page?.id])
 
   // --- pseudo-labeling OCR ----------------------------------------------------
   // Streaming: ogni blocco scritto dal backend arriva come evento SSE e
@@ -304,6 +402,7 @@ export default function AnnotationPage() {
     // pagina, mischiando bozze e azzerando blocchi che non c'entrano nulla.
     const targetPageId = page.id
     const isCurrent = () => pageIdRef.current === targetPageId
+    try { await flushEdits() } catch (e) { setError(e); return }
     setPrefillOpen(false)
     setPrefillBusy(true)
     workingStartedAt.current = Date.now()
@@ -397,7 +496,7 @@ export default function AnnotationPage() {
         if (abortController.signal.aborted) {
           setPrefillNotice(t('annotate.prefillStopped'))
         } else {
-          setError(String(e))
+          setError(e)
         }
         setPrefillBusy(false)
         setPrefillProgress(null)
@@ -453,13 +552,14 @@ export default function AnnotationPage() {
     if (!ok) return
     setError(null)
     try {
-      await apiDelete(`/pages/${page.id}/annotations`)
-      ann.reset([])
+      await draftEdits.flush()
+      const out = await ann.runExternal(() => apiDelete<{ annotation_revision: number }>(`/pages/${page.id}/annotations?expected_revision=${ann.getRevision()}`))
+      ann.reset([], out.annotation_revision)
       setPrefillDrafts([])
       setLiveOutput(null)
       setPrefillNotice(t('annotate.clearAllDone'))
     } catch (e) {
-      setError(String(e))
+      setError(e)
     }
   }
 
@@ -472,12 +572,8 @@ export default function AnnotationPage() {
   /** Il pulsante Prefill: con blocchi presenti apre il dialog di conferma,
    *  su pagina vuota le modalità sono equivalenti e si parte subito. */
   const onPrefillClick = () => {
-    if (!page || prefillEngine === 'off' || prefillBusy) return
-    if (ann.blocks.length > 0) {
-      setPrefillOpen(true)
-      return
-    }
-    void runPrelabel(defaultPrefillMode(summarizePage(ann.blocks, prefillDrafts)))
+    if (!page || prefillBusy) return
+    setPrefillOpen(true)
   }
 
   // --- seleziona progetto -----------------------------------------------------
@@ -485,10 +581,10 @@ export default function AnnotationPage() {
     // Il lavoro sporco della pagina corrente va a dormire prima di lasciarla:
     // il cambio progetto smonta tutto lo stato, il debounce non basterebbe.
     try {
-      await ann.flush()
-    } catch {
-      // Un salvataggio fallito non deve intrappolare l'utente qui: l'errore
-      // resta visibile e i blocchi sono ancora nel canvas storico del server.
+      await flushEdits()
+    } catch (e) {
+      setError(e)
+      return
     }
     setProjectId(pid)
     writeActiveProject(pid === '' ? null : pid)
@@ -539,7 +635,7 @@ export default function AnnotationPage() {
       setLabels(pg.labels)
       ann.setActiveLabel(pg.labels.some((l) => l.name === 'Text') ? 'Text' : pg.labels[0]?.name ?? 'Text')
     } catch (e) {
-      setError(String(e))
+      setError(e)
     } finally {
       setPagesLoading(false)
     }
@@ -661,8 +757,8 @@ export default function AnnotationPage() {
 
   // --- carica progetti e riapre subito quello attivo ---------------------------
   const projects = useProjects(
-    (pid) => void onProjectChange(pid),
-    (e) => setError(String(e)),
+    (pid) => void onProjectChange(requestedProject ?? pid),
+    (e) => setError(e),
   )
 
   // I risultati bulk aprono direttamente la pagina da verificare. Il link è
@@ -688,6 +784,13 @@ export default function AnnotationPage() {
     }
   }, [requestedPage, page?.id, pages, navBusy])
 
+  useEffect(() => {
+    if (!page && requestedPage == null && pages.length && !navBusy) {
+      const next = pages.find((p) => p.work?.can_submit || p.work?.can_review) ?? pages[0]
+      void onPageSelect(next.id)
+    }
+  }, [pages, page, requestedPage, navBusy])
+
   // --- seleziona pagina -------------------------------------------------------
   const onPageSelect = async (pid: number) => {
     if (!pages.some((x) => x.id === pid)) return
@@ -698,10 +801,10 @@ export default function AnnotationPage() {
       // Prima di abbandonare la pagina si aspetta l'autosave: il timer con
       // debounce verrebbe cancellato dal cambio pagina e le ultime modifiche
       // resterebbero solo nel browser.
-      await ann.flush()
-    } catch {
-      // L'errore di salvataggio è già visibile nell'header: la navigazione
-      // resta possibile, non si intrappola l'utente su una pagina.
+      await flushEdits()
+    } catch (e) {
+      setError(e); setNavBusy(false)
+      return
     }
     const p = pages.find((x) => x.id === pid)
     if (!p) {
@@ -709,6 +812,7 @@ export default function AnnotationPage() {
       return
     }
     setPage(p)
+    setRemoteEdit(null)
     pageIdRef.current = p.id
     // Senza, un refresh riportava lo Studio vuoto e la pagina aperta si perdeva.
     if (requestedPage !== p.id) {
@@ -736,7 +840,7 @@ export default function AnnotationPage() {
       const r = size.w > 0 ? scaleRatio(size, { w: p.width, h: p.height }) : 1
       await applyBlocks(p, r)
     } catch (e) {
-      setError(String(e))
+      setError(e)
     } finally {
       setNavBusy(false)
     }
@@ -747,7 +851,7 @@ export default function AnnotationPage() {
   // chiamate al server, referenziate sul blocco selezionato al momento
   // dell'invocazione (il pannello le passa insieme al blocco).
   const saveTable = async (serverId: number, grid: TableGrid): Promise<string> => {
-    const out = await apiPut<TableSaveOut>(`/blocks/${serverId}/table`, grid)
+    const out = await ann.runExternal(() => apiPut<TableSaveOut>(`/blocks/${serverId}/table?expected_revision=${ann.getRevision()}`, grid))
     // Il server ha fatto avanzare la revisione della pagina: senza allinearla
     // il prossimo autosave del canvas verrebbe respinto con un 409 inventato.
     ann.syncRevision(out.annotation_revision)
@@ -755,6 +859,9 @@ export default function AnnotationPage() {
     return out.otsl
   }
 
+  // DEPRECATO: `/table/detect` è il percorso geometrico (`services/table_detect.py`),
+  // che i modelli non ci danno. Resta per «Rileva griglia» e il ri-rilevamento al
+  // resize, ma la correzione model-agnostic passa dal foglio. Non estendere.
   const detectTable = (serverId: number, opts: TableDetectRequest): Promise<TableDetectOut> =>
     apiPost<TableDetectOut>(`/blocks/${serverId}/table/detect`, opts)
 
@@ -780,7 +887,7 @@ export default function AnnotationPage() {
   const redetectTable = async (serverId: number, force = false) => {
     try {
       // Il rilevamento gira sul bbox salvato: senza flush leggerebbe il vecchio.
-      await ann.flush()
+      await flushEdits()
       const current = await apiGet<{ grid: TableGrid | null }>(`/blocks/${serverId}/table`)
       const verified = (current.grid?.cells ?? []).some(
         (c) => (c.text ?? '').trim() !== '' && c.verified,
@@ -898,34 +1005,50 @@ export default function AnnotationPage() {
   const nextReviewPage = reviewIndex >= 0 ? pages[reviewIndex + 1] ?? null : pages[0] ?? null
   const openNextTask = () => {
     if (reviewRun && nextReviewPage) void onPageSelect(nextReviewPage.id)
-    else if (nextTask) void onPageSelect(nextTask.id)
+    else {
+      const next = pages.find((p) => p.id !== page?.id && (p.work?.can_submit || p.work?.can_review))
+        ?? pages.find((p) => p.id !== page?.id && !p.work?.assignee_id && !['approved', 'exported'].includes(p.status))
+      if (next) void onPageSelect(next.id)
+    }
   }
 
   // Approvazione dallo Studio: prima si salva, perché il server giudica ciò
   // che ha, poi lo stesso controllo di «pagina pronta» dell'Archivio.
   const [approving, setApproving] = useState(false)
-  const approveCurrentPage = async () => {
+  const approveCurrentPage = async (confirmDrafts = false) => {
     if (!page || projectId === '') return
     setError(null)
     setApproving(true)
     try {
-      await ann.flush()
-      await apiPost(`/pages/${page.id}/approve`)
+      await flushEdits()
+      await apiPost(`/pages/${page.id}/approve`, confirmDrafts ? { confirm_drafts: true } : undefined)
       setPage((cur) => (cur && cur.id === page.id ? { ...cur, status: 'approved' } : cur))
       setPages((cur) => cur.map((p) => (p.id === page.id ? { ...p, status: 'approved' } : p)))
       const queue = await apiGet<{ items: Array<{ id: number; reason: string; rel_path?: string }> }>(`/projects/${projectId}/annotation-queue?limit=1`)
       setNextTask(queue.items[0] ?? null)
     } catch (e) {
-      // 409: la pagina non è pronta, e il server dice perché.
-      let reasons: string[] = []
-      if (e instanceof ApiError && e.status === 409) {
+      // 409: la pagina non è pronta (di solito bozze non verificate). Non è un
+      // vicolo cieco: si offre di confermarle e approvare, scelta esplicita.
+      if (!confirmDrafts && e instanceof ApiError && e.status === 409) {
+        let reasons: string[] = []
         try {
           reasons = (JSON.parse(e.body)?.detail?.errors ?? []) as string[]
         } catch {
           /* corpo non JSON: resta il messaggio generico */
         }
+        const ok = await confirm({
+          title: t('annotate.approveDraftsTitle'),
+          message: reasons.length ? `${t('annotate.approveDraftsBody')} ${reasons.join(' · ')}` : t('annotate.approveDraftsBody'),
+          acceptLabel: t('annotate.approveDraftsConfirm'),
+        })
+        if (ok) {
+          setApproving(false)
+          return approveCurrentPage(true)
+        }
+        setApproving(false)
+        return
       }
-      setError(reasons.length ? `${t('annotate.notReady')} ${reasons.join(' · ')}` : String(e))
+      setError(e)
     } finally {
       setApproving(false)
     }
@@ -933,24 +1056,50 @@ export default function AnnotationPage() {
   const approved = page?.status === 'approved' || page?.status === 'exported'
 
   const contentCount = prefillDrafts.length + ann.blocks.length
-  // Le tre viste. Stanno nel menu «Altro» della barra del canvas, ma la vista
-  // «solo trascrizione» nasconde il canvas e con lui la barra: lì si ripetono
-  // in testa al pannello, altrimenti non si torna indietro.
-  const viewChoices = (['all', 'canvas', 'transcription'] as const).map((mode) => (
-    <button
-      key={mode}
-      type="button"
-      onClick={() => setMode(mode)}
-      aria-pressed={studioMode === mode}
-      className="menu-choice"
-    >
-      {t(`annotate.view${mode[0].toUpperCase()}${mode.slice(1)}` as 'annotate.viewAll' | 'annotate.viewCanvas' | 'annotate.viewTranscription')}
-    </button>
-  ))
+
+  // Collaboratori sulla pagina (noi esclusi) per la fila di avatar.
+  const peers = live.participants.filter((p) => p.connId !== live.selfId)
+  const editingPeer = peers.find((p) => p.editing) ?? null
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <PageHeader title={t('annotate.title')} intro={t('annotate.intro')} className="shrink-0 px-3 py-1.5" />
+      <PageHeader title={t('annotate.title')} intro={t('annotate.intro')} className="shrink-0 px-3 py-1.5" aux={<>
+        <select className="fld !w-auto text-[12px]" aria-label={t('annotate.viewModeAria')} value={studioMode} onChange={(e) => setMode(e.target.value as StudioMode)}>
+          {(['all', 'canvas', 'transcription'] as const).map((mode) => <option key={mode} value={mode}>{t(`annotate.view${mode[0].toUpperCase()}${mode.slice(1)}`)}</option>)}
+        </select>
+        {page && <PageWorkControl
+        key={page.id} page={page} revision={ann.getRevision()} disabled={navBusy || prefillBusy}
+        beforeAction={async () => { await flushEdits(); return ann.getRevision() }}
+        onReview={() => setMode('all')}
+        onChanged={(work) => {
+          const status = work.state === 'pending' ? 'qa' : work.state === 'approved' ? 'approved' : work.state === 'changes_requested' ? 'review' : page.status === 'approved' || page.status === 'qa' || page.status === 'exported' ? 'annotated' : page.status
+          setPage((p) => p ? { ...p, work, status } : p)
+          setPages((items) => items.map((p) => p.id === work.page_id ? { ...p, work, status } : p))
+        }}
+      />}
+            {!page?.work?.assignee_id && !page?.work?.reviewer_id && <button
+              type="button"
+              onClick={() => void approveCurrentPage()}
+              disabled={!page || approved || approving || navBusy || prefillBusy}
+              className="btn whitespace-nowrap"
+              title={t('project.approveTitle')}
+            >
+              <IconCheck size={12} />
+              {approved ? t('annotate.approved') : t('project.approve')}
+            </button>}
+            <button
+              type="button"
+              onClick={openNextTask}
+              disabled={reviewRun ? !nextReviewPage : !pages.some((p) => p.id !== page?.id && (p.work?.can_submit || p.work?.can_review || (!p.work?.assignee_id && !['approved', 'exported'].includes(p.status))))}
+              className="btn btn-primary whitespace-nowrap"
+              title={reviewRun ? t('annotate.nextRunPage') : nextTask?.reason}
+            >
+              <IconNext size={12} />
+              {t('sidebar.nextPage')}
+            </button>
+
+      </>} />
+      {error != null && <div className="shrink-0 px-3 py-2"><ErrorNotice error={error} onDismiss={() => setError(null)} /></div>}
       {reviewRun && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-2 py-1 text-[11px]">
           <b>{t('annotate.reviewRun', { id: reviewRun.id, count: pages.length })}</b>
@@ -969,7 +1118,7 @@ export default function AnnotationPage() {
         onPageSelect={onPageSelect}
         sums={sums}
         loading={pagesLoading}
-        width={split.sidebar}
+        width={sidebarWidth}
         reviewScope={reviewRun ? {
           label: t('annotate.reviewRun', { id: reviewRun.id, count: pages.length }),
           backTo: `/risultati?project=${reviewRun.project_id}&run=${reviewRun.id}`,
@@ -978,7 +1127,7 @@ export default function AnnotationPage() {
       />}
 
       {studioMode === 'all' && <Splitter
-        value={split.sidebar}
+        value={sidebarWidth}
         min={SIDEBAR_MIN}
         max={SIDEBAR_MAX}
         side="left"
@@ -1044,18 +1193,8 @@ export default function AnnotationPage() {
             </select>
             <button
               type="button"
-              onClick={() => setNewLabelOpen(true)}
-              title={t('labels.newTitle')}
-              aria-label={t('labels.newTitle')}
-              className="btn whitespace-nowrap"
-            >
-              <IconPlus size={12} />
-              <span className="tb-label">{t('labels.new')}</span>
-            </button>
-            <button
-              type="button"
               onClick={ann.undo}
-              disabled={!ann.canUndo}
+              disabled={!ann.canUndo || navBusy || prefillBusy}
               title={t('annotate.undoTitle')}
               className="btn mr-auto"
             >
@@ -1063,6 +1202,34 @@ export default function AnnotationPage() {
               <span className="tb-undo-label">{t('annotate.undo')}</span>
             </button>
           <div className="contents">
+            {peers.length > 0 && (
+              <div
+                className="flex items-center -space-x-1"
+                title={tn('live.onlineTitle', peers.length, { n: peers.length })}
+                aria-label={tn('live.onlineTitle', peers.length, { n: peers.length })}
+              >
+                {peers.slice(0, 4).map((p) => (
+                  <span
+                    key={p.connId}
+                    className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[color:var(--color-sheet)] text-[9px] font-semibold uppercase text-white"
+                    style={{ backgroundColor: p.color }}
+                    title={p.username}
+                  >
+                    {initialsOf(p.username)}
+                  </span>
+                ))}
+                {peers.length > 4 && (
+                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[color:var(--color-sheet)] bg-[color:var(--color-ink-3)] text-[9px] font-semibold text-white">
+                    +{peers.length - 4}
+                  </span>
+                )}
+              </div>
+            )}
+            {editingPeer && (
+              <span className="tb-label whitespace-nowrap text-[11px] text-[color:var(--color-ink-3)]">
+                {t('live.editing', { name: editingPeer.username })}
+              </span>
+            )}
             {page && (
               <span className="tb-name mono max-w-[16ch] truncate text-[11px] text-[color:var(--color-ink-3)]" title={`${pageLabel(page)} · ${page.width}×${page.height}`}>
                 {pageLabel(page)}
@@ -1078,86 +1245,39 @@ export default function AnnotationPage() {
                 {t('annotate.stopInference')}
               </button>
             )}
+            <button type="button" className="btn" disabled={!page || navBusy || prefillBusy} onClick={onPrefillClick}><IconPrefill size={12} />{t('work.recognize')}</button>
             <Menu label={t('annotate.more')}>
-              <span className="lbl !mb-0 px-2 pt-1">{t('annotate.viewMode')}</span>
-              <div className="flex gap-0.5 px-1 pb-0.5" role="group" aria-label={t('annotate.viewModeAria')}>
-                {viewChoices}
-              </div>
-              {/* Su una riga: il menu resta largo e basso invece che quadrato. */}
-              <div className="flex gap-px">
-                <button
-                  type="button"
-                  onClick={() => setShowFlow((value) => !value)}
-                  aria-pressed={showFlow}
-                  className="menu-item !w-auto flex-1 whitespace-nowrap"
-                >
-                  <IconFlow size={12} />
-                  {showFlow ? t('annotate.showFlow') : t('annotate.viewFlow')}
-                  {showFlow && <IconCheck size={12} className="ml-auto text-[color:var(--color-sig-text)]" />}
-                </button>
-                <button
-                  type="button"
-                  onClick={ann.redo}
-                  disabled={!ann.canRedo}
-                  title={t('annotate.redoTitle')}
-                  className="menu-item !w-auto whitespace-nowrap"
-                >
-                  <IconRedo size={12} />
-                  {t('annotate.redo')}
-                </button>
-              </div>
-              <hr className="menu-sep" />
-              <span className="lbl !mb-0 px-2 pt-1">{t('annotate.prefill')}</span>
-              {/* I due motori non sono intercambiabili: `ocr` trova righe di testo
-                  e le etichetta tutte Text, `model` restituisce blocchi già
-                  classificati e riconosce le tabelle. */}
-              <div className="flex items-center gap-1 pr-1">
-                <button
-                  type="button"
-                  onClick={onPrefillClick}
-                  disabled={prefillBusy || !page || prefillEngine === 'off'}
-                  className="menu-item !w-auto"
-                  title={
-                    prefillEngine === 'off'
-                      ? t('annotate.prefillOff')
-                      : prefillEngine !== 'ocr'
-                        ? t('annotate.prefillTitleModel')
-                        : t('annotate.prefillTitleOcr')
-                  }
-                >
-                  <IconPrefill size={12} />
-                  {prefillBusy ? t('annotate.ocrBusy') : t('annotate.prefill')}
-                </button>
-              <select
-                value={prefillEngine}
-                onChange={(e) => setPrefillEngine(e.target.value as 'off' | 'ocr' | 'model-native')}
-                disabled={prefillBusy}
-                aria-label={t('annotate.prefillEngine')}
-                className="fld !w-auto text-xs"
+            <button
+              type="button"
+              onClick={() => setNewLabelOpen(true)}
+              title={t('labels.newTitle')}
+              aria-label={t('labels.newTitle')}
+              className="menu-item"
+            >
+              <IconPlus size={12} />
+              <span className="tb-label">{t('labels.new')}</span>
+            </button>
+
+              <button
+                type="button"
+                onClick={() => setShowFlow((value) => !value)}
+                aria-pressed={showFlow}
+                className="menu-item"
               >
-                <option value="off">{t('annotate.prefillOff')}</option>
-                <option value="ocr">{t('annotate.prefillEngineOcr')} (CPU)</option>
-                {/* Un solo percorso modello: l'inferenza NATIVA — immagine
-                    com'è, prompt di default del modello, sampling suo. Il
-                    layout che chiedevamo noi al due-stadi è uscito: i
-                    risultati devono coincidere con l'uso diretto del modello. */}
-                <option
-                  value="model-native"
-                  disabled={
-                    !inf.enabled ||
-                    (engines ? !engines.model.available || engines.model.supports_native === false : false)
-                  }
-                >
-                  {!inf.enabled
-                    ? `${t('annotate.prefillEngineModelNative')} — ${t('annotate.gpuOff')}`
-                    : engines && !engines.model.available
-                      ? t('annotate.prefillEngineModelOff')
-                      : engines && engines.model.supports_native === false
-                        ? `${t('annotate.prefillEngineModelNative')} — ${t('annotate.prefillModeUnsupported')}`
-                        : `${t('annotate.prefillEngineModelNative')} (${inf.isCloud ? 'Cloud' : 'GPU'})`}
-                </option>
-              </select>
-              </div>
+                <IconFlow size={12} />
+                {showFlow ? t('annotate.showFlow') : t('annotate.viewFlow')}
+                {showFlow && <IconCheck size={12} className="ml-auto text-[color:var(--color-sig-text)]" />}
+              </button>
+              <button
+                type="button"
+                onClick={ann.redo}
+                disabled={!ann.canRedo}
+                title={t('annotate.redoTitle')}
+                className="menu-item"
+              >
+                <IconRedo size={12} />
+                {t('annotate.redo')}
+              </button>
               <hr className="menu-sep" />
               <button
                 type="button"
@@ -1180,29 +1300,10 @@ export default function AnnotationPage() {
                 {t('annotate.clearAll')}
               </button>
             </Menu>
-            <button
-              type="button"
-              onClick={() => void approveCurrentPage()}
-              disabled={!page || approved || approving}
-              className="btn whitespace-nowrap"
-              title={t('project.approveTitle')}
-            >
-              <IconCheck size={12} />
-              {approved ? t('annotate.approved') : t('project.approve')}
-            </button>
-            <button
-              type="button"
-              onClick={openNextTask}
-              disabled={reviewRun ? !nextReviewPage : !nextTask}
-              className="btn btn-primary whitespace-nowrap"
-              title={reviewRun ? t('annotate.nextRunPage') : nextTask?.reason}
-            >
-              <IconNext size={12} />
-              {t('annotate.nextTask')}
-            </button>
           </div>
         </div>
-        <div className="relative flex-1">
+        <div className="relative min-h-0 flex-1">
+          {navBusy && <div className="absolute inset-0 z-30 flex items-center justify-center bg-[color:var(--color-sheet)]/80" role="status">{t('common.loading')}</div>}
           {/* Lo stato del salvataggio sta fermo nell'angolo del foglio, non nella
               barra: cambiando parola ne cambiava la larghezza e la mandava a capo. */}
           <div
@@ -1212,10 +1313,10 @@ export default function AnnotationPage() {
             {ann.save.state === 'saving' && (
               <span className="text-[color:var(--color-ink-2)]">{t('annotate.saving')}</span>
             )}
-            {ann.save.state !== 'saving' && ann.dirty && (
+            {ann.save.state !== 'saving' && (ann.dirty || draftEdits.dirty) && (
               <span className="text-[color:var(--color-warn)]">{t('annotate.unsaved')}</span>
             )}
-            {ann.save.state === 'saved' && !ann.dirty && (
+            {ann.save.state === 'saved' && !ann.dirty && !draftEdits.dirty && (
               <span className="flex items-center gap-1 text-[color:var(--color-ok)]">
                 <IconCheck size={11} />
                 {t('annotate.saved')}
@@ -1232,17 +1333,24 @@ export default function AnnotationPage() {
             {ann.save.state === 'conflict' && (
               <span className="flex items-center gap-1.5 text-[color:var(--color-sig-text)]">
                 {t('annotate.conflictRemote')}
-                <button onClick={() => page && void applyBlocks(page, ratio)} className="btn btn-sm">
+                <button onClick={() => void reloadRemote()} className="btn btn-sm">
                   {t('annotate.conflictReload')}
                 </button>
               </span>
             )}
           </div>
-          {error && (
-            <div className="absolute left-3 top-3 z-10 max-w-md border border-[color:var(--color-sig-plate)] bg-[color:var(--color-sig-wash)] p-3 text-xs text-[color:var(--color-sig-text)]">
-              {error}
+          {remoteEdit && page && (
+            <div className="pointer-events-auto absolute right-3 top-12 z-10 flex items-center gap-2 rounded-full border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] px-2.5 py-0.5 text-[11px] text-[color:var(--color-warn)]">
+              <span>{t('live.remoteChanged', { name: remoteEdit.username })}</span>
+              <button onClick={() => void reloadRemote()} className="btn btn-sm">
+                {t('live.loadRemote')}
+              </button>
+              <button onClick={() => setRemoteEdit(null)} className="btn btn-sm">
+                {t('common.cancel')}
+              </button>
             </div>
           )}
+
           {prefillNotice && (
             <div className="absolute left-3 top-16 z-10 max-w-md border border-[color:var(--color-ok)] bg-[color:var(--color-ok-wash)] p-3 text-xs text-[color:var(--color-ok)]">
               {prefillNotice}
@@ -1293,7 +1401,9 @@ export default function AnnotationPage() {
             </div>
           ) : (
             previewUrl && (
+              <div className={`h-full ${prefillBusy ? 'pointer-events-none' : ''}`}>
               <StudioCanvas
+                interactive={!navBusy && !prefillBusy && studioMode !== 'transcription'}
                 imageUrl={previewUrl}
                 imageNatural={previewSize}
                 blocks={ann.blocks}
@@ -1307,6 +1417,7 @@ export default function AnnotationPage() {
                 onUpdateBlock={updateBlockPoints}
                 onDeleteBlock={handleDeleteBlock}
               />
+              </div>
             )
           )}
         </div>
@@ -1318,7 +1429,7 @@ export default function AnnotationPage() {
           destra), l'ordine di lettura si governa dalle righe stesse.
           Larghezza governata dallo splitter. */}
       {studioMode === 'all' && <Splitter
-        value={split.content}
+        value={contentWidth}
         min={CONTENT_MIN}
         max={contentMax()}
         side="right"
@@ -1328,17 +1439,10 @@ export default function AnnotationPage() {
       />}
       <section
         aria-label={t('content.paneAria')}
-        className={`glide flex min-w-0 flex-col overflow-y-auto bg-[color:var(--color-sheet)] p-3 ${studioMode === 'all' ? 'shrink-0' : 'flex-1'}`}
-        style={studioMode === 'all' ? { width: split.content } : undefined}
+        className={`${studioMode === 'canvas' ? 'hidden' : 'flex'} min-w-0 flex-col overflow-y-auto bg-[color:var(--color-sheet)] p-3 ${studioMode === 'all' ? 'shrink-0' : 'flex-1'}`}
+        style={studioMode === 'all' ? { width: contentWidth } : undefined}
       >
-        {studioMode === 'transcription' && (
-          <div className="mb-3 flex items-center gap-2">
-            <span className="lbl !mb-0">{t('annotate.viewMode')}</span>
-            <div className="flex gap-0.5 rounded-md border border-[color:var(--color-rule)] p-0.5" role="group" aria-label={t('annotate.viewModeAria')}>
-              {viewChoices}
-            </div>
-          </div>
-        )}
+        <fieldset disabled={prefillBusy || navBusy} className="min-w-0 border-0 p-0">
         <ContentPane
           blocks={ann.blocks}
           drafts={prefillDrafts}
@@ -1353,7 +1457,6 @@ export default function AnnotationPage() {
           onConfirmed={ann.setBlockConfirmed}
           onDelete={handleDeleteBlock}
           onSaveTable={saveTable}
-          onDetectTable={detectTable}
           tableVersions={tableVersions}
           tableRedetect={tableRedetect}
           onDismissRedetect={() => setTableRedetect(null)}
@@ -1386,12 +1489,43 @@ export default function AnnotationPage() {
               : null
           }
         />
+        </fieldset>
       </section>
 
       </div>
 
       {prefillOpen && page && projectId !== '' && (
         <PrefillDialog
+          canRun={prefillEngine !== 'off' && (prefillEngine === 'ocr' ? engines?.ocr.available !== false : inf.enabled && engines?.model.available !== false)}
+          engineControl={<label className="block"><span className="lbl">{t('annotate.prefillEngine')}</span>              <select
+                value={prefillEngine}
+                onChange={(e) => setPrefillEngine(e.target.value as 'off' | 'ocr' | 'model-native')}
+                disabled={prefillBusy}
+                aria-label={t('annotate.prefillEngine')}
+                className="fld !w-auto text-xs"
+              >
+                <option value="off">{t('annotate.prefillOff')}</option>
+                <option value="ocr">{t('annotate.prefillEngineOcr')} (CPU)</option>
+                {/* Un solo percorso modello: l'inferenza NATIVA — immagine
+                    com'è, prompt di default del modello, sampling suo. Il
+                    layout che chiedevamo noi al due-stadi è uscito: i
+                    risultati devono coincidere con l'uso diretto del modello. */}
+                <option
+                  value="model-native"
+                  disabled={
+                    !inf.enabled ||
+                    (engines ? !engines.model.available || engines.model.supports_native === false : false)
+                  }
+                >
+                  {!inf.enabled
+                    ? `${t('annotate.prefillEngineModelNative')} — ${t('annotate.gpuOff')}`
+                    : engines && !engines.model.available
+                      ? t('annotate.prefillEngineModelOff')
+                      : engines && engines.model.supports_native === false
+                        ? `${t('annotate.prefillEngineModelNative')} — ${t('annotate.prefillModeUnsupported')}`
+                        : `${t('annotate.prefillEngineModelNative')} — ${nameOf(engines?.model.adapter_id ?? inf.adapterId) ?? inf.model} (${(engines?.model.is_cloud ?? inf.isCloud) ? 'Cloud' : 'GPU'})`}
+                </option>
+              </select></label>}
           summary={summarizePage(ann.blocks, prefillDrafts)}
           busy={prefillBusy}
           onRun={(mode) => void runPrelabel(mode)}

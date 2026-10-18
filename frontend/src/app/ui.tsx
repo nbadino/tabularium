@@ -6,15 +6,14 @@
  * — un form da 16 campi, una tabella di metriche, la rassegna dell'archivio,
  * un pannello dello studio — è lo stesso oggetto a densità diverse.
  *
- * Regola non negoziabile: ogni zona porta il proprio nome scritto. Nessun
- * modulo senza linguetta, nessun pulsante affidato alla sola icona.
+ * Nominare le zone di lavoro senza ripetere il titolo sui contenitori di
+ * impaginazione; mantenere esplicite le azioni.
  */
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react'
 import { IconAlert, IconChevron, IconClose, IconWarn } from './icons'
 import { describeError } from '../lib/errors'
-import { prefersReducedMotion } from '../lib/motion'
 import type { StatusTone } from '../lib/vocab'
 import { useI18n } from '../i18n'
 
@@ -55,9 +54,7 @@ export function Module({
 /* ------------------------------------------------------------ PageHeader -- */
 
 /**
- * Titolo della pagina e, sotto, il suo scopo su una riga sola: lo spazio
- * verticale serve al lavoro. Se manca larghezza l'intro si tronca e resta
- * intera nel tooltip.
+ * Un titolo operativo; la spiegazione si apre su richiesta.
  */
 export function PageHeader({
   title,
@@ -71,13 +68,17 @@ export function PageHeader({
   aux?: ReactNode
   className?: string
 }) {
+  const { t } = useI18n()
   return (
     <div className={`border-b border-[color:var(--color-rule-strong)] ${className}`}>
-      <div className="flex items-baseline gap-3">
-        <h1 className="text-[30px] font-bold leading-tight tracking-[-0.03em]">{title}</h1>
-        {aux}
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <h1 className="text-[24px] font-bold leading-tight tracking-[-0.03em]">{title}</h1>
+        <div className="ml-auto flex flex-wrap items-center gap-2">{aux}</div>
       </div>
-      <p className="truncate text-[12px] text-[color:var(--color-ink-2)]" title={intro}>{intro}</p>
+      <details className="mt-1 text-[12px] text-[color:var(--color-ink-2)]">
+        <summary className="w-fit cursor-pointer">{t('team.pageHelp')}</summary>
+        <p className="mt-2 max-w-[100ch] text-[13px] leading-relaxed">{intro}</p>
+      </details>
     </div>
   )
 }
@@ -235,28 +236,9 @@ export function WarnNotice({
  * scritte per esteso, ma non occupano la barra. Si apre col clic, mai al
  * passaggio del mouse; si chiude con un clic fuori, Esc o scegliendo.
  */
-// Durata del ripiegamento: deve coincidere con `.menu-unfold[data-closing]`
-// in index.css. Un timer e non `animationend`: l'evento può non arrivare mai
-// (scheda in background, animazione saltata) e il menu resterebbe aperto.
-const FOLD_MS = 450
-let foldSeq = 0
-
-/** Chiude il menu: prima lo ripiega, poi toglie `open`. */
+/** Chiude subito: la navigazione non attende un'animazione. */
 function closeMenu(d: HTMLDetailsElement | null) {
-  if (!d?.open || d.dataset.closing !== undefined) return
-  if (prefersReducedMotion()) {
-    d.open = false
-    return
-  }
-  // Il gettone distingue questa chiusura da una successiva: se il menu viene
-  // riaperto e richiuso prima dello scadere, il timer vecchio non deve chiudere.
-  const token = String(++foldSeq)
-  d.dataset.closing = token
-  window.setTimeout(() => {
-    if (d.dataset.closing !== token) return
-    delete d.dataset.closing
-    d.open = false
-  }, FOLD_MS)
+  if (d) d.open = false
 }
 
 /** Clic fuori ed Escape chiudono il menu. */
@@ -277,12 +259,11 @@ function useDismiss(ref: RefObject<HTMLDetailsElement | null>) {
   }, [ref])
 }
 
-/** Il toggle nativo del `<summary>` chiuderebbe di colpo: lo sostituiamo. */
+/** Chiusura coerente per summary, Escape e scelta di una voce. */
 function onSummaryClick(e: ReactMouseEvent, d: HTMLDetailsElement | null) {
   if (!d?.open) return
   e.preventDefault()
-  if (d.dataset.closing !== undefined) delete d.dataset.closing // riaperto mentre si ripiegava
-  else closeMenu(d)
+  closeMenu(d)
 }
 
 export function Menu({
@@ -323,9 +304,8 @@ export function Menu({
 /* ----------------------------------------------------------------- Select -- */
 
 /**
- * Tendina che si srotola come il menu dell'account. Sostituisce `<select>`
- * dove serve l'animazione: la lista di un `<select>` nativo la disegna il
- * browser e il CSS non la raggiunge. Tastiera come un select: frecce,
+ * Tendina con opzioni stilizzate, apertura e chiusura immediate.
+ * Tastiera come un select: frecce,
  * Home/Fine, Invio, Escape; Tab chiude e prosegue.
  */
 export function Select({
@@ -654,6 +634,8 @@ export function Modal({
   children: ReactNode
 }) {
   const ref = useRef<HTMLDivElement>(null)
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
   const titleId = useId()
   const returnTo = useRef<HTMLElement | null>(null)
   const { t } = useI18n()
@@ -671,12 +653,13 @@ export function Modal({
       ).filter((el) => el.offsetParent !== null || el === document.activeElement)
 
     // Il primo campo utile riceve il focus all'apertura.
-    focusables()[0]?.focus()
+    const initial = root.querySelector<HTMLElement>('[data-autofocus]') ?? focusables()[0]
+    initial?.focus()
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation()
-        onClose()
+        closeRef.current()
         return
       }
       if (e.key !== 'Tab') return
@@ -698,7 +681,7 @@ export function Modal({
       root.removeEventListener('keydown', onKey)
       returnTo.current?.focus?.()
     }
-  }, [onClose])
+  }, [])
 
   // Il portale su `body` non e' un dettaglio: la modale nasce dentro sezioni
   // che animano `clip-path` (`.swap`), e un antenato ritagliato ridefinisce il

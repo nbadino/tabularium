@@ -11,6 +11,7 @@ import { useI18n } from '../i18n'
 import { clamp, clampDragDelta, clampPoints } from './canvasGeometry'
 
 interface StudioCanvasProps {
+  interactive?: boolean
   imageUrl: string
   imageNatural: { w: number; h: number }
   blocks: DisplayBlock[]
@@ -30,6 +31,7 @@ const MIN_SIZE = 3
 const CLICK_SLOP = 4
 
 export default function StudioCanvas({
+  interactive = true,
   imageUrl,
   imageNatural,
   blocks,
@@ -186,6 +188,7 @@ export default function StudioCanvas({
   // La cancellazione è annullabile dal toast/Ctrl+Z prima del prossimo autosave.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!interactive) return
       const t = e.target as HTMLElement
       if (t?.closest('input, textarea, select, button, a, [contenteditable="true"]')) return
       if (e.key === 'Delete' && selectedId) {
@@ -227,7 +230,7 @@ export default function StudioCanvas({
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onBlur)
     }
-  }, [selectedId, onDeleteBlock, onSelect, vp.endPan, vp.fit, vp.zoomBy])
+  }, [interactive, selectedId, onDeleteBlock, onSelect, vp.endPan, vp.fit, vp.zoomBy])
 
   // --- transform / drag handlers ---------------------------------------------
   const onRectTransformEnd = (id: string) => {

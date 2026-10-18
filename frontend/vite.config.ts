@@ -14,6 +14,9 @@ export default defineConfig({
       '/api': {
         target: apiTarget,
         changeOrigin: true,
+        // Il canale live dello Studio è un WebSocket sullo stesso prefisso:
+        // senza `ws` il proxy di sviluppo risponderebbe 426 al handshake.
+        ws: true,
       },
     },
   },

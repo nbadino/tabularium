@@ -1,5 +1,9 @@
 // @vitest-environment jsdom
 /**
+ * DEPRECATO: verifica `TableGridOverlay`, che non è montato da nessuna parte
+ * (v. l'intestazione del componente). Il test resta per non perdere la
+ * verifica, ma accompagna codice in via di rimozione: non estenderlo.
+ *
  * Overlay dei confini: la selezione di un filetto è ciò che abilita
  * «Rifiuta confine». Un click che risalisse alla superficie la azzererebbe
  * subito, e il pulsante resterebbe disabilitato per sempre — verificato a

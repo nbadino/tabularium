@@ -105,8 +105,13 @@ export default function PlaygroundPage() {
   return (
     <div className="p-3">
       <PageHeader title={t('playground.title')} intro={t('playground.intro')} />
+      <div className="mb-3 flex flex-wrap items-center gap-3 border border-[color:var(--color-rule)] p-3">
+        <p className="max-w-[85ch] text-[13px] text-[color:var(--color-ink-2)]">{t('workflow.tryHint')}</p>
+        <Link to="/" className="btn no-underline">{t('workflow.saveRecognition')}</Link>
+        <Link to="/progetti" className="btn btn-sm no-underline">{t('workflow.addPages')}</Link>
+      </div>
 
-      {!inference.enabled && (
+      {activeEngine === 'model' && !inference.enabled && (
         <div className="mb-3 flex items-center justify-between border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-3 py-2 text-[12px] text-[color:var(--color-ink-2)]">
           <span>{t('cloud.card.inferenceDisabledNotice')}</span>
           {/* Modello e destinazione si scelgono nello stesso flusso, dalla pagina Modelli. */}
@@ -115,7 +120,7 @@ export default function PlaygroundPage() {
           </Link>
         </div>
       )}
-      {inference.enabled && !inference.available && (
+      {activeEngine === 'model' && inference.enabled && !inference.available && (
         <div className="mb-3">
           <Notice tone="warn">
             <span>{t('recognition.unreachableModel', { model: nameOf(inference.adapterId) ?? inference.model, url: inference.url })}</span>{' '}
@@ -138,6 +143,7 @@ export default function PlaygroundPage() {
             <Field label={t('playground.project')}>
               <select
                 value={projectId}
+                disabled={busy}
                 onChange={(e) => void onProject(e.target.value === '' ? '' : Number(e.target.value))}
                 className="fld"
               >
@@ -152,8 +158,8 @@ export default function PlaygroundPage() {
             <Field label={t('playground.page')}>
               <select
                 value={pageId ?? ''}
-                onChange={(e) => setPageId(e.target.value === '' ? null : Number(e.target.value))}
-                disabled={pages.length === 0}
+                onChange={(e) => { setPageId(e.target.value === '' ? null : Number(e.target.value)); setResult(null); setImg(null) }}
+                disabled={busy || pages.length === 0}
                 className="fld"
               >
                 <option value="">

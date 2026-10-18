@@ -5,7 +5,7 @@ import { ApiError } from '../lib/api'
 import type { PageItem, PrefillEngines, RecognitionRun, SystemInfo } from '../lib/types'
 import { Badge, ErrorNotice, Field, Modal, Module, Notice, Progress, PageHeader } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
-import { useInference } from '../app/inference'
+import { syncInferenceFromBackend, useInference } from '../app/inference'
 import { useCanAdminister } from '../app/auth'
 import { IconArchive, IconPlayground } from '../app/icons'
 import { useI18n } from '../i18n'
@@ -116,6 +116,10 @@ export default function RecognizePage() {
   const [engineTouched, setEngineTouched] = useState(false)
 
   useEffect(() => {
+    // Lo store di inferenza vive in memoria: un refresh di questa pagina
+    // partirebbe con lo stato salvato nel browser (senza `available`), e la
+    // sessione sembrerebbe non raggiungibile. Si riallinea dal backend.
+    void syncInferenceFromBackend().catch(() => {})
     void Promise.all([
       apiGet<{ items: ModelRuntimeInfo[] }>('/models').then((out) => setModelRuntime(out.items)),
       apiGet<PrefillEngines>('/system/prefill-engines').then(setEngines),
@@ -215,13 +219,16 @@ export default function RecognizePage() {
   // backend l'elaborazione muore con un messaggio di pip. Finché il backend
   // non risponde restiamo sul comportamento precedente, per non gridare al lupo.
   const ocrReady = engines ? engines.ocr.available : true
-  const modelReady = engine === 'ocr' ? ocrReady : inference.enabled && inference.available
+  // La disponibilità viene dal ping *live* di `prefill-engines` quando c'è:
+  // lo store può essere vecchio (configurata altrove o pagina ricaricata).
+  const modelAvailable = engines ? engines.model.available : inference.available
+  const modelReady = engine === 'ocr' ? ocrReady : inference.enabled && modelAvailable
   // Su una macchina senza CUDA locale «l'endpoint non risponde» è il sintomo,
   // non la causa: mostrarli entrambi manda a controllare un endpoint che non
   // potrà mai rispondere. Vince la causa, che dice anche come uscirne.
   // Senza CUDA un modello può comunque girare qui via MLX: lo dice il verdetto
   // del registro, che vince sulla sola assenza di CUDA.
-  const noLocalGpu = engine === 'model' && !inference.isCloud && caps?.local_cuda === false && !runtimeWarning?.local?.runnable
+  const noLocalGpu = engine === 'model' && !inference.isCloud && !modelAvailable && runtimeWarning?.local?.runnable !== true && caps?.local_cuda === false
   // La macchina può servire *qualcosa* in locale? Su Apple Silicon sì, via
   // MLX — ma non quel modello, se non ha un checkpoint MLX. Distinguere le due
   // cose evita di dire «questa macchina non può» quando può, solo con un
@@ -304,6 +311,11 @@ export default function RecognizePage() {
   return (
     <div className="p-3">
       <PageHeader title={t('recognition.title')} intro={t('recognition.intro')} />
+      <div className="mb-3 flex flex-wrap gap-2">
+        <Link to="/progetti?nuovo=1" className="btn btn-sm no-underline">{t('projects.new')}</Link>
+        {projectId !== '' && <Link to={`/progetti/${projectId}`} className="btn btn-sm no-underline">{t('workflow.addPages')}</Link>}
+        <Link to="/playground" className="btn btn-sm no-underline">{t('nav.playground')}</Link>
+      </div>
 
       {error != null && <div className="mb-3"><ErrorNotice error={error} onDismiss={() => setError(null)} /></div>}
       {backendRestartRequired && (
@@ -429,7 +441,7 @@ export default function RecognizePage() {
                 }}
                 className="fld"
               >
-                <option value="model" disabled={!inference.enabled || !inference.available}>{t('recognition.servedModel')}</option>
+                <option value="model" disabled={!inference.enabled || !modelAvailable}>{t('recognition.servedModel')}</option>
                 <option value="ocr">{t('recognition.localOcr')}</option>
               </select>
             </Field>
@@ -442,7 +454,7 @@ export default function RecognizePage() {
             {engine === 'model' && !inference.isCloud && runtimeWarning?.local_serve_blocker && (
               <Notice tone="sig">{runtimeWarning.local_serve_blocker}</Notice>
             )}
-            {engine === 'model' && inference.enabled && !inference.available && !noLocalGpu && (
+            {engine === 'model' && inference.enabled && !modelAvailable && !noLocalGpu && (
               <Notice tone="warn">{t('recognition.unreachableNotice', { url: inference.url })}</Notice>
             )}
             {engine === 'ocr' && engines && !engines.ocr.available && (
@@ -468,10 +480,10 @@ export default function RecognizePage() {
             <div className="mt-3 border-y border-[color:var(--color-rule)] py-2">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-[13px] font-semibold">{engine === 'model' ? inference.model || '—' : t('recognition.localOcr')}</div>
+                  <div className="text-[13px] font-semibold">{engine === 'model' ? nameOf(inference.adapterId) ?? (inference.model || '—') : t('recognition.localOcr')}</div>
                   <div className="mono truncate text-[11px] text-[color:var(--color-ink-3)]">
                     {engine === 'model'
-                      ? `${t(inference.isCloud ? 'recognition.locationCloud' : 'recognition.locationLocal')} · ${inference.provider ? t(`recognition.provider.${inference.provider}`) : ''}`
+                      ? inference.provider ? t(`recognition.provider.${inference.provider}`) : t(inference.isCloud ? 'recognition.locationCloud' : 'recognition.locationLocal')
                       : t('recognition.locationCpu')}
                   </div>
                 </div>

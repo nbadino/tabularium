@@ -36,4 +36,27 @@ describe('Layout', () => {
     fireEvent.click(screen.getByText('Annotazione'))
     expect(screen.getByTestId('where')).toHaveTextContent('/annotazione?project=1&page=7')
   })
+  it.each([
+    ['/training', 'Fine-tuning'],
+    ['/valutazione', 'Fine-tuning'],
+    ['/playground', 'Modelli'],
+    ['/archivio', 'Progetti'],
+  ])('la sottosezione %s mantiene visibile la sezione %s', (path, label) => {
+    render(
+      <MemoryRouter initialEntries={[path]}>
+        <Routes><Route element={<Layout />}><Route path="*" element={<Where />} /></Route></Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('link', { name: label })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('Progetti torna all’elenco dopo aver aperto il dialogo di creazione', () => {
+    render(<MemoryRouter initialEntries={['/progetti?nuovo=1']}>
+      <Routes><Route element={<Layout />}><Route path="*" element={<Where />} /></Route></Routes>
+    </MemoryRouter>)
+    fireEvent.click(screen.getByText('Risultati'))
+    fireEvent.click(screen.getByRole('link', { name: 'Progetti' }))
+    expect(screen.getByTestId('where')).toHaveTextContent(/^\/progetti$/)
+  })
+
 })

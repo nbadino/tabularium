@@ -22,6 +22,7 @@ function describeBody(body: string): string {
     const parsed = JSON.parse(raw)
     const detail = parsed?.detail
     if (typeof detail === 'string') return detail
+    if (detail && typeof detail === 'object' && typeof detail.message === 'string') return [detail.message, ...(Array.isArray(detail.errors) ? detail.errors.filter((e: unknown) => typeof e === 'string') : [])].join(' · ')
     if (Array.isArray(detail)) {
       const msgs = detail.map((item) => item?.msg).filter((msg) => typeof msg === 'string')
       if (msgs.length) return msgs.join('; ')

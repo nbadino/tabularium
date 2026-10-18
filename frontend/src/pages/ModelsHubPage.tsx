@@ -25,6 +25,7 @@ import { ModelPicker } from '../app/models/ModelPicker'
 import { DestinationPicker } from '../app/models/DestinationPicker'
 import { LocalSetup } from '../app/models/LocalSetup'
 import {
+  destinationForProvider,
   destinationVerdict,
   fetchModelRegistry,
   isDestination,
@@ -86,7 +87,7 @@ export default function ModelsHubPage() {
   const urlStep = PARAM_STEP[params.get('passo') ?? ''] ?? null
   const pristine = !urlModel && !urlDest && !urlStep
   const modelId = urlModel ?? (pristine && configured ? inference.adapterId : null)
-  const destRaw = urlDest ?? (pristine && configured ? inference.provider : null)
+  const destRaw = urlDest ?? (pristine && configured ? destinationForProvider(inference.provider) : null)
   const dest: Destination | null = isDestination(destRaw) ? destRaw : null
   const model = useMemo(() => models.find((m) => m.adapter_id === modelId) ?? null, [models, modelId])
   const step = resolveStep(urlStep ?? (pristine && configured ? 'configure' : null), model, dest)
@@ -139,6 +140,7 @@ export default function ModelsHubPage() {
 
   const inUse = inference.enabled && configured
   const inUseReady = inUse && inference.available
+  const inUseDest = destinationForProvider(inference.provider)
   const inUseLabel = models.find((m) => m.adapter_id === inference.adapterId)?.display_name ?? inference.model
 
   const stepTabs: { id: StepId; n: number; label: string; value: string | null; enabled: boolean }[] = [
@@ -157,7 +159,7 @@ export default function ModelsHubPage() {
       // Il terzo passo non ha una scelta da ricordare: ha uno stato.
       value:
         model && dest
-          ? inUseReady && model.adapter_id === inference.adapterId && dest === inference.provider
+          ? inUseReady && model.adapter_id === inference.adapterId && dest === inUseDest
             ? t('modelsHub.stepReady')
             : t('modelsHub.stepConfiguring')
           : null,
@@ -194,21 +196,21 @@ export default function ModelsHubPage() {
             </div>
             <div>
               <span className="lbl">{t('cloud.models.destinationLabel')}</span>
-              <div className="text-[14px] font-semibold">{t(`recognition.provider.${inference.provider}`)}</div>
+              <div className="text-[14px] font-semibold">{t(`recognition.provider.${inUseDest ?? inference.provider}`)}</div>
             </div>
             <div className="min-w-0">
               <span className="lbl">{t('modelsHub.endpoint')}</span>
               <div className="mono truncate text-[12px]">{inference.url || '—'}</div>
             </div>
             <div className="ml-auto flex flex-wrap gap-2">
-              {!(step === 'configure' && modelId === inference.adapterId && dest === inference.provider) && (
+              {!(step === 'configure' && modelId === inference.adapterId && dest === inUseDest) && (
                 <button
                   type="button"
                   className="btn"
                   onClick={() =>
                     go({
                       model: inference.adapterId,
-                      dest: isDestination(inference.provider) ? inference.provider : null,
+                      dest: inUseDest,
                       step: 'configure',
                     })
                   }
@@ -368,21 +370,19 @@ export default function ModelsHubPage() {
       )}
 
       <div className="mt-3">
-        <Module tab={t('modelsHub.improveModel')} quiet>
+        <Module tab={t('ux.modelTools')} quiet>
           <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('modelsHub.toolsIntro')}</p>
-          <ul className="mt-3 grid border-t border-[color:var(--color-rule)] sm:grid-cols-2 xl:grid-cols-4">
+          <ul className="mt-3 grid border-t border-[color:var(--color-rule)] sm:grid-cols-2">
             {(
               [
-                { to: '/dataset', label: t('nav.dataset'), hint: t('modelsHub.toolDatasetHint') },
-                { to: '/training', label: t('nav.training'), hint: t('modelsHub.toolTrainingHint') },
-                { to: '/valutazione', label: t('nav.evaluation'), hint: t('modelsHub.toolEvaluationHint') },
+                { to: '/fine-tuning', label: t('nav.training'), hint: t('ux.refineToolHint') },
                 { to: '/playground', label: t('nav.playground'), hint: t('modelsHub.toolPlaygroundHint') },
               ] as const
             ).map((tool) => (
               <li key={tool.to} className="border-b border-[color:var(--color-rule)]">
                 <Link to={tool.to} className="block px-1 py-1.5 no-underline hover:bg-[color:var(--color-fill)]">
                   <span className="text-[13px] font-semibold text-[color:var(--color-ink)]">{tool.label}</span>
-                  <span className="mt-0.5 block text-[11px] text-[color:var(--color-ink-2)]">{tool.hint}</span>
+                  <span className="mt-0.5 block text-[13px] text-[color:var(--color-ink-2)]">{tool.hint}</span>
                 </Link>
               </li>
             ))}

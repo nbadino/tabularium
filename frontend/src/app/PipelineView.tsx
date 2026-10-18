@@ -83,7 +83,10 @@ export function PipelineStrip({ stages, here }: { stages: Stage[]; here: string 
   if (i < 0) return null
   const stage = stages[i]
   if (stage.state !== 'blocked') return null
-  const blocking = stages.slice(0, i).find((s) => s.state !== 'done')
+  const prerequisite = here === 'train' ? 'dataset' : here === 'evaluate' ? 'annotate' : null
+  const blocking = prerequisite
+    ? stages.find((s) => s.id === prerequisite && s.state !== 'done')
+    : stages.slice(0, i).find((s) => s.state !== 'done')
 
   return (
     <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 border border-[color:var(--color-warn)] bg-[color:var(--color-warn-wash)] px-2 py-1.5">

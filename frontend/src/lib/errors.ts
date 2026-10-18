@@ -27,6 +27,10 @@ function detailOf(body: string): string | null {
     if (parsed && typeof parsed === 'object' && 'detail' in parsed) {
       const d = (parsed as { detail: unknown }).detail
       if (typeof d === 'string') return d
+      if (d && typeof d === 'object' && 'message' in d && typeof d.message === 'string') {
+        const errors = 'errors' in d && Array.isArray(d.errors) ? d.errors.filter((e) => typeof e === 'string') : []
+        return [d.message, ...errors].join(' · ')
+      }
       if (Array.isArray(d) && d.length > 0) {
         // errori di validazione pydantic
         const first = d[0] as { msg?: string; loc?: unknown[] }

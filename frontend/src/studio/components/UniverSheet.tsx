@@ -12,14 +12,11 @@
  * nei due sensi: Univer possiede testo, stile e merge, non la geometria sul
  * ritaglio né i metadati per cella (`source`/`verified`).
  *
- * A ogni comando si rilegge il documento e lo si confronta con l'impronta di
- * ciò che è già noto: si notifica solo ciò che è cambiato davvero. Serve
- * perché Univer emette un comando anche per la sola selezione, e perché il
- * salvataggio non deve ri-innescarsi da solo.
+ * Solo le mutazioni dei dati rileggono il documento e ne confrontano
+ * l'impronta: selezione e scorrimento non serializzano il foglio.
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { LoadingGrid } from '../../app/ui'
-import { prefersReducedMotion } from '../../lib/motion'
 import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets'
 import {
   ContextMenuPosition,
@@ -44,6 +41,7 @@ import type { TableGrid } from '../../lib/types'
 import { gridToUniver, univerGridSignature, univerToGrid } from '../../lib/univerGrid'
 import { setVerified } from '../../lib/grid'
 import { useI18n } from '../../i18n'
+import { commandAffectsGrid } from '../../lib/univerEvents'
 import { toFractionGlyphs } from '../../lib/fractions'
 
 /** I comandi nostri: ognuno esegue un'operazione sulla selezione.
@@ -82,11 +80,41 @@ const COLUMN_COMMANDS: { op: ColumnOp; id: string; title: string; order: number 
   { op: 'unmerge', id: 'tabularium.command.unmerge-cell', title: 'tabularium.unmerge', order: 208 },
 ]
 
+/** Le operazioni su righe e colonne: **struttura**, non testo.
+ *
+ *  Sono nostre e non di Univer perché solo `lib/grid.ts` sa cosa succede a una
+ *  cella unita che attraversa il punto e come seguono `vlines`/`hlines`/
+ *  `phantom_cols`: le stesse funzioni di `insertBoundary`/`dropBoundary`, ma sul
+ *  numero di tracce invece che sul pixel. Inserire una riga o una colonna è come
+ *  si corregge un'intestazione o una colonna che il modello ha mancato. */
+export type TrackOp =
+  | 'insertRowAbove'
+  | 'insertRowBelow'
+  | 'deleteRow'
+  | 'insertColLeft'
+  | 'insertColRight'
+  | 'deleteCol'
+
+const TRACK_COMMANDS: { op: TrackOp; id: string; title: string; order: number }[] = [
+  { op: 'insertRowAbove', id: 'tabularium.command.insert-row-above', title: 'tabularium.insertRowAbove', order: 100 },
+  { op: 'insertRowBelow', id: 'tabularium.command.insert-row-below', title: 'tabularium.insertRowBelow', order: 101 },
+  { op: 'deleteRow', id: 'tabularium.command.delete-row', title: 'tabularium.deleteRow', order: 102 },
+  { op: 'insertColLeft', id: 'tabularium.command.insert-col-left', title: 'tabularium.insertColLeft', order: 103 },
+  { op: 'insertColRight', id: 'tabularium.command.insert-col-right', title: 'tabularium.insertColRight', order: 104 },
+  { op: 'deleteCol', id: 'tabularium.command.delete-col', title: 'tabularium.deleteCol', order: 105 },
+]
+
 /** Le etichette che Univer disegna nel suo menù: si registrano nella sua
  *  lingua, altrimenti al posto della voce comparirebbe la chiave. */
 const LABELS_IT = {
   verify: 'Segna come verificata',
   unverify: 'Segna come non verificata',
+  insertRowAbove: 'Inserisci una riga sopra',
+  insertRowBelow: 'Aggiungi una riga',
+  deleteRow: 'Elimina la riga',
+  insertColLeft: 'Inserisci una colonna a sinistra',
+  insertColRight: 'Aggiungi una colonna',
+  deleteCol: 'Elimina la colonna',
   splitColumn: 'Separa per separatore…',
   joinColumn: 'Unisci con la colonna a destra',
   normalizeSpaces: 'Normalizza gli spazi',
@@ -100,6 +128,12 @@ const LABELS_IT = {
 const LABELS_EN = {
   verify: 'Mark as verified',
   unverify: 'Mark as not verified',
+  insertRowAbove: 'Insert row above',
+  insertRowBelow: 'Add a row',
+  deleteRow: 'Delete row',
+  insertColLeft: 'Insert column left',
+  insertColRight: 'Add a column',
+  deleteCol: 'Delete column',
   splitColumn: 'Split by separator…',
   joinColumn: 'Merge with the column to the right',
   normalizeSpaces: 'Normalize spaces',
@@ -113,6 +147,12 @@ const LABELS_EN = {
 const LABELS_FR = {
   verify: 'Marquer comme vérifiée',
   unverify: 'Marquer comme non vérifiée',
+  insertRowAbove: 'Insérer une ligne au-dessus',
+  insertRowBelow: 'Ajouter une ligne',
+  deleteRow: 'Supprimer la ligne',
+  insertColLeft: 'Insérer une colonne à gauche',
+  insertColRight: 'Ajouter une colonne',
+  deleteCol: 'Supprimer la colonne',
   splitColumn: 'Séparer par séparateur…',
   joinColumn: 'Fusionner avec la colonne à droite',
   normalizeSpaces: 'Normaliser les espaces',
@@ -122,6 +162,34 @@ const LABELS_FR = {
   fillDown: 'Propager la valeur vers le bas',
   merge: 'Fusionner les cellules',
   unmerge: 'Séparer la cellule fusionnée',
+}
+
+/** I comandi nativi di Univer che nascondiamo.
+ *
+ *  Fanno quello che fanno i nostri (inserisci/elimina riga e colonna, blocca,
+ *  proteggi) ma operano sulla griglia di Univer senza toccare il nostro modello:
+ *  `header_rows`, `phantom_cols`, `misprints`. Due voci per lo stesso gesto, una
+ *  delle quali sbagliata, è esattamente la confusione da togliere. */
+const HIDDEN_NATIVE_MENUS = {
+  // I menu degli header espongono anche comandi diretti, fuori dai sottomenu.
+  'sheet.command.insert-row-before': { hidden: true },
+  'sheet.command.insert-row-after': { hidden: true },
+  'sheet.command.insert-multi-rows-above': { hidden: true },
+  'sheet.command.insert-multi-rows-after': { hidden: true },
+  'sheet.command.insert-col-before': { hidden: true },
+  'sheet.command.insert-col-after': { hidden: true },
+  'sheet.command.insert-multi-cols-before': { hidden: true },
+  'sheet.command.insert-multi-cols-right': { hidden: true },
+  'sheet.command.remove-row-confirm': { hidden: true },
+  'sheet.command.remove-col-confirm': { hidden: true },
+  'sheet.menu.row-insert': { hidden: true },
+  'sheet.menu.col-insert': { hidden: true },
+  'sheet.menu.cell-insert': { hidden: true },
+  'sheet.menu.delete': { hidden: true },
+  'sheet.menu.sheet-frozen': { hidden: true },
+  'sheet.column-header-menu.sheet-frozen': { hidden: true },
+  'sheet.row-header-menu.sheet-frozen': { hidden: true },
+  'sheet.contextMenu.permission': { hidden: true },
 }
 
 /** La lingua di Univer segue quella dell'app: il foglio non deve parlare
@@ -184,42 +252,9 @@ function verifiedCells(grid: TableGrid): [number, number][] {
 }
 
 
-// Geometria del foglio (v. `lib/univerGrid.ts`): intestazione di colonna e righe.
-const COLUMN_HEADER_PX = 22
-const ROW_PX = 24
-/** Un passo per riga, e mai più di questo in tutto: una tabella lunga non fa aspettare. */
-const REVEAL_STEP_MS = 25
-const REVEAL_MAX_MS = 450
-
-/** La tela delle celle: la più alta. Quella della barra della formula è una
- *  striscia di ~27 px, e finché Univer non ha dimensionato il foglio è l'unica
- *  ad avere un'altezza. */
+/** La tela del foglio è più alta della barra della formula. */
 function sheetCanvas(host: HTMLElement): HTMLCanvasElement | null {
-  const tall = Array.from(host.querySelectorAll('canvas')).filter((c) => c.clientHeight > 60)
-  return tall.sort((a, b) => b.clientHeight - a.clientHeight)[0] ?? null
-}
-
-/**
- * Alla prima apertura il foglio si scopre dall'alto, una riga alla volta,
- * come un foglio che esce dalla stampa. È solo una maschera (`clip-path` a
- * scatti) sul disegno già completo: i dati ci sono tutti fin dall'inizio, e
- * l'autosave non vede mai una griglia a metà. Contano solo le righe in vista.
- */
-function revealRows(host: HTMLElement, rows: number): void {
-  if (prefersReducedMotion() || !host.animate) return
-  const box = host.getBoundingClientRect()
-  if (box.height <= 0) return
-  // La tela del foglio comincia sotto quella della barra della formula: si misura.
-  const sheet = sheetCanvas(host)
-  const firstRow = (sheet ? sheet.getBoundingClientRect().top - box.top : 0) + COLUMN_HEADER_PX
-  const visible = Math.max(1, Math.min(rows, Math.ceil((box.height - firstRow) / ROW_PX)))
-  const frames: Keyframe[] = []
-  for (let k = 0; k <= visible; k++) {
-    const shown = Math.min(box.height, firstRow + k * ROW_PX)
-    frames.push({ clipPath: `inset(0 0 ${box.height - shown}px 0)`, offset: k / (visible + 1), easing: 'step-end' })
-  }
-  frames.push({ clipPath: 'inset(0 0 0 0)', offset: 1 })
-  host.animate(frames, { duration: Math.min(REVEAL_MAX_MS, (visible + 1) * REVEAL_STEP_MS) })
+  return Array.from(host.querySelectorAll('canvas')).find((c) => c.clientHeight > 60) ?? null
 }
 
 interface UniverSheetProps {
@@ -229,29 +264,30 @@ interface UniverSheetProps {
   onGridChange: (grid: TableGrid) => void
   /** Invocata da una voce di operazione di colonna, con la selezione corrente. */
   onColumnOp: (op: ColumnOp, selection: SheetSelection) => void
+  /** Invocata da una voce su righe/colonne (struttura), con la selezione corrente. */
+  onTrackOp: (op: TrackOp, selection: SheetSelection) => void
   /** Celle da evidenziare (controlli aritmetici), [riga, colonna]. */
   suspects?: [number, number][]
   /** La cella attiva, per dire accanto al foglio perché è evidenziata. */
   onSelectionChange?: (selection: SheetSelection) => void
-  /** Prima apertura: lo scheletro resta finché il foglio non ha disegnato,
-   *  poi i due si scambiano in dissolvenza. Ai rimontaggi (una colonna
-   *  aggiunta) il foglio non ripassa dallo scheletro. */
+  /** Mostra lo scheletro soltanto finché la tela del foglio è pronta. */
   intro?: boolean
 }
 
-export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, onSelectionChange, intro = false }: UniverSheetProps) {
+export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp, suspects, onSelectionChange, intro = false }: UniverSheetProps) {
   const { t, locale } = useI18n()
   const host = useRef<HTMLDivElement | null>(null)
   const [failed, setFailed] = useState(false)
   const [ready, setReady] = useState(!intro)
-  // Lo scheletro sfuma insieme al foglio che compare, e si toglie a
-  // dissolvenza finita: toglierlo subito lascerebbe un attimo di vuoto.
+  // Nessuna attesa decorativa dopo che il foglio è pronto.
   const [skeletonGone, setSkeletonGone] = useState(!intro)
   const gridRef = useRef(grid)
   const changeRef = useRef(onGridChange)
   changeRef.current = onGridChange
   const opRef = useRef(onColumnOp)
   opRef.current = onColumnOp
+  const trackOpRef = useRef(onTrackOp)
+  trackOpRef.current = onTrackOp
   const selectRef = useRef(onSelectionChange)
   selectRef.current = onSelectionChange
   /** Ridipinge le celle sospette; `null` finché il foglio non è montato. */
@@ -291,6 +327,9 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
               toolbar: false,
               formulaBar: true,
               footer: false,
+              // I comandi di struttura nativi sono ridondanti coi nostri (v. la
+              // costante): si nascondono.
+              menu: HIDDEN_NATIVE_MENUS,
               // Le celle sono testo per scelta («1,837» resta com'è stampato):
               // l'avviso «numero memorizzato come testo» e il suo triangolino
               // verde comparirebbero su ogni cifra. In 0.25.1 il messaggio
@@ -311,9 +350,8 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
         const markReady = () => {
           if (cancelled || revealed) return
           revealed = true
-          if (intro) revealRows(container, gridRef.current.rows)
           setReady(true)
-          window.setTimeout(() => !cancelled && setSkeletonGone(true), 400)
+          setSkeletonGone(true)
         }
         const waitCanvas = (attempt = 0) => {
           if (cancelled) return
@@ -352,11 +390,10 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
         // Impronta di ciò che è già noto: riconosce i comandi che non hanno
         // cambiato niente (selezione, scroll, un click su una cella).
         let known = univerGridSignature(gridRef.current)
-        // Si assegna più sotto, quando esiste lo stato della cella attiva: ogni
-        // comando — anche solo di selezione — lo riallinea.
-        let afterCommand = () => {}
-        unsubscribe = api.onCommandExecuted(() => {
-          afterCommand()
+        // Solo le mutazioni del dato ricostruiscono il modello; selezione e
+        // scorrimento restano a costo della vista, senza snapshot completo.
+        unsubscribe = api.onCommandExecuted((command) => {
+          if (!commandAffectsGrid(command.id)) return
           const data = api.getActiveWorkbook()?.save()
           if (!data) return
           const next = univerToGrid(data, gridRef.current)
@@ -453,7 +490,6 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
           )
         }
         injector.get(IUIPartsService).registerComponent('formula-aux', () => VerifyButtons)
-        afterCommand = () => refreshActive()
         refreshActive()
 
         selectionListener = api.addEvent(api.Event.SelectionChanged, ({ selections }) => {
@@ -486,6 +522,16 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
             },
           })
         }
+        for (const entry of TRACK_COMMANDS) {
+          commands.registerCommand({
+            id: entry.id,
+            type: CommandType.COMMAND,
+            handler: () => {
+              trackOpRef.current(entry.op, selection())
+              return true
+            },
+          })
+        }
 
         const entry = (key: string, title: string, commandId: string, order: number) => ({
           [key]: {
@@ -493,17 +539,18 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, suspects, 
             menuItemFactory: () => ({ id: key, type: MenuItemType.BUTTON, title, commandId }),
           },
         })
-        const group = COLUMN_COMMANDS.reduce(
+        const group = [...TRACK_COMMANDS, ...COLUMN_COMMANDS].reduce(
           (acc, item) => ({ ...acc, ...entry(item.id, item.title, item.id, item.order) }),
           {},
         )
         injector.get(IMenuManagerService).appendRootMenu({
           [MenuManagerPosition.CONTEXT_MENU]: {
-            // Sia sul corpo del foglio sia sull'intestazione di colonna: il
-            // gesto è «tasto destro su una colonna», e le due strade devono
-            // portare allo stesso posto.
+            // Sul corpo del foglio, sull'intestazione di colonna e su quella di
+            // riga: il gesto è «tasto destro su riga/colonna», e le tre strade
+            // devono portare allo stesso posto.
             [ContextMenuPosition.MAIN_AREA]: { [ContextMenuGroup.OTHERS]: group },
             [ContextMenuPosition.COL_HEADER]: { [ContextMenuGroup.OTHERS]: group },
+            [ContextMenuPosition.ROW_HEADER]: { [ContextMenuGroup.OTHERS]: group },
           },
         })
       } catch (error) {

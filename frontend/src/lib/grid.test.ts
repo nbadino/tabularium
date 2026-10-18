@@ -288,6 +288,27 @@ describe('separare una colonna sul separatore', () => {
   const at = (grid: TableGrid, r: number, c: number) =>
     grid.cells.find((x) => x.r === r && x.c === c)
 
+  it('separa da destra preservando un nome composto', () => {
+    const grid = register()
+    grid.cells = grid.cells.map((cell) => cell.r === 1 && cell.c === 1 ? { ...cell, text: 'Acton Manor Br' } : cell)
+    const out = splitColumn(grid, 1, { separator: ' ', fromRight: true })!
+    expect(at(out, 1, 1)?.text).toBe('Acton Manor')
+    expect(at(out, 1, 2)?.text).toBe('Br')
+    expect(at(out, 1, 3)?.text).toBe('2')
+  })
+
+  it('limita la separazione alle righe scelte lasciando intatta una testata unita', () => {
+    const grid = register()
+    grid.cells = grid.cells.map((cell) => cell.r === 0 && cell.c === 1 ? { ...cell, rowspan: 2, text: 'VESSEL Owner' } : cell).filter((cell) => !(cell.r === 1 && cell.c === 1))
+    const out = splitColumn(grid, 1, { separator: ' ', startRow: 2, endRow: 3 })!
+    expect(out).not.toBeNull()
+    expect(at(out, 0, 1)?.text).toBe('VESSEL Owner')
+    expect(at(out, 0, 1)?.rowspan).toBe(2)
+    expect(at(out, 2, 1)?.text).toBe('Nettuno')
+    expect(splitColumn(grid, 1, { separator: ' ', startRow: 1, endRow: 3 })).toBeNull()
+    expect(splitColumn(grid, 1, { separator: ' ', startRow: 3, endRow: 2 })).toBeNull()
+  })
+
   it('divide in due colonne sullo spazio e lascia il resto al suo posto', () => {
     const out = splitColumn(register(), 1, { separator: ' ' })!
     expect(out.cols).toBe(4)

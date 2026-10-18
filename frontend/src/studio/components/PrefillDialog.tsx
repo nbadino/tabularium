@@ -5,7 +5,7 @@
  * qui l'utente vede cosa c'è sulla pagina, sceglie cosa sostituire e conferma.
  * Nessuna modalità distruttiva parte da un semplice clic sul pulsante Prefill.
  */
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Badge, Modal } from '../../app/ui'
 import { useI18n } from '../../i18n'
 import {
@@ -17,13 +17,15 @@ import {
 } from '../prefill'
 
 interface PrefillDialogProps {
+  engineControl?: ReactNode
+  canRun?: boolean
   summary: PrefillPageSummary
   busy: boolean
   onRun: (mode: PrefillMode) => void
   onClose: () => void
 }
 
-export default function PrefillDialog({ summary, busy, onRun, onClose }: PrefillDialogProps) {
+export default function PrefillDialog({ summary, busy, onRun, onClose, engineControl, canRun = true }: PrefillDialogProps) {
   const { t, tn } = useI18n()
   const [mode, setMode] = useState<PrefillMode>(() => defaultPrefillMode(summary))
   const plan = replacementPlan(mode, summary)
@@ -56,14 +58,15 @@ export default function PrefillDialog({ summary, busy, onRun, onClose }: Prefill
         <button
           type="button"
           className="btn btn-sm btn-primary"
-          disabled={busy}
+          disabled={busy || !canRun}
           onClick={() => onRun(mode)}
         >
           {busy ? t('annotate.ocrBusy') : t('annotate.prefillRun')}
         </button>
       </>
     }>
-      <div className="space-y-3">
+      <div className="space-y-3 p-3">
+        {engineControl}
         <p className="text-[13px] text-[color:var(--color-ink-2)]">
           {t('annotate.prefillDialogIntro')}
         </p>

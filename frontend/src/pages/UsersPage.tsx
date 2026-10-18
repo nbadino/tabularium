@@ -8,8 +8,9 @@
  */
 import { FormEvent, useEffect, useState } from 'react'
 import { apiDelete, apiGet, apiPatch, apiPost } from '../lib/api'
-import type { User } from '../lib/types'
+import type { User, UserCreated } from '../lib/types'
 import { ErrorNotice, Field, Modal, Module, PageHeader } from '../app/ui'
+import { IconCopy } from '../app/icons'
 import { useAuth } from '../app/auth'
 import { useI18n } from '../i18n'
 
@@ -29,11 +30,15 @@ export default function UsersPage() {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<User['role']>('editor')
   const [active, setActive] = useState(true)
+  // Invito via link: l'utente sceglie la password da sé, l'admin non la conosce.
+  const [inviteMode, setInviteMode] = useState(false)
 
   // modali
   const [resetTarget, setResetTarget] = useState<User | null>(null)
   const [resetPassword, setResetPassword] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null)
+  const [inviteLink, setInviteLink] = useState<{ username: string; url: string } | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const load = () =>
     apiGet<User[]>('/users')
@@ -50,23 +55,54 @@ export default function UsersPage() {
     setBusy(true)
     setError(null)
     try {
-      await apiPost<User>('/users', {
+      const created = await apiPost<UserCreated>('/users', {
         username: username.trim(),
-        password,
+        // Con l'invito la password la sceglie l'utente: non ne mandiamo una.
+        password: inviteMode ? undefined : password,
         email: email.trim() || undefined,
         role,
         active,
+        invite: inviteMode,
       })
+      if (created.invite_url) {
+        setInviteLink({ username: created.username, url: created.invite_url })
+      }
       setUsername('')
       setPassword('')
       setEmail('')
       setRole('editor')
       setActive(true)
+      setInviteMode(false)
       await load()
     } catch (err) {
       setError(err)
     } finally {
       setBusy(false)
+    }
+  }
+
+  const regenerateInvite = async (u: User) => {
+    setBusy(true)
+    setError(null)
+    try {
+      const out = await apiPost<UserCreated>(`/users/${u.id}/invite`)
+      if (out.invite_url) setInviteLink({ username: out.username, url: out.invite_url })
+      await load()
+    } catch (err) {
+      setError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const copyInvite = async () => {
+    if (!inviteLink) return
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}${inviteLink.url}`)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Appunti non disponibili: il link resta selezionabile a mano.
     }
   }
 
@@ -130,16 +166,27 @@ export default function UsersPage() {
                   className="fld"
                 />
               </Field>
-              <Field label={t('auth.password')} hint={t('auth.passwordHint')}>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  autoComplete="new-password"
-                  className="fld"
-                />
-              </Field>
+              {inviteMode ? (
+                <Field label={t('users.inviteModeLabel')} hint={t('users.inviteModeHint')}>
+                  <div className="fld flex items-center text-[12px] text-[color:var(--color-ink-2)]">
+                    {t('users.invitePasswordChosen')}
+                  </div>
+                </Field>
+              ) : (
+                <Field
+                  label={t('auth.password')}
+                  hint={t('users.tempPasswordHint')}
+                >
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required={!inviteMode}
+                    autoComplete="new-password"
+                    className="fld"
+                  />
+                </Field>
+              )}
               <Field label={t('auth.email')}>
                 <input
                   type="email"
@@ -172,6 +219,15 @@ export default function UsersPage() {
                   className="h-4 w-4 accent-[color:var(--color-sig)]"
                 />
                 {t('users.active')}
+              </label>
+              <label className="mt-4 flex items-center gap-2 text-[13px]">
+                <input
+                  type="checkbox"
+                  checked={inviteMode}
+                  onChange={(e) => setInviteMode(e.target.checked)}
+                  className="h-4 w-4 accent-[color:var(--color-sig)]"
+                />
+                {t('users.inviteByLink')}
               </label>
               <button type="submit" disabled={busy} className="btn btn-primary mt-4">
                 {busy ? t('common.loading') : t('users.create')}
@@ -210,6 +266,11 @@ export default function UsersPage() {
                           {t('users.me')}
                         </span>
                       )}
+                      {u.must_change_password && (
+                        <span className="badge text-[color:var(--color-warn)]">
+                          {t('users.mustChange')}
+                        </span>
+                      )}
                     </span>
                     <select
                       value={u.role}
@@ -242,6 +303,14 @@ export default function UsersPage() {
                       {u.created_at.slice(0, 10)}
                     </span>
                     <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => void regenerateInvite(u)}
+                        disabled={busy || isMe || !u.active}
+                        className="btn btn-sm"
+                      >
+                        {t('users.invite')}
+                      </button>
                       <button
                         type="button"
                         onClick={() => {
@@ -342,6 +411,38 @@ export default function UsersPage() {
             <p className="text-[13px]">
               {t('users.deleteBody', { name: deleteTarget.username })}
             </p>
+          </div>
+        </Modal>
+      )}
+
+      {/* link d'invito: visibile una sola volta, da consegnare all'utente */}
+      {inviteLink && (
+        <Modal
+          title={t('users.inviteLinkTitle', { name: inviteLink.username })}
+          onClose={() => setInviteLink(null)}
+          footer={
+            <button type="button" className="btn btn-primary" onClick={() => setInviteLink(null)}>
+              {t('common.close')}
+            </button>
+          }
+        >
+          <div className="p-3">
+            <p className="mb-3 max-w-[60ch] text-[12px] text-[color:var(--color-ink-2)]">
+              {t('users.inviteLinkBody')}
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                readOnly
+                value={`${window.location.origin}${inviteLink.url}`}
+                onFocus={(e) => e.target.select()}
+                className="fld mono !text-[12px]"
+                aria-label={t('users.inviteLinkLabel')}
+              />
+              <button type="button" className="btn btn-sm shrink-0" onClick={() => void copyInvite()}>
+                <IconCopy size={12} />
+                {copied ? t('users.copied') : t('users.copy')}
+              </button>
+            </div>
           </div>
         </Modal>
       )}

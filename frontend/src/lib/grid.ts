@@ -530,6 +530,9 @@ export interface SplitColumnOptions {
   separator: string
   /** In quante colonne al massimo dividere. 2 = una colonna nuova. */
   maxParts?: number
+  fromRight?: boolean
+  startRow?: number
+  endRow?: number
 }
 
 const MAX_SPLIT_PARTS = 8
@@ -541,11 +544,12 @@ const MAX_SPLIT_PARTS = 8
  *  non quattro. Un separatore letterale invece non si ricompone mai: il resto
  *  si tiene **com'era**, spazi compresi — rimontarlo con `join` mangerebbe lo
  *  spazio dopo la virgola di «Aagtekerk, 1924, Ne». */
-function splitParts(text: string, separator: string, maxParts: number): string[] {
+function splitParts(text: string, separator: string, maxParts: number, fromRight = false): string[] {
   const trimmed = text.trim()
   if (!trimmed) return ['']
   if (separator === ' ') {
     const parts = trimmed.split(/\s+/).filter((part) => part !== '')
+    if (fromRight && parts.length > maxParts) return [parts.slice(0, parts.length - maxParts + 1).join(' '), ...parts.slice(parts.length - maxParts + 1)]
     return parts.length > maxParts
       ? [...parts.slice(0, maxParts - 1), parts.slice(maxParts - 1).join(' ')]
       : parts
@@ -553,12 +557,18 @@ function splitParts(text: string, separator: string, maxParts: number): string[]
   const parts: string[] = []
   let rest = trimmed
   for (let k = 1; k < maxParts; k++) {
-    const cut = rest.indexOf(separator)
+    const cut = fromRight ? rest.lastIndexOf(separator) : rest.indexOf(separator)
     if (cut < 0) break
-    parts.push(rest.slice(0, cut))
-    rest = rest.slice(cut + separator.length)
+    if (fromRight) {
+      parts.unshift(rest.slice(cut + separator.length))
+      rest = rest.slice(0, cut)
+    } else {
+      parts.push(rest.slice(0, cut))
+      rest = rest.slice(cut + separator.length)
+    }
   }
-  parts.push(rest)
+  if (fromRight) parts.unshift(rest)
+  else parts.push(rest)
   return parts.map((part) => part.trim()).filter((part) => part !== '')
 }
 
@@ -594,12 +604,15 @@ export function splitColumn(
 
   const map = ownerMap(grid)
   const rowParts = new Map<number, string[]>()
-  for (let r = 0; r < grid.rows; r++) {
+  const start = options.startRow ?? 0
+  const end = options.endRow ?? grid.rows - 1
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end >= grid.rows || start > end) return null
+  for (let r = start; r <= end; r++) {
     const owner = map[r]?.[at]
     if (owner && (owner.rowspan > 1 || owner.colspan > 1)) return null
     // Oltre il tetto il resto resta unito nell'ultima colonna: spezzare una
     // descrizione in otto colonne non è quello che l'utente ha chiesto.
-    rowParts.set(r, splitParts(owner?.text ?? '', separator, maxParts))
+    rowParts.set(r, splitParts(owner?.text ?? '', separator, maxParts, options.fromRight))
   }
 
   // Una inserzione alla volta **nella stessa posizione**: la seconda spinge a

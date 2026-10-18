@@ -44,10 +44,15 @@ export interface PipelineInput {
   training: TrainingStatus | null
 }
 
+/** Un export vuoto non è materiale disponibile per il training. */
+export function datasetUsable(status: DatasetStatus | null): boolean {
+  return status?.built === true && (status.report?.pages?.with_blocks ?? 0) > 0
+}
+
 /**
  * Le fasi in ordine, ciascuna con la condizione che la considera soddisfatta.
  * `satisfied` guarda solo la propria fase: l'ordinamento in done/current/
- * blocked lo decide `buildPipeline`, così esiste sempre una sola corrente.
+ * blocked lo decide `buildPipeline` dai prerequisiti della singola attività.
  */
 function definitions({ project, workflow, dataset, training }: PipelineInput) {
   const wf = workflow
@@ -83,7 +88,7 @@ function definitions({ project, workflow, dataset, training }: PipelineInput) {
     {
       id: 'annotate',
       name: t('pipeline.steps.annotateName'),
-      satisfied: total > 0 && daFare === 0,
+      satisfied: (wf?.approved_pages ?? 0) > 0,
       detail: total > 0 ? t('pipeline.steps.annotateDetail', { done: lavorate, total }) : '',
       why: t('pipeline.steps.annotateTodo'),
       needs: t('pipeline.steps.annotateNeeds'),
@@ -92,7 +97,7 @@ function definitions({ project, workflow, dataset, training }: PipelineInput) {
     {
       id: 'dataset',
       name: t('pipeline.steps.datasetName'),
-      satisfied: dataset?.built === true,
+      satisfied: datasetUsable(dataset),
       detail:
         dataset?.built && dataset.report
           ? t('pipeline.steps.datasetDone', {
@@ -129,16 +134,14 @@ function definitions({ project, workflow, dataset, training }: PipelineInput) {
 
 export function buildPipeline(input: PipelineInput): Stage[] {
   const defs = definitions(input)
-  const firstOpen = defs.findIndex((d) => !d.satisfied)
-  return defs.map((d, i) => ({
-    id: d.id,
-    name: d.name,
-    state:
-      firstOpen === -1 || i < firstOpen ? 'done' : i === firstOpen ? 'current' : 'blocked',
-    detail: d.detail,
-    why: d.why,
-    needs: d.needs,
-    action: d.action,
+  const dependencies: Record<string, string[]> = {
+    project: [], scan: ['project'], annotate: ['project', 'scan'],
+    dataset: ['project', 'scan', 'annotate'], train: ['project', 'dataset'],
+    evaluate: ['project', 'scan', 'annotate'],
+  }
+  return defs.map((d) => ({
+    ...d,
+    state: d.satisfied ? 'done' : dependencies[d.id].every((id) => defs.find((p) => p.id === id)?.satisfied) ? 'current' : 'blocked',
   }))
 }
 
@@ -200,7 +203,7 @@ export function buildBranches({ project, workflow, dataset, training, runs, draf
   // la tappa aperta si decide sulla soddisfazione delle sue fasi, non sullo
   // stato della catena lineare, dove una fase precedente aperta marcherebbe
   // come bloccata anche una tappa già fatta.
-  const datasetReady = dataset?.built === true
+  const datasetReady = datasetUsable(dataset)
   const trainingDone = training?.run?.state === 'finished'
   const refineOpen = !datasetReady
     ? stageOf('dataset')
@@ -269,7 +272,10 @@ export function buildBranches({ project, workflow, dataset, training, runs, draf
  * se una fallisce la fase corrispondente risulta semplicemente non ancora
  * soddisfatta, e il percorso resta leggibile.
  */
-export function usePipelineState(projectId: number | null) {
+export function usePipelineState(projectId: number | null, options: { dataset?: boolean; training?: boolean; runs?: boolean } = {}) {
+  const loadDataset = options.dataset !== false
+  const loadTraining = options.training !== false
+  const loadRuns = options.runs !== false
   const [workflow, setWorkflow] = useState<Workflow | null>(null)
   const [dataset, setDataset] = useState<DatasetStatus | null>(null)
   const [training, setTraining] = useState<TrainingStatus | null>(null)
@@ -285,19 +291,19 @@ export function usePipelineState(projectId: number | null) {
     apiGet<Workflow>(`/projects/${projectId}/workflow`)
       .then((w) => alive && setWorkflow(w))
       .catch(() => {})
-    apiGet<DatasetStatus>(`/projects/${projectId}/datasets`)
+    if (loadDataset) apiGet<DatasetStatus>(`/projects/${projectId}/datasets`)
       .then((d) => alive && setDataset(d))
       .catch(() => {})
-    apiGet<TrainingStatus>(`/projects/${projectId}/training/status`)
+    if (loadTraining) apiGet<TrainingStatus>(`/projects/${projectId}/training/status`)
       .then((s) => alive && setTraining(s))
       .catch(() => {})
-    apiGet<{ items: RecognitionRun[] }>(`/recognition-runs?project_id=${projectId}`)
+    if (loadRuns) apiGet<{ items: RecognitionRun[] }>(`/recognition-runs?project_id=${projectId}`)
       .then((r) => alive && setRuns(r.items))
       .catch(() => {})
     return () => {
       alive = false
     }
-  }, [projectId])
+  }, [projectId, loadDataset, loadTraining, loadRuns])
 
   return { workflow, dataset, training, runs }
 }
