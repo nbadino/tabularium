@@ -6,6 +6,8 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-18
+
 ### Added
 - **Install with one command**: `uv tool install tabularium`, then `tabularium`.
   uv provides a compatible Python, the interface is prebuilt, and the command
