@@ -51,6 +51,9 @@ fi
 # ms-swift bundlato: `pip install -e ./ms-swift` dalla cartella `parsing/train`.
 TRAIN_DIR="$ROOT/MonkeyOCRv2/parsing/train"
 if [ -d "$TRAIN_DIR/ms-swift" ]; then
+  # Il `setup.py` bundlato apre `README.md`, che il repo non include (404):
+  # senza, la build editable fallisce con FileNotFoundError.
+  [ -f "$TRAIN_DIR/ms-swift/README.md" ] || printf '# ms-swift (bundled with MonkeyOCRv2)\n' > "$TRAIN_DIR/ms-swift/README.md"
   echo ">> installo ms-swift bundlato ($TRAIN_DIR/ms-swift)"
   ( cd "$TRAIN_DIR" && python -m pip install -e ./ms-swift )
 else
@@ -59,7 +62,12 @@ else
 fi
 
 echo ">> verifica"
-swift --version || { echo "ERRORE: 'swift' non risponde"; exit 1; }
+# `swift --version` non esiste in questa versione di ms-swift: si verifica
+# l'import. E si controlla che torch veda davvero la GPU: un container senza
+# `/dev/nvidia*` importa torch ma non può addestrare.
+python -c "import swift" || { echo "ERRORE: ms-swift non importabile"; exit 1; }
+python -c "import torch; assert torch.cuda.is_available()" \
+  || { echo "ERRORE: torch non vede la GPU (container senza device NVIDIA?)"; exit 1; }
 # Marcatore di readiness: il backend può dire "preparato" solo quando esiste,
 # non quando l'onstart è stato lanciato (l'installazione dura minuti).
 date -u +"%Y-%m-%dT%H:%M:%SZ" > "$ROOT/.train_ready"

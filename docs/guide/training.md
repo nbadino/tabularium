@@ -75,3 +75,32 @@ run; a recipe becomes `verified` **only** here.
 - **Limit**: does not prove the script *runs* on a GPU.
 
 Next test: a real smoke test on a GPU (Vast.ai RTX 3090).
+
+### 2026-10-18: Vast provisioning — recipe installs, GPU not mapped
+
+- **What**: `rent_vast_instance(prepare_training=True, tabularium_ref=main)` on
+  an RTX 3090; the onstart runs `setup_cloud_train.sh`; then verification and a
+  1-step LoRA attempt over SSH.
+- **Found and fixed in the script**:
+  1. the `ms-swift` submodule must be initialised
+     (`git submodule update --init --recursive`), or `pip install -e ./ms-swift`
+     fails;
+  2. `parsing/train/ms-swift/setup.py` opens `README.md`, which the repo does
+     **not** include (404): the script now creates it when missing;
+  3. `ms-swift`'s dependency overwrote `torch` (cu130) — fine on driver 13.1;
+  4. `swift --version` **does not exist** in this version (KeyError): the
+     readiness check now uses `python -c "import swift"` **and**
+     `torch.cuda.is_available()`.
+- **Remaining blocker (Vast host)**: the container has **no `/dev/nvidia*`**, so
+  `torch.cuda.is_available()` is `False` (`CUDA unknown error`) even though
+  `nvidia-smi` works. Such a container cannot train; not fixable from inside.
+  Another offer (id 38849861) failed to start with a CDI error
+  (`failed to inject CDI devices gpu=1`). Two cheap hosts out of two with a
+  mis-mapped GPU.
+- **Outcome**: ❌ the **recipe provisioning now works** (ms-swift installed and
+  importable), but the **real run is not verifiable** on these hosts. Credit
+  spent ~$0.21; instances destroyed.
+- **Next**: retry on a **verified** Vast host (or another GPU); a host exposing
+  `/dev/nvidia*` with `torch.cuda.is_available() == True` is the minimum
+  condition for training to start.
+

@@ -216,6 +216,9 @@ def rent_training(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             instance_type="on-demand",
             disk_gb=disk_gb,
             min_gpu_ram_gb=payload.get("min_gpu_ram_gb", 16),
+            # Il training usa bf16: serve Ampere+ (compute capability 8.0). Le
+            # Pascal/Volta costano meno ma non hanno bf16 accelerato.
+            min_compute_capability=payload.get("min_compute_capability", 8.0),
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
