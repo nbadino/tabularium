@@ -76,8 +76,8 @@ def main() -> int:
         assert created.status_code == 201, created.text
         project_id = int(created.json()["id"])
         driver.get(f"{BASE}/progetti/{project_id}")
-        wait_for(driver, EC.presence_of_element_located((By.XPATH, "//button[contains(., 'Scansiona archivio')]")))
-        wait_for(driver, EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Scansiona archivio')]"))).click()
+        wait_for(driver, EC.presence_of_element_located((By.XPATH, "//button[contains(., 'Registra pagine dalla cartella')]")))
+        wait_for(driver, EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Registra pagine dalla cartella')]"))).click()
         wait_for(driver, EC.presence_of_element_located((By.XPATH, "//*[contains(., 'Registrati') or contains(., 'Registered') or contains(., 'Enregistrés')]")))
 
         # Annotazione minima via API per rendere il test deterministico.
@@ -157,7 +157,10 @@ def main() -> int:
             ),
         )
         textarea.click()
-        textarea.clear()
+        # `clear()` non passa dagli eventi di React: il campo controllato
+        # tornerebbe al vecchio valore e il testo si accoderebbe. Si seleziona
+        # tutto e si scrive sopra, come farebbe una persona.
+        driver.execute_script("arguments[0].select()", textarea)
         textarea.send_keys("Synthetic maritime record.")
         wait_for(driver, lambda d: "Synthetic maritime record." in d.find_element(*content_box).get_attribute("value"))
         # L'indicatore può sparire rapidamente; il contratto forte è il dato
@@ -177,8 +180,10 @@ def main() -> int:
         # La superficie è Univer, che si carica su richiesta: il suo contenitore
         # arriva dopo il chunk lazy.
         host = wait_for(driver, EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='univer-host']")), timeout=40)
-        wait_for(driver, EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Salva griglia') or contains(., 'Save grid') or contains(., 'Enregistrer')]"))).click()
-        wait_for(driver, EC.presence_of_element_located((By.XPATH, "//*[contains(., 'OTSL generato') or contains(., 'OTSL generated') or contains(., 'OTSL généré')]")))
+        wait_for(driver, EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='univer-host'][data-ready]")), timeout=40)
+        # «Salva griglia» resta spento finché il foglio non ha modifiche: la
+        # griglia salvata via API porta già l'OTSL generato dal server.
+        assert "<fcel>Vessel" in _put_table.json()["otsl"], _put_table.text
 
         # Scrivere in una cella **deve** arrivare al server. Con Univer la
         # griglia è su canvas: non ci sono `<td>` da cercare, quindi la cella si
@@ -216,7 +221,7 @@ def main() -> int:
         # Training center e preflight.
         stage = "training UI"
         driver.get(f"{BASE}/training")
-        wait_for(driver, EC.presence_of_element_located((By.XPATH, "//*[contains(., 'Training')]")))
+        wait_for(driver, EC.presence_of_element_located((By.XPATH, "//h1[contains(., 'Addestramento') or contains(., 'Training') or contains(., 'Entraînement')]")))
         preflight = requests.post(f"{BASE}/api/projects/{project_id}/training/preflight", json={}, timeout=10)
         assert preflight.status_code == 200, preflight.text
         print("e2e workflow OK: UI import/scan -> annotation -> dataset snapshot -> training preflight")
