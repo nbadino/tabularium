@@ -24,6 +24,8 @@ from ..schemas import (
     ScanReportOut,
     StudyProtocolIn,
     StudyProtocolOut,
+    TableHintIn,
+    TableHintOut,
 )
 from ..services import pages as pagesvc
 from ..services import scan as scanmod
@@ -31,6 +33,7 @@ from ..services import corpus as corpusmod
 from ..services import pilot as pilotmod
 from ..services import auth as authsvc
 from ..services import audit as auditsvc
+from ..services import table_hint as table_hint_svc
 from ..services.i18n import msg, parse_lang
 from .deps import require_resource
 
@@ -115,7 +118,7 @@ def _get_project_or_404(conn, project_id: int):
     return row
 
 
-def _project_out(conn, row) -> ProjectOut:
+def _project_out(conn, row, user: dict) -> ProjectOut:
     count = conn.execute(
         "SELECT COUNT(*) AS n FROM pages WHERE project_id=? AND status != 'missing'", (row["id"],)
     ).fetchone()["n"]
@@ -123,6 +126,20 @@ def _project_out(conn, row) -> ProjectOut:
         settings = json.loads(row["settings_json"] or "{}")
     except (TypeError, ValueError):
         settings = {}
+    # La creazione può essere nella stessa transazione: leggere il ruolo con
+    # un'altra connessione non vedrebbe ancora il progetto appena inserito.
+    if authsvc.is_local(user) or authsvc.is_admin(user) or row["owner_id"] == user.get("id"):
+        level = "owner"
+    else:
+        membership = conn.execute("SELECT role FROM project_members WHERE project_id=? AND user_id=?", (row["id"], user.get("id"))).fetchone()
+        level = membership["role"] if membership else None
+    source = "local" if authsvc.is_local(user) else "admin" if authsvc.is_admin(user) else "owner" if row["owner_id"] == user.get("id") else "member"
+    owner = conn.execute("SELECT username FROM users WHERE id=?", (row["owner_id"],)).fetchone()
+    members_count = conn.execute(
+        "SELECT COUNT(*) AS n FROM users WHERE active=1 AND (id=? OR id IN "
+        "(SELECT user_id FROM project_members WHERE project_id=?))",
+        (row["owner_id"], row["id"]),
+    ).fetchone()["n"]
     return ProjectOut(
         id=row["id"],
         name=row["name"],
@@ -132,6 +149,9 @@ def _project_out(conn, row) -> ProjectOut:
         settings_json=settings if isinstance(settings, dict) else {},
         pages_count=count,
         created_at=row["created_at"],
+        owner_name=owner["username"] if owner else None,
+        members_count=members_count,
+        access={"role": level, "source": source, "can_edit": level in ("owner", "editor"), "can_manage": level == "owner"},
     )
 
 
@@ -149,8 +169,8 @@ def create_project(
     # Chi crea il progetto ne diventa il proprietario. In modalità off
     # `owner_id` resta NULL (non esistono utenti).
     authsvc.require_role(user, "editor")
-    archive_dir = str(Path(payload.archive_dir).expanduser().resolve())
-    if not Path(archive_dir).is_dir():
+    archive_dir = str(Path(payload.archive_dir).expanduser().resolve()) if payload.archive_dir else None
+    if archive_dir and not Path(archive_dir).is_dir():
         raise HTTPException(status_code=400, detail="la cartella archivio non esiste")
     with connect() as conn:
         cur = conn.execute(
@@ -162,7 +182,7 @@ def create_project(
         # directory dati del progetto (crops/runs arriveranno nelle milestone successive)
         (config.DATA_DIR / str(project_id)).mkdir(parents=True, exist_ok=True)
         row = _get_project_or_404(conn, project_id)
-        return _project_out(conn, row)
+        return _project_out(conn, row, user)
 
 
 @router.get("/api/projects", response_model=ProjectList)
@@ -181,7 +201,7 @@ def list_projects(user: dict = Depends(authsvc.get_current_user)) -> ProjectList
                    ORDER BY p.created_at DESC""",
                 (user["id"], user["id"]),
             ).fetchall()
-        return ProjectList(items=[_project_out(conn, r) for r in rows])
+        return ProjectList(items=[_project_out(conn, r, user) for r in rows])
 
 
 @router.get("/api/projects/{project_id}", response_model=ProjectOut)
@@ -190,7 +210,7 @@ def get_project(
     _auth: dict = Depends(require_resource()),
 ) -> ProjectOut:
     with connect() as conn:
-        return _project_out(conn, _get_project_or_404(conn, project_id))
+        return _project_out(conn, _get_project_or_404(conn, project_id), _auth)
 
 
 def _require_project_manager(project_id: int, user: dict) -> str:
@@ -567,6 +587,64 @@ def put_conventions(
             (json.dumps(settings), project_id),
         )
     return ConventionsOut(conventions=payload.conventions)
+
+
+@router.get("/api/projects/{project_id}/table-hint", response_model=TableHintOut)
+def get_table_hint(
+    project_id: int,
+    _auth: dict = Depends(require_resource()),
+) -> TableHintOut:
+    """Hint di schema tabella del progetto e se il modello attivo lo accetta."""
+    with connect() as conn:
+        project = _get_project_or_404(conn, project_id)
+        settings = json.loads(project["settings_json"] or "{}")
+    return _table_hint_out(settings)
+
+
+@router.put("/api/projects/{project_id}/table-hint", response_model=TableHintOut)
+def put_table_hint(
+    project_id: int,
+    payload: TableHintIn,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> TableHintOut:
+    hint = table_hint_svc.clean_table_hint(payload.hint)
+    with connect() as conn:
+        project = _get_project_or_404(conn, project_id)
+        settings = json.loads(project["settings_json"] or "{}")
+        if hint:
+            settings["table_hint"] = hint
+        else:
+            # Vuoto = nessun hint: si cancella la chiave invece di salvare "".
+            settings.pop("table_hint", None)
+        conn.execute(
+            "UPDATE projects SET settings_json=? WHERE id=?",
+            (json.dumps(settings, ensure_ascii=False), project_id),
+        )
+    return _table_hint_out(settings)
+
+
+def _table_hint_out(settings: dict) -> TableHintOut:
+    """Risposta condivisa da GET e PUT: lo stato del modello attivo aiuta la UI
+    a dire che il hint è ignorato dai motori a prompt di protocollo."""
+    from ..services import inference as inference_svc  # noqa: PLC0415 - evita import ciclico
+
+    adapter_id = inference_svc.get_inference_config().get("adapter_id")
+    display: str | None = None
+    accepts = False
+    if adapter_id:
+        try:
+            from ..services.model_adapters import get_adapter  # noqa: PLC0415
+
+            capabilities = get_adapter(adapter_id).capabilities
+            display = capabilities.display_name
+            accepts = bool(capabilities.accepts_prompt_hint)
+        except ValueError:
+            display = None
+    return TableHintOut(
+        hint=table_hint_svc.get_table_hint(settings),
+        active_model=display,
+        accepts_hint=accepts,
+    )
 
 
 @router.delete("/api/projects/{project_id}")

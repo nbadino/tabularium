@@ -698,6 +698,7 @@ def rent_vast_instance(
     monkeyocr_ref: str = "",
     tabularium_ref: str = "",
     prepare_server: bool = False,
+    prepare_training: bool = False,
 ) -> dict[str, Any]:
     """Noleggia un'offerta esplicita. L'azione è separata dalla ricerca."""
     token = api_key.strip()
@@ -705,12 +706,14 @@ def rent_vast_instance(
         raise ValueError("API Key di Vast.ai non specificata.")
     if int(disk_gb) < 10:
         raise ValueError("Il disco deve essere almeno 10 GB.")
+    if prepare_server and prepare_training:
+        raise ValueError("preparare serving e training sulla stessa istanza non è supportato")
     pinned_ref = str(monkeyocr_ref).strip()
     if prepare_server and not pinned_ref:
         raise ValueError("monkeyocr_ref obbligatorio per preparare il server con una recipe riproducibile")
     pinned_tabularium_ref = str(tabularium_ref).strip()
-    if prepare_server and not pinned_tabularium_ref:
-        raise ValueError("tabularium_ref obbligatorio per preparare il server con una recipe riproducibile")
+    if (prepare_server or prepare_training) and not pinned_tabularium_ref:
+        raise ValueError("tabularium_ref obbligatorio per preparare la risorsa con una recipe riproducibile")
     if pinned_ref and any(ch in pinned_ref for ch in " \t\r\n;|&`$\\'"):
         raise ValueError("monkeyocr_ref non valido")
     if pinned_tabularium_ref and any(ch in pinned_tabularium_ref for ch in " \t\r\n;|&`$\\'"):
@@ -729,7 +732,8 @@ def rent_vast_instance(
         "runtype": "ssh_direct",
         # Vast documenta `env` come stringa di opzioni container; il vecchio
         # dict non era interpretato come port mapping dall'API REST.
-        "env": f"-p {int(port)}:{int(port)}/http -p 22:22/tcp",
+        # Il training non serve una porta HTTP: basta SSH.
+        "env": "-p 22:22/tcp" if prepare_training else f"-p {int(port)}:{int(port)}/http -p 22:22/tcp",
     }
     if prepare_server:
         secret = api_key_for_server.strip()
@@ -741,6 +745,16 @@ def rent_vast_instance(
             f"{shlex.quote(pinned_tabularium_ref)}/"
             "scripts/cloud/setup_cloud_vllm.sh | bash -s --"
             f" --port {int(port)} --model {shlex.quote(str(model))} --ref {shlex.quote(pinned_ref)}"
+        )
+    elif prepare_training:
+        # Prepara l'ambiente ms-swift (venv + repo + `swift`) e scrive il
+        # marcatore di readiness; l'executor di training poi sincronizza il
+        # dataset e lancia lo script su questo host.
+        body["onstart"] = (
+            "apt-get update -qq && apt-get install -y -qq git curl && "
+            "curl -fsSL https://raw.githubusercontent.com/nbadino/tabularium/"
+            f"{shlex.quote(pinned_tabularium_ref)}/"
+            "scripts/cloud/setup_cloud_train.sh | bash"
         )
     data = _vast_call(token, "PUT", f"/asks/{int(offer_id)}/", json_body=body, timeout=30.0)
     if isinstance(data, dict) and data.get("success") is False:

@@ -1,4 +1,20 @@
-"""Rilevamento della struttura di tabelle *senza filetti* (whitespace-aligned).
+"""DEPRECATO — rilevatore geometrico della griglia (whitespace-aligned).
+
+Questa è la parte "geometria" del prodotto: deduce righe e colonne dall'inchiostro
+di un ritaglio. Tabularium è **model-agnostic** e i modelli non ci danno quella
+geometria: su 248 griglie salvate una sola porta `vlines`/`hlines`/`row_columns`.
+La correzione della struttura passa quindi dal foglio (unisci/separa, riga/colonna),
+non dai confini sul pixel.
+
+Resta in servizio per due usi che ancora ci si appoggiano — la promozione a
+`Table` del prefill OCR (`services/prefill.py`) e il pulsante «Rileva griglia» /
+ri-rilevamento al resize dello Studio (`api/blocks.py`, `AnnotationPage.tsx`) —
+ed è su una via d'uscita decisa. Non costruire sopra questo modulo: è una
+proposta, mai verità, e non è il percorso model-agnostic.
+
+--- nota storica (ancora valida tecnicamente) ---
+
+Rilevamento della struttura di tabelle *senza filetti* (whitespace-aligned).
 
 I registri navali Historic Shipping Index non hanno righe di riquadro: le colonne sono tenute
 insieme dalla composizione tipografica (allineamenti costanti) e i campi sono
@@ -739,6 +755,8 @@ def detect_grid(
 
     `min_support` è la frazione di righe su cui un allineamento deve ricorrere
     perché valga come confine di colonna: alzarlo dà meno colonne ma più solide.
+
+    Deprecato: v. l'intestazione del modulo. Non è il percorso model-agnostic.
     """
     gray = np.asarray(image.convert("L"))
     if gray.ndim != 2 or gray.size == 0:

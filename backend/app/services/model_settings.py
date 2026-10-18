@@ -51,7 +51,13 @@ _MLX_LIMITS = {
 # cui difesa n-gram `mlx-vlm` non fornisce. Applicati solo al serving locale
 # Apple Silicon (v. `inference._sampling_for`).
 _MLX_REPEAT_FLOAT_LIMITS = {"repetition_penalty": (0.5, 2.0)}
-_MLX_REPEAT_INT_LIMITS = {"repetition_context_size": (1, 2048)}
+_MLX_REPEAT_INT_LIMITS = {
+    "repetition_context_size": (1, 2048),
+    # Finestra della presence penalty: mlx-vlm la applica su 20 token di
+    # default, troppo pochi per una riga di registro. Stesso gate della
+    # repetition penalty (v. `local_mlx_repetition_penalty`).
+    "presence_context_size": (1, 2048),
+}
 _PADDLE_BOOLEAN_WORKFLOW = {
     "use_layout_detection",
     "layout_nms",
@@ -171,13 +177,21 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
                 # l'adapter ne dichiara più di una. None = default dichiarato.
                 **({"repo": None} if getattr(adapter.capabilities, "local_mlx_repo_choices", ()) else {}),
                 # Guard anti-loop consigliato quando la ricetta ufficiale si
-                # regge su un n-gram processor che mlx-vlm non ha.
+                # regge su un n-gram processor che mlx-vlm non ha, o quando le
+                # penalità ufficiali hanno una finestra più corta di una riga di
+                # registro (Qwen3-VL). Tutti i campi sono solo per il serving
+                # locale Apple Silicon.
                 **(
                     {
                         "repetition_penalty": adapter.capabilities.local_mlx_repetition_penalty,
                         "repetition_context_size": adapter.capabilities.local_mlx_repetition_context_size,
                     }
                     if getattr(adapter.capabilities, "local_mlx_repetition_penalty", None) is not None
+                    else {}
+                ),
+                **(
+                    {"presence_context_size": adapter.capabilities.local_mlx_presence_context_size}
+                    if getattr(adapter.capabilities, "local_mlx_presence_context_size", 0)
                     else {}
                 ),
             }

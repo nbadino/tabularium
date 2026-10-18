@@ -350,6 +350,23 @@ def test_unlimited_ocr_mlx_variant_and_repetition_guard(tmp_path, monkeypatch):
         model_settings.save_settings("paddleocr-vl", {"mlx": {"repetition_penalty": 1.1}})
 
 
+def test_qwen_mlx_guard_windows(tmp_path, monkeypatch):
+    """Qwen3-VL porta le penalità ufficiali ma su mlx-vlm la loro finestra è 20
+    token: il guard alza le finestre (regolabili) senza toccare vLLM."""
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "qwen-mlx.db")
+    init_db()
+    mlx = model_settings.get_settings("qwen3-vl-8b")["recommended"]["mlx"]
+    assert mlx["repetition_penalty"] == 1.1
+    assert mlx["repetition_context_size"] == 128
+    assert mlx["presence_context_size"] == 256
+
+    saved = model_settings.save_settings("qwen3-vl-8b", {"mlx": {"presence_context_size": 512}})
+    assert saved["effective"]["mlx"]["presence_context_size"] == 512
+    # Un modello senza il guard non accetta la finestra della presence penalty.
+    with pytest.raises(HTTPException, match="non riconosciuto"):
+        model_settings.save_settings("paddleocr-vl", {"mlx": {"presence_context_size": 256}})
+
+
 def test_teleocr_sampling_preserves_upstream_task_defaults():
     from app.services.model_adapters import get_adapter
 

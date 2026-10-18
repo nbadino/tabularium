@@ -12,10 +12,13 @@ from ..db import connect
 from ..schemas import (
     AuthStatusOut,
     ChangePasswordIn,
+    InviteAcceptIn,
+    InviteStatusOut,
     LoginIn,
     RegisterIn,
     SetupIn,
     UserOut,
+    UserSelfUpdate,
 )
 from ..services import auth as authsvc
 from ..services import settings as settingssvc
@@ -34,6 +37,7 @@ def _user_out(user: dict | None) -> UserOut | None:
         email=user["email"],
         role=user["role"],
         active=bool(user["active"]),
+        must_change_password=bool(user.get("must_change_password")),
         created_at=user["created_at"],
         last_login_at=user["last_login_at"],
     )
@@ -118,6 +122,7 @@ def login(payload: LoginIn, response: Response) -> UserOut:
         email=row["email"],
         role=row["role"],
         active=bool(row["active"]),
+        must_change_password=bool(row["must_change_password"]),
         created_at=row["created_at"],
         last_login_at=row["last_login_at"],
     )
@@ -166,6 +171,53 @@ def logout(request: Request, response: Response) -> dict:
 @router.get("/api/auth/me", response_model=UserOut)
 def me(user: dict = Depends(authsvc.get_current_user)) -> UserOut:
     return _user_out(user)  # type: ignore[return-value]
+
+
+@router.patch("/api/auth/me", response_model=UserOut)
+def update_me(
+    payload: UserSelfUpdate,
+    user: dict = Depends(authsvc.get_current_user),
+) -> UserOut:
+    """Modifica del proprio profilo: solo l'email (il nome utente è immutabile)."""
+    if user.get("is_local"):
+        raise HTTPException(status_code=400, detail="la modalità locale non ha un profilo")
+    with connect() as conn:
+        updated = usersvc.update_user(conn, user["id"], email=payload.email)
+    return UserOut(**updated)
+
+
+@router.get("/api/auth/invite/{token}", response_model=InviteStatusOut)
+def invite_status(token: str) -> InviteStatusOut:
+    """Stato di un invito: usato dalla pagina di accettazione per salutare
+    l'invitato prima che scelga la password. Pubblico (l'invitato non è ancora
+    autenticato)."""
+    if not authsvc.auth_enabled():
+        raise HTTPException(status_code=400, detail="autenticazione disattivata")
+    with connect() as conn:
+        row = usersvc.find_by_invite(conn, token)
+    if row is None:
+        return InviteStatusOut(valid=False)
+    return InviteStatusOut(
+        valid=True,
+        username=row["username"],
+        email=row["email"],
+        expires_at=row["invite_expires_at"],
+    )
+
+
+@router.post("/api/auth/invite/accept", response_model=UserOut)
+def accept_invite(payload: InviteAcceptIn, response: Response) -> UserOut:
+    """Consuma l'invito: l'utente sceglie la password e resta connesso."""
+    if not authsvc.auth_enabled():
+        raise HTTPException(status_code=400, detail="autenticazione disattivata")
+    with connect() as conn:
+        if not rate_limit.allow(conn, "invite"):
+            raise HTTPException(status_code=429, detail="troppi tentativi, riprova più tardi")
+        conn.commit()
+        user = usersvc.accept_invite(conn, payload.token, payload.password)
+    token, expires = authsvc.create_session(user["id"])
+    authsvc.set_session_cookie(response, token, expires)
+    return UserOut(**user)
 
 
 @router.post("/api/auth/change-password")

@@ -13,6 +13,7 @@ from ..services import otsl as otslmod
 from ..services.i18n import msg, parse_lang
 from ..services import auth as authsvc
 from ..services import audit as auditsvc
+from ..services import page_work as worksvc
 from .deps import require_resource
 import json
 from pydantic import BaseModel, Field
@@ -78,6 +79,7 @@ def list_pages(
     with connect() as conn:
         rows = conn.execute(sql, params).fetchall()
         total = conn.execute(count_sql, count_params).fetchone()[0]
+        work_items = worksvc.project_work(conn, project_id, _auth)
         items = [
             PageOut(
                 id=r["id"],
@@ -97,6 +99,7 @@ def list_pages(
                 created_at=r["created_at"],
                 blocks=r["blocks"],
                 drafts=r["drafts"],
+                work=work_items.get(r["id"]),
             )
             for r in rows
         ]
@@ -204,10 +207,19 @@ def page_readiness(
 def approve_page(
     page_id: int,
     request: Request,
+    payload: BulkApproveIn | None = None,
     user: dict = Depends(require_resource(write=True)),
 ) -> dict:
     lang = parse_lang(request.headers.get("accept-language"))
+    confirm_drafts = bool(payload and payload.confirm_drafts)
     with connect() as conn:
+        if worksvc.configured(conn, page_id):
+            worksvc.fail('work_use_review', lang)
+        # Conferma delle bozze su richiesta esplicita (`confirm_drafts`): le
+        # bozze del modello diventano verità, quindi è una scelta dell'utente,
+        # non un automatismo. Senza, la pagina con bozze non è approvabile.
+        if confirm_drafts:
+            conn.execute("UPDATE blocks SET confirmed=1 WHERE page_id=? AND confirmed=0", (page_id,))
         readiness = pagesvc.compute_readiness(conn, page_id, lang=lang)
         page = _get_page_or_404(conn, page_id)
         project = conn.execute("SELECT settings_json FROM projects WHERE id=?", (page["project_id"],)).fetchone()
@@ -226,6 +238,63 @@ def approve_page(
         auditsvc.record(conn, user, "page.approved", resource_type="page", resource_id=page_id)
         readiness["status"] = "approved"
         return readiness
+
+
+class BulkApproveIn(BaseModel):
+    # `None` = tutte le pagine del progetto; una lista = solo quelle.
+    page_ids: list[int] | None = None
+    # Conferma anche le bozze non verificate (le rende verità): esplicito,
+    # perché insegna al modello il proprio output. Senza, si approvano solo le
+    # pagine già pronte e le altre si dichiarano saltate.
+    confirm_drafts: bool = False
+
+
+@router.post("/api/projects/{project_id}/pages/approve")
+def approve_pages_bulk(
+    project_id: int,
+    payload: BulkApproveIn,
+    request: Request,
+    user: dict = Depends(require_resource(write=True)),
+) -> dict:
+    """Approva in blocco le pagine del progetto (con `confirm_drafts` anche le bozze)."""
+    lang = parse_lang(request.headers.get("accept-language"))
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id FROM pages WHERE project_id=? AND status != 'missing' ORDER BY id",
+            (project_id,),
+        ).fetchall()
+        ids = [int(r["id"]) for r in rows]
+        if payload.page_ids is not None:
+            wanted = set(int(v) for v in payload.page_ids)
+            ids = [pid for pid in ids if pid in wanted]
+        approved = 0
+        confirmed_blocks = 0
+        skipped: list[dict] = []
+        for pid in ids:
+            if worksvc.configured(conn, pid):
+                skipped.append({"page_id": pid, "reasons": [msg('work_use_review', lang)]})
+                continue
+            readiness = pagesvc.compute_readiness(conn, pid, lang=lang)
+            if not readiness["ready"] and payload.confirm_drafts:
+                confirmed_blocks += conn.execute(
+                    "UPDATE blocks SET confirmed=1 WHERE page_id=? AND confirmed=0", (pid,)
+                ).rowcount
+                readiness = pagesvc.compute_readiness(conn, pid, lang=lang)
+            if readiness["ready"]:
+                conn.execute("UPDATE pages SET status='approved' WHERE id=?", (pid,))
+                approved += 1
+            else:
+                skipped.append({"page_id": pid, "reasons": readiness.get("errors") or []})
+        auditsvc.record(
+            conn, user, "pages.approved_bulk", resource_type="project", resource_id=project_id,
+            payload={"approved": approved, "confirmed_blocks": confirmed_blocks, "skipped": len(skipped)},
+        )
+    return {
+        "approved": approved,
+        "confirmed_blocks": confirmed_blocks,
+        "skipped_count": len(skipped),
+        "skipped": skipped[:50],
+    }
 
 
 @router.get("/api/pages/{page_id}/reviews")
@@ -247,6 +316,8 @@ def add_page_review(
 ) -> dict:
     with connect() as conn:
         _get_page_or_404(conn, page_id)
+        if worksvc.configured(conn, page_id):
+            worksvc.fail('work_use_review', 'it')
         cur = conn.execute("INSERT INTO page_reviews (page_id, reviewer, status, errors_json, notes) VALUES (?,?,?,?,?)", (page_id, payload.reviewer, payload.status, json.dumps(payload.errors, ensure_ascii=False), payload.notes))
         if payload.status == "pass":
             conn.execute("UPDATE pages SET status='qa' WHERE id=? AND status IN ('annotated','review')", (page_id,))

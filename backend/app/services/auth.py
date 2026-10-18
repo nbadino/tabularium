@@ -156,6 +156,13 @@ def resolve_user(request: Request) -> dict | None:
 
 
 # --- dipendenze FastAPI -----------------------------------------------------------
+# Con la password da cambiare al primo accesso solo queste rotte restano
+# raggiungibili: il resto è bloccato finché l'utente non ne sceglie una propria.
+_MUST_CHANGE_ALLOWED = frozenset(
+    {"/api/auth/me", "/api/auth/change-password", "/api/auth/logout"}
+)
+
+
 def get_current_user(request: Request) -> dict:
     """Dipende da `Depends`. In modalità off restituisce l'utente locale."""
     if not auth_enabled():
@@ -166,6 +173,11 @@ def get_current_user(request: Request) -> dict:
             status_code=401,
             detail="autenticazione richiesta",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+    if user.get("must_change_password") and request.url.path not in _MUST_CHANGE_ALLOWED:
+        raise HTTPException(
+            status_code=403,
+            detail="devi cambiare la password prima di continuare",
         )
     return user
 

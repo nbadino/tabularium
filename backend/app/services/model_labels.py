@@ -141,9 +141,31 @@ PADDLE_LABELS: dict[str, str] = {
 }
 
 # --- unione per adapter (unicamente per calcolare le classi note) --------------
+UNLIMITED_LABELS: dict[str, str] = {
+    "text": "Text",
+    "title": "Title",
+    "table": "Table",
+    "figure": "Picture",
+    "image": "Picture",
+    "chart": "Picture",
+    "formula": "Formula",
+    "equation": "Formula",
+    "header": "Page-header",
+    "page_header": "Page-header",
+    "footer": "Page-footer",
+    "page_footer": "Page-footer",
+    "page_number": "Page-footer",
+    "list": "List-item",
+    "list_item": "List-item",
+    "caption": "Caption",
+    "footnote": "Footnote",
+    "reference": "Text",
+}
+
 NATIVE_LABELS: dict[str, dict[str, str]] = {
     "mineru2.5": {**MINERU_LAYOUT_LABELS, **MINERU_NATIVE_LABELS},
     "glm-ocr": GLM_LABELS,
+    "unlimited-ocr": UNLIMITED_LABELS,
     "deepseek-ocr": DEEPSEEK_LABELS,
     "qwen3-vl-8b": QWEN3_LABELS,
     "teleocr": TELEOCR_LABELS,

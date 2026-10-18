@@ -177,6 +177,7 @@ def rent_vast(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             monkeyocr_ref=payload.get("monkeyocr_ref", ""),
             tabularium_ref=payload.get("tabularium_ref", ""),
             prepare_server=bool(payload.get("prepare_server", False)),
+            prepare_training=bool(payload.get("prepare_training", False)),
         )
         if result.get("contract_id") is not None:
             cloud_manager.track_cloud_resource(
@@ -187,6 +188,69 @@ def rent_vast(payload: dict, _admin: dict = Depends(_admin)) -> dict:
         return result
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/system/cloud/vast/rent-training")
+def rent_training(payload: dict, _admin: dict = Depends(_admin)) -> dict:
+    """Noleggia e prepara da sé un host Vast per il training (M18).
+
+    Cerca l'offerta più economica che rispetta i minimi, la noleggia con
+    `prepare_training` (onstart = `setup_cloud_train.sh`) e restituisce
+    l'istanza più i percorsi da usare nell'executor di training. L'host impiega
+    qualche minuto a installare ms-swift: la UI attende `.train_ready`.
+    """
+    from ..services import cloud_manager
+
+    api_key = _credential(payload)
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API Key di Vast.ai obbligatoria.")
+    ref = str(payload.get("tabularium_ref") or "main").strip() or "main"
+    disk_gb = int(payload.get("disk_gb") or 80)
+    try:
+        offers = cloud_manager.search_vast_offers(
+            api_key,
+            gpu_name=payload.get("gpu_name", ""),
+            num_gpus=1,
+            max_dph=payload.get("max_dph", 1.0),
+            min_reliability=payload.get("min_reliability", 0.95),
+            instance_type="on-demand",
+            disk_gb=disk_gb,
+            min_gpu_ram_gb=payload.get("min_gpu_ram_gb", 16),
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not offers:
+        raise HTTPException(status_code=400, detail="nessuna offerta Vast.ai con questi minimi")
+    best = min(offers, key=lambda o: (o.get("dph_total") or 1e9))
+    try:
+        result = cloud_manager.rent_vast_instance(
+            api_key,
+            int(best["id"]),
+            cuda_max_good=best.get("cuda_max_good"),
+            disk_gb=disk_gb,
+            tabularium_ref=ref,
+            prepare_training=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    contract = result.get("contract_id")
+    if contract is not None:
+        cloud_manager.track_cloud_resource(
+            "vast", contract, owner_id=_admin.get("id"),
+            hourly_rate=best.get("dph_total"), metadata={"offer_id": best.get("id"), "purpose": "training"},
+        )
+    return {
+        "ok": True,
+        "tabularium_ref": ref,
+        "offer": best,
+        "instance_id": contract,
+        "ssh": {
+            "user": "root",
+            # Percorsi che `setup_cloud_train.sh` crea sull'host.
+            "python": "$HOME/tabularium-train/venv/bin/python",
+            "train_repo": "$HOME/tabularium-train/MonkeyOCRv2/parsing/train",
+        },
+    }
 
 
 @router.post("/api/system/cloud/vast/control")

@@ -143,3 +143,27 @@ def test_folder_browser_lists_subfolders_and_supported_files(tmp_path):
     assert [d["name"] for d in out["dirs"]] == ["scans"]
     assert out["files"] == 1
     assert out["parent"] == str(tmp_path.resolve().parent)
+
+
+def test_create_project_then_upload_without_server_folder(tmp_path: Path):
+    """Il percorso browser non richiede un percorso sul server e non scansiona altro."""
+    image = tmp_path / "uploaded.png"
+    Image.new("RGB", (400, 600), "white").save(image)
+    with TestClient(app) as client:
+        created = client.post("/api/projects", json={"name": "Browser upload"})
+        assert created.status_code == 201, created.text
+        project = created.json()
+        assert project["archive_dir"] is None
+        assert project["pages_count"] == 0
+        pid = project["id"]
+        with image.open("rb") as source:
+            uploaded = client.post(f"/api/projects/{pid}/import-upload", files={
+                "files": (image.name, source, "image/png"),
+            })
+        assert uploaded.status_code == 200, uploaded.text
+        assert uploaded.json()["registered"] == 1
+        pages = client.get(f"/api/projects/{pid}/pages").json()["items"]
+        assert len(pages) == 1
+        # Una scansione server non deve trattare gli upload come file mancanti.
+        assert client.post(f"/api/projects/{pid}/scan").status_code == 400
+        assert client.get(f"/api/pages/{pages[0]['id']}/preview").status_code == 200

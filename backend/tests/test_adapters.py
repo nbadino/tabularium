@@ -32,6 +32,7 @@ def test_monkeyocr_adapter_contract():
         ("glm-ocr", "official"),
         ("qwen3-vl-8b", "official"),
         ("lightonocr-3", "end2end"),
+        ("gemini-argon", "end2end"),
     ],
 )
 def test_native_prefill_selects_model_workflow(adapter_id, expected):

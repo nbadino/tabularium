@@ -118,6 +118,21 @@ class ModelCapabilities:
     # token: troppo corto per una riga di registro ripetuta (~25 token), che
     # scivola fuori dalla finestra e non viene mai penalizzata. 128 la copre.
     local_mlx_repetition_context_size: int = 0
+    # Finestra della *presence penalty*. Qwen3-VL la prescrive ufficialmente a
+    # 1.5 come difesa principale contro le ripetizioni, ma mlx-vlm la applica su
+    # 20 token (`DEFAULT_REPETITION_CONTEXT_SIZE`): più corta di una riga di
+    # registro, quindi non vede la ripetizione. Alzarla (128–256) è l'unico modo
+    # per rendere efficace la penalità ufficiale sul percorso MLX. 0 = default
+    # di mlx-vlm.
+    local_mlx_presence_context_size: int = 0
+    # L'adapter accetta un hint testuale accodato al prompt tabella? Vero solo
+    # per i modelli il cui prompt tabella è un'istruzione in linguaggio naturale
+    # (MonkeyOCRv2/GLM-OCR/TeleOCR). Falso per chi usa un token di protocollo o
+    # una pipeline nativa (Qwen `qwenvl html`, Paddle/MinerU `Table Recognition:`,
+    # DeepSeek grounded markdown) o non ha il task tabella: lì un'aggiunta
+    # sarebbe testo fuori distribuzione o romperebbe la modalità. È il gate che
+    # impedisce al hint di progetto di finire dove non è capito.
+    accepts_prompt_hint: bool = False
 
 
 class ModelAdapter(Protocol):
@@ -281,14 +296,14 @@ class MinerU2_5Adapter(_StubAdapter):
         tasks=("layout", "text", "table", "formula"),
         coordinate_system="normalized-0-1000",
         table_format="html",
-        training_types=(),
+        training_types=("lora", "full"),
         inference_modes=("vllm",),
         hardware=("cuda",),
         languages=("en", "zh", "multilingual-partial"),
         hf_repo="opendatalab/MinerU2.5-Pro-2605-1.2B",
         approx_size_gb=2.5,
         license_note="",
-        train_toolchain="none",
+        train_toolchain="ms-swift",
         serve_backend="vllm-openai-native-client",
         served_model_name="mineru2.5",
         # Il checkpoint corrente dichiara max_position_embeddings=8192 nella
@@ -670,14 +685,14 @@ class DotsOcrAdapter(_StubAdapter):
         tasks=("layout", "text", "table"),
         coordinate_system="image-pixels",
         table_format="html",
-        training_types=(),
+        training_types=("lora", "full"),
         inference_modes=("vllm",),
         hardware=("cuda",),
         languages=("en", "multilingual-partial"),
         hf_repo="dots-studio/dots.mocr",
         approx_size_gb=6.1,
         license_note='Richiede la dicitura "Built with dots.ocr" su pesi/derivati ridistribuiti.',
-        train_toolchain="community",
+        train_toolchain="ms-swift",
         serve_backend="vllm-openai",
         served_model_name="dots-mocr",
         local_runtimes=("vllm",),
@@ -766,14 +781,14 @@ class GlmOcrAdapter(_StubAdapter):
         tasks=("layout", "text", "table"),
         coordinate_system="unverified",
         table_format="markdown",
-        training_types=(),
+        training_types=("lora", "full"),
         inference_modes=("vllm",),
         hardware=("cuda",),
         languages=("en", "zh", "multilingual-partial"),
         hf_repo="zai-org/GLM-OCR",
         approx_size_gb=2.7,
         license_note="Codice Apache-2.0, pesi MIT.",
-        train_toolchain="llama-factory",
+        train_toolchain="ms-swift",
         serve_backend="vllm-openai",
         served_model_name="glm-ocr",
         local_runtimes=("vllm",),
@@ -871,14 +886,14 @@ class DeepSeekOcrAdapter(_StubAdapter):
         tasks=("layout", "text", "table"),
         coordinate_system="unverified",
         table_format="markdown",
-        training_types=(),
+        training_types=("lora", "full"),
         inference_modes=("vllm",),
         hardware=("cuda",),
         languages=("en", "zh", "multilingual-partial"),
         hf_repo="deepseek-ai/DeepSeek-OCR-2",
         approx_size_gb=6.0,
         license_note="Apache-2.0.",
-        train_toolchain="unsloth",
+        train_toolchain="ms-swift",
         serve_backend="vllm-openai",
         served_model_name="deepseek-ocr-2",
         max_model_len=8192,
@@ -1173,6 +1188,24 @@ class Qwen3VlAdapter(_StubAdapter):
         local_runtimes=("vllm", "mlx-vlm"),
         local_mlx_repo="mlx-community/Qwen3-VL-8B-Instruct-4bit",
         local_mlx_settings=True,
+        # Guard anti-loop per il percorso MLX. `recommended_generation` include
+        # già i parametri ufficiali Qwen3-VL-Instruct (top_p 0.8, top_k 20,
+        # temperature 0.7, repetition_penalty 1.0, presence_penalty 1.5), ma su
+        # mlx-vlm le due penalità guardano solo gli ultimi 20 token — meno di
+        # una riga di registro (~25–40 token) — quindi la riga ripetuta resta
+        # invisibile e la generazione scorre fino al tetto (misurato: una pagina
+        # `index` a 16384 token / 508 s, `finish_reason=length`). Si alzano le
+        # finestre: la presence penalty resta quella ufficiale, la finestra la
+        # copre. Valori regolabili da Impostazioni (sezione MLX).
+        local_mlx_repetition_penalty=1.1,
+        local_mlx_repetition_context_size=128,
+        local_mlx_presence_context_size=256,
+        # Qwen3-VL è un instruct generalista: il suo parser nativo `qwenvl html`
+        # è un preset, ma può ricevere anche un'istruzione sul contenuto. Unico
+        # modello eseguibile in locale su Apple Silicon con questa proprietà,
+        # quindi l'unico su cui l'hint di schema tabella è sperimentabile senza
+        # una GPU CUDA o un endpoint remoto.
+        accepts_prompt_hint=True,
     )
 
     _PROMPTS = {
@@ -1540,6 +1573,108 @@ class LightOnOcr3Adapter(_StubAdapter):
         ]
 
 
+class GeminiArgonAdapter(_StubAdapter):
+    """Gemini 4 Argon (Google) raggiunto via gateway, non in locale.
+
+    Argon non ha pesi pubblici: esiste solo come API. Tabularium lo interroga
+    attraverso un endpoint che parla il protocollo Google `generateContent`
+    (`chat_protocol = "google-generatecontent"`), tipicamente il gateway
+    OpenCode (Zen o Go) — che espone i modelli Gemini su
+    `.../inference/<scope>/google/v1beta` e autentica con una chiave OpenCode.
+
+    Verificato live sul corpus (pagina del campione, ottobre 2026):
+      - con il prompt **END2END** qui sotto restituisce l'intera pagina in una
+        sola generazione — `Page-header` (numero), `Title`, `Issue-date` e la
+        tabella — con bbox normalizzati 0–1000 e la tassonomia del progetto:
+        è il percorso usato dal prefill/Riconosci e dal Playground;
+      - il prompt Tabella vincola i soli token canonici: senza, il modello
+        inventa `<ched>/<splt>/<uched>`, che `otsl.otsl_to_grid` (e l'oracolo
+        ufficiale `otsl_to_html`) non riconoscono.
+
+    Limiti dichiarati, non aggirabili col prompt:
+      - il layout è quello che il modello *dichiara*, non una segmentazione
+        geometrica: affidabile sulla testata e sulla tabella, da correggere ai
+        bordi come qualsiasi proposta;
+      - nessun fine-tuning: `training_types` vuoto, non è addestrabile.
+    """
+
+    adapter_id = "gemini-argon"
+    # END2END: bbox + label + contenuto in una generazione. È il percorso
+    # nativo di questo modello, non il due-stadi (che richiederebbe un prompt
+    # di layout separato).
+    native_prefill_mode = "end2end"
+    chat_protocol = "google-generatecontent"
+    capabilities = ModelCapabilities(
+        adapter_id=adapter_id,
+        display_name="Gemini 4 Argon",
+        tasks=("layout", "text", "table"),
+        coordinate_system="normalized-0-1000",
+        table_format="otsl",
+        training_types=(),
+        inference_modes=("opencode",),
+        hardware=(),
+        geometry=("bbox",),
+        reading_order=True,
+        languages=("en", "multilingual"),
+        hf_repo="",
+        approx_size_gb=None,
+        license_note="Modello chiuso Google: uso solo via API, con la chiave del gateway OpenCode o dell'AI Studio.",
+        train_toolchain="none",
+        # Endpoint esterno con protocollo Google `generateContent`: né un server
+        # vLLM locale né una template Modal/Vast.
+        serve_backend="opencode-gateway",
+        served_model_name="gemini-4-argon-contributor",
+        max_model_len=1_048_576,
+        maturity="experimental",
+        # Nessun percorso locale: non ci sono pesi da servire.
+        local_runtimes=(),
+    )
+
+    # Tassonomia del progetto Historic Shipping Index, elencata per nome: il
+    # modello non la conosce, quindi la si dichiara. Le classi custom di un
+    # progetto restano fuori e il bridge nativa→canonica le conta fra le
+    # `unmapped` (v. prefill), senza inventare etichette.
+    _END2END_PROMPT = (
+        "You are given one scanned page of an old newspaper register. Return ONLY a JSON array "
+        "(no prose, no markdown fences) of the document elements in reading order. Each element "
+        'is an object: {"bbox": [x1, y1, x2, y2], "label": "<class>", "content": "<text>"} '
+        "where bbox is normalized 0-1000 relative to the full image (x and y independently), "
+        "x1<x2 and y1<y2. Allowed labels (use exactly these): Title, Page-header, Issue-number, "
+        "Issue-date, Section-header, Headline, Text, List-item, Table, Picture, Advertisement, "
+        "Column, Note, Formula. For Table, content must be OTSL using ONLY these tokens with no "
+        "closing tags: <fcel>text, <ecel>, <lcel>, <ucel>, <xcel>, <nl>. Include EVERY visible "
+        "element, including the masthead/title, the issue number and the date at the top; do not "
+        "merge them into the table."
+    )
+
+    _PROMPTS = {
+        "text": "Please output the text content from the image.",
+        # Il vincolo sui token non è cosmetico: misurato, senza di esso il
+        # modello emette `<ched>/<splt>/<uched>`, che `otsl.otsl_to_grid`
+        # (e l'oracolo ufficiale `otsl_to_html`) non riconoscono.
+        "table": (
+            "Please extract the table from the image and represent it in OTSL format. "
+            "Use ONLY these tokens and no closing tags: <fcel>text, <ecel>, <lcel>, "
+            "<ucel>, <xcel>, <nl>. Do not emit <ched>, <splt>, <uched> or any other tag. "
+            "End each row with <nl>."
+        ),
+        "end2end": _END2END_PROMPT,
+    }
+
+    def prompt_for(self, task: str, label: str | None = None) -> str | None:
+        if task == "text" and label in {"Column", "Picture"}:
+            return None
+        if task in self._PROMPTS:
+            return self._PROMPTS[task]
+        # Un prompt di layout separato non è verificato: il percorso nativo è
+        # end2end. Meglio un errore esplicito del default «solo download».
+        raise NotImplementedError(
+            f"adapter '{self.adapter_id}': il percorso verificato è end2end "
+            "(bbox + label + contenuto in una generazione); il layout separato "
+            "non è supportato"
+        )
+
+
 class CustomVllmAdapter(_StubAdapter):
     """Un modello aggiunto liberamente dall'utente (repo Hugging Face
     qualsiasi), riga della tabella `custom_models` — stesso principio di LM
@@ -1647,6 +1782,7 @@ _ADAPTERS: dict[str, ModelAdapter] = {
         Qwen3VlAdapter(),
         TeleOcrAdapter(),
         LightOnOcr3Adapter(),
+        GeminiArgonAdapter(),
     )
 }
 

@@ -556,3 +556,54 @@ def test_token_hash_not_plaintext():
     digest = security.hash_token(token)
     assert digest != token
     assert len(digest) == 64  # sha256 hex
+
+
+def test_project_capabilities_follow_project_role_not_global_role():
+    owner = _mkuser("owner_team", role="editor")
+    colleague = _mkuser("colleague", role="editor")
+    reader = _mkuser("reader_team", role="viewer")
+    owned = _mkproject(owner_id=owner["id"], name="Team")
+    other = _mkproject(owner_id=owner["id"], name="Other")
+    with connect() as conn:
+        conn.execute("INSERT INTO project_members(project_id,user_id,role) VALUES(?,?,?)", (owned, colleague["id"], "viewer"))
+        conn.execute("INSERT INTO project_members(project_id,user_id,role) VALUES(?,?,?)", (owned, reader["id"], "editor"))
+    with _client() as client:
+        _login(client, "colleague")
+        project = client.get(f"/api/projects/{owned}").json()
+        assert project["access"] == {"role": "viewer", "source": "member", "can_edit": False, "can_manage": False}
+        assert project["owner_name"] == "owner_team"
+        assert project["members_count"] == 3
+        assert client.get(f"/api/projects/{other}").status_code == 404
+        assert [p["id"] for p in client.get("/api/projects").json()["items"]] == [owned]
+        assert client.put(f"/api/projects/{owned}/conventions", json={"conventions": []}).status_code == 403
+    with _client() as client:
+        _login(client, "reader_team")
+        project = client.get(f"/api/projects/{owned}").json()
+        assert project["access"] == {"role": "editor", "source": "member", "can_edit": True, "can_manage": False}
+        assert client.put(f"/api/projects/{owned}/conventions", json={"conventions": []}).status_code == 200
+        assert client.get(f"/api/projects/{owned}/member-candidates").status_code == 403
+        assert client.post("/api/projects", json={"name": "Not allowed"}).status_code == 403
+    with _client() as client:
+        _login(client, "owner_team")
+        assert client.get(f"/api/projects/{owned}").json()["access"]["can_manage"] is True
+
+
+def test_block_context_is_authorized_and_cannot_be_spoofed_by_query():
+    owner = _mkuser("block_owner")
+    reader = _mkuser("block_reader", role="viewer")
+    stranger = _mkuser("block_stranger")
+    pid = _mkproject(owner_id=owner["id"])
+    with connect() as conn:
+        page_id = conn.execute("INSERT INTO pages(project_id,rel_path,abs_path,source_kind,width,height) VALUES(?,?,?,'image',100,100)", (pid, "sample.png", "/tmp/sample.png")).lastrowid
+        block_id = conn.execute("INSERT INTO blocks(page_id,label,kind,points,content) VALUES(?,'Text','rect','[[0,0],[10,10]]','Sample')", (page_id,)).lastrowid
+        conn.execute("INSERT INTO project_members(project_id,user_id,role) VALUES(?,?,'viewer')", (pid, reader["id"]))
+    with _client() as client:
+        _login(client, "block_reader")
+        result = client.get(f"/api/blocks/{block_id}?page=9999&project=9999")
+        assert result.status_code == 200, result.text
+        assert result.json()["project_id"] == pid
+        assert result.json()["page_id"] == page_id
+        assert client.patch(f"/api/blocks/{block_id}", json={"content": "Cannot write"}).status_code == 403
+    with _client() as client:
+        _login(client, "block_stranger")
+        assert client.get(f"/api/blocks/{block_id}").status_code == 404

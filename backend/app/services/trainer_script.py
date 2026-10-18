@@ -130,16 +130,40 @@ def generate_script(cfg: dict, run_dir: Path, train_file: Path, val_file: Path) 
         )
 
     cache_dir = "cache" if remote else str(run_dir / "cache")
+    # La ricetta dell'adapter decide come si addestra (M18). Il generatore non
+    # conosce MonkeyOCRv2 per nome e non produce mai uno script per un toolchain
+    # che non sa eseguire: fallisce esplicito, indicando la doc ufficiale.
+    from . import train_recipes as recipes
+
+    recipe = recipes.get_recipe(adapter_id)
+    if recipe is None or not recipe.trainable:
+        raise ValueError(
+            f"nessuna ricetta di training per '{adapter_id}': "
+            "il modello non è addestrabile o non è a pesi aperti"
+        )
+    if recipe.toolchain != "ms-swift":
+        raise NotImplementedError(
+            f"toolchain '{recipe.toolchain}' non eseguito da questo generatore "
+            f"(vista dati '{recipe.data_view}'); doc ufficiale: {recipe.official_doc}"
+        )
+    if not recipe.script_ready:
+        raise NotImplementedError(
+            f"ricetta ms-swift di '{adapter_id}' non ancora verificata "
+            f"(--model_type/--template da confermare); doc ufficiale: {recipe.official_doc}"
+        )
+    model_type = recipe.swift_model_type
+    template = recipe.swift_template
     if adapter_id == "qwen3-vl-8b":
-        model_type = "qwen3_vl"
-        template = "qwen3_vl"
         train_flag = f"  --tuner_type {train_type} \\"
         vit_flags = ""
-    else:
-        model_type = "monkeyocrv2"
-        template = "monkeyocrv2"
+    elif adapter_id == "monkeyocrv2-parsing":
         train_flag = f"  --train_type '{train_type}' \\"
         vit_flags = f"  --freeze_vit {'true' if c['freeze_vit'] else 'false'} \\\n  --freeze_aligner false \\\n  --freeze_llm false \\\n"
+    else:
+        # Altri adapter ms-swift (es. Unlimited-OCR): i flag di congelamento del
+        # ViT sono specifici di MonkeyOCRv2 e non si ereditano.
+        train_flag = f"  --train_type '{train_type}' \\"
+        vit_flags = ""
 
     script = f"""#!/usr/bin/env bash
 set -euo pipefail

@@ -20,6 +20,16 @@ SUPPORTED = ("it", "en", "fr")
 DEFAULT = "it"
 
 _IT: dict[str, str] = {
+    "work_conflict": "L’assegnazione è cambiata. Ricarica prima di procedere.",
+    "work_manager_only": "Solo proprietario e amministratori possono assegnare il lavoro.",
+    "work_distinct": "Annotatore e revisore devono essere persone diverse.",
+    "work_member_required": "Scegli persone attive con permesso di modifica sul progetto.",
+    "work_annotator_only": "Solo l’annotatore assegnato può inviare questa pagina al revisore.",
+    "work_reviewer_only": "Solo il revisore assegnato può decidere su una pagina inviata da un’altra persona.",
+    "work_revision_changed": "La pagina è cambiata. Ricarica e controlla la versione aggiornata.",
+    "work_note_required": "Indica cosa deve correggere l’annotatore.",
+    "work_use_review": "Questa pagina segue una revisione assegnata. Usa Invia al revisore o Revisiona nello Studio.",
+
     # --- dettagli API -------------------------------------------------------
     "page_not_found": "pagina non trovata",
     "project_not_found": "progetto non trovato",
@@ -192,6 +202,16 @@ _IT: dict[str, str] = {
 }
 
 _EN: dict[str, str] = {
+    "work_conflict": "The assignment changed. Reload before continuing.",
+    "work_manager_only": "Only the owner and administrators can assign work.",
+    "work_distinct": "Annotator and reviewer must be different people.",
+    "work_member_required": "Choose active people with edit access to the project.",
+    "work_annotator_only": "Only the assigned annotator can submit this page for review.",
+    "work_reviewer_only": "Only the assigned reviewer can decide on a page submitted by another person.",
+    "work_revision_changed": "The page changed. Reload and check the latest version.",
+    "work_note_required": "Describe what the annotator needs to correct.",
+    "work_use_review": "This page has an assigned review. Use Submit for review or Review in the Studio.",
+
     "page_not_found": "page not found",
     "project_not_found": "project not found",
     "block_not_found": "block not found",
@@ -351,6 +371,16 @@ _EN: dict[str, str] = {
 }
 
 _FR: dict[str, str] = {
+    "work_conflict": "L’affectation a changé. Rechargez avant de continuer.",
+    "work_manager_only": "Seuls le propriétaire et les administrateurs peuvent affecter le travail.",
+    "work_distinct": "L’annotateur et le réviseur doivent être différents.",
+    "work_member_required": "Choisissez des personnes actives autorisées à modifier le projet.",
+    "work_annotator_only": "Seul l’annotateur affecté peut soumettre cette page.",
+    "work_reviewer_only": "Seul le réviseur affecté peut statuer sur une page soumise par une autre personne.",
+    "work_revision_changed": "La page a changé. Rechargez et vérifiez la dernière version.",
+    "work_note_required": "Indiquez les corrections demandées à l’annotateur.",
+    "work_use_review": "Cette page suit une révision affectée. Utilisez Soumettre ou Réviser dans le Studio.",
+
     "page_not_found": "page introuvable",
     "project_not_found": "projet introuvable",
     "block_not_found": "bloc introuvable",

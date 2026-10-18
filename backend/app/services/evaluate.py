@@ -19,8 +19,10 @@ from . import inference as infmod
 from . import labeling
 from . import otsl as otslmod
 from . import pages as pagesvc
+from . import table_hint as table_hint_svc
 from .i18n import msg
 from .. import config
+from ..db import connect
 
 _TEXT_LABELS = {l.name for l in labeling.DEFAULT_LABELS if l.prompt_kind == "text"}
 STRICT_IOU = 0.75
@@ -135,6 +137,53 @@ def order_metrics(gt_labels: list[str], pred_labels: list[str]) -> dict:
 # --- tabelle ------------------------------------------------------------------
 
 
+def _cell_label(cell: dict) -> tuple:
+    return (
+        int(cell.get("colspan") or 1),
+        int(cell.get("rowspan") or 1),
+        (cell.get("text") or "").strip(),
+    )
+
+
+def _grid_rows(grid: dict) -> list[list[tuple]]:
+    """Righe della griglia come sequenze di etichette di cella (span + testo)."""
+    rows = int(grid.get("rows") or 0)
+    out: list[list[tuple]] = [[] for _ in range(rows)]
+    for cell in grid.get("cells", []):
+        r = int(cell.get("r") or 0)
+        if 0 <= r < rows:
+            out[r].append((int(cell.get("c") or 0), _cell_label(cell)))
+    for row in out:
+        row.sort(key=lambda item: item[0])
+    return [[label for _, label in row] for row in out]
+
+
+def teds(gt_grid: dict, pred_grid: dict) -> float:
+    """Similarità di tabella 0–1 (TEDS ad allineamento per riga).
+
+    Il TEDS classico è la tree edit distance tra le due tabelle, normalizzata.
+    Sui registri a piena pagina (decine di righe × colonne) l'albero ha centinaia
+    di nodi e l'algoritmo esatto è troppo lento; qui le righe si allineano per
+    posizione e dentro la riga si misura la distanza di edit fra le sequenze di
+    celle (span + testo). Restituisce 1.0 per tabelle identiche, 0.0 per nulla in
+    comune, e **valori intermedi** quando la struttura assomiglia ma non coincide
+    — che è il punto: `structure_ok` è binario e azzera tabelle quasi giuste.
+    """
+    gr = _grid_rows(gt_grid)
+    pr = _grid_rows(pred_grid)
+    if not gr and not pr:
+        return 1.0
+    cost = 0
+    for i in range(max(len(gr), len(pr))):
+        a = gr[i] if i < len(gr) else []
+        b = pr[i] if i < len(pr) else []
+        cost += _edit_distance(a, b)
+    denom = max(sum(len(r) for r in gr), sum(len(r) for r in pr)) + abs(len(gr) - len(pr))
+    if denom == 0:
+        return 1.0
+    return max(0.0, 1.0 - cost / denom)
+
+
 def table_metrics(gt_grid: dict, pred_otsl: str, lang: str = "it") -> dict:
     try:
         pred = otslmod.otsl_to_grid(pred_otsl)
@@ -161,6 +210,7 @@ def table_metrics(gt_grid: dict, pred_otsl: str, lang: str = "it") -> dict:
     return {
         "structure_ok": bool(structure_ok),
         "cell_cer": sum(cers) / len(cers) if cers else 1.0,
+        "teds": teds(gt_grid, pred),
     }
 
 
@@ -173,11 +223,43 @@ def _norm(points: list) -> list[float]:
     return [min(xs), min(ys), max(xs), max(ys)]
 
 
+def _project_table_hint(project_id: int) -> str:
+    """Hint di schema tabella del progetto (v. `services/table_hint.py`)."""
+    try:
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT settings_json FROM projects WHERE id=?", (project_id,)
+            ).fetchone()
+    except Exception:  # noqa: BLE001 - DB non ancora inizializzato nei test
+        return ""
+    if not row:
+        return ""
+    try:
+        settings = json.loads(row["settings_json"] or "{}")
+    except (TypeError, ValueError):
+        return ""
+    return table_hint_svc.get_table_hint(settings)
+
+
+def _schema_labels(project_id: int) -> list:
+    """Classi del progetto (default + custom) per il bridge nativa → canonica."""
+    try:
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT settings_json FROM projects WHERE id=?", (project_id,)
+            ).fetchone()
+    except Exception:  # noqa: BLE001 - DB non ancora inizializzato nei test
+        return labeling.DEFAULT_LABELS
+    settings = json.loads(row["settings_json"] or "{}") if row else {}
+    return labeling.project_schema(settings).labels
+
+
 # --- valutazione pagina -------------------------------------------------------
 
 
 def _evaluate_page(
-    client, data: dict, with_text: bool, warnings: list[str], lang: str = "it"
+    client, data: dict, with_text: bool, warnings: list[str], lang: str = "it",
+    table_hint: str = "", schema_labels: list | None = None, table_only: bool = False,
 ) -> dict:
     page = data["page"]
     gt_blocks = data["blocks"]
@@ -207,16 +289,31 @@ def _evaluate_page(
             }
         )
 
+    # «Solo tabelle»: si misura la struttura della tabella, non la segmentazione
+    # né le label. Evita del tutto il rumore della tassonomia (una testata
+    # `Title` vs `Page-header` non deve abbassare il punteggio della tabella).
+    if table_only:
+        gt_items = [g for g in gt_items if g["label"] == "Table"]
+        with_text = True
+
     try:
         image = pagesvc.load_source_image(page)
         # I modelli solo end2end (LightOnOCR-3, Unlimited-OCR, DeepSeek-OCR…)
         # non hanno un prompt di layout: si misurano sulla loro generazione
-        # nativa, che porta anche il contenuto di ogni blocco.
+        # nativa, che porta anche il contenuto di ogni blocco. Gli adapter a
+        # pipeline «official» (Qwen3-VL, PaddleOCR-VL, MinerU2.5, GLM, TeleOCR)
+        # si misurano allo stesso modo, ma con la pipeline del produttore:
+        # altrimenti non sarebbero misurabili (non hanno `prompt_for("layout")`).
         adapter = getattr(client, "adapter", None)
-        end2end = getattr(adapter, "native_prefill_mode", None) == "end2end"
+        mode = getattr(adapter, "native_prefill_mode", None)
+        end2end = mode in {"end2end", "official"}
         if image is None:
             pred_items = []
-        elif end2end:
+        elif mode == "official":
+            from . import prefill as prefillsvc  # import locale: evita un ciclo
+
+            pred_items = prefillsvc.native_page_items(client, image)
+        elif mode == "end2end":
             pred_items = client.end2end(image)
         else:
             pred_items = client.layout(image)
@@ -228,6 +325,32 @@ def _evaluate_page(
             "pdf_page": page["pdf_page"],
             "error": str(exc),
         }
+
+    # Bridge nativa → canonica: un modello emette i propri nomi (`header`,
+    # `page_number`, `table`); senza tradurli ogni confronto con la verità
+    # canonica è zero. È lo stesso bridge del prefill (`model_labels`).
+    if schema_labels is not None and adapter is not None:
+        from . import model_labels  # noqa: PLC0415
+
+        adapter_id = getattr(adapter, "adapter_id", None)
+        for item in pred_items:
+            resolved = model_labels.resolve_native_label(
+                str(item.get("label") or ""), schema_labels, adapter_id
+            )
+            if resolved:
+                item["label"] = resolved
+
+    if table_only:
+        # Un modello può restituire la tabella in un blocco etichettato `Table`
+        # oppure (end2end) con contenuto OTSL/HTML in un blocco qualsiasi: si
+        # tengono entrambi, altrimenti una tabella corretta ma mal etichettata
+        # conterebbe zero.
+        pred_items = [
+            p for p in pred_items
+            if str(p.get("label") or "") == "Table"
+            or otslmod.looks_like_otsl(str(p.get("content") or ""))
+            or "<table" in str(p.get("content") or "").lower()
+        ]
 
     # riordina per label/ordine (qualsiasi ordine emesso dal modello = reading order)
     page_result = {
@@ -259,7 +382,10 @@ def _evaluate_page(
             if end2end:
                 return matched_content.get(gi)
             crop = pagesvc.crop_block_jpeg(page, [int(v) for v in g["source_bbox"]])
-            return client.recognize(_image_from_bytes(crop), g["label"])
+            # Il hint si passa solo quando esiste: un client legacy senza il
+            # parametro resta compatibile.
+            extra = {"hint": table_hint} if table_hint else {}
+            return client.recognize(_image_from_bytes(crop), g["label"], **extra)
 
         for gi, g in enumerate(gt_items):
             label = g["label"]
@@ -377,10 +503,15 @@ def evaluate_project(
     if not client.ping():
         warnings.append(msg("vllm_ping", lang, url=client.url))
 
+    table_hint = _project_table_hint(project_id)
+    schema_labels = _schema_labels(project_id)
     pages_result = []
     for pid in val_ids:
         data = page_data[pid]
-        res = _evaluate_page(client, data, with_text, warnings, lang=lang)
+        res = _evaluate_page(
+            client, data, with_text, warnings, lang=lang, table_hint=table_hint,
+            schema_labels=schema_labels,
+        )
         pages_result.append(res)
 
     # aggregazioni solo sulle pagine valutate con successo
@@ -401,7 +532,7 @@ def evaluate_project(
             "layout_strict": _agg_layout(ok_pages, key="layout_strict"),
             "order": _agg_order(ok_pages),
             "text": {"n": n_text, "mean_cer": _mean([t["cer"] for t in texts]), "mean_wer": _mean([t["wer"] for t in texts])},
-            "tables": {"n": n_tables, "structure_ok_pct": (_mean([1.0 if t["structure_ok"] else 0.0 for t in tables]) * 100) if tables else None, "mean_cell_cer": _mean([t["cell_cer"] for t in tables])},
+            "tables": {"n": n_tables, "structure_ok_pct": (_mean([1.0 if t["structure_ok"] else 0.0 for t in tables]) * 100) if tables else None, "mean_cell_cer": _mean([t["cell_cer"] for t in tables]), "mean_teds": _mean([t.get("teds") for t in tables if t.get("teds") is not None])},
         },
         "pages": pages_result,
         "warnings": warnings,

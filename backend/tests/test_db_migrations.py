@@ -54,6 +54,7 @@ def test_versioned_migration_applies_once_in_order(monkeypatch):
     with _fresh_conn() as conn:
         db.init_db()
         conn.execute("UPDATE meta SET value='6' WHERE key='schema_version'")
+        conn.execute("DROP TRIGGER IF EXISTS invalidate_team_approval")
         conn.execute("ALTER TABLE pages DROP COLUMN annotation_revision")
         conn.commit()
 
@@ -89,6 +90,7 @@ def test_incomplete_migration_chain_raises(monkeypatch):
     with _fresh_conn() as conn:
         db.init_db()
         conn.execute("UPDATE meta SET value='6' WHERE key='schema_version'")
+        conn.execute("DROP TRIGGER IF EXISTS invalidate_team_approval")
         conn.execute("ALTER TABLE pages DROP COLUMN annotation_revision")
         conn.commit()
 

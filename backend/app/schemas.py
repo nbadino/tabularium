@@ -30,16 +30,43 @@ class UserOut(BaseModel):
     email: str | None = None
     role: str
     active: bool = True
+    must_change_password: bool = False
     created_at: str
     last_login_at: str | None = None
 
 
 class UserCreate(BaseModel):
     username: str = Field(min_length=1, max_length=100)
-    password: str = Field(min_length=1, max_length=500)
+    # Con `invite=True` la password è generata dal server e l'utente la sceglie
+    # dal link d'invito; altrimenti è obbligatoria e l'utente la cambierà al
+    # primo accesso.
+    password: str | None = Field(default=None, max_length=500)
     email: str | None = Field(default=None, max_length=300)
     role: str = "editor"
     active: bool = True
+    invite: bool = False
+
+
+class UserCreatedOut(UserOut):
+    """Esito della creazione: quando si invita, il link va consegnato una volta."""
+    invite_url: str | None = None
+
+
+class UserSelfUpdate(BaseModel):
+    """Modifica del proprio profilo (email; il nome utente è immutabile)."""
+    email: str | None = Field(default=None, max_length=300)
+
+
+class InviteAcceptIn(BaseModel):
+    token: str = Field(min_length=1, max_length=500)
+    password: str = Field(min_length=8, max_length=500)
+
+
+class InviteStatusOut(BaseModel):
+    valid: bool = False
+    username: str | None = None
+    email: str | None = None
+    expires_at: str | None = None
 
 
 class UserUpdate(BaseModel):
@@ -100,7 +127,14 @@ class SecretOut(BaseModel):
 # --- Progetti ----------------------------------------------------------------
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
-    archive_dir: str = Field(min_length=1, description="Cartella archivio con le scansioni")
+    archive_dir: str | None = Field(default=None, min_length=1, description="Cartella sorgente opzionale; senza, si importano file dal browser")
+
+
+class ProjectAccess(BaseModel):
+    role: Literal["owner", "editor", "viewer"]
+    source: Literal["local", "admin", "owner", "member"]
+    can_edit: bool
+    can_manage: bool
 
 
 class ProjectOut(BaseModel):
@@ -112,6 +146,9 @@ class ProjectOut(BaseModel):
     settings_json: dict = {}
     pages_count: int = 0
     created_at: str
+    owner_name: str | None = None
+    members_count: int = 0
+    access: ProjectAccess | None = None
 
 
 class ProjectList(BaseModel):
@@ -199,6 +236,7 @@ class PageOut(BaseModel):
     # bozze da verificare.
     blocks: int = 0
     drafts: int = 0
+    work: dict | None = None
 
 
 class PageUpdate(BaseModel):
@@ -278,6 +316,7 @@ class BlockUpdate(BaseModel):
 
 class BlockOut(BaseModel):
     id: int
+    project_id: int | None = None
     page_id: int
     label: str
     kind: str
@@ -470,6 +509,19 @@ class ConventionsOut(BaseModel):
 
 class ConventionsIn(BaseModel):
     conventions: list[ConventionItem]
+
+
+# --- Hint di schema tabella (per progetto) ------------------------------------
+class TableHintIn(BaseModel):
+    hint: str = Field(default="", max_length=2000)
+
+
+class TableHintOut(BaseModel):
+    hint: str = ""
+    # Modello attualmente configurato e se accetta il hint: la UI avvisa che
+    # l'hint è ignorato dai motori a prompt di protocollo (v. §2.3 e capability).
+    active_model: str | None = None
+    accepts_hint: bool = False
 
 
 # --- Training -----------------------------------------------------------------

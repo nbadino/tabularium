@@ -237,6 +237,33 @@ def test_vast_prepare_requires_pinned_ref_and_quotes_onstart(monkeypatch):
     assert "TABULARIUM_SERVER_API_KEY" in body["env"]
 
 
+def test_vast_prepare_training_provisions_the_ms_swift_env(monkeypatch):
+    """`prepare_training` mette nell'onstart lo script di training (non quello
+    di serving) e non apre la porta HTTP: al training basta SSH."""
+    with pytest.raises(ValueError, match="tabularium_ref"):
+        cloud_manager.rent_vast_instance("token", 7, prepare_training=True)
+
+    calls: list = []
+    _fake_vast_client(monkeypatch, {("PUT", "/asks/7/"): {"new_contract": 9}}, calls)
+    result = cloud_manager.rent_vast_instance(
+        "token", 7, prepare_training=True, tabularium_ref="2026-08-31"
+    )
+    assert result["contract_id"] == 9
+    body = calls[0]["json"]
+    assert "setup_cloud_train.sh" in body["onstart"]
+    assert "setup_cloud_vllm.sh" not in body["onstart"]
+    assert "raw.githubusercontent.com/nbadino/tabularium/2026-08-31/" in body["onstart"]
+    assert body["env"] == "-p 22:22/tcp"
+
+
+def test_vast_prepare_server_and_training_are_mutually_exclusive(monkeypatch):
+    with pytest.raises(ValueError, match="non è supportato"):
+        cloud_manager.rent_vast_instance(
+            "token", 7, prepare_server=True, prepare_training=True,
+            monkeyocr_ref="v1", tabularium_ref="2026-08-31",
+        )
+
+
 def test_provider_refresh_persists_rate_and_live_state(monkeypatch):
     init_db()
     resource_id = 987654

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 
@@ -14,6 +15,10 @@ from . import security
 
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9._-]{3,40}$")
 ROLES = {"admin", "editor", "viewer"}
+
+# Durata dell'invito via link: l'invitato deve scegliere la password entro
+# questo termine. Oltre, il link va rigenerato dall'admin.
+INVITE_TTL_HOURS = 72
 
 
 def normalize_username(username: str) -> str:
@@ -39,12 +44,14 @@ def validate_role(role: str) -> str:
 
 
 def user_out(row: sqlite3.Row) -> dict:
+    keys = row.keys()
     return {
         "id": row["id"],
         "username": row["username"],
         "email": row["email"],
         "role": row["role"],
         "active": bool(row["active"]),
+        "must_change_password": bool(row["must_change_password"]) if "must_change_password" in keys else False,
         "created_at": row["created_at"],
         "last_login_at": row["last_login_at"],
     }
@@ -57,6 +64,7 @@ def create_user(
     email: str | None = None,
     role: str = "editor",
     active: bool = True,
+    must_change_password: bool = False,
 ) -> dict:
     username = normalize_username(username)
     validate_password(password)
@@ -66,9 +74,9 @@ def create_user(
         raise HTTPException(status_code=409, detail="nome utente già esistente")
     salt, hash_hex = security.hash_password(password)
     cur = conn.execute(
-        "INSERT INTO users (username, email, password_hash, salt, role, active) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (username, email or None, hash_hex, salt, role, 1 if active else 0),
+        "INSERT INTO users (username, email, password_hash, salt, role, active, must_change_password) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (username, email or None, hash_hex, salt, role, 1 if active else 0, 1 if must_change_password else 0),
     )
     return user_out(conn.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone())
 
@@ -103,13 +111,70 @@ def update_user(
     return user_out(get_user(conn, user_id))
 
 
-def set_password(conn: sqlite3.Connection, user_id: int, new_password: str) -> None:
+def set_password(
+    conn: sqlite3.Connection,
+    user_id: int,
+    new_password: str,
+    *,
+    must_change: bool = False,
+) -> None:
     validate_password(new_password)
     salt, hash_hex = security.hash_password(new_password)
     conn.execute(
-        "UPDATE users SET password_hash=?, salt=? WHERE id=?",
-        (hash_hex, salt, user_id),
+        "UPDATE users SET password_hash=?, salt=?, must_change_password=? WHERE id=?",
+        (hash_hex, salt, 1 if must_change else 0, user_id),
     )
+
+
+def generate_invite(conn: sqlite3.Connection, user_id: int, ttl_hours: int = INVITE_TTL_HOURS) -> tuple[str, str]:
+    """Crea (o rinnova) il link d'invito di un utente. Restituisce il token in
+    chiaro — l'unica volta che è visibile — e la sua scadenza ISO.
+
+    L'hash sostituisce i campi password del primo accesso: chi riceve il link
+    sceglie la propria password, senza che l'admin ne conosca una.
+    """
+    if get_user(conn, user_id) is None:
+        raise HTTPException(status_code=404, detail="utente non trovato")
+    token = security.new_token()
+    expires = (datetime.now(timezone.utc) + timedelta(hours=ttl_hours)).isoformat()
+    conn.execute(
+        "UPDATE users SET invite_token_hash=?, invite_expires_at=?, must_change_password=1 WHERE id=?",
+        (security.hash_token(token), expires, user_id),
+    )
+    return token, expires
+
+
+def find_by_invite(conn: sqlite3.Connection, token: str) -> sqlite3.Row | None:
+    """Utente il cui invito è valido (token presente e non scaduto), o None."""
+    if not token:
+        return None
+    row = conn.execute(
+        "SELECT * FROM users WHERE invite_token_hash=?", (security.hash_token(token),)
+    ).fetchone()
+    if row is None or not row["invite_expires_at"]:
+        return None
+    try:
+        expires = datetime.fromisoformat(row["invite_expires_at"])
+    except ValueError:
+        return None
+    if expires < datetime.now(timezone.utc):
+        return None
+    return row
+
+
+def accept_invite(conn: sqlite3.Connection, token: str, new_password: str) -> dict:
+    """Consuma l'invito: imposta la password scelta, attiva l'utente e invalida
+    le sessioni. Il token d'invito muore qui (uso singolo)."""
+    row = find_by_invite(conn, token)
+    if row is None:
+        raise HTTPException(status_code=400, detail="invito non valido o scaduto")
+    set_password(conn, row["id"], new_password, must_change=False)
+    conn.execute(
+        "UPDATE users SET invite_token_hash=NULL, invite_expires_at=NULL, active=1 WHERE id=?",
+        (row["id"],),
+    )
+    conn.execute("DELETE FROM sessions WHERE user_id=?", (row["id"],))
+    return user_out(get_user(conn, row["id"]))
 
 
 def delete_user(conn: sqlite3.Connection, user_id: int) -> None:

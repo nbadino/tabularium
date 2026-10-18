@@ -355,3 +355,40 @@ def test_recovery_restarts_only_a_dead_local_server(monkeypatch):
     # Locale e morto: si riavvia sulla stessa porta e si aspetta che risponda.
     assert recognition._recover_local_server(local, cancel) is True
     assert started == [("unlimited-ocr", 8889)]
+
+
+def test_playground_reads_headers_and_table_with_end2end_model(tmp_path, monkeypatch):
+    """Gemini 4 Argon via END2END: il Playground disegna testata, data e tabella
+    con i bbox 0–1000 restituiti in una sola generazione."""
+    from app.api import playground as playground_mod
+    from app.services import model_adapters
+
+    otsl = "<fcel>Corbank<fcel>Br<nl><fcel>Corbeach<ecel><nl>"
+
+    class FakeClient:
+        adapter = model_adapters.get_adapter("gemini-argon")
+        model = "gemini-4-argon-contributor"
+        url = "https://opencode.ai/inference/go/google/v1beta"
+        provider = "custom"
+
+        def end2end(self, _image, **kwargs):
+            return [
+                {"bbox": [332, 47, 626, 61], "label": "Title", "content": "LLOYD'S DAILY INDEX"},
+                {"bbox": [773, 47, 902, 62], "label": "Issue-date", "content": "Nov. 2, 1925"},
+                {"bbox": [36, 75, 932, 978], "label": "Table", "content": otsl},
+            ]
+
+    monkeypatch.setattr(playground_mod.infmod, "get_vllm_client", lambda: FakeClient())
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        res = client.post(
+            "/api/playground/parse",
+            json={"project_id": project_id, "page_id": page_ids[0], "engine": "model"},
+        )
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["ok"] is True
+        labels = [i["label"] for i in body["items"]]
+        assert labels == ["Title", "Issue-date", "Table"]
+        table = body["items"][-1]
+        assert table["content"] == otsl

@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import json
 import threading
+from .table_provenance import with_cell_provenance
+
 from dataclasses import dataclass
 
 from fastapi import HTTPException
 
 from ..db import connect
-from . import labeling, ocr as ocrmod, otsl, table_detect, table_headers
+from . import labeling, ocr as ocrmod, otsl, table_detect, table_headers, table_hint
 from . import model_labels
 from . import paddle_official
 from .inference import OutputTruncated
@@ -100,7 +102,12 @@ _TABLE_MIN_ROWS = 6
 
 
 def _looks_like_table(image, bbox: list[int]) -> bool:
-    """Vero se il ritaglio ha la struttura di una tabella allineata a spazi."""
+    """Vero se il ritaglio ha la struttura di una tabella allineata a spazi.
+
+    DEPRECATO: poggia su `table_detect` (percorso geometrico, v. l'intestazione
+    di quel modulo). È la promozione a `Table` del prefill OCR, in via d'uscita
+    insieme al rilevatore.
+    """
     x1, y1, x2, y2 = bbox
     if x2 - x1 < 50 or y2 - y1 < 50:
         return False
@@ -119,7 +126,7 @@ def _looks_like_table(image, bbox: list[int]) -> bool:
     return solid >= _TABLE_MIN_COLS - 1
 
 
-def _recognize_table(client, image, bbox: list[int], on_delta=None, cancel_event=None) -> dict:
+def _recognize_table(client, image, bbox: list[int], on_delta=None, cancel_event=None, hint: str | None = None) -> dict:
     """Griglia di una tabella: confini di riga dalla geometria, testo dal modello."""
     x1, y1, x2, y2 = bbox
     crop = image.crop((x1, y1, x2, y2))
@@ -129,7 +136,7 @@ def _recognize_table(client, image, bbox: list[int], on_delta=None, cancel_event
         row_bounds = [round(h * crop.height) for h in detection.hlines]
     except Exception:  # noqa: BLE001
         row_bounds = None
-    return client.table_grid(crop, row_bounds=row_bounds, on_delta=on_delta, cancel_event=cancel_event)
+    return client.table_grid(crop, row_bounds=row_bounds, on_delta=on_delta, cancel_event=cancel_event, hint=hint)
 
 
 def _table_cluster(kept: list[dict]) -> tuple[list[int], list[int]] | None:
@@ -346,6 +353,47 @@ def native_mode(adapter) -> str:
     )
 
 
+def native_page_items(client, image) -> list[dict]:
+    """Blocchi di una pagina dal percorso nativo «official» dell'adapter.
+
+    Qwen3-VL, PaddleOCR-VL, MinerU2.5, GLM-OCR e TeleOCR non hanno un prompt di
+    layout: il loro percorso in esercizio è la pipeline del produttore, che
+    restituisce bbox 0–1000 + label + contenuto in una volta. Estratto da
+    `model_prelabel_events` perché lo usino sia il prefill sia la valutazione e
+    il benchmark (altrimenti un adapter «official» non è misurabile).
+    """
+    adapter_id = client.adapter.adapter_id
+    if adapter_id == "teleocr":
+        return client.teleocr_native_page(image)
+    if adapter_id == "glm-ocr":
+        return client.glmocr_native_page(image)
+    if adapter_id == "mineru2.5":
+        return client.mineru_native_page(image)
+    if adapter_id == "qwen3-vl-8b":
+        return client.qwen_native_page(image)
+    # PaddleOCR-VL: pipeline ufficiale Paddle (layout + riconoscimento).
+    paddle_backend = "vllm-server"
+    if getattr(client, "provider", None) == "local":
+        from . import hardware
+
+        if hardware.pick_serve_runtime(client.adapter.capabilities) == hardware.RUNTIME_MLX:
+            paddle_backend = "mlx-vlm-server"
+    items = paddle_official.parse_page(
+        image, client.url, client.model, image.width, image.height,
+        vl_rec_backend=paddle_backend,
+    )
+    for item in items:
+        bbox = item.get("bbox") or []
+        if len(bbox) == 4:
+            item["bbox"] = [
+                round(float(bbox[0]) / image.width * 1000),
+                round(float(bbox[1]) / image.height * 1000),
+                round(float(bbox[2]) / image.width * 1000),
+                round(float(bbox[3]) / image.height * 1000),
+            ]
+    return items
+
+
 def _project_schema_labels(project_id: int) -> list:
     """Classi del progetto (default + custom) per il bridge nativa → canonica."""
     with connect() as conn:
@@ -354,6 +402,16 @@ def _project_schema_labels(project_id: int) -> list:
         ).fetchone()
     settings = json.loads(row["settings_json"] or "{}") if row else {}
     return labeling.project_schema(settings).labels
+
+
+def _project_table_hint(project_id: int) -> str:
+    """Hint di schema tabella del progetto (v. `services/table_hint.py`)."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT settings_json FROM projects WHERE id=?", (project_id,)
+        ).fetchone()
+    settings = json.loads(row["settings_json"] or "{}") if row else {}
+    return table_hint.get_table_hint(settings)
 
 
 def model_prelabel_events(
@@ -386,6 +444,7 @@ def model_prelabel_events(
     # default, quindi le classi custom del ricercatore venivano coercizzate a
     # `Text` in silenzio.
     schema_labels = _project_schema_labels(project_id)
+    table_hint_text = _project_table_hint(project_id)
     with connect() as conn:
         for pid in page_ids:
             if cancel_event is not None and cancel_event.is_set():
@@ -430,19 +489,19 @@ def model_prelabel_events(
                         visible_phase = output_phases.get(pid, phase)
                         on_output({"type": "output", "page_id": pid, "phase": visible_phase, "text": delta})
 
-                def call_live(method, *args, phase: str, on_retry=None):
+                def call_live(method, *args, phase: str, on_retry=None, **extra):
                     """Compatibilità con client/mock legacy privi di on_delta."""
                     callback = lambda d: emit(d, phase)
                     try:
-                        kwargs = {"on_delta": callback, "cancel_event": cancel_event}
+                        kwargs = {"on_delta": callback, "cancel_event": cancel_event, **extra}
                         if on_retry is not None:
                             kwargs["on_retry"] = on_retry
                         return method(*args, **kwargs)
                     except TypeError as exc:
-                        if not any(key in str(exc) for key in ("on_delta", "cancel_event", "on_retry")):
+                        if not any(key in str(exc) for key in ("on_delta", "cancel_event", "on_retry", *extra)):
                             raise
                         try:
-                            return method(*args, on_delta=callback)
+                            return method(*args, on_delta=callback, **extra)
                         except TypeError as retry_exc:
                             if "on_delta" not in str(retry_exc):
                                 raise
@@ -631,6 +690,7 @@ def model_prelabel_events(
                             crop,
                             k["label"],
                             phase="text",
+                            hint=table_hint_text,
                         )
                     except Exception as exc:  # noqa: BLE001
                         k["error"] = f"{k['bbox']}: {exc}"
@@ -692,11 +752,13 @@ def model_prelabel_events(
                                     client, image, k["bbox"],
                                     on_delta=lambda d: emit(d, "table"),
                                     cancel_event=cancel_event,
+                                    hint=table_hint_text,
                                 )
                     except Exception as exc:  # noqa: BLE001
                         k["error"] = f"{k['bbox']}: {exc}"
                         grid = None
                     if grid and grid["rows"]:
+                        grid = with_cell_provenance(grid, f"model:{client.model}", generated=True)
                         conn.execute(
                             "INSERT INTO tables (block_id, grid_json) VALUES (?, ?) "
                             "ON CONFLICT(block_id) DO UPDATE SET grid_json=excluded.grid_json, "

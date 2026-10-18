@@ -1,6 +1,8 @@
 """API playground: analisi di una pagina con il modello servito via vLLM."""
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import Literal
 
@@ -12,6 +14,7 @@ from ..services import labeling
 from ..services import paddle_official
 from ..services import pages as pagesvc
 from ..services import auth as authsvc
+from ..services import table_hint as table_hint_svc
 from ..services.i18n import msg, parse_lang
 
 router = APIRouter(
@@ -56,6 +59,11 @@ def playground_parse(
     if payload.engine == "ocr":
         return _parse_with_ocr(page, image, request)
     client = infmod.get_vllm_client()
+    try:
+        project_settings = json.loads(project["settings_json"] or "{}")
+    except (TypeError, ValueError):
+        project_settings = {}
+    table_hint = table_hint_svc.get_table_hint(project_settings)
 
     # Il playground disegna il layout: non tutti i modelli lo sanno fare. Tre
     # percorsi possibili, in ordine di specificità:
@@ -132,7 +140,8 @@ def playground_parse(
 
                     from PIL import Image as PILImage
 
-                    content = client.recognize(PILImage.open(BytesIO(crop)), label)
+                    extra = {"hint": table_hint} if (label == "Table" and table_hint) else {}
+                    content = client.recognize(PILImage.open(BytesIO(crop)), label, **extra)
             except Exception:  # noqa: BLE001
                 content = ""
         items.append(

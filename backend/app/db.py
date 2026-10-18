@@ -12,7 +12,7 @@ import sqlite3
 
 from . import config
 
-SCHEMA_VERSION = "17"
+SCHEMA_VERSION = "19"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -95,6 +95,12 @@ CREATE TABLE IF NOT EXISTS users (
     role          TEXT    NOT NULL DEFAULT 'editor'
                   CHECK(role IN ('admin','editor','viewer')),
     active        INTEGER NOT NULL DEFAULT 1,
+    -- Primo accesso / password reimpostata dall'admin: l'utente deve sceglierne
+    -- una propria prima di poter usare l'istanza (v. api/auth.py).
+    must_change_password INTEGER NOT NULL DEFAULT 0,
+    -- Invito via link: si conserva solo l'hash del token e la scadenza.
+    invite_token_hash TEXT,
+    invite_expires_at TEXT,
     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
     last_login_at TEXT
 );
@@ -344,6 +350,38 @@ _MIGRATIONS: list[tuple[str, str]] = [
         -- serving deve caricare il modello base e applicare questo adapter.
         ALTER TABLE custom_models ADD COLUMN source_train_type TEXT;
     """),
+    ("18", """
+        -- Onboarding e sicurezza account: password da cambiare al primo
+        -- accesso (o dopo un reset dell'admin) e invito via link a scadenza.
+        ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE users ADD COLUMN invite_token_hash TEXT;
+        ALTER TABLE users ADD COLUMN invite_expires_at TEXT;
+    """),
+    ("19", """
+        CREATE TABLE IF NOT EXISTS page_work (
+            page_id INTEGER PRIMARY KEY REFERENCES pages(id) ON DELETE CASCADE,
+            assignee_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            reviewer_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            state TEXT NOT NULL DEFAULT 'annotation' CHECK(state IN ('annotation','pending','changes_requested','approved')),
+            version INTEGER NOT NULL DEFAULT 1,
+            submitted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            submitted_revision INTEGER,
+            approved_revision INTEGER,
+            note TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            CHECK(assignee_id IS NULL OR reviewer_id IS NULL OR assignee_id != reviewer_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_page_work_assignee ON page_work(assignee_id, state);
+        CREATE INDEX IF NOT EXISTS idx_page_work_reviewer ON page_work(reviewer_id, state);
+        CREATE TRIGGER IF NOT EXISTS invalidate_team_approval AFTER UPDATE OF annotation_revision ON pages
+        WHEN NEW.annotation_revision != OLD.annotation_revision
+          AND EXISTS(SELECT 1 FROM page_work WHERE page_id=NEW.id AND state='approved')
+        BEGIN
+            UPDATE page_work SET state='changes_requested', version=version+1,
+                updated_at=datetime('now') WHERE page_id=NEW.id;
+            UPDATE pages SET status='review' WHERE id=NEW.id AND status IN ('approved','exported');
+        END;
+    """),
 ]
 
 
@@ -406,7 +444,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     for version, ddl in sorted(_MIGRATIONS, key=lambda m: int(m[0])):
         if int(version) <= current:
             continue
-        if version in {"16", "17"}:
+        if version in {"16", "17", "18"}:
             _execute_additive_migration(conn, ddl)
         else:
             conn.executescript(ddl)

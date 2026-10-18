@@ -18,6 +18,28 @@ def test_default_client_keeps_monkeyocrv2_prompts():
     assert infmod._prompt_for(client.adapter, "table", "Table", "fallback") == infmod.TABLE_PROMPT
 
 
+def test_qwen_mlx_guard_overrides_official_repetition_penalty():
+    """Sul percorso MLX il guard deve vincere sul `repetition_penalty` 1.0 della
+    ricetta ufficiale (prima il `setdefault` lo rendeva un no-op) e aggiungere le
+    finestre; su vLLM non tocca nulla."""
+    adapter = model_adapters.get_adapter("qwen3-vl-8b")
+
+    local = infmod.VllmClient(url="http://127.0.0.1:8889/v1", adapter=adapter)
+    local._uses_local_mlx = lambda: True  # type: ignore[method-assign]
+    sampling = local._sampling_for("layout")
+    assert sampling["repetition_penalty"] == 1.1
+    assert sampling["repetition_context_size"] == 128
+    assert sampling["presence_context_size"] == 256
+    assert sampling["presence_penalty"] == 1.5  # ufficiale, invariata
+    assert sampling["temperature"] == 0.7
+
+    remote = infmod.VllmClient(url="https://example.invalid/v1", adapter=adapter)
+    remote_sampling = remote._sampling_for("layout")
+    assert remote_sampling["repetition_penalty"] == 1.0
+    assert "repetition_context_size" not in remote_sampling
+    assert "presence_context_size" not in remote_sampling
+
+
 def test_prompt_for_propagates_not_implemented_instead_of_falling_back():
     # Un adapter che non sa fare un task deve fallire in modo esplicito, non
     # ricevere in silenzio il prompt di un modello diverso (v. `_prompt_for`

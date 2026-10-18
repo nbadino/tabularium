@@ -115,6 +115,21 @@ def test_end2end_model_is_scored_on_its_own_blocks_and_content(monkeypatch):
     assert res["tables"][0]["structure_ok"] is True and res["tables"][0]["cell_cer"] == 0.0
 
 
+def test_teds_grades_partial_structure():
+    """TEDS è graduato: struttura identica = 1, una cella in meno < 1, vuoto = 1."""
+    def grid(rows, cells):
+        return {"rows": rows, "cols": 2, "cells": cells}
+
+    a = grid(2, [{"r": 0, "c": 0, "rowspan": 1, "colspan": 1, "text": "Abidjan"},
+                 {"r": 1, "c": 0, "rowspan": 1, "colspan": 1, "text": "Accra"}])
+    b = grid(2, [{"r": 0, "c": 0, "rowspan": 1, "colspan": 1, "text": "Abidjan"}])
+    assert evmod.teds(a, a) == 1.0
+    assert 0.0 < evmod.teds(a, b) < 1.0
+    assert evmod.teds({"rows": 0, "cells": []}, {"rows": 0, "cells": []}) == 1.0
+    m = evmod.table_metrics(a, "<fcel>Abidjan<nl><fcel>Accra<nl>")
+    assert "teds" in m and m["teds"] == 1.0
+
+
 def test_table_metrics():
     grid = {
         "rows": 2,

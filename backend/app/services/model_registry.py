@@ -437,10 +437,11 @@ def list_models() -> list[dict]:
             "local_serve_ready": local_serve_ready,
             "cloud_serve_ready": cap["adapter_id"] in _CLOUD_TEMPLATES,
             "cloud_template": _CLOUD_TEMPLATES.get(cap["adapter_id"]),
-            "downloadable": not custom_checkpoint,
+            "downloadable": bool(cap.get("hf_repo")) and not custom_checkpoint,
             "checkpoint_detached": custom_checkpoint and not state.get("installed"),
             "download_only": (
-                not local_serve_ready
+                bool(cap.get("hf_repo"))
+                and not local_serve_ready
                 and cap["adapter_id"] not in _CLOUD_TEMPLATES
                 and not modes["supports_native"]
             ),

@@ -4,6 +4,7 @@ Avvio:  uvicorn app.main:app --port 8787
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -20,8 +21,14 @@ from .services.i18n import localize_detail, parse_lang
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
+    # Il canale live notifica gli endpoint sincroni (che girano in un thread di
+    # lavoro) da un loop diverso: senza questo riferimento i `publish` non
+    # avrebbero dove atterrare.
+    from .services import live as livesvc
+    livesvc.hub.bind_loop(asyncio.get_running_loop())
     from .services import backup as backupsvc
     from .services import cloud_manager, recognition, serve_manager, trainer
+    from .services import benchmark as benchsvc
     db_check = backupsvc.integrity()
     if not db_check["ok"]:
         detail = "; ".join(db_check.get("messages") or ["integrity check fallito"])
@@ -34,6 +41,7 @@ async def lifespan(_app: FastAPI):
     trainer.reconcile_jobs()
     serve_manager.reconcile_jobs()
     recognition.reconcile_runs()
+    benchsvc.reconcile_benchmarks()
     cloud_manager.reconcile_tunnel()
     yield
 

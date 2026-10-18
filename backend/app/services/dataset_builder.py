@@ -15,6 +15,8 @@ import random
 import shutil
 import sqlite3
 import tempfile
+from .table_provenance import with_cell_provenance
+
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -280,6 +282,9 @@ def collect_pages_with_blocks(project_id: int) -> dict[int, dict]:
                         tables[row["block_id"]] = json.loads(row["grid_json"] or "{}")
                     except (TypeError, ValueError):
                         tables[row["block_id"]] = {}
+            for block in blocks:
+                if block["id"] in tables:
+                    tables[block["id"]] = with_cell_provenance(tables[block["id"]], block["prefill_source"])
             page_data[page["id"]] = {"page": page, "blocks": blocks, "tables": tables}
     return page_data
 

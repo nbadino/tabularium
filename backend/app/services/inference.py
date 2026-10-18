@@ -14,6 +14,7 @@ import re
 import sqlite3
 import threading
 import time
+import uuid
 from collections import Counter
 from collections.abc import Callable
 
@@ -39,6 +40,11 @@ END2END_PROMPT = (
     "coordinates, and the content of each element."
 )
 
+# Valori ammessi da `compute_profiles.provider` (CHECK in `db.py`): un provider
+# esterno fuori elenco — il gateway OpenCode dei modelli chiusi — si registra
+# come "custom".
+_PROFILE_PROVIDERS = frozenset({"local", "ssh", "vast", "runpod", "modal", "custom"})
+
 
 class OutputTruncated(RuntimeError):
     """La generazione ha esaurito i token prima di chiudere l'output."""
@@ -61,6 +67,22 @@ def _prompt_for(adapter: ModelAdapter, task: str, label: str | None, fallback: s
     pagina/richiesta, non un crash.
     """
     return adapter.prompt_for(task, label) or fallback
+
+
+def _with_table_hint(adapter: ModelAdapter, prompt: str, hint: str | None) -> str:
+    """Accoda il hint di schema tabella al prompt, solo dove l'adapter lo accetta.
+
+    Il hint è testo libero scritto dal progetto (es. «Year e Tons sono unite su
+    una riga sopra»). Si aggiunge **dopo** il prompt ufficiale, separato da una
+    riga vuota, così il modello vede prima l'istruzione canonica del checkpoint.
+    Gli adapter con un token di protocollo o una pipeline nativa dichiarano
+    `accepts_prompt_hint=False` e restano invariati: lì il testo sarebbe fuori
+    distribuzione o romperebbe la modalità (v. `ModelCapabilities`).
+    """
+    text = (hint or "").strip()
+    if not text or not getattr(adapter.capabilities, "accepts_prompt_hint", False):
+        return prompt
+    return f"{prompt}\n\n{text}"
 
 # Semantica identica a `load_image` di `parsing/core_runner.py` (repo ufficiale):
 #   - `min_pixels` INGRANDISCE le immagini piccole, non le riduce. Il pipeline
@@ -285,6 +307,10 @@ class VllmClient:
         self.max_pixels: int | None = cap if (cap or 0) > 0 else None
         self.last_trace: dict = {}
         self.last_text = ""
+        # Session id stabile per il gateway OpenCode: il suo routing e il
+        # prompt caching lo usano per raggruppare le richieste della stessa
+        # conversazione (header `x-opencode-session`, obbligatorio lì).
+        self._session_id = uuid.uuid4().hex
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -483,6 +509,19 @@ class VllmClient:
         task: str = "text",
         cancel_event: threading.Event | None = None,
     ) -> str:
+        # Alcuni modelli chiusi (Gemini 4 Argon) non parlano OpenAI: il loro
+        # endpoint è il `generateContent` di Google. Il resto della pipeline
+        # non cambia — stesso prompt dall'adapter, stessa risposta di testo.
+        if getattr(self.adapter, "chat_protocol", "") == "google-generatecontent":
+            return self._generate_content(
+                image,
+                prompt,
+                max_tokens=max_tokens,
+                total_timeout=total_timeout,
+                sampling=sampling,
+                on_delta=on_delta,
+                cancel_event=cancel_event,
+            )
         buf = io.BytesIO()
         # Cap effettivo: default storico = tetto del client (MOCR2-style);
         # `None` esplicito = nessun ridimensionamento client-side (il cap vero
@@ -669,6 +708,115 @@ class VllmClient:
             raise RuntimeError(f"vLLM non raggiungibile ({self.url}): {last}")
         raise RuntimeError(f"vLLM ({self.url}): {last}")
 
+    def _google_base_url(self) -> str:
+        """Base del protocollo Google, tollerante alla forma dell'URL salvato.
+
+        L'utente può incollare l'endpoint del modello per intero (come nella
+        documentazione OpenCode: `.../models/gemini-4-argon-contributor`) o la
+        sola base `.../v1beta`. Entrambi devono produrre la stessa richiesta:
+        tutto ciò che è `/models/<id>` o `:generateContent` viene tolto e il
+        modello lo si prende da `self.model`.
+        """
+        url = self.url.rstrip("/")
+        if url.endswith(":generateContent"):
+            url = url[: -len(":generateContent")]
+        marker = "/models/"
+        if marker in url:
+            url = url.split(marker, 1)[0]
+        return url
+
+    def _generate_content(
+        self,
+        image: Image.Image,
+        prompt: str,
+        *,
+        max_tokens: int = 4096,
+        total_timeout: float | None = None,
+        sampling: dict | None = None,
+        on_delta: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
+        """Una generazione dal protocollo Google `generateContent`.
+
+        Non streaming (una richiesta, una risposta): il client OpenCode/Google
+        qui non offre un percorso di streaming usato dal resto del codice, e
+        una risposta unica è più semplice da tracciare. `sampling` copre solo i
+        campi che `generationConfig` accetta davvero.
+        """
+        if cancel_event is not None and cancel_event.is_set():
+            raise RuntimeError("inference cancelled")
+        prepared = _fit_pixels(image, max_pixels=self.max_pixels).convert("RGB")
+        buf = io.BytesIO()
+        prepared.save(buf, format="PNG")
+        data = base64.b64encode(buf.getvalue()).decode("ascii")
+
+        generation: dict = {"maxOutputTokens": max(1, int(max_tokens))}
+        for key in ("temperature", "topP", "topK"):
+            source = {"temperature": "temperature", "topP": "top_p", "topK": "top_k"}[key]
+            if sampling and sampling.get(source) is not None:
+                generation[key] = sampling[source]
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"inline_data": {"mime_type": "image/png", "data": data}},
+                        {"text": prompt},
+                    ],
+                }
+            ],
+            "generationConfig": generation,
+        }
+        headers = self._headers()
+        # L'header è obbligatorio sul gateway OpenCode e innocuo altrove;
+        # l'User-Agent generico viene rifiutato dal bordo Cloudflare.
+        headers["x-opencode-session"] = self._session_id
+        headers.setdefault("User-Agent", "tabularium/1.0")
+        # Google nativo usa `x-goog-api-key`; il gateway OpenCode accetta
+        # anche `Authorization: Bearer`, già presente in `_headers`. Mando
+        # entrambi per non dipendere dalla via.
+        if self.api_key:
+            headers.setdefault("x-goog-api-key", self.api_key)
+
+        endpoint = f"{self._google_base_url()}/models/{self.model}:generateContent"
+        started = time.perf_counter()
+        try:
+            response = requests.post(
+                endpoint,
+                json=payload,
+                headers=headers,
+                timeout=(10, total_timeout or self.timeout),
+            )
+            response.raise_for_status()
+            body = response.json()
+        except requests.exceptions.RequestException as exc:
+            raise RuntimeError(f"gateway del modello non raggiungibile ({self.url}): {exc}") from exc
+        except ValueError as exc:
+            raise RuntimeError(f"risposta non JSON dal gateway ({self.url})") from exc
+        ended = time.perf_counter()
+
+        candidates = body.get("candidates") or []
+        text = ""
+        finish_reason: str | None = None
+        if candidates:
+            candidate = candidates[0]
+            finish_reason = candidate.get("finishReason")
+            for part in (candidate.get("content") or {}).get("parts") or []:
+                text += str(part.get("text") or "")
+        self.last_text = text
+        usage = body.get("usageMetadata") or {}
+        self.last_trace = {
+            "elapsed_s": round(ended - started, 3),
+            "prompt_tokens": usage.get("promptTokenCount"),
+            "completion_tokens": usage.get("candidatesTokenCount"),
+            "finish_reason": finish_reason,
+            "max_tokens": generation["maxOutputTokens"],
+            "chars": len(text),
+        }
+        if on_delta and text:
+            on_delta(text)
+        return text
+
     def _parse_items(self, raw: str) -> list[dict]:
         """Delega il parsing all'adapter se ne dichiara uno proprio (es.
         `MinerU2_5Adapter`, formato a token speciali, non il JSON tollerante
@@ -721,10 +869,23 @@ class VllmClient:
             # il modello ha già il suo processore n-gram.
             if self._uses_local_mlx():
                 mlx = settings["effective"].get("mlx") or {}
-                if mlx.get("repetition_penalty") is not None:
-                    sampling.setdefault("repetition_penalty", float(mlx["repetition_penalty"]))
+                gen_overrides = (settings.get("overrides") or {}).get("generation") or {}
+                # Il guard vince sul default della ricetta (Qwen porta
+                # `repetition_penalty` a 1.0): senza questo l'override resterebbe
+                # un no-op per via del `setdefault`. Un valore scelto dall'utente
+                # in Impostazioni ha comunque la precedenza.
+                if (
+                    mlx.get("repetition_penalty") is not None
+                    and "repetition_penalty" not in gen_overrides
+                ):
+                    sampling["repetition_penalty"] = float(mlx["repetition_penalty"])
                 if mlx.get("repetition_context_size") is not None:
-                    sampling.setdefault("repetition_context_size", int(mlx["repetition_context_size"]))
+                    sampling["repetition_context_size"] = int(mlx["repetition_context_size"])
+                # La presence penalty ufficiale di Qwen3-VL vale solo se la
+                # finestra copre una riga di registro: a 20 token (default di
+                # mlx-vlm) la ripetizione resta invisibile.
+                if mlx.get("presence_context_size") is not None:
+                    sampling["presence_context_size"] = int(mlx["presence_context_size"])
         except (ImportError, ValueError, KeyError):
             pass
         return sampling or None
@@ -923,10 +1084,13 @@ class VllmClient:
         on_delta: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
         total_timeout: float | None = None,
+        hint: str | None = None,
     ) -> str:
         task = "table" if label == "Table" else "text"
         fallback = TABLE_PROMPT if label == "Table" else TEXT_PROMPT
         prompt = _prompt_for(self.adapter, task, label, fallback)
+        if task == "table":
+            prompt = _with_table_hint(self.adapter, prompt, hint)
         # Una tabella non sta in un budget da blocco di testo: un registro
         # Historic Shipping Index a piena pagina è di 70-80 righe OTSL e a 3072
         # token l'uscita si interrompeva a metà cella (misurato su
@@ -973,6 +1137,7 @@ class VllmClient:
         max_tokens: int = TABLE_MAX_TOKENS,
         on_delta: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
+        hint: str | None = None,
     ) -> dict:
         """Riconosce una tabella e restituisce la griglia (celle + span).
 
@@ -1007,7 +1172,11 @@ class VllmClient:
             else 0
         )
         header = image.crop((0, 0, image.width, header_h)) if header_h > 4 else None
-        prompt = _prompt_for(self.adapter, "table", "Table", TABLE_PROMPT)
+        prompt = _with_table_hint(
+            self.adapter,
+            _prompt_for(self.adapter, "table", "Table", TABLE_PROMPT),
+            hint,
+        )
 
         def recognize_band(item: tuple[int, tuple[int, int]]) -> list[list[dict]]:
             """Riconosce una banda e restituisce le righe già ordinate.
@@ -1141,6 +1310,11 @@ class VllmClient:
         ]
 
     def ping(self, timeout: float | None = None) -> bool:
+        # Il protocollo Google non ha `/models`: la disponibilità si prova con
+        # la stessa generazione minima di `test_connection`, altrimenti il
+        # pre-flight del prefill direbbe «modello non disponibile» sempre.
+        if getattr(self.adapter, "chat_protocol", "") == "google-generatecontent":
+            return bool(self._test_google_connection(timeout=timeout or self.timeout)["ok"])
         # Il default usa il timeout del client, non un tetto fisso: i tre
         # chiamanti reali (prelabel, blocks, evaluate) lo invocano come
         # pre-flight prima di un'operazione lunga, con il timeout che l'utente
@@ -1168,6 +1342,10 @@ class VllmClient:
 
     def test_connection(self, timeout: float = 10.0) -> dict:
         """Verifica la connessione all'endpoint (locale o cloud) e misura latenza e modelli."""
+        # Il protocollo Google non espone `/models` come OpenAI: la prova è una
+        # generazione minima, che verifica insieme endpoint, chiave e modello.
+        if getattr(self.adapter, "chat_protocol", "") == "google-generatecontent":
+            return self._test_google_connection(timeout=timeout)
         started = time.perf_counter()
         try:
             if self.api_key or self.extra_headers:
@@ -1226,6 +1404,52 @@ class VllmClient:
                 "is_cloud": self.is_cloud,
                 "error": str(exc),
             }
+
+
+    def _test_google_connection(self, timeout: float = 10.0) -> dict:
+        """Prova del gateway Google: una generazione minima testo→testo.
+
+        Il gateway non ha un ping economico: `GET /models` è 404, e una richiesta
+        malformata (corpo vuoto, `thinkingLevel`, modello inesistente) risponde
+        **500 con corpo vuoto**, indistinguibile da un guasto. L'unica risposta
+        affidabile è una generazione vera (`maxOutputTokens: 1`), che costa la
+        latenza del «pensiero» di Argon (2–20 s): per questo il timeout ha un
+        pavimento alto e il risultato è quello che la UI mostra come disponibile.
+        """
+        started = time.perf_counter()
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": "ok"}]}],
+            "generationConfig": {"maxOutputTokens": 1},
+        }
+        headers = self._headers()
+        headers["x-opencode-session"] = self._session_id
+        headers.setdefault("User-Agent", "tabularium/1.0")
+        if self.api_key:
+            headers.setdefault("x-goog-api-key", self.api_key)
+        endpoint = f"{self._google_base_url()}/models/{self.model}:generateContent"
+
+        def result(ok: bool, error: str | None) -> dict:
+            return {
+                "ok": ok,
+                "url": self.url,
+                "model": self.model,
+                "models_available": [self.model] if ok else [],
+                "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+                "is_cloud": self.is_cloud,
+                "error": error,
+            }
+
+        try:
+            response = requests.post(
+                endpoint, json=payload, headers=headers, timeout=max(timeout, 30.0)
+            )
+        except requests.exceptions.RequestException as exc:
+            return result(False, str(exc))
+        if response.status_code in (401, 403):
+            return result(False, "chiave rifiutata dal gateway (HTTP 401)")
+        if response.status_code == 200:
+            return result(True, None)
+        return result(False, f"gateway non disponibile (HTTP {response.status_code})")
 
 
 def get_inference_config() -> dict:
@@ -1333,6 +1557,19 @@ def get_inference_config() -> dict:
     except Exception:
         profile = None
 
+    # Un modello chiuso via gateway OpenCode non ha una chiave nel vault: la
+    # sottoscrizione la conserva già sulla macchina. Vale per ogni lettore
+    # (readiness della UI, test, client), quindi si risolve qui una volta sola.
+    if not api_key:
+        try:
+            backend = getattr(get_adapter(adapter_id).capabilities, "serve_backend", "")
+        except ValueError:
+            backend = ""
+        if provider == "opencode" or backend == "opencode-gateway":
+            from . import opencode_gateway
+
+            api_key = opencode_gateway.read_api_key()
+
     native_url = None
     if adapter_id in {"teleocr", "glm-ocr", "mineru2.5"} and provider == "vast":
         try:
@@ -1366,6 +1603,8 @@ def get_inference_config() -> dict:
 
 def _provider_for_endpoint(url: str) -> str:
     value = str(url or "").lower()
+    if "opencode.ai" in value:
+        return "opencode"
     if ".modal.run" in value:
         return "modal"
     if "runpod" in value:
@@ -1392,6 +1631,8 @@ def _adapter_for_endpoint(model: str, url: str) -> str | None:
         ("glm-ocr", "glm-ocr"),
         ("deepseek-ocr", "deepseek-ocr"),
         ("qwen3-vl", "qwen3-vl-8b"),
+        ("gemini-4-argon", "gemini-argon"),
+        ("argon", "gemini-argon"),
         ("monkeyocr", "monkeyocrv2-parsing"),
     )
     for alias, adapter_id in aliases:
@@ -1438,6 +1679,11 @@ def save_inference_config(cfg: dict) -> None:
         adapter_id = str(cfg["adapter_id"]).strip() or "monkeyocrv2-parsing"
         get_adapter(adapter_id)  # ValueError esplicito se sconosciuto, non salvato a metà
         items.append(("inference_adapter_id", adapter_id))
+        # Il tetto pixel globale è un residuo della ricetta MonkeyOCRv2 (1 MP) e
+        # non vale per gli altri modelli: cambiando adapter si azzera, così il
+        # nuovo modello usa la propria ricetta (o nessun tetto). Un override per
+        # modello resta in Impostazioni → Modelli.
+        items.append(("inference_max_pixels", ""))
     elif "model" in cfg or "url" in cfg:
         inferred = _adapter_for_endpoint(
             str(cfg.get("model") or ""), str(cfg.get("url") or "")
@@ -1447,6 +1693,12 @@ def save_inference_config(cfg: dict) -> None:
     identity_changed = any(key in cfg for key in ("url", "model", "adapter_id"))
     if identity_changed:
         provider = str(cfg.get("provider") or _provider_for_endpoint(str(cfg.get("url") or ""))).strip()
+        # `compute_profiles.provider` ha un CHECK con l'elenco dei provider
+        # fisici; un endpoint esterno come il gateway OpenCode è «custom» nel
+        # profilo (resta remoto, quindi `is_cloud` è vero) anche se `provider`
+        # in memoria può portare l'etichetta più specifica.
+        if provider not in _PROFILE_PROVIDERS:
+            provider = "custom"
         items.append(("inference_provider", provider))
         items.append(("inference_resource_id", str(cfg.get("resource_id") or "").strip()))
         items.append((
@@ -1511,10 +1763,21 @@ def get_vllm_client(
         # ripiegare su MonkeyOCRv2 che rifiutare la richiesta di inferenza.
         adapter = MonkeyOCRv2ParsingAdapter()
     try:
+        resolved_key = api_key if api_key is not None else cfg.get("api_key")
+        # I modelli chiusi via gateway OpenCode non hanno una chiave nel vault
+        # al primo uso: opencode la conserva già sulla macchina, quindi la
+        # prendiamo da lì invece di chiedere di incollarla due volte.
+        if not resolved_key and (
+            cfg.get("provider") == "opencode"
+            or getattr(adapter.capabilities, "serve_backend", "") == "opencode-gateway"
+        ):
+            from . import opencode_gateway
+
+            resolved_key = opencode_gateway.read_api_key() or None
         kwargs = {
             "url": url or cfg["url"],
             "model": model or cfg["model"],
-            "api_key": api_key if api_key is not None else cfg.get("api_key"),
+            "api_key": resolved_key,
             "extra_headers": (
                 extra_headers if extra_headers is not None else cfg.get("extra_headers")
             ),

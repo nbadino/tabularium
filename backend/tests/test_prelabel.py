@@ -339,6 +339,51 @@ def test_model_end2end_persists_table_without_second_call(tmp_path: Path, monkey
         assert block["prefill_source"].endswith(":end2end")
         grid = client.get(f"/api/blocks/{block['id']}/table").json()["grid"]
         assert grid["rows"] == 2 and grid["cols"] == 2
+        assert all(c["source"] == "model" and not c["verified"] for c in grid["cells"])
+
+
+def test_model_end2end_argon_keeps_header_elements_and_table(tmp_path: Path, monkeypatch):
+    """Gemini 4 Argon via END2END: testata, numero, data e tabella in una sola
+    generazione. È ciò che il modello senza protocollo di layout deve dare per
+    poter etichettare anche le informazioni in alto, non solo il registro."""
+    from app.api import prelabel as prelabelmod
+    from app.services import prefill as prefillsvc
+    from app.services.model_adapters import GeminiArgonAdapter
+
+    class FakeModel:
+        model = "gemini-4-argon-contributor"
+        adapter = GeminiArgonAdapter()
+
+        def ping(self):
+            return True
+
+        def end2end(self, image, **kwargs):
+            return [
+                {"bbox": [65, 48, 86, 61], "label": "Page-header", "content": "44"},
+                {"bbox": [332, 47, 626, 61], "label": "Title", "content": "LLOYD'S DAILY INDEX"},
+                {"bbox": [773, 47, 902, 62], "label": "Issue-date", "content": "Nov. 2, 1925"},
+                {"bbox": [36, 75, 932, 978], "label": "Table",
+                 "content": "<fcel>Corbank<fcel>Br<nl><fcel>Corbeach<ecel><nl>"},
+            ]
+
+    monkeypatch.setattr(prelabelmod.inference, "VllmClient", FakeModel)
+    monkeypatch.setattr(prefillsvc, "_looks_like_table", lambda *_args: True)
+
+    with TestClient(app) as client:
+        pid, page_id = _get_page(client, tmp_path / "argon-end2end")
+        response = client.post(
+            f"/api/projects/{pid}/prelabel",
+            json={"page_ids": [page_id], "mode": "replace", "engine": "model"},
+        )
+        assert response.status_code == 200, response.text
+        result = response.json()["results"][0]
+        assert result["model_mode"] == "end2end"
+        blocks = client.get(f"/api/pages/{page_id}/annotations").json()["items"]
+        labels = [b["label"] for b in blocks]
+        assert "Title" in labels and "Issue-date" in labels and "Page-header" in labels
+        table = next(b for b in blocks if b["label"] == "Table")
+        grid = client.get(f"/api/blocks/{table['id']}/table").json()["grid"]
+        assert grid["rows"] == 2 and grid["cols"] == 2
 
 
 def test_model_end2end_truncated_page_falls_back_to_two_stage(tmp_path: Path, monkeypatch):

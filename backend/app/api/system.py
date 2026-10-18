@@ -14,7 +14,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from ..services.model_adapters import list_adapters
+from ..services.model_adapters import get_adapter, list_adapters
 from ..services.domain_profiles import list_profiles
 from ..services.pipeline import list_plugins
 from ..services.url_security import validate_endpoint
@@ -35,6 +35,17 @@ _inference_health_cache: tuple[str, float, dict] | None = None
 
 def _admin(user: dict = Depends(authsvc.get_current_user)) -> dict:
     return authsvc.require_admin(user)
+
+
+def _adapter_or_none(adapter_id: str | None):
+    """Adapter per l'endpoint configurato, o `None` (default MonkeyOCRv2) se
+    l'id non è (più) registrato: la readiness non deve mai fallire per questo."""
+    if not adapter_id:
+        return None
+    try:
+        return get_adapter(adapter_id)
+    except ValueError:
+        return None
 
 
 @router.get("/api/system/backup", dependencies=[Depends(authsvc.get_current_user)])
@@ -178,6 +189,14 @@ def model_adapters() -> dict:
         item["export_ready"] = supports_export(get_adapter(item["adapter_id"]))
         items.append(item)
     return {"items": items}
+
+
+@router.get("/api/system/train-recipes", dependencies=[Depends(authsvc.get_current_user)])
+def train_recipes() -> dict:
+    """Ricette di training per adapter (M18): toolchain, doc ufficiale, maturità."""
+    from ..services import train_recipes as recipes
+
+    return {"items": recipes.list_recipes(), "trainable": recipes.trainable_adapters()}
 
 
 @router.get("/api/system/domain-profiles", dependencies=[Depends(authsvc.get_current_user)])
@@ -345,6 +364,7 @@ def get_inference_settings() -> dict:
         extra_headers=cfg["extra_headers"],
         timeout=min(cfg.get("timeout", 180), 5),
         provider=cfg.get("provider"),
+        adapter=_adapter_or_none(cfg.get("adapter_id")),
     )
     global _inference_health_cache
     cache_key = "\x1f".join(
@@ -426,6 +446,15 @@ def test_inference_endpoint(payload: dict, user: dict = Depends(authsvc.get_curr
     api_key = payload.get("api_key") or ""
     extra_headers = payload.get("extra_headers") or {}
     timeout = float(payload.get("timeout", 10.0))
+    adapter = _adapter_or_none(payload.get("adapter_id"))
+    # Il test nasce da un endpoint non ancora salvato: la chiave del gateway
+    # OpenCode va cercata qui, non nel vault (che è vuoto al primo giro).
+    if not api_key and adapter is not None and getattr(
+        adapter.capabilities, "serve_backend", ""
+    ) == "opencode-gateway":
+        from ..services import opencode_gateway
+
+        api_key = opencode_gateway.read_api_key()
 
     client = inference.VllmClient(
         url=url,
@@ -433,6 +462,8 @@ def test_inference_endpoint(payload: dict, user: dict = Depends(authsvc.get_curr
         api_key=api_key,
         extra_headers=extra_headers,
         timeout=int(timeout),
+        adapter=adapter,
+        provider="opencode" if "opencode.ai" in url.lower() else None,
     )
     return client.test_connection(timeout=timeout)
 

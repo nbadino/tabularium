@@ -111,6 +111,7 @@ def test_new_adapters_are_registered_alongside_monkeyocrv2():
         "qwen3-vl-8b",
         "teleocr",
         "lightonocr-3",
+        "gemini-argon",
     ):
         assert expected in ids
 
@@ -121,6 +122,25 @@ def test_unknown_adapter_raises():
         raise AssertionError("doveva sollevare ValueError")
     except ValueError:
         pass
+
+
+def test_gemini_argon_is_remote_only_and_not_downloadable():
+    """Argon non ha pesi: non si scarica, non gira in locale, e l'unico
+    percorso è un endpoint esterno con protocollo Google."""
+    row = {item["adapter_id"]: item for item in model_registry.list_models()}["gemini-argon"]
+    assert row["hf_repo"] == ""
+    assert row["downloadable"] is False
+    assert row["download_only"] is False
+    assert row["local"]["runnable"] is False
+    assert row["local"]["reason"] == "model_unsupported_locally"
+    assert row["cloud_serve_ready"] is False
+    assert row["export_ready"] is False
+    # END2END: bbox + label + contenuto (testata, numero, data, tabella) in una
+    # sola generazione; niente due-stadi.
+    assert row["supports_native"] is True
+    assert row["supports_two_stage"] is False
+    assert row["supports_end2end"] is True
+    assert row["serve_backend"] == "opencode-gateway"
 
 
 def test_install_state_reflects_disk_without_weights():
