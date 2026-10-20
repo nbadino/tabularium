@@ -1,0 +1,19 @@
+name: publish-monkey-image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  public:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Make the Monkey training image public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method PATCH /user/packages/container/tabularium-train-monkey -f visibility=public
+          gh api /user/packages/container/tabularium-train-monkey | head -c 400
