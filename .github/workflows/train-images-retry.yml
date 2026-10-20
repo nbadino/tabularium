@@ -2,6 +2,11 @@ name: train-images-retry
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "docker/train-qwen/**"
+      - "docker/train-dots/**"
+      - ".github/workflows/train-images-retry.yml"
 
 permissions:
   contents: read
