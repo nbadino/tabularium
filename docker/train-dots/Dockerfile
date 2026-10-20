@@ -1,6 +1,6 @@
-# flash-attn senza compilare: wheel prebuilt per torch 2.6/cu12/ABI FALSE.
-# Immagine solo ambiente (pesi scaricati da HuggingFace al primo run).
-FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
+# dots.ocr: base torch 2.8 e wheel flash-attn prebuilt per la stessa coppia.
+# Il wheel viene scelto in base all'ABI C++ di torch, senza compilare.
+FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
@@ -10,7 +10,9 @@ RUN python -m venv --system-site-packages /opt/tabularium/venv
 ENV PATH=/opt/tabularium/venv/bin:$PATH
 RUN python -m pip install --upgrade pip
 RUN python -m pip install "ms-swift==4.6.0" "transformers==4.57.1" "accelerate==1.11.0" "qwen_vl_utils==0.0.14"
-RUN python -m pip install "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.6cxx11abiTRUE-cp311-cp311-linux_x86_64.whl"
+RUN ABI=$(python -c 'import torch; print("TRUE" if torch._C._GLIBCXX_USE_CXX11_ABI else "FALSE")') \
+    && echo "torch cxx11 ABI=$ABI" \
+    && python -m pip install "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abi${ABI}-cp311-cp311-linux_x86_64.whl"
 RUN python - <<'PY'
 import json, pathlib
 import torch, transformers, swift, flash_attn
