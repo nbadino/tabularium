@@ -30,3 +30,9 @@ jobs:
             ghcr.io/nbadino/tabularium-train-monkey:monkey-v1
             ghcr.io/nbadino/tabularium-train-monkey:monkey-${{ github.sha }}
           provenance: false
+      - name: Make GHCR package public
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method PATCH /user/packages/container/tabularium-train-monkey -f visibility=public
