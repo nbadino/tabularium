@@ -2,6 +2,10 @@ name: publish-monkey-image
 
 on:
   workflow_dispatch:
+  push:
+    branches: [feature/train-image]
+    paths:
+      - ".github/workflows/publish-monkey-image.yml"
 
 permissions:
   contents: read
