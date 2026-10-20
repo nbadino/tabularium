@@ -19,5 +19,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh api --method PATCH /user/packages/container/tabularium-train-monkey -f visibility=public
-          gh api /user/packages/container/tabularium-train-monkey | head -c 400
+          gh api "/users/${GITHUB_REPOSITORY_OWNER}/packages?package_type=container"
+          gh api --method PATCH "/users/${GITHUB_REPOSITORY_OWNER}/packages/container/tabularium-train-monkey" -f visibility=public
+          gh api "/users/${GITHUB_REPOSITORY_OWNER}/packages/container/tabularium-train-monkey" | head -c 400
