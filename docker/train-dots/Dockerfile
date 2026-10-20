@@ -10,7 +10,7 @@ RUN python -m venv --system-site-packages /opt/tabularium/venv
 ENV PATH=/opt/tabularium/venv/bin:$PATH
 RUN python -m pip install --upgrade pip
 RUN python -m pip install "ms-swift==4.6.0" "transformers==4.57.1" "accelerate==1.11.0" "qwen_vl_utils==0.0.14"
-RUN python -m pip install "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl"
+RUN python -m pip install "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.6cxx11abiTRUE-cp311-cp311-linux_x86_64.whl"
 RUN python - <<'PY'
 import json, pathlib
 import torch, transformers, swift, flash_attn
