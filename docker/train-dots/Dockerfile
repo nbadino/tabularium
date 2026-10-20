@@ -2,7 +2,7 @@
 # da HuggingFace al primo run).
 FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
 ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
-    HF_HOME=/root/.cache/huggingface MAX_JOBS=8
+    HF_HOME=/root/.cache/huggingface MAX_JOBS=8     TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"     CXXFLAGS="-D_GLIBCXX_USE_CXX11_ABI=0"
 RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates python3-venv libgl1 libglib2.0-0 libgomp1 && rm -rf /var/lib/apt/lists/*
 RUN python -m venv --system-site-packages /opt/tabularium/venv
 ENV PATH=/opt/tabularium/venv/bin:$PATH

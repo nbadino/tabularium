@@ -5,7 +5,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-cer
 RUN python -m venv --system-site-packages /opt/tabularium/venv
 ENV PATH=/opt/tabularium/venv/bin:$PATH
 RUN python -m pip install --upgrade pip
-RUN python -m pip install "ms-swift==4.6.0" "transformers==5.20.2" "accelerate==1.11.0" "qwen_vl_utils==0.0.14"
+# ms-swift 4.6 dichiara transformers<5; il setup runtime installa i due
+# pacchetti in due passi perché la ricetta Qwen è validata su 5.20.2.
+RUN python -m pip install "ms-swift==4.6.0"
+RUN python -m pip install "transformers==5.20.2" "accelerate==1.11.0" "qwen_vl_utils==0.0.14"
 RUN python - <<'PY'
 import json, pathlib
 import torch, transformers, swift
