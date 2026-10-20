@@ -39,9 +39,15 @@ PADDLE_IMAGE = "paddlepaddle/paddle:3.3.0-gpu-cuda12.6-cudnn9.5"
 # Immagini prebuilt versionate: niente pip al noleggio. Il profilo monkey è il
 # primo; gli altri restano sul provisioning runtime finché non hanno la loro.
 PREBUILT_IMAGES = {
-    "monkey": "ghcr.io/nbadino/tabularium-train-monkey:monkey-v3",
+    "monkey": "ghcr.io/nbadino/tabularium-train-monkey:monkey-v4",
+    "qwen": "ghcr.io/nbadino/tabularium-train-qwen:qwen-v1",
+    "legacy": "ghcr.io/nbadino/tabularium-train-legacy:legacy-v1",
+    "glm": "ghcr.io/nbadino/tabularium-train-glm:glm-v1",
+    "paddle": "ghcr.io/nbadino/tabularium-train-paddle:paddle-v1",
 }
 PREBUILT_MARKER = "/opt/tabularium/ready.json"
+# Driver minimo per l'immagine: la Paddle ufficiale è cu12.6, le PyTorch cu12.4.
+PREBUILT_CUDA = {"paddle": 12.6}
 _LOCK = threading.Lock()
 _CANCEL: dict[str, threading.Event] = {}
 _THREADS: dict[str, threading.Thread] = {}
@@ -409,7 +415,7 @@ def _run(
             disk_gb=disk_gb,
             min_gpu_ram_gb=min_gpu_ram_gb,
             min_compute_capability=8.0,
-            min_cuda=(12.4 if profile in PREBUILT_IMAGES else None),
+            min_cuda=(PREBUILT_CUDA.get(profile, 12.4) if profile in PREBUILT_IMAGES else None),
             limit=50,
         )
         if not offers:
