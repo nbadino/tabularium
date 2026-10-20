@@ -19,8 +19,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - profile: qwen
-            tag: qwen-v1
           - profile: dots
             tag: dots-v1
     steps:
