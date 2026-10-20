@@ -72,4 +72,4 @@ print("READY", marker)
 PY
 
 WORKDIR /opt/tabularium
-CMD ["bash"]
+CMD ["sleep", "infinity"]
