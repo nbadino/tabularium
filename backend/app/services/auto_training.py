@@ -39,7 +39,7 @@ PADDLE_IMAGE = "paddlepaddle/paddle:3.3.0-gpu-cuda12.6-cudnn9.5"
 # Immagini prebuilt versionate: niente pip al noleggio. Il profilo monkey è il
 # primo; gli altri restano sul provisioning runtime finché non hanno la loro.
 PREBUILT_IMAGES = {
-    "monkey": "ghcr.io/nbadino/tabularium-train-monkey:monkey-v2",
+    "monkey": "ghcr.io/nbadino/tabularium-train-monkey:monkey-v3",
 }
 PREBUILT_MARKER = "/opt/tabularium/ready.json"
 _LOCK = threading.Lock()
@@ -504,7 +504,7 @@ def _run(
         if not access.get("ok"):
             raise RuntimeError(access.get("message") or "SSH non raggiungibile dopo 10 minuti")
         if prebuilt:
-            _update(job, phase="env", message="avvio l'immagine prebuilt già pronta…")
+            _update(job, state="provisioning", phase="env", message="avvio l'immagine prebuilt già pronta…")
             deadline = time.time() + 10 * 60
             paths = expected_paths(profile)
             last_error = ""
@@ -515,7 +515,7 @@ def _run(
                 output = (proc.stdout or "").strip()
                 if output.startswith("{"):
                     paths = {**paths, **json.loads(output)}
-                    _update(job, log=output[-2000:], message="immagine prebuilt pronta")
+                    _update(job, state="starting", phase="train", log=output[-2000:], message="immagine prebuilt pronta")
                     break
                 last_error = (proc.stderr or output or "ready.json non trovato").strip()[-500:]
                 time.sleep(5)
@@ -566,6 +566,10 @@ def _run(
             "ssh_train_repo": str(paths.get("repo") or ""),
             "ssh_root": str(cfg.get("ssh_root") or "/tmp/tabularium-runs"),
             "auto_prepare": True,
+            # I repo delle ricette sono HuggingFace; su Vast fuori dalla Cina
+            # ModelScope è solo un mirror più lento (e il download del modello
+            # può bloccarsi al primo step).
+            "use_hf": True,
             # Una GPU sola: zero1/zero2 non partizionano nulla e aggiungono
             # solo un optimizer wrapper che può rompere lo scheduler. La run
             # manuale può ancora usare DeepSpeed; l'avvio automatico no.
@@ -573,6 +577,9 @@ def _run(
         }
         started = trainer.start_run(int(job["project_id"]), remote_cfg, owner_id=owner_id, lang=lang)
         run_id = (started.get("run") or {}).get("run_id")
+        if not run_id:
+            recent = trainer.list_runs(int(job["project_id"]), limit=1)
+            run_id = recent[0]["run_id"] if recent else None
         _update(
             job,
             state="running",

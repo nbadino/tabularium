@@ -27,7 +27,7 @@ jobs:
           context: docker/train-monkey
           push: true
           tags: |
-            ghcr.io/nbadino/tabularium-train-monkey:monkey-v2
+            ghcr.io/nbadino/tabularium-train-monkey:monkey-v3
             ghcr.io/nbadino/tabularium-train-monkey:monkey-${{ github.sha }}
           provenance: false
       - name: Make GHCR package public

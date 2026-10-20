@@ -48,6 +48,11 @@ RUN cd /opt/tabularium/MonkeyOCRv2/parsing/train \
 # Pin dopo ms-swift: le sue dipendenze possono tirare una transformers diversa.
 RUN python -m pip install "transformers==4.57.1" "accelerate==1.11.0" "qwen_vl_utils==0.0.14"
 
+# I pesi del modello base sono dentro l'immagine: il noleggio non deve
+# dipendere dalla velocità di ModelScope/HuggingFace al primo step.
+ENV HF_HOME=/root/.cache/huggingface
+RUN python -c "from huggingface_hub import snapshot_download; snapshot_download('zenosai/MonkeyOCRv2-B-Parsing')"
+
 RUN python - <<'PY'
 import json
 import pathlib
