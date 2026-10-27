@@ -1,0 +1,11 @@
+.git
+.github
+data
+frontend/node_modules
+frontend/dist
+backend/.venv
+.venv-mlx
+**/__pycache__
+**/*.pyc
+docs
+node_modules

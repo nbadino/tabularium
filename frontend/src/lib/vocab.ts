@@ -55,6 +55,7 @@ export function pageTypeLabel(type: string | null | undefined): string {
 
 /** Stato di una run di training. */
 export function runStateLabel(s: string): string {
+  if (s === 'error') s = 'failed'
   if (s === '—') return t('vocab.runState.none')
   const label = t(`vocab.runState.${s}`)
   return label !== `vocab.runState.${s}` ? label : s
@@ -66,6 +67,7 @@ export function runStateLabel(s: string): string {
  * fermato a mano e il checkpoint potrebbe essere parziale.
  */
 export const RUN_STATE_TONE: Record<string, StatusTone> = {
+  error: 'sig',
   running: 'progress',
   finished: 'ok',
   failed: 'sig',

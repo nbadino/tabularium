@@ -8,11 +8,13 @@ import { useProjects, writeActiveProject } from '../app/activeProject'
 import { datasetUsable, type Workflow } from '../app/pipeline'
 import { Badge, ErrorNotice, Field, Loading, Module, PageHeader } from '../app/ui'
 import { useI18n, tn } from '../i18n'
+import { useInference } from '../app/inference'
 
 type Overview = { workflow: Workflow; dataset: DatasetStatus; training: TrainingStatus }
 
 export default function FineTuningPage() {
   const { t } = useI18n()
+  const inference = useInference()
   const [projectId, setProjectId] = useState<number | ''>('')
   const [overview, setOverview] = useState<Overview | null>(null)
   const [error, setError] = useState<unknown>(null)
@@ -46,6 +48,8 @@ export default function FineTuningPage() {
   const active = overview?.training.active === true
   const readOnly = projects.find((p) => p.id === projectId)?.access?.can_edit === false
   const trained = overview?.training.run?.state === 'finished'
+  const prepared = overview?.training.run?.prepare_job
+  const modelReady = prepared?.state === 'finished' && Boolean(prepared.model_id)
   const studio = overview?.workflow.next_page
     ? `/annotazione?project=${projectId}&page=${overview.workflow.next_page.id}`
     : '/annotazione'
@@ -59,9 +63,13 @@ export default function FineTuningPage() {
         ? { to: studio, title: 'ux.nextReview', body: 'ux.nextReviewBody', action: 'dataset.material.openStudio' }
         : !dataReady
           ? { to: '/dataset', title: 'ux.nextDataset', body: 'ux.nextDatasetBody', action: 'pipeline.steps.datasetAction' }
+          : trained && !modelReady
+            ? { to: '/training', title: 'ux.nextPrepare', body: 'ux.nextPrepareBody', action: 'training.prepareCheckpoint' }
+            : trained && (inference.adapterId !== prepared?.model_id || !inference.enabled || !inference.available)
+              ? { to: `/modelli?modello=${encodeURIComponent(prepared?.model_id ?? '')}&passo=dove`, title: 'ux.nextServe', body: 'ux.nextServeBody', action: 'training.serveModel' }
           : trained
             ? { to: '/valutazione', title: 'ux.nextEvaluate', body: 'ux.nextEvaluateBody', action: 'pipeline.steps.evaluateAction' }
-            : { to: '/training', title: 'ux.nextTrain', body: 'ux.nextTrainBody', action: 'ux.configureTraining' }
+            : { to: '/training?view=new', title: 'ux.nextTrain', body: 'ux.nextTrainBody', action: 'ux.configureTraining' }
 
   return (
     <div className="p-3">
@@ -82,20 +90,20 @@ export default function FineTuningPage() {
       </Module>}
       {projectId !== '' && !overview && error == null && <Loading label={t('ux.loadingStatus')} />}
       {overview && <>
-        <section aria-label={t('ux.nextStep')} className="mb-3 flex flex-wrap items-center gap-3 border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-3">
+        <section aria-label={t('ux.nextStep')} className="mb-8 flex flex-wrap items-center gap-5 py-5">
           <div className="min-w-0 flex-1 basis-64">
             <h2 className="text-[18px] font-bold">{t(next.title)}</h2>
             <p className="mt-1 max-w-[85ch] text-[13px] text-[color:var(--color-ink-2)]">{t(next.body)}</p>
           </div>
           <Link to={next.to} className="btn btn-primary no-underline">{t(next.action)}</Link>
         </section>
-        <section aria-label={t('ux.refineTools')} className="border-y border-[color:var(--color-rule)]">
+        <section aria-label={t('ux.refineTools')} className="mt-6">
           <ol className="ruled">
             {[
               { to: '/dataset', title: 'workflow.dataset', status: dataReady ? t('ux.dataReady') : tn('ux.goldCount', gold) },
               { to: '/training', title: 'workflow.train', status: overview.training.run ? runStateLabel(overview.training.run.state) : t('ux.noTraining') },
               { to: '/valutazione', title: 'workflow.evaluate', status: gold > 0 ? tn('ux.goldCount', gold) : t('ux.needsGold') },
-            ].map((step) => <li key={step.to}><Link to={step.to} className="flex flex-wrap items-center gap-x-5 gap-y-2 px-3 py-3 no-underline hover:bg-[color:var(--color-fill)]">
+            ].map((step) => <li key={step.to}><Link to={step.to} className="flex flex-wrap items-center gap-x-5 gap-y-2 py-4 no-underline hover:bg-[color:var(--color-fill)]">
               <div className="min-w-0 flex-1 basis-64">
                 <h3 className="text-[15px] font-semibold">{t(step.title)}</h3>
               </div>

@@ -12,7 +12,7 @@ import sqlite3
 
 from . import config
 
-SCHEMA_VERSION = "19"
+SCHEMA_VERSION = "20"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -381,6 +381,50 @@ _MIGRATIONS: list[tuple[str, str]] = [
                 updated_at=datetime('now') WHERE page_id=NEW.id;
             UPDATE pages SET status='review' WHERE id=NEW.id AND status IN ('approved','exported');
         END;
+    """),
+    ("20", """
+        -- LlamaIndex/LlamaCloud is a first-class remote OCR provider, not a
+        -- generic OpenAI-compatible endpoint. Rebuild the CHECK constraint so
+        -- active profiles keep their provider identity across restarts.
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE compute_profiles_v20 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            provider TEXT NOT NULL CHECK(provider IN ('local','ssh','vast','runpod','modal','custom','llamaindex')),
+            purpose TEXT NOT NULL CHECK(purpose IN ('inference','training','both')),
+            model_adapter_id TEXT NOT NULL,
+            model_revision TEXT,
+            served_model_name TEXT NOT NULL,
+            endpoint TEXT NOT NULL,
+            credential_ref TEXT,
+            runtime_recipe_id TEXT,
+            generation_profile_id TEXT,
+            image_profile_id TEXT,
+            hardware_profile_json TEXT NOT NULL DEFAULT '{}',
+            active INTEGER NOT NULL DEFAULT 0,
+            last_health_check TEXT,
+            last_health_ok INTEGER,
+            last_health_error TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO compute_profiles_v20 (
+            id, name, provider, purpose, model_adapter_id, model_revision,
+            served_model_name, endpoint, credential_ref, runtime_recipe_id,
+            generation_profile_id, image_profile_id, hardware_profile_json,
+            active, last_health_check, last_health_ok, last_health_error,
+            created_at, updated_at
+        )
+        SELECT id, name, provider, purpose, model_adapter_id, model_revision,
+               served_model_name, endpoint, credential_ref, runtime_recipe_id,
+               generation_profile_id, image_profile_id, hardware_profile_json,
+               active, last_health_check, last_health_ok, last_health_error,
+               created_at, updated_at
+          FROM compute_profiles;
+        DROP TABLE compute_profiles;
+        ALTER TABLE compute_profiles_v20 RENAME TO compute_profiles;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_compute_active ON compute_profiles(active) WHERE active=1;
+        PRAGMA foreign_keys = ON;
     """),
 ]
 

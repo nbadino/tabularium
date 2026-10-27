@@ -5,7 +5,10 @@ login/logout, registrazione se aperta. `/me` richiede login.
 """
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse
 
 from .. import config
 from ..db import connect
@@ -21,6 +24,7 @@ from ..schemas import (
     UserSelfUpdate,
 )
 from ..services import auth as authsvc
+from ..services import oidc
 from ..services import settings as settingssvc
 from ..services import users as usersvc
 from ..services import rate_limit
@@ -53,12 +57,17 @@ def auth_status(request: Request) -> AuthStatusOut:
     if enabled:
         with connect() as conn:
             needs_setup = usersvc.count_users(conn) == 0
+    oidc_setup = oidc.setup_from_settings(settings)
     return AuthStatusOut(
         auth_enabled=enabled,
         needs_setup=needs_setup,
         allow_registration=bool(settings["allow_registration"]),
         instance_name=settings["instance_name"],
         user=_user_out(user),
+        # The login page must not offer a button that leads to a provider the admin
+        # did not configure: `ready` also checks issuer and client id.
+        oidc_enabled=bool(enabled and oidc_setup.ready),
+        oidc_button_label=oidc_setup.button_label,
     )
 
 
@@ -68,13 +77,9 @@ def setup_first_admin(payload: SetupIn, response: Response) -> UserOut:
     if not authsvc.auth_enabled():
         raise HTTPException(status_code=400, detail="autenticazione disattivata")
     # Il rate-limit deve sopravvivere anche a un errore applicativo successivo
-    # (per esempio setup già completato). Lo si committa prima di iniziare il
-    # claim; il claim resta atomico nella transazione separata.
-    with connect() as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        setup_allowed = rate_limit.allow(conn, "setup")
-        conn.commit()
-    if not setup_allowed:
+    # (per esempio setup già completato), quindi viene prima del claim e con la
+    # sua connessione: due scrittori sullo stesso database si bloccherebbero.
+    if not rate_limit.allow("setup"):
         raise HTTPException(status_code=429, detail="troppi tentativi, riprova più tardi")
 
     with connect() as conn:
@@ -100,19 +105,17 @@ def login(payload: LoginIn, response: Response) -> UserOut:
     if not authsvc.auth_enabled():
         raise HTTPException(status_code=400, detail="autenticazione disattivata")
     client_key = f"login:{payload.username.strip().lower()}"
+    if not rate_limit.allow(client_key):
+        raise HTTPException(status_code=429, detail="troppi tentativi, riprova più tardi")
     with connect() as conn:
-        login_allowed = rate_limit.allow(conn, client_key)
         row = conn.execute(
             "SELECT * FROM users WHERE username=?", (payload.username.strip(),)
         ).fetchone()
-    if not login_allowed:
-        raise HTTPException(status_code=429, detail="troppi tentativi, riprova più tardi")
     if row is None or not row["active"]:
         raise HTTPException(status_code=401, detail="credenziali non valide")
     if not authsvc.check_password(row, payload.password):
         raise HTTPException(status_code=401, detail="credenziali non valide")
-    with connect() as conn:
-        rate_limit.reset(conn, client_key)
+    rate_limit.reset(client_key)
     with connect() as conn:
         token, expires = authsvc.create_session(row["id"])
     authsvc.set_session_cookie(response, token, expires)
@@ -137,12 +140,10 @@ def register(payload: RegisterIn, response: Response) -> UserOut:
     if not settings["allow_registration"]:
         raise HTTPException(status_code=403, detail="la registrazione è chiusa dall'amministratore")
     role = settings["default_new_user_role"]
-    with connect() as conn:
-        register_allowed = rate_limit.allow(conn, "register")
-        # Persisti il tentativo prima di create_user: anche username duplicato
-        # o password rifiutata non deve azzerare il limite.
-        conn.commit()
-    if not register_allowed:
+    # Il tentativo si persiste prima di create_user: anche username duplicato o
+    # password rifiutata non deve azzerare il limite, e la sua connessione resta
+    # separata da quella della creazione.
+    if not rate_limit.allow("register"):
         raise HTTPException(status_code=429, detail="troppi tentativi, riprova più tardi")
     with connect() as conn:
         user = usersvc.create_user(
@@ -210,10 +211,9 @@ def accept_invite(payload: InviteAcceptIn, response: Response) -> UserOut:
     """Consuma l'invito: l'utente sceglie la password e resta connesso."""
     if not authsvc.auth_enabled():
         raise HTTPException(status_code=400, detail="autenticazione disattivata")
+    if not rate_limit.allow("invite"):
+        raise HTTPException(status_code=429, detail="troppi tentativi, riprova più tardi")
     with connect() as conn:
-        if not rate_limit.allow(conn, "invite"):
-            raise HTTPException(status_code=429, detail="troppi tentativi, riprova più tardi")
-        conn.commit()
         user = usersvc.accept_invite(conn, payload.token, payload.password)
     token, expires = authsvc.create_session(user["id"])
     authsvc.set_session_cookie(response, token, expires)
@@ -255,3 +255,61 @@ def change_password(
         else:
             conn.execute("DELETE FROM sessions WHERE user_id=?", (row["id"],))
     return {"ok": True}
+
+
+# --- OpenID Connect -----------------------------------------------------------------
+def _callback_url(request: Request) -> str:
+    """The URL the provider will call back, as the browser sees it.
+
+    Behind a reverse proxy the scheme and host come from the forwarded headers (uvicorn
+    handles them when `--proxy-headers` is on); `TABULARIUM_PUBLIC_URL` overrides both
+    when the public address is not what the app receives.
+    """
+    explicit = os.environ.get("TABULARIUM_PUBLIC_URL", "").strip()
+    base = explicit or str(request.base_url)
+    return f"{base.rstrip('/')}/api/auth/oidc/callback"
+
+
+def _login_error(code: str) -> RedirectResponse:
+    # A code, not a sentence: the login page translates it.
+    return RedirectResponse(f"/?auth_error={code}", status_code=303)
+
+
+@router.get("/api/auth/oidc/start")
+def oidc_start(request: Request) -> RedirectResponse:
+    if not authsvc.auth_enabled():
+        raise HTTPException(status_code=404, detail="autenticazione disattivata")
+    setup = oidc.setup_from_settings(settingssvc.get_app_settings())
+    try:
+        target = oidc.authorization_url(setup, _callback_url(request))
+    except oidc.OidcError as exc:
+        return _login_error(exc.code)
+    return RedirectResponse(target, status_code=303)
+
+
+@router.get("/api/auth/oidc/callback")
+def oidc_callback(request: Request, code: str = "", state: str = "") -> RedirectResponse:
+    if not authsvc.auth_enabled():
+        raise HTTPException(status_code=404, detail="autenticazione disattivata")
+    setup = oidc.setup_from_settings(settingssvc.get_app_settings())
+    try:
+        claims = oidc.exchange_code(setup, code, state)
+        identity = oidc.identity_from_claims(claims)
+    except oidc.OidcError as exc:
+        return _login_error(exc.code)
+    if not setup.email_allowed(identity["email"]):
+        return _login_error("oidc_domain")
+    with connect() as conn:
+        try:
+            user = usersvc.ensure_oidc_user(
+                conn,
+                email=identity["email"],
+                username=identity["username"],
+                role=setup.default_role,
+            )
+        except HTTPException:
+            return _login_error("oidc_user")
+    token, expires_at = authsvc.create_session(user["id"], request)
+    response = RedirectResponse("/", status_code=303)
+    authsvc.set_session_cookie(response, token, expires_at)
+    return response

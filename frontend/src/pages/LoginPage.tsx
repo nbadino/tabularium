@@ -9,16 +9,32 @@ import { useState } from 'react'
 import { Field } from '../app/ui'
 import { useAuth } from '../app/auth'
 import { describeError } from '../lib/errors'
+import { API_BASE } from '../lib/endpoints'
 import { useI18n } from '../i18n'
+
+/** The backend sends a code; the page owns the sentence. */
+const SSO_ERROR_KEYS: Record<string, string> = {
+  oidc_state: 'auth.oidcErrorState',
+  oidc_domain: 'auth.oidcErrorDomain',
+  oidc_email: 'auth.oidcErrorEmail',
+  oidc_exchange: 'auth.oidcErrorProvider',
+  oidc_discovery: 'auth.oidcErrorProvider',
+  oidc_userinfo: 'auth.oidcErrorProvider',
+  oidc_user: 'auth.oidcErrorUser',
+  oidc_disabled: 'auth.oidcErrorDisabled',
+}
 
 export default function LoginPage() {
   const { t } = useI18n()
-  const { instanceName, allowRegistration, login, register } = useAuth()
+  const { instanceName, allowRegistration, oidcEnabled, oidcButtonLabel, login, register } = useAuth()
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // A failed SSO round trip comes back as `?auth_error=<code>`: the backend sends a
+  // code, not a sentence, so the page can translate it.
+  const [ssoError] = useState(() => new URLSearchParams(window.location.search).get('auth_error'))
   const [busy, setBusy] = useState(false)
 
   const submit = async (e: React.FormEvent) => {
@@ -50,7 +66,7 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[color:var(--color-fill)] p-4">
-      <div className="mod w-full max-w-sm border-[color:var(--color-rule-strong)]">
+      <div className="mod w-full max-w-sm rounded-lg p-6">
         <div className="mod-head border-b-[color:var(--color-rule-strong)]">
           <span className="mod-tab">
             {mode === 'login' ? t('auth.loginTitle') : t('auth.registerTitle')}
@@ -65,6 +81,26 @@ export default function LoginPage() {
             {mode === 'login' ? t('auth.loginSubtitle') : t('auth.registerSubtitle')}
           </p>
 
+          {ssoError && (
+            <p
+              role="alert"
+              className="mt-3 rounded border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sig-soft)] px-3 py-2 text-[12px] text-[color:var(--color-sig-text)]"
+            >
+              {t(SSO_ERROR_KEYS[ssoError] ?? 'auth.oidcErrorGeneric')}
+            </p>
+          )}
+
+          {oidcEnabled && mode === 'login' && (
+            <>
+              <a href={`${API_BASE}/auth/oidc/start`} className="btn mt-4 w-full justify-center">
+                {oidcButtonLabel || t('auth.oidcFallback')}
+              </a>
+              <p className="mt-2 text-center text-[10px] uppercase tracking-wide text-[color:var(--color-ink-3)]">
+                {t('auth.orLocal')}
+              </p>
+            </>
+          )}
+
           <form onSubmit={submit} className="mt-4 space-y-3">
             <Field label={t('auth.username')}>
               <input
@@ -76,12 +112,13 @@ export default function LoginPage() {
                 className="fld"
               />
             </Field>
-            <Field label={t('auth.password')}>
+            <Field label={t('auth.password')} hint={mode === 'register' ? t('auth.passwordHint') : undefined}>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                minLength={mode === 'register' ? 8 : undefined}
                 className="fld"
               />
             </Field>
@@ -103,7 +140,7 @@ export default function LoginPage() {
             )}
             <button
               type="submit"
-              disabled={busy}
+              disabled={busy || !username.trim() || !password || (mode === 'register' && password.length < 8)}
               className="btn btn-primary w-full justify-center"
             >
               {busy

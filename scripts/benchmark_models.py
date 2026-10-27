@@ -33,7 +33,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 from PIL import Image
 
-from app.services import inference, model_adapters, model_settings, otsl, paddle_official, serve_recipes
+from app.services import inference, model_adapters, model_settings, paddle_official, serve_recipes
+from app.domain import otsl
 
 
 def _safe_endpoint(value: str | None) -> str | None:

@@ -2,20 +2,27 @@
 from __future__ import annotations
 
 import time
-import sqlite3
+
+from ..adapters import rate_limits as store
 
 
-def allow(conn: sqlite3.Connection, key: str, *, limit: int = 10, window: float = 60.0) -> bool:
+def allow(key: str, *, limit: int = 10, window: float = 60.0) -> bool:
+    """Count one attempt in the current window; False when the limit is reached.
+
+    The counter owns its connection on purpose: it must survive the rollback of the
+    request that failed, otherwise a rejected login would clear the evidence of the
+    attempts that made it suspicious.
+    """
     now = time.time()
-    row = conn.execute("SELECT window_started, attempts FROM rate_limits WHERE key=?", (key,)).fetchone()
-    if row is None or now - float(row["window_started"]) >= window:
-        conn.execute("INSERT INTO rate_limits(key,window_started,attempts) VALUES(?,?,1) ON CONFLICT(key) DO UPDATE SET window_started=excluded.window_started, attempts=1", (key, now))
+    current = store.window(key)
+    if current is None or now - current[0] >= window:
+        store.start(key, now)
         return True
-    if int(row["attempts"]) >= limit:
+    if current[1] >= limit:
         return False
-    conn.execute("UPDATE rate_limits SET attempts=attempts+1 WHERE key=?", (key,))
+    store.bump(key)
     return True
 
 
-def reset(conn: sqlite3.Connection, key: str) -> None:
-    conn.execute("DELETE FROM rate_limits WHERE key=?", (key,))
+def reset(key: str) -> None:
+    store.clear(key)

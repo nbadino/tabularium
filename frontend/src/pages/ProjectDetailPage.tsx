@@ -5,7 +5,7 @@ import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
 import { PAGE_STATUSES, PAGE_TYPES } from '../lib/types'
 import type { PageItem, Project, ScanReport } from '../lib/types'
 import { pageTypeLabel, pages as pagesN, statusLabel, STATUS_TONE } from '../lib/vocab'
-import { Badge, Collapsible, ErrorNotice, Field, Menu, Modal, Module, WarnNotice } from '../app/ui'
+import { Badge, Collapsible, ErrorNotice, Field, Loading, Menu, Modal, Module, WarnNotice } from '../app/ui'
 import { ActivityFeed, type ProjectActivity } from '../app/ActivityFeed'
 import ShareDialog from '../app/ShareDialog'
 import { useConfirm } from '../app/confirm'
@@ -15,6 +15,7 @@ import { useI18n, tn } from '../i18n'
 import { writeActiveProject } from '../app/activeProject'
 import { accessLabel, projectAccess } from '../app/projectAccess'
 import { pageLabel } from '../lib/pageLabel'
+import { API_BASE } from '../lib/endpoints'
 
 type StudyProtocol = {
   corpus_scope: string
@@ -50,6 +51,9 @@ export default function ProjectDetailPage() {
   const [project, setProject] = useState<Project | null>(null)
   const [pages, setPages] = useState<PageItem[]>([])
   const [busy, setBusy] = useState(false)
+  const [pagesLoading, setPagesLoading] = useState(true)
+  const [pageQuery, setPageQuery] = useState('')
+  const [pageLimit, setPageLimit] = useState(50)
   const [scanProgress, setScanProgress] = useState<{ current: number; total: number; file?: string }>({ current: 0, total: 0 })
   const [report, setReport] = useState<ScanReport | null>(() => loadReport(projectId))
   const [error, setError] = useState<unknown>(null)
@@ -85,12 +89,18 @@ export default function ProjectDetailPage() {
   }, [])
 
   useEffect(() => {
+    setProject(null)
+    setPages([])
+    setPagesLoading(true)
+    setPageQuery('')
+    setPageLimit(50)
     setReport(loadReport(projectId))
     setSelected(new Set())
     apiGet<Project>(`/projects/${projectId}`).then((p) => { setProject(p); writeActiveProject(p.id) }).catch(setError)
     apiGet<{ items: PageItem[] }>(`/projects/${projectId}/pages`)
       .then((r) => setPages(r.items))
       .catch(setError)
+      .finally(() => setPagesLoading(false))
     apiGet<StudyProtocol>(`/projects/${projectId}/study-protocol`)
       .then(setProtocol)
       .catch(() => setProtocol(null))
@@ -140,7 +150,7 @@ export default function ProjectDetailPage() {
     try {
       const form = new FormData()
       Array.from(files).forEach((file) => form.append('files', file, file.name))
-      const response = await fetch(`/api/projects/${projectId}/import-upload`, { method: 'POST', body: form })
+      const response = await fetch(`${API_BASE}/projects/${projectId}/import-upload`, { method: 'POST', body: form })
       if (!response.ok) throw new Error(t('project.importFailed', { status: response.status, detail: await response.text() }))
       const rep = await response.json() as ScanReport
       setReport(rep)
@@ -263,6 +273,11 @@ export default function ProjectDetailPage() {
     }
   }
 
+  const filteredPages = useMemo(() => {
+    const query = pageQuery.trim().toLocaleLowerCase()
+    return query ? pages.filter((page) => pageLabel(page).toLocaleLowerCase().includes(query)) : pages
+  }, [pages, pageQuery])
+
   const allSelected = pages.length > 0 && selected.size === pages.length
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(pages.map((p) => p.id)))
   const toggleOne = (pid: number) =>
@@ -277,6 +292,8 @@ export default function ProjectDetailPage() {
     'px-2 py-1 text-left text-[11px] font-semibold uppercase tracking-[0.04em] text-[color:var(--color-ink-2)]'
   const td = 'px-2 py-1 align-middle'
   const errorCount = useMemo(() => report?.errors.length ?? 0, [report])
+
+  if (!project && error == null) return <div className="p-3"><Loading label={t('common.loading')} /></div>
 
   return (
     <div className="p-3">
@@ -300,7 +317,7 @@ export default function ProjectDetailPage() {
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <span className="mono text-[12px] text-[color:var(--color-ink-2)]">
-            {pagesN(pages.length)}
+            {pagesLoading ? t('common.loading') : pagesN(pages.length)}
           </span>
           <button type="button" onClick={() => setShareOpen(true)} className="btn" title={t('share.buttonTitle')}>
             <IconUsers size={13} />
@@ -404,6 +421,8 @@ export default function ProjectDetailPage() {
                 <button type="button" onClick={() => void saveProtocol()} disabled={protocolBusy} className="btn btn-sm btn-primary">{t('project.saveProtocol')}</button>
               </div>
             </fieldset>
+        {filteredPages.length > pageLimit && <button type="button" className="btn mt-3" onClick={() => setPageLimit((count) => count + 50)}>{t('recognition.showMorePages', { n: filteredPages.length - pageLimit })}</button>}
+
           </Collapsible>
         </div>
       )}
@@ -573,6 +592,11 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
+        <div className="mb-3 max-w-md">
+          <Field label={t('recognition.filterPages')}>
+            <input type="search" className="fld" value={pageQuery} onChange={(e) => { setPageQuery(e.target.value); setPageLimit(50) }} placeholder={t('recognition.filterPagesHint')} />
+          </Field>
+        </div>
       <fieldset disabled={!canEdit} className="min-w-0">
       <Module
         tab={t('project.registry')}
@@ -593,11 +617,12 @@ export default function ProjectDetailPage() {
             <button type="button" className="btn btn-sm btn-primary" disabled={approveBusy || pages.length === 0} onClick={() => void bulkApprove(null)}>
               {t('project.approveAll')}
             </button>
-            <span>{pagesN(pages.length)}</span>
+            <span>{pagesLoading ? t('common.loading') : pagesN(pages.length)}</span>
           </span>
         }
       >
-        {pages.length > 0 ? (
+
+        {pagesLoading ? <Loading label={t('common.loading')} /> : filteredPages.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-[12px]">
               <thead className="border-b border-[color:var(--color-rule)] bg-[color:var(--color-fill)]">
@@ -621,7 +646,7 @@ export default function ProjectDetailPage() {
                 </tr>
               </thead>
               <tbody className="ruled">
-                {pages.map((p) => (
+                {filteredPages.slice(0, pageLimit).map((p) => (
                   <tr
                     key={p.id}
                     className={
@@ -640,7 +665,7 @@ export default function ProjectDetailPage() {
                     </td>
                     <td className={td}>
                       <img data-fade
-                        src={`/api/pages/${p.id}/thumbnail`}
+                        src={`${API_BASE}/pages/${p.id}/thumbnail`}
                         alt={t('project.thumbnailAlt', { path: pageLabel(p) })}
                         loading="lazy"
                         className="h-10 w-8 border border-[color:var(--color-rule)] bg-white object-cover object-top"
@@ -732,7 +757,7 @@ export default function ProjectDetailPage() {
         ) : (
           <div className="flex flex-col items-start gap-2 p-6">
             <IconScan size={22} />
-            <p className="text-[13px] font-semibold">{t('project.emptyTitle')}</p>
+            <p className="text-[13px] font-semibold">{t(pageQuery ? 'recognition.noFilteredPages' : 'project.emptyTitle')}</p>
 
           </div>
         )}

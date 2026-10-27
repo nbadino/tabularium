@@ -83,3 +83,18 @@ cambiata la collaborazione live in questo intervento.
 ![Fine-tuning](screenshots/ux-finetuning.jpg)
 
 ![Prova modello](screenshots/ux-try-model.jpg)
+
+## Follow-up — 21 October 2026
+
+See [browser use-case verification](UX_USE_CASE_VERIFICATION.md) for the subsequent browser audit, synthetic recognition-to-dataset walkthrough, implementation changes, screenshots and explicit verification limits.
+
+
+## Follow-up — 23 October 2026: live training visibility
+
+The live monitor exposes current/next stage, separate phase and rental durations,
+dataset composition, real optimizer progress, trainer ETA and latest recorded
+activity. File transfer progress uses measured completed files and bytes; provider
+container substeps are named without fabricated percentages. Steps are shown once,
+instant GPU memory is no longer called a peak, and empty quality panels are hidden.
+A run reaching its last step is distinguished from a usable, evaluated checkpoint.
+See [the trial record](APPROVAL_EXPORT_REPAIR_20261023.md) for real outcomes and limits.

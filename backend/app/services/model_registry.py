@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import config
+from .. import models as model_specs
 from .model_adapters import get_adapter, list_adapters, supported_prefill_modes, supports_export
 from . import hardware
 from . import paddle_runtime
@@ -28,17 +29,10 @@ _RUNTIME_ACTIVE: set[str] = set()
 # Template Modal gestite dall'interfaccia CloudControlModal. È distinto da
 # `local_serve_ready`: Unlimited-OCR, per esempio, è cloud-ready ma non si
 # avvia con il server locale standard.
-_CLOUD_TEMPLATES = {
-    "monkeyocrv2-parsing": "monkeyocrv2",
-    "mineru2.5": "mineru",
-    "paddleocr-vl": "paddleocr-vl",
-    "unlimited-ocr": "unlimited-ocr",
-    "dots-ocr": "dots-ocr",
-    "glm-ocr": "glm-ocr",
-    "deepseek-ocr": "deepseek-ocr",
-    "qwen3-vl-8b": "qwen3-vl",
-    "teleocr": "teleocr",
-}
+# Modal template per model, declared in the model's own spec. A model without a
+# template says so (`cloud=NotApplicable`), instead of being silently absent.
+_CLOUD_TEMPLATES: dict[str, str] = model_specs.declared_values("cloud")
+
 
 _DOWNLOAD_SCRIPT = (
     "import sys\n"
@@ -489,6 +483,53 @@ def list_models() -> list[dict]:
     return items
 
 
+def import_local(adapter_id: str, source: str | Path, *, force: bool = False) -> dict:
+    """Install a checkpoint from a directory, for machines that cannot download one.
+
+    An air-gapped host never reaches Hugging Face: the checkpoint arrives on a disk (or
+    through an internal mirror) and has to become exactly what a finished download
+    leaves behind — the files under `<data>/models/<adapter>` and a state that the
+    registry reads as installed. Nothing else in the application knows the difference.
+
+    The copy is staged next to the destination and renamed at the end, so an
+    interrupted import can never look like a complete checkpoint (`is_installed`
+    checks for `config.json` plus real weights).
+    """
+    get_adapter(adapter_id)  # unknown id raises ValueError before touching the disk
+    if adapter_id.startswith("custom-"):
+        raise ValueError(
+            "a fine-tuned checkpoint is registered from its training run, not imported as a base model"
+        )
+    src = Path(source).expanduser().resolve()
+    if not src.is_dir():
+        raise ValueError(f"not a directory: {src}")
+    if not (src / "config.json").is_file():
+        raise ValueError(f"{src} has no config.json: it is not a model checkpoint")
+    if not (any(src.glob("*.safetensors")) or any(src.glob("*.bin"))):
+        raise ValueError(f"{src} has no weights (*.safetensors or *.bin)")
+    dest = models_dir(adapter_id)
+    if dest.exists() and any(dest.iterdir()) and not force:
+        raise ValueError(f"{dest} already contains files: pass --force to replace them")
+
+    staging = dest.with_name(f"{dest.name}.importing")
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src, staging)
+    if dest.exists():
+        shutil.rmtree(dest)
+    staging.rename(dest)
+    _write_state(
+        adapter_id,
+        installed=True,
+        downloading=False,
+        imported_from=str(src),
+        imported_at=_now(),
+        size_bytes=_dir_size(dest),
+    )
+    return install_state(adapter_id)
+
+
 def start_download(adapter_id: str) -> dict:
     adapter = get_adapter(adapter_id)
     if adapter_id.startswith('custom-'):
@@ -600,7 +641,9 @@ def delete_model(adapter_id: str) -> dict:
         row = custom_models.get(adapter_id)
         if row and row.get('source_path'):
             with connect() as conn:
-                conn.execute('UPDATE custom_models SET source_path=NULL WHERE id=?', (adapter_id,))
+                from ..adapters import models as modelstore
+
+                modelstore.clear_source_path(adapter_id)
     # Il draft segue il checkpoint: lasciarlo indietro terrebbe in vita anche il
     # marcatore `.unusable`, che deve poter essere azzerato riscaricando.
     draft = draft_dir(adapter_id)

@@ -8,6 +8,7 @@
 import { useSyncExternalStore } from 'react'
 import { apiGet, apiPost, apiPut } from '../lib/api'
 import type { InferenceConfig, InferenceTestResult } from '../lib/types'
+import { DEFAULT_MODEL_ID } from '../lib/constants'
 
 const KEY = 'tabularium.inference.preferences'
 
@@ -33,7 +34,7 @@ const EMPTY: InferenceCfg = {
   enabled: true,
   url: '',
   model: '',
-  adapterId: 'monkeyocrv2-parsing',
+  adapterId: DEFAULT_MODEL_ID,
   provider: null,
   apiKey: '',
   hasApiKey: false,
@@ -185,6 +186,9 @@ export async function saveInferenceToBackend(cfg: {
    *  (`monkeyocrv2-parsing`, `paddleocr-vl`, `mineru2.5`, ...). Omesso =
    *  lascia invariato l'adapter attuale sul backend. */
   adapterId?: string
+  /** Provider persistito: per LlamaIndex è un'identità di prima classe,
+   *  non un endpoint OpenAI-compatibile generico. */
+  provider?: string
 }): Promise<InferenceCfg> {
   const payload: Record<string, unknown> = {
     enabled: cfg.enabled !== undefined ? cfg.enabled : current.enabled,
@@ -200,6 +204,9 @@ export async function saveInferenceToBackend(cfg: {
   }
   if (cfg.adapterId !== undefined) {
     payload.adapter_id = cfg.adapterId
+  }
+  if (cfg.provider !== undefined) {
+    payload.provider = cfg.provider
   }
 
   const res = await apiPut<InferenceConfig>('/system/inference', payload)
@@ -239,6 +246,9 @@ export async function testInferenceConnection(opts: {
   /** Adapter dell'endpoint: decide il protocollo della prova (OpenAI vs
    *  Google `generateContent`). Omesso = prova OpenAI storica. */
   adapterId?: string
+  provider?: string
+  /** Usa la chiave nel vault senza richiederne una nuova al browser. */
+  useSavedCredentials?: boolean
 }): Promise<InferenceTestResult> {
   return apiPost<InferenceTestResult>('/system/inference/test', {
     url: opts.url.trim(),
@@ -247,6 +257,8 @@ export async function testInferenceConnection(opts: {
     extra_headers: opts.extraHeaders ?? {},
     timeout: opts.timeout ?? 10,
     adapter_id: opts.adapterId,
+    provider: opts.provider,
+    use_saved_credentials: opts.useSavedCredentials ?? false,
   })
 }
 

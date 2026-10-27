@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { apiDownload, apiGet, apiPost } from '../lib/api'
 import type { RecognitionRun } from '../lib/types'
-import { Badge, ErrorNotice, Field, Module, Notice, Progress, PageHeader } from '../app/ui'
+import { Badge, ErrorNotice, Field, Loading, Module, Notice, Progress, PageHeader } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { syncInferenceFromBackend, toggleInferenceEnabled, useInference } from '../app/inference'
 import { useI18n } from '../i18n'
@@ -11,6 +11,8 @@ import { useCanAdminister } from '../app/auth'
 import { pageLabel } from '../lib/pageLabel'
 import { runTitle, useModelNames } from '../app/models/names'
 import { formatShortDate } from '../lib/dates'
+import { statusLabel } from '../lib/vocab'
+import { API_BASE } from '../lib/endpoints'
 
 const isActive = (run: RecognitionRun | null) => run?.state === 'queued' || run?.state === 'running'
 
@@ -28,14 +30,13 @@ const stateKey = (state: string) => {
 
 function providerLabel(provider: string, engine: RecognitionRun['engine'], t: (key: string) => string): string {
   const effectiveProvider = engine === 'ocr' ? 'local' : provider
-  return ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom'].includes(effectiveProvider)
+  return ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom', 'llamaindex'].includes(effectiveProvider)
     ? t(`recognition.provider.${effectiveProvider}`)
     : effectiveProvider
 }
 
-/** Una pagina «completata» senza blocchi non è un successo: il modello ha
- *  risposto e non ha trovato niente. Mostrarla in verde la nascondeva. */
-const isEmptyResult = (item: NonNullable<RecognitionRun['items']>[number]) => item.state === 'finished' && item.blocks === 0
+/** Detection is the immutable run result; saved blocks can be corrected or replaced later. */
+const isEmptyResult = (item: NonNullable<RecognitionRun['items']>[number]) => item.state === 'finished' && item.detected === 0
 
 type PageFilter = 'all' | 'drafts' | 'empty' | 'failed'
 
@@ -49,14 +50,24 @@ export default function ResultsPage() {
   const [projectId, setProjectId] = useState<number | ''>(() => Number(params.get('project')) || '')
   const [runs, setRuns] = useState<RecognitionRun[]>([])
   const [run, setRun] = useState<RecognitionRun | null>(null)
+  const [openingRun, setOpeningRun] = useState(false)
+  const [requestedRunId, setRequestedRunId] = useState<number | null>(null)
   const [exportFormat, setExportFormat] = useState<'json' | 'text' | 'csv'>('text')
   const [error, setError] = useState<unknown>(null)
 
   const openRun = async (pid: number, runId: number) => {
-    const next = await apiGet<RecognitionRun>(`/projects/${pid}/recognition-runs/${runId}`)
-    setRun(next)
-    setPageFilter('all')
-    setParams({ project: String(pid), run: String(runId) }, { replace: true })
+    setRequestedRunId(runId)
+    setOpeningRun(true)
+    setError(null)
+    try {
+      const next = await apiGet<RecognitionRun>(`/projects/${pid}/recognition-runs/${runId}`)
+      setRun(next)
+      setPageFilter('all')
+      setParams({ project: String(pid), run: String(runId) }, { replace: true })
+    } catch (error) {
+      setRequestedRunId(null)
+      setError(error)
+    } finally { setOpeningRun(false) }
   }
 
   const onProject = async (pid: number | '') => {
@@ -156,43 +167,31 @@ export default function ResultsPage() {
       <PageHeader title={t('recognition.resultsTitle')} intro={t('recognition.resultsIntro')} />
       {error != null && <div className="mb-3"><ErrorNotice error={error} onDismiss={() => setError(null)} /></div>}
 
-      <div className="grid gap-3 lg:grid-cols-[300px_minmax(0,1fr)]">
-        <div className="space-y-3">
-          <Module tab={t('recognition.project')}>
-            <Field label={t('recognition.projectPick')}>
-              <select value={projectId} onChange={(e) => void onProject(e.target.value === '' ? '' : Number(e.target.value))} className="fld">
-                <option value="">{t('common.chooseProject')}</option>
-                {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-              </select>
-            </Field>
-          </Module>
-          <Module tab={t('recognition.recent')} quiet flush>
-            {runs.length === 0 ? <p className="p-3 text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.noRuns')}</p> : (
-              <ul className="divide-y divide-[color:var(--color-rule)]">
-                {runs.map((item) => (
-                  <li key={item.id}>
-                    <button type="button" onClick={() => projectId !== '' && void openRun(projectId, item.id)} className={`w-full p-2 text-left ${run?.id === item.id ? 'bg-[color:var(--color-sig-wash)] outline outline-2 -outline-offset-2 outline-[color:var(--color-sig)]' : 'hover:bg-[color:var(--color-fill)]'}`}>
-                      <span className="flex items-center gap-2"><b className="mono text-[11px]">#{item.id}</b><span className="min-w-0 flex-1 truncate text-[12px] font-semibold">{runTitle(item, nameOf)}</span></span>
-                      <span className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-[color:var(--color-ink-3)]">
-                        <span>{t('recognition.runPagesCount', { done: item.completed_pages, total: item.total_pages })}</span>
-                        <span>· {providerLabel(item.provider, item.engine, t)}</span>
-                        <span className="mono">· {formatShortDate(item.created_at, locale)}</span>
-                        {item.state !== 'finished' && <Badge tone={isActive(item) ? 'progress' : 'warn'}>{t(stateKey(item.state))}</Badge>}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Module>
+      <div className="space-y-6">
+        <div className="grid gap-4 sm:grid-cols-[minmax(12rem,1fr)_minmax(0,2fr)]">
+          <Field label={t('recognition.projectPick')}>
+            <select value={projectId} onChange={(e) => void onProject(e.target.value === '' ? '' : Number(e.target.value))} className="fld">
+              <option value="">{t('common.chooseProject')}</option>
+              {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select>
+          </Field>
+          <Field label={t('recognition.recent')}>
+            <select className="fld" value={requestedRunId ?? run?.id ?? ''} disabled={runs.length === 0 || openingRun} onChange={(e) => { if (projectId !== '' && e.target.value) void openRun(projectId, Number(e.target.value)) }}>
+              {runs.length === 0 && <option value="">{t('recognition.noRuns')}</option>}
+              {runs.map((item) => <option key={item.id} value={item.id}>
+                #{item.id} · {runTitle(item, nameOf)} · {formatShortDate(item.created_at, locale)} · {t(stateKey(item.state))} · {t('recognition.runPagesCount', { done: item.completed_pages, total: item.total_pages })} · {providerLabel(item.provider, item.engine, t)}
+              </option>)}
+            </select>
+          </Field>
         </div>
 
+        {openingRun && <Loading label={t('common.loading')} />}
         {!run ? (
           <Module tab={t('recognition.resultsTitle')} quiet><p className="text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.pickRun')}</p></Module>
         ) : (
           // Resta in vista mentre si scorre l'elenco delle esecuzioni; se è
           // più alta della finestra scorre per conto suo.
-          <div className="space-y-3 lg:sticky lg:top-0 lg:max-h-[calc(100dvh-6rem)] lg:self-start lg:overflow-y-auto">
+          <div className="space-y-6">
             <Module tab={`${t('recognition.resultsTitle')} · #${run.id}`} aux={<Badge tone={isActive(run) ? 'progress' : run.failed_pages ? 'warn' : 'ok'}>{t(stateKey(run.state))}</Badge>}>
               <div className="mb-2 flex flex-wrap items-baseline gap-x-3">
                 <span className="text-[18px] font-bold">{runTitle(run, nameOf)}</span>
@@ -267,7 +266,7 @@ export default function ResultsPage() {
                   const StateIcon = empty ? IconWarn : item.state === 'finished' ? IconCheck : item.state === 'failed' ? IconAlert : null
                   return (
                     <li key={item.id} className="grid grid-cols-[48px_minmax(0,1fr)] items-center gap-x-3.5 gap-y-2 px-3.5 py-3 sm:grid-cols-[48px_minmax(0,1fr)_auto]">
-                      <img data-fade src={`/api/pages/${item.page_id}/thumbnail`} alt="" className="h-16 w-12 rounded-[4px] border border-[color:var(--color-rule)] bg-white object-cover object-top" />
+                      <img data-fade src={`${API_BASE}/pages/${item.page_id}/thumbnail`} loading="lazy" alt="" className="h-16 w-12 rounded-[4px] border border-[color:var(--color-rule)] bg-white object-cover object-top" />
                       <div className="min-w-0">
                         <div className="text-[18px] font-semibold leading-tight tracking-[-0.01em]">
                           {item.pdf_page != null ? t('recognition.pageN', { n: item.pdf_page + 1 }) : item.rel_path}
@@ -280,7 +279,8 @@ export default function ResultsPage() {
                             {StateIcon && <StateIcon size={12} />}
                             {empty ? t('recognition.emptyResult') : t(stateKey(item.state))}
                           </span>
-                          {!empty && item.state !== 'failed' && <span>{t('recognition.blocks', { n: item.blocks })}</span>}
+                          {!empty && item.state !== 'failed' && <span>{t('recognition.detectedBlocks', { n: item.detected })}</span>}
+                          <span>{t('recognition.currentPageStatus', { state: statusLabel(item.page_status) })}</span>
                           {item.drafts > 0 && <span className="text-[color:var(--color-warn)]">{t('recognition.drafts', { n: item.drafts })}</span>}
                         </div>
                         {item.error && <p className="mt-1 text-[11px] text-[color:var(--color-sig-text)]">{item.error}</p>}

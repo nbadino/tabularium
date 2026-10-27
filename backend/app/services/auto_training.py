@@ -46,8 +46,8 @@ PREBUILT_IMAGES = {
     "paddle": "ghcr.io/nbadino/tabularium-train-paddle:paddle-v1",
 }
 PREBUILT_MARKER = "/opt/tabularium/ready.json"
-# Driver minimo per l'immagine: la Paddle ufficiale è cu12.6, le PyTorch cu12.4.
-PREBUILT_CUDA = {"paddle": 12.6}
+# Minimum host CUDA compatibility must follow each versioned image.
+PREBUILT_CUDA = {"monkey": 12.8, "paddle": 12.6}
 _LOCK = threading.Lock()
 _CANCEL: dict[str, threading.Event] = {}
 _THREADS: dict[str, threading.Thread] = {}
@@ -150,9 +150,22 @@ def get_job(job_id: str, *, project_id: int | None = None) -> dict:
 
 
 def _update(job: dict, **patch) -> None:
+    now = _now()
+    if patch.get("state") == "failed" and job.get("state") != "failed":
+        job["failure_stage"] = job.get("phase")
+    if patch.get("phase") and patch["phase"] != job.get("phase"):
+        job.setdefault("phase_history", []).append({"phase": patch["phase"], "started_at": now})
+        job["phase_started_at"] = now
     job.update(patch)
-    job["updated_at"] = _now()
+    job["updated_at"] = now
     _save(job)
+    if patch.get('instance_destroyed') and job.get('run_id'):
+        try:
+            run_dir, meta = trainer._load_run(int(job['project_id']), str(job['run_id']))
+            meta['remote_cleaned_at'] = _now()
+            trainer.write_run_meta(run_dir, meta)
+        except (OSError, ValueError):
+            pass
 
 
 def _ssh(host: str, port: int, command: str, *, timeout: int = 45) -> subprocess.CompletedProcess:
@@ -169,13 +182,86 @@ def _instance(api_key: str, instance_id: int) -> dict | None:
     return None
 
 
+def reconcile_jobs() -> None:
+    """Recover monitoring after restart without ever renting another GPU."""
+    from . import checkpoint_prepare, vault
+
+    api_key = vault.get('vault:vast_api_key')
+    if not api_key:
+        return
+    active = []
+    for path in _job_dir().glob('auto_*.json'):
+        try:
+            job = json.loads(path.read_text(encoding='utf-8'))
+            if job.get('state') in {'queued', 'renting', 'waiting_ssh', 'provisioning', 'starting', 'running'}:
+                active.append(job)
+        except (OSError, ValueError):
+            continue
+    if not active:
+        return
+    try:
+        instances = {int(item['id']) for item in cloud_manager.list_vast_instances(api_key) if item.get('id')}
+    except Exception:
+        # Unavailable provider is not proof that a resource was deleted.
+        return
+    for job in active:
+        instance_id = job.get('instance_id')
+        run_id = job.get('run_id')
+        project_id = int(job['project_id'])
+        if not instance_id or int(instance_id) not in instances:
+            _update(job, state='failed', phase='prepare' if run_id else 'failed',
+                    instance_destroyed=bool(instance_id),
+                    cost_unknown=bool(instance_id), last_observed_at=job.get('updated_at'),
+                    message='remote instance unavailable; local checkpoints are preserved',
+                    error='The backend restarted and the remote instance is no longer available.')
+            if run_id:
+                try:
+                    checkpoint_prepare._job_status(project_id, str(run_id))
+                    run_dir, meta = trainer._load_run(project_id, str(run_id))
+                    meta['remote_cleaned_at'] = _now()
+                    trainer.write_run_meta(run_dir, meta)
+                except (OSError, ValueError):
+                    pass
+            continue
+        if not run_id:
+            # Provisioning configuration is not persisted: never guess it or
+            # leave an orphaned rental charged after a process restart.
+            try:
+                cloud_manager.control_vast_instance(api_key, int(instance_id), 'delete')
+                deleted = _instance(api_key, int(instance_id)) is None
+            except Exception:
+                deleted = False
+            _update(job, state='failed', phase='failed', instance_destroyed=deleted,
+                    message='provisioning interrupted by backend restart',
+                    error='Retry preparation. Verify the provider resource if cleanup is not confirmed.')
+            continue
+        try:
+            _, meta = trainer._load_run(project_id, str(run_id))
+            if meta.get('state') == 'finished' and (meta.get('prepare_job') or {}).get('state') in {'running', 'queued', 'starting'}:
+                checkpoint_prepare._job_status(project_id, str(run_id))
+                checkpoint_prepare.start_prepare(project_id, str(run_id))
+            event = threading.Event()
+            thread = threading.Thread(target=_monitor_run,
+                args=(job, api_key, project_id, str(run_id), int(instance_id), event),
+                name=f"resume-{job['id']}", daemon=True)
+            with _LOCK:
+                _CANCEL[job['id']] = event
+                _THREADS[job['id']] = thread
+            thread.start()
+        except (OSError, ValueError):
+            continue
+
+
 def _destroy(api_key: str, instance_id: int | None) -> None:
     if not instance_id:
         return
-    try:
-        cloud_manager.control_vast_instance(api_key, int(instance_id), "delete")
-    except Exception:  # noqa: BLE001
-        pass
+    cloud_manager.control_vast_instance(api_key, int(instance_id), "delete")
+    for _ in range(3):
+        remaining = _instance(api_key, int(instance_id))
+        if remaining is None or str(remaining.get('status') or '').lower() in {'deleted', 'destroyed', 'terminated'}:
+            return
+        time.sleep(2)
+    raise RuntimeError('GPU deletion could not be confirmed; check the Vast.ai instance before leaving.')
 
 
 def _active_for_project(project_id: int) -> dict | None:
@@ -185,7 +271,7 @@ def _active_for_project(project_id: int) -> dict | None:
         except (OSError, ValueError):
             continue
         if int(job.get("project_id") or 0) == int(project_id) and job.get("state") in {
-            "queued", "renting", "waiting_ssh", "provisioning", "starting",
+            "queued", "renting", "waiting_ssh", "provisioning", "starting", "running",
         }:
             return job
     return None
@@ -235,6 +321,10 @@ def start_auto(
         raise ValueError("costruisci prima il dataset di training (Dataset → Costruisci)") from exc
     if not any(source.glob("*_train.jsonl")) or not any(source.glob("*_val.jsonl")):
         raise ValueError("il dataset non contiene ancora una famiglia train/val: costruiscilo prima")
+    coverage = trainer.preflight(project_id, {**cfg, 'executor': 'vast'}, lang=lang)
+    data_errors = coverage.get('dataset_coverage_errors') or []
+    if data_errors:
+        raise ValueError('; '.join(data_errors))
     job_id = f"auto_{int(time.time() * 1000)}"
     job = {
         "id": job_id,
@@ -372,9 +462,9 @@ def _monitor_run(
                 if time.time() > prepare_wait_deadline:
                     _update(
                         job,
-                        state="finished",
-                        phase="done",
-                        message="training completato; preparazione manuale necessaria",
+                        state="failed",
+                        phase="prepare",
+                        message="training completato; preparazione automatica non avviata",
                         error="la preparazione automatica non è partita: il pannello mostra il piano locale",
                     )
                     _destroy(api_key, instance_id)
@@ -418,6 +508,24 @@ def _run(
             min_cuda=(PREBUILT_CUDA.get(profile, 12.4) if profile in PREBUILT_IMAGES else None),
             limit=50,
         )
+        # A retry should not immediately select the same offer that just failed
+        # to provision. Completed training runs do not exclude their hosts.
+        recent_failed_offers: set[int] = set()
+        for previous_path in _job_dir().glob('auto_*.json'):
+            try:
+                if previous_path.stat().st_mtime < time.time() - 24 * 60 * 60:
+                    continue
+                previous = json.loads(previous_path.read_text(encoding='utf-8'))
+                if (previous.get('project_id') == job['project_id']
+                        and previous.get('adapter_id') == job['adapter_id']
+                        and previous.get('state') in {'failed', 'cancelled'}
+                        and not previous.get('run_id')):
+                    offer_id = (previous.get('offer') or {}).get('id')
+                    if offer_id is not None:
+                        recent_failed_offers.add(int(offer_id))
+            except (OSError, ValueError, TypeError):
+                continue
+        offers = [offer for offer in offers if int(offer.get('id') or 0) not in recent_failed_offers]
         if not offers:
             raise RuntimeError(
                 f"nessuna GPU Vast.ai entro ${max_dph:.2f}/h con almeno {min_gpu_ram_gb} GB; "
@@ -445,14 +553,32 @@ def _run(
             message=f"noleggio {best.get('gpu_name') or 'GPU'} a ${float(best.get('dph_total') or 0):.3f}/h",
             offer={k: best.get(k) for k in ("id", "gpu_name", "dph_total", "cuda_max_good")},
         )
-        rented = cloud_manager.rent_vast_instance(
-            api_key,
-            int(best["id"]),
-            image=image,
-            cuda_max_good=best.get("cuda_max_good"),
-            disk_gb=disk_gb,
-            onstart_script="" if prebuilt else _onstart(profile, job["adapter_id"]),
-        )
+        for attempt in range(5):
+            if cancel.is_set():
+                raise RuntimeError("annullato")
+            try:
+                rented = cloud_manager.rent_vast_instance(
+                    api_key,
+                    int(best["id"]),
+                    image=image,
+                    cuda_max_good=best.get("cuda_max_good"),
+                    disk_gb=disk_gb,
+                    onstart_script="" if prebuilt else _onstart(profile, job["adapter_id"]),
+                )
+                break
+            except RuntimeError as exc:
+                # Retry only a definitive refusal: network timeouts may hide a
+                # successful rental and must never create a second instance.
+                if 'no_such_ask' not in str(exc) or attempt == 4:
+                    raise
+                offers = [offer for offer in offers if offer.get('id') != best['id']]
+                best = best_offer(offers, max_dph)
+                if best is None:
+                    raise RuntimeError("nessuna offerta disponibile entro il budget") from exc
+                if not prebuilt and profile != 'paddle':
+                    image = cloud_manager.vast_image_for(best.get('cuda_max_good'))
+                _update(job, message="offerta non più disponibile; provo la successiva…",
+                        offer={k: best.get(k) for k in ('id', 'gpu_name', 'dph_total', 'cuda_max_good')})
         instance_id = rented.get("contract_id")
         if instance_id is None:
             raise RuntimeError("Vast.ai non ha restituito l'istanza noleggiata")
@@ -474,7 +600,8 @@ def _run(
                 raise RuntimeError("annullato")
             inst = _instance(api_key, int(instance_id))
             if inst:
-                _update(job, message=f"attendo l'istanza (stato {inst.get('status') or 'unknown'})…")
+                _update(job, provider_status=inst.get("status"), provider_message=inst.get("status_message"),
+                        message=f"attendo l'istanza (stato {inst.get('status') or 'unknown'})…")
                 # `ssh_host`/`ssh_port` sono già la coppia coerente scelta da
                 # Vast; incrociare `ssh_direct_host` con la porta proxy crea un
                 # endpoint che non esiste (→ ssh-keyscan fallisce per sempre).
@@ -576,12 +703,15 @@ def _run(
             # ModelScope è solo un mirror più lento (e il download del modello
             # può bloccarsi al primo step).
             "use_hf": True,
+            "auto_evaluate": True,
+            "lang": lang,
             # Una GPU sola: zero1/zero2 non partizionano nulla e aggiungono
             # solo un optimizer wrapper che può rompere lo scheduler. La run
             # manuale può ancora usare DeepSpeed; l'avvio automatico no.
             "disable_deepspeed": True,
         }
-        started = trainer.start_run(int(job["project_id"]), remote_cfg, owner_id=owner_id, lang=lang)
+        started = trainer.start_run(int(job["project_id"]), remote_cfg, owner_id=owner_id, lang=lang,
+            on_run_created=lambda rid: _update(job, run_id=rid, phase='sync', message='transferring dataset and checkpoints to the GPU'))
         run_id = (started.get("run") or {}).get("run_id")
         if not run_id:
             recent = trainer.list_runs(int(job["project_id"]), limit=1)
@@ -601,7 +731,7 @@ def _run(
             _update(job, state="cancelled", phase="cancelled", message="annullato")
         else:
             _update(job, state="failed", phase="failed", error=message, message=message[:300])
-        if instance_id is not None and not job.get("run_id"):
+        if instance_id is not None:
             _destroy(api_key, instance_id)
             _update(job, instance_destroyed=True)
     finally:

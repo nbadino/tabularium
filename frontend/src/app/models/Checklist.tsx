@@ -42,12 +42,12 @@ export function ChecklistItem({
       <span
         className={`flex h-7 w-7 items-center justify-center text-[13px] font-bold ${
           state === 'done'
-            ? 'bg-[color:var(--color-ok)] text-white'
+            ? 'text-[color:var(--color-ok)]'
             : state === 'active'
-              ? 'bg-[color:var(--color-sig-plate)] text-white'
+              ? 'text-[color:var(--color-sig)]'
               : state === 'failed'
-                ? 'bg-[color:var(--color-warn)] text-white'
-                : 'border border-[color:var(--color-rule)] text-[color:var(--color-ink-3)]'
+                ? 'text-[color:var(--color-warn)]'
+                : 'text-[color:var(--color-ink-3)]'
         }`}
         aria-hidden
       >

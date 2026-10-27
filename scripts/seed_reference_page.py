@@ -38,7 +38,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app import config  # noqa: E402
-from app.services import otsl, table_detect  # noqa: E402
+from app.services import table_detect  # noqa: E402
+from app.domain import otsl
 
 PAGE_FILE = "LSI_17186_015.tif"
 INK_LEVEL = 128

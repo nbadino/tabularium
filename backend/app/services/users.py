@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 
+from ..adapters import users as accountstore
 from . import security
 
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9._-]{3,40}$")
@@ -69,25 +70,28 @@ def create_user(
     username = normalize_username(username)
     validate_password(password)
     role = validate_role(role)
-    existing = conn.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
-    if existing:
+    if accountstore.username_taken(username, conn):
         raise HTTPException(status_code=409, detail="nome utente già esistente")
     salt, hash_hex = security.hash_password(password)
-    cur = conn.execute(
-        "INSERT INTO users (username, email, password_hash, salt, role, active, must_change_password) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (username, email or None, hash_hex, salt, role, 1 if active else 0, 1 if must_change_password else 0),
+    user_id = accountstore.insert(
+        conn,
+        username=username,
+        email=email or None,
+        password_hash=hash_hex,
+        salt=salt,
+        role=role,
+        active=active,
+        must_change_password=must_change_password,
     )
-    return user_out(conn.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone())
+    return user_out(accountstore.get(user_id, conn))
 
 
-def get_user(conn: sqlite3.Connection, user_id: int) -> sqlite3.Row | None:
-    return conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+def get_user(conn: sqlite3.Connection, user_id: int) -> dict | None:
+    return accountstore.get(user_id, conn)
 
 
 def list_users(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute("SELECT * FROM users ORDER BY username").fetchall()
-    return [user_out(r) for r in rows]
+    return [user_out(row) for row in accountstore.list_accounts(conn)]
 
 
 def update_user(
@@ -101,13 +105,15 @@ def update_user(
     user = get_user(conn, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="utente non trovato")
+    fields: dict = {}
     if role is not None:
-        role = validate_role(role)
-        conn.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+        fields["role"] = validate_role(role)
     if active is not None:
-        conn.execute("UPDATE users SET active=? WHERE id=?", (1 if active else 0, user_id))
+        fields["active"] = 1 if active else 0
     if email is not None:
-        conn.execute("UPDATE users SET email=? WHERE id=?", (email or None, user_id))
+        fields["email"] = email or None
+    if fields:
+        accountstore.update_fields(conn, user_id, fields)
     return user_out(get_user(conn, user_id))
 
 
@@ -120,9 +126,8 @@ def set_password(
 ) -> None:
     validate_password(new_password)
     salt, hash_hex = security.hash_password(new_password)
-    conn.execute(
-        "UPDATE users SET password_hash=?, salt=?, must_change_password=? WHERE id=?",
-        (hash_hex, salt, 1 if must_change else 0, user_id),
+    accountstore.set_password(
+        conn, user_id, password_hash=hash_hex, salt=salt, must_change=must_change
     )
 
 
@@ -137,9 +142,8 @@ def generate_invite(conn: sqlite3.Connection, user_id: int, ttl_hours: int = INV
         raise HTTPException(status_code=404, detail="utente non trovato")
     token = security.new_token()
     expires = (datetime.now(timezone.utc) + timedelta(hours=ttl_hours)).isoformat()
-    conn.execute(
-        "UPDATE users SET invite_token_hash=?, invite_expires_at=?, must_change_password=1 WHERE id=?",
-        (security.hash_token(token), expires, user_id),
+    accountstore.set_invite(
+        conn, user_id, token_hash=security.hash_token(token), expires_at=expires, must_change=True
     )
     return token, expires
 
@@ -148,9 +152,7 @@ def find_by_invite(conn: sqlite3.Connection, token: str) -> sqlite3.Row | None:
     """Utente il cui invito è valido (token presente e non scaduto), o None."""
     if not token:
         return None
-    row = conn.execute(
-        "SELECT * FROM users WHERE invite_token_hash=?", (security.hash_token(token),)
-    ).fetchone()
+    row = accountstore.by_invite_hash(security.hash_token(token), conn)
     if row is None or not row["invite_expires_at"]:
         return None
     try:
@@ -169,23 +171,58 @@ def accept_invite(conn: sqlite3.Connection, token: str, new_password: str) -> di
     if row is None:
         raise HTTPException(status_code=400, detail="invito non valido o scaduto")
     set_password(conn, row["id"], new_password, must_change=False)
-    conn.execute(
-        "UPDATE users SET invite_token_hash=NULL, invite_expires_at=NULL, active=1 WHERE id=?",
-        (row["id"],),
-    )
-    conn.execute("DELETE FROM sessions WHERE user_id=?", (row["id"],))
+    accountstore.set_invite(conn, row["id"], token_hash=None, expires_at=None)
+    accountstore.activate(conn, row["id"])
+    accountstore.delete_sessions(row["id"], conn)
     return user_out(get_user(conn, row["id"]))
 
 
 def delete_user(conn: sqlite3.Connection, user_id: int) -> None:
-    conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+    accountstore.delete(conn, user_id)
 
 
 def count_users(conn: sqlite3.Connection) -> int:
-    return conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+    return accountstore.count(conn)
 
 
 def count_admins(conn: sqlite3.Connection) -> int:
-    return conn.execute(
-        "SELECT COUNT(*) AS n FROM users WHERE role='admin'"
-    ).fetchone()["n"]
+    return accountstore.count_admins(conn)
+
+
+def ensure_oidc_user(
+    conn: sqlite3.Connection,
+    *,
+    email: str,
+    username: str,
+    role: str,
+) -> dict:
+    """Return the account for an OIDC identity, creating it on first login.
+
+    The link is the verified email: an administrator who already created the account
+    keeps its role and its projects. A new account gets the instance's default role and
+    a password nobody knows — it is a random token hashed and discarded, so the local
+    login form cannot be used for it until someone resets the password on purpose.
+    """
+    email = email.strip().lower()
+    existing = accountstore.by_email(email, conn)
+    if existing is not None:
+        if not existing["active"]:
+            raise HTTPException(status_code=403, detail="account disattivato")
+        return existing
+
+    base = normalize_username(username) or "utente"
+    candidate = base
+    suffix = 2
+    while accountstore.username_taken(candidate, conn):
+        candidate = f"{base}{suffix}"
+        suffix += 1
+    created = create_user(
+        conn,
+        username=candidate,
+        password=security.new_token(),
+        email=email,
+        role=role,
+        active=True,
+        must_change_password=False,
+    )
+    return accountstore.get(created["id"], conn) or {}

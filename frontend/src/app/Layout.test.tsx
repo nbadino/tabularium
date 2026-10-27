@@ -31,16 +31,27 @@ describe('Layout', () => {
         </Routes>
       </MemoryRouter>,
     )
-    fireEvent.click(screen.getByText('Risultati'))
+    fireEvent.click(screen.getByRole('link', { name: 'Riconosci' }))
+    fireEvent.click(screen.getByRole('link', { name: 'Risultati' }))
     expect(screen.getByTestId('where')).toHaveTextContent(/^\/risultati$/)
     fireEvent.click(screen.getByText('Annotazione'))
     expect(screen.getByTestId('where')).toHaveTextContent('/annotazione?project=1&page=7')
   })
+  it('keeps the selected recognition run when returning through contextual navigation', () => {
+    render(<MemoryRouter initialEntries={['/risultati?project=2&run=24']}>
+      <Routes><Route element={<Layout />}><Route path="*" element={<Where />} /></Route></Routes>
+    </MemoryRouter>)
+    fireEvent.click(screen.getByRole('link', { name: 'Archivio' }))
+    fireEvent.click(screen.getByRole('link', { name: 'Riconosci' }))
+    fireEvent.click(screen.getByRole('link', { name: 'Risultati' }))
+    expect(screen.getByTestId('where')).toHaveTextContent('/risultati?project=2&run=24')
+  })
+
   it.each([
     ['/training', 'Fine-tuning'],
     ['/valutazione', 'Fine-tuning'],
     ['/playground', 'Modelli'],
-    ['/archivio', 'Progetti'],
+    ['/archivio', 'Archivio'],
   ])('la sottosezione %s mantiene visibile la sezione %s', (path, label) => {
     render(
       <MemoryRouter initialEntries={[path]}>
@@ -50,13 +61,13 @@ describe('Layout', () => {
     expect(screen.getByRole('link', { name: label })).toHaveAttribute('aria-current', 'page')
   })
 
-  it('Progetti torna all’elenco dopo aver aperto il dialogo di creazione', () => {
+  it('Archive returns to the overview after project creation', () => {
     render(<MemoryRouter initialEntries={['/progetti?nuovo=1']}>
       <Routes><Route element={<Layout />}><Route path="*" element={<Where />} /></Route></Routes>
     </MemoryRouter>)
-    fireEvent.click(screen.getByText('Risultati'))
-    fireEvent.click(screen.getByRole('link', { name: 'Progetti' }))
-    expect(screen.getByTestId('where')).toHaveTextContent(/^\/progetti$/)
+    fireEvent.click(screen.getByRole('link', { name: 'Riconosci' }))
+    fireEvent.click(screen.getByRole('link', { name: 'Archivio' }))
+    expect(screen.getByTestId('where')).toHaveTextContent(/^\/archivio$/)
   })
 
 })

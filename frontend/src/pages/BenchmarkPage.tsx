@@ -11,7 +11,7 @@ import { Link } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import type { BenchStatus, BenchmarkReport, BenchmarkTarget } from '../lib/types'
 import type { ModelItem } from '../app/models/registry'
-import { ErrorNotice, Field, Module, Notice, PageHeader, Badge } from '../app/ui'
+import { ErrorNotice, Field, Module, Notice, Loading, PageHeader, Badge } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { useInference } from '../app/inference'
 import { useModelNames } from '../app/models/names'
@@ -37,6 +37,8 @@ export default function BenchmarkPage() {
   const [adapters, setAdapters] = useState<ModelItem[]>([])
   const [targets, setTargets] = useState<BenchmarkTarget[]>([])
   const [pages, setPages] = useState<BenchPage[]>([])
+  const [pagesLoading, setPagesLoading] = useState(false)
+  const [showUnready, setShowUnready] = useState(false)
   const [picked, setPicked] = useState<Set<number>>(new Set())
   const [limit, setLimit] = useState(10)
   const [withText, setWithText] = useState(true)
@@ -67,10 +69,16 @@ export default function BenchmarkPage() {
   }, [inference.adapterId, inference.url, inference.model])
 
   useEffect(() => {
-    if (projectId === '') return
+    setPages([])
+    setShowUnready(false)
+    if (projectId === '') { setPagesLoading(false); return }
+    let active = true
+    setPagesLoading(true)
     apiGet<{ items: BenchPage[] }>(`/projects/${projectId}/benchmark/pages`)
-      .then((out) => setPages(out.items))
-      .catch(() => setPages([]))
+      .then((out) => { if (active) setPages(out.items) })
+      .catch((error) => { if (active) setError(error) })
+      .finally(() => { if (active) setPagesLoading(false) })
+    return () => { active = false }
   }, [projectId])
 
   const readyPages = pages.filter((p) => p.ready)
@@ -236,11 +244,11 @@ export default function BenchmarkPage() {
                 </span>
               }
             >
-              {pages.length === 0 ? (
+              {pagesLoading ? <Loading label={t('common.loading')} /> : pages.length === 0 ? (
                 <Notice>{t('benchmark.noPages')}</Notice>
               ) : (
                 <div className="max-h-72 overflow-y-auto">
-                  {pages.map((p) => (
+                  {(showUnready ? pages : readyPages).map((p) => (
                     <label key={p.page_id} className={`flex items-center gap-2 border-b border-[color:var(--color-rule)] py-1 text-[12px] ${p.ready ? '' : 'opacity-50'}`}>
                       <input type="checkbox" disabled={!p.ready} checked={picked.has(p.page_id)} onChange={() => toggle(p.page_id)} />
                       <span className="mono min-w-0 flex-1 truncate">{p.rel_path}</span>
@@ -251,6 +259,8 @@ export default function BenchmarkPage() {
                   ))}
                 </div>
               )}
+              {!pagesLoading && pages.some((page) => !page.ready) && <label className="mt-2 flex items-center gap-2 text-[12px] text-[color:var(--color-ink-2)]"><input type="checkbox" checked={showUnready} onChange={(e) => setShowUnready(e.target.checked)} />{t('benchmark.showUnready', { n: pages.length - readyPages.length })}</label>}
+              {!pagesLoading && pages.length > 0 && readyPages.length === 0 && <Notice>{t('benchmark.noPages')}{' '}<Link to={`/annotazione?project=${projectId}`}>{t('dataset.material.openStudio')}</Link></Notice>}
               <div className="mt-3 flex flex-wrap items-end gap-3">
                 <Field label={t('benchmark.pages')} hint={t('benchmark.limitHint')}>
                   <input type="number" min={1} max={200} className="fld !w-24" value={limit} onChange={(e) => setLimit(Math.max(1, Math.min(200, Number(e.target.value) || 1)))} />
@@ -263,7 +273,7 @@ export default function BenchmarkPage() {
                   <input type="checkbox" checked={tableOnly} onChange={(e) => setTableOnly(e.target.checked)} />
                   {t('benchmark.tableOnly')}
                 </label>
-                <button type="button" className="btn btn-primary btn-sm" onClick={() => void run()} disabled={running}>
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => void run()} disabled={running || pagesLoading || readyPages.length === 0 || !targets.some((target) => target.adapter_id)}>
                   {running ? t('benchmark.running') : t('benchmark.run')}
                 </button>
               </div>

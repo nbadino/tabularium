@@ -74,7 +74,7 @@ def test_strict_layout_counts_loose_boxes_missed_and_invented_per_label():
 def test_end2end_model_is_scored_on_its_own_blocks_and_content(monkeypatch):
     """Un modello senza prompt di layout (LightOnOCR-3) non va interrogato
     per crop: layout e contenuto vengono dalla sua generazione end2end."""
-    from app.services.otsl import html_to_otsl, otsl_to_grid
+    from app.domain.otsl import html_to_otsl, otsl_to_grid
 
     class Adapter:
         native_prefill_mode = "end2end"
@@ -141,7 +141,7 @@ def test_table_metrics():
             {"r": 1, "c": 1, "rowspan": 1, "colspan": 1, "text": "D"},
         ],
     }
-    from app.services.otsl import grid_to_otsl
+    from app.domain.otsl import grid_to_otsl
 
     m = evmod.table_metrics(grid, grid_to_otsl(grid))
     assert m["structure_ok"] is True
@@ -159,7 +159,7 @@ def test_table_metrics():
 
 
 def test_html_to_otsl_preserves_headers_and_spans():
-    from app.services.otsl import html_to_otsl, otsl_to_grid
+    from app.domain.otsl import html_to_otsl, otsl_to_grid
 
     html = (
         "<table><tr><th colspan='2'>Vessel</th></tr>"
@@ -430,7 +430,7 @@ def test_table_grid_normalises_to_the_modal_column_count():
     """
     from PIL import Image
 
-    from app.services import otsl
+    from app.domain import otsl
     from app.services.inference import VllmClient
 
     calls = {"n": 0}

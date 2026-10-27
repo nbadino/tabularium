@@ -199,13 +199,37 @@ def rent_training(payload: dict, _admin: dict = Depends(_admin)) -> dict:
     l'istanza più i percorsi da usare nell'executor di training. L'host impiega
     qualche minuto a installare ms-swift: la UI attende `.train_ready`.
     """
-    from ..services import cloud_manager
+    from ..services import cloud_manager, vault
 
-    api_key = _credential(payload)
+    # Il pulsante manuale non manda la chiave in chiaro: il default è il
+    # credential del vault, come già fa l'avvio automatico. Prima il noleggio
+    # manuale falliva con "API Key obbligatoria" anche a vault configurato.
+    credential_ref = str(payload.get("credential_ref") or "vault:vast_api_key").strip()
+    api_key = _credential({**payload, "credential_ref": credential_ref})
     if not api_key:
-        raise HTTPException(status_code=400, detail="API Key di Vast.ai obbligatoria.")
+        api_key = vault.get(credential_ref)
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="API Key di Vast.ai non configurata: aggiungila in Modelli → Cloud.",
+        )
     ref = str(payload.get("tabularium_ref") or "main").strip() or "main"
     disk_gb = int(payload.get("disk_gb") or 80)
+    adapter_id = str(payload.get("adapter_id") or "").strip()
+    if adapter_id:
+        from ..services import train_recipes
+
+        recipe = train_recipes.get_recipe(adapter_id)
+        if recipe is not None and recipe.adapter_id != "monkeyocrv2-parsing":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Il noleggio automatico prepara solo l'ambiente MonkeyOCRv2/ms-swift: "
+                    f"per {recipe.display_name} serve un ambiente {recipe.toolchain} con i pin "
+                    "della ricetta. Noleggia l'istanza e configura host, repository e Python "
+                    "nei campi SSH (la guida della ricetta elenca i pin)."
+                ),
+            )
     try:
         offers = cloud_manager.search_vast_offers(
             api_key,
@@ -247,6 +271,7 @@ def rent_training(payload: dict, _admin: dict = Depends(_admin)) -> dict:
         "tabularium_ref": ref,
         "offer": best,
         "instance_id": contract,
+        "adapter_id": adapter_id or "monkeyocrv2-parsing",
         "ssh": {
             "user": "root",
             # Percorsi che `setup_cloud_train.sh` crea sull'host.

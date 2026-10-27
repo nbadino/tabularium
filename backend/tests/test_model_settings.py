@@ -81,11 +81,11 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
             "serving": {"max_model_len": 4096},
             "generation": {"max_tokens": 4096},
         })
-    with pytest.raises(HTTPException, match="Detection o Segmentation"):
+    with pytest.raises(HTTPException, match="uno tra Detection, Segmentation"):
         model_settings.save_settings("teleocr", {"workflow": {"layout_mode": "automatic"}})
-    with pytest.raises(HTTPException, match="limite ufficiale TeleOCR"):
+    with pytest.raises(HTTPException, match="supera il limite ufficiale"):
         model_settings.save_settings("teleocr", {"image": {"max_pixels": 71_372_800}})
-    with pytest.raises(HTTPException, match="workflow PaddleOCR-VL non riconosciuto"):
+    with pytest.raises(HTTPException, match="workflow non riconosciuto"):
         model_settings.save_settings("paddleocr-vl", {"workflow": {"layout_mode": "Segmentation"}})
     paddle_defaults = model_settings.get_settings("paddleocr-vl")["recommended"]["workflow"]
     assert paddle_defaults["layout_threshold"] is None
@@ -106,15 +106,15 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
     assert paddle["effective"]["workflow"]["layout_merge_bboxes_mode"] == "union"
     assert paddle["effective"]["workflow"]["layout_shape_mode"] == "quad"
     assert paddle["effective"]["workflow"]["vl_rec_max_concurrency"] == 8
-    with pytest.raises(HTTPException, match="layout_threshold deve essere tra"):
+    with pytest.raises(HTTPException, match="layout_threshold deve essere un numero tra"):
         model_settings.save_settings("paddleocr-vl", {"workflow": {"layout_threshold": 1.1}})
-    with pytest.raises(HTTPException, match="layout_merge_bboxes_mode non valido"):
+    with pytest.raises(HTTPException, match="layout_merge_bboxes_mode deve essere uno tra"):
         model_settings.save_settings("paddleocr-vl", {"workflow": {"layout_merge_bboxes_mode": "auto"}})
-    with pytest.raises(HTTPException, match="layout_shape_mode non valido"):
+    with pytest.raises(HTTPException, match="layout_shape_mode deve essere uno tra"):
         model_settings.save_settings("paddleocr-vl", {"workflow": {"layout_shape_mode": "polygon"}})
     with pytest.raises(HTTPException, match="vl_rec_max_concurrency deve essere un intero"):
         model_settings.save_settings("paddleocr-vl", {"workflow": {"vl_rec_max_concurrency": 1.5}})
-    with pytest.raises(HTTPException, match="image.min_pixels è disponibile solo"):
+    with pytest.raises(HTTPException, match="image.min_pixels non è esposto"):
         model_settings.save_settings("teleocr", {"image": {"min_pixels": 1000}})
     qwen = model_settings.save_settings("qwen3-vl-8b", {
         "image": {"min_pixels": 100_000, "max_pixels": 2_000_000},
@@ -136,7 +136,7 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
     assert tuned["effective"]["workflow"] == {
         "ngram_size": 40, "window_size": 1024, "image_mode": "base",
     }
-    with pytest.raises(HTTPException, match="image_mode non valido"):
+    with pytest.raises(HTTPException, match="image_mode deve essere uno tra"):
         model_settings.save_settings("unlimited-ocr", {"workflow": {"image_mode": "crop"}})
     with pytest.raises(HTTPException, match="richiede un logits processor"):
         model_settings.save_settings("unlimited-ocr", {"generation": {"no_repeat_ngram_size": 35}})

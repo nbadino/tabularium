@@ -17,7 +17,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from ..db import connect
+from ..adapters import runs as runstore
 from . import inference, ocr as ocrmod, prefill
 from .i18n import msg
 
@@ -30,21 +30,20 @@ def _now() -> str:
 
 
 def _provider(cfg: dict[str, Any]) -> str:
-    try:
-        with connect() as conn:
-            row = conn.execute(
-                "SELECT provider FROM compute_profiles WHERE active=1 LIMIT 1"
-            ).fetchone()
-        if row:
-            return str(row["provider"])
-    except Exception:
-        pass
+    active = runstore.active_provider()
+    if active:
+        return active
+    if cfg.get("provider"):
+        return str(cfg["provider"])
     url = str(cfg.get("url") or "").lower()
+    if "api.cloud.llamaindex.ai" in url or "llamaindex" in url:
+        return "llamaindex"
     if ".modal.run" in url:
         return "modal"
     if "runpod" in url:
         return "runpod"
     return "local" if "127.0.0.1" in url or "localhost" in url else "custom"
+
 
 
 def _release_inference(
@@ -100,19 +99,8 @@ def _run_out(row, *, include_items: bool = True, results: str | int = "all") -> 
     out = dict(row)
     if not include_items:
         return out
-    with connect() as conn:
-        items = conn.execute(
-            """SELECT i.*, p.rel_path, p.pdf_page, p.status AS page_status,
-                      (SELECT COUNT(*) FROM blocks b
-                        WHERE b.recognition_run_id=i.run_id AND b.page_id=i.page_id) AS blocks,
-                      (SELECT COUNT(*) FROM blocks b
-                        WHERE b.recognition_run_id=i.run_id AND b.page_id=i.page_id
-                          AND b.confirmed=0) AS drafts
-                 FROM recognition_run_items i
-                 JOIN pages p ON p.id=i.page_id
-                WHERE i.run_id=? ORDER BY i.id""",
-            (row["id"],),
-        ).fetchall()
+    items = runstore.items_for_run(int(row["id"]))
+
     def _result(item) -> dict[str, Any] | None:
         if results == "all" or (results != "none" and int(item["page_id"]) == int(results)):
             return json.loads(item["result_json"] or "{}")
@@ -124,26 +112,21 @@ def _run_out(row, *, include_items: bool = True, results: str | int = "all") -> 
     return out
 
 
+
 def get_run(run_id: int, *, results: str | int = "all") -> dict[str, Any]:
-    with connect() as conn:
-        row = conn.execute("SELECT * FROM recognition_runs WHERE id=?", (run_id,)).fetchone()
+    row = runstore.get(run_id)
     if row is None:
         raise HTTPException(status_code=404, detail="sessione di riconoscimento non trovata")
     return _run_out(row, results=results)
 
 
+
 def list_runs(project_id: int | None = None, limit: int = 50) -> list[dict[str, Any]]:
-    with connect() as conn:
-        if project_id is None:
-            rows = conn.execute(
-                "SELECT * FROM recognition_runs ORDER BY id DESC LIMIT ?", (limit,)
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM recognition_runs WHERE project_id=? ORDER BY id DESC LIMIT ?",
-                (project_id, limit),
-            ).fetchall()
-    return [_run_out(row, include_items=False) for row in rows]
+    return [
+        _run_out(row, include_items=False)
+        for row in runstore.list_runs(project_id, limit)
+    ]
+
 
 
 def create_run(
@@ -172,43 +155,13 @@ def create_run(
     cfg = inference.get_inference_config()
     if engine == "model" and not cfg.get("enabled", True):
         raise HTTPException(status_code=409, detail="attiva un modello prima di avviare il riconoscimento")
-    placeholders = ",".join("?" for _ in unique_ids)
-    with connect() as conn:
+    try:
+        runstore.check(project_id, unique_ids, engine=engine)
         if engine == "model":
-            active = conn.execute(
-                "SELECT id FROM recognition_runs "
-                "WHERE engine='model' AND state IN ('queued','running') "
-                "ORDER BY id LIMIT 1"
-            ).fetchone()
-            if active is not None:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"il modello sta già elaborando la sessione #{active['id']}",
-                )
-        # Due sessioni sulla stessa pagina si pestano: ognuna toglie le bozze
-        # all'inizio e scrive le sue, quindi entrambe sopravvivono doppie
-        # (successo con due run OCR partite a 2 s di distanza). Il blocco del
-        # modello qui sopra è globale; questo vale per ogni motore.
-        busy = conn.execute(
-            "SELECT r.id FROM recognition_runs r JOIN recognition_run_items i ON i.run_id = r.id "
-            f"WHERE r.state IN ('queued','running') AND i.page_id IN ({placeholders}) LIMIT 1",
-            unique_ids,
-        ).fetchone()
-        if busy is not None:
-            raise HTTPException(status_code=409, detail=msg("pages_in_active_run", lang, run=busy["id"]))
-        rows = conn.execute(
-            f"SELECT id FROM pages WHERE project_id=? AND id IN ({placeholders})",
-            (project_id, *unique_ids),
-        ).fetchall()
-        found = {int(row["id"]) for row in rows}
-        missing = [value for value in unique_ids if value not in found]
-        if missing:
-            raise HTTPException(status_code=404, detail="una o più pagine non appartengono al progetto")
-        if engine == "model":
-            # L'endpoint dichiarato deve rispondere PRIMA di accodare migliaia
-            # di pagine destinate a fallire una a una. La sonda è corta e non
-            # avvia nulla: per un serverless freddo è il segnale giusto per
-            # andare a riattivarlo dalla pagina Modelli, non un falso blocco.
+            # L'endpoint dichiarato deve rispondere PRIMA di accodare migliaia di
+            # pagine destinate a fallire una a una. La sonda è corta e non avvia
+            # nulla: per un serverless freddo è il segnale giusto per andare a
+            # riattivarlo dalla pagina Modelli, non un falso blocco.
             client_probe = inference.get_vllm_client(timeout=5)
             probe = client_probe.test_connection(timeout=5.0)
             if not probe.get("ok") and str(client_probe.url).startswith(("http://127.0.0.1:", "http://localhost:")):
@@ -224,51 +177,40 @@ def create_run(
                     status_code=409,
                     detail=msg("model_endpoint_unreachable", lang, url=cfg.get("url") or ""),
                 )
-        # L'OCR è un percorso locale alternativo: non deve ereditare il
-        # provider dell'endpoint modello precedentemente configurato (per
-        # esempio Vast.ai), altrimenti storico e lifecycle descrivono una
-        # risorsa cloud che questa run non usa.
+
+        # L'OCR è un percorso locale alternativo: non deve ereditare il provider
+        # dell'endpoint modello precedentemente configurato (per esempio Vast.ai),
+        # altrimenti storico e lifecycle descrivono una risorsa cloud che non usa.
         provider = _provider(cfg) if engine == "model" else "local"
-        job = conn.execute(
-            """INSERT INTO jobs
-               (kind, owner_id, project_id, provider, state, heartbeat_at,
-                command_json, recovery_strategy)
-               VALUES ('recognition',?,?,?,?,?,?,?)""",
-            (
-                owner_id,
-                project_id,
-                provider,
-                "queued",
-                _now(),
-                json.dumps({"page_ids": unique_ids, "engine": engine}),
-                "persisted-results-mark-interrupted",
+        run_id = runstore.create(
+            project_id,
+            unique_ids,
+            engine=engine,
+            mode=mode,
+            model_mode=model_mode,
+            stop_policy=stop_policy,
+            owner_id=owner_id,
+            model_name=(
+                str(cfg.get("model") or "") if engine == "model"
+                else str(getattr(ocrmod.OcrEngine(), "name", "ocr"))
             ),
+            adapter_id=str(cfg.get("adapter_id") or "") if engine == "model" else "local-ocr",
+            provider=provider,
+            endpoint=cfg.get("url") if engine == "model" else None,
         )
-        run = conn.execute(
-            """INSERT INTO recognition_runs
-               (project_id, owner_id, job_id, state, engine, mode, model_mode,
-                model_name, adapter_id, provider, endpoint, stop_policy, total_pages)
-               VALUES (?,?,?,'queued',?,?,?,?,?,?,?,?,?)""",
-            (
-                project_id,
-                owner_id,
-                job.lastrowid,
-                engine,
-                mode,
-                model_mode,
-                cfg.get("model") if engine == "model" else getattr(ocrmod.OcrEngine(), "name", "ocr"),
-                cfg.get("adapter_id") if engine == "model" else "local-ocr",
-                provider,
-                cfg.get("url") if engine == "model" else None,
-                stop_policy,
-                len(unique_ids),
-            ),
-        )
-        run_id = int(run.lastrowid)
-        conn.executemany(
-            "INSERT INTO recognition_run_items (run_id,page_id,state) VALUES (?,?,'queued')",
-            [(run_id, page_id) for page_id in unique_ids],
-        )
+    except runstore.ModelBusy as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"il modello sta già elaborando la sessione #{exc.run_id}",
+        ) from exc
+    except runstore.PagesBusy as exc:
+        raise HTTPException(
+            status_code=409, detail=msg("pages_in_active_run", lang, run=exc.run_id)
+        ) from exc
+    except runstore.MissingPages as exc:
+        raise HTTPException(
+            status_code=404, detail="una o più pagine non appartengono al progetto"
+        ) from exc
     _start_worker(run_id)
     return get_run(run_id)
 
@@ -286,38 +228,13 @@ def _start_worker(run_id: int) -> None:
 
 
 def _mark_item(item_id: int, state: str, **values: Any) -> None:
-    fields = ["state=?"]
-    params: list[Any] = [state]
-    for key in ("detected", "inserted", "result_json", "error", "started_at", "ended_at"):
-        if key in values:
-            fields.append(f"{key}=?")
-            params.append(values[key])
-    params.append(item_id)
-    with connect() as conn:
-        conn.execute(f"UPDATE recognition_run_items SET {', '.join(fields)} WHERE id=?", params)
+    runstore.mark_item(item_id, state, **values)
+
 
 
 def _refresh_counts(run_id: int) -> None:
-    now = _now()
-    with connect() as conn:
-        counts = {
-            row["state"]: int(row["n"])
-            for row in conn.execute(
-                "SELECT state,COUNT(*) AS n FROM recognition_run_items WHERE run_id=? GROUP BY state",
-                (run_id,),
-            ).fetchall()
-        }
-        completed = sum(counts.get(key, 0) for key in ("finished", "failed", "cancelled"))
-        conn.execute(
-            """UPDATE recognition_runs
-                  SET completed_pages=?, succeeded_pages=?, failed_pages=?, heartbeat_at=?
-                WHERE id=?""",
-            (completed, counts.get("finished", 0), counts.get("failed", 0), now, run_id),
-        )
-        conn.execute(
-            "UPDATE jobs SET heartbeat_at=? WHERE id=(SELECT job_id FROM recognition_runs WHERE id=?)",
-            (now, run_id),
-        )
+    runstore.refresh_counts(run_id)
+
 
 
 def _recognize_page(run, item, opts, client, engine, cancel: threading.Event):
@@ -401,19 +318,10 @@ def _recover_local_server(run, cancel: threading.Event) -> bool:
 
 def _worker(run_id: int, cancel: threading.Event) -> None:
     started = _now()
-    with connect() as conn:
-        run = conn.execute("SELECT * FROM recognition_runs WHERE id=?", (run_id,)).fetchone()
-        if run is None:
-            return
-        conn.execute(
-            "UPDATE recognition_runs SET state='running',started_at=?,heartbeat_at=? WHERE id=?",
-            (started, started, run_id),
-        )
-        conn.execute("UPDATE jobs SET state='running',heartbeat_at=? WHERE id=?", (started, run["job_id"]))
-        items = conn.execute(
-            "SELECT id,page_id FROM recognition_run_items WHERE run_id=? ORDER BY id",
-            (run_id,),
-        ).fetchall()
+    run = runstore.start(run_id, started)
+    if run is None:
+        return
+    items = runstore.items_for_run(run_id)
 
     try:
         opts = prefill.PrelabelOptions(
@@ -457,29 +365,20 @@ def _worker(run_id: int, cancel: threading.Event) -> None:
                 )
             _refresh_counts(run_id)
 
-        with connect() as conn:
-            counts = {
-                row["state"]: int(row["n"])
-                for row in conn.execute(
-                    "SELECT state,COUNT(*) AS n FROM recognition_run_items WHERE run_id=? GROUP BY state",
-                    (run_id,),
-                ).fetchall()
-            }
-            if cancel.is_set():
-                state = "cancelled"
-            elif counts.get("failed", 0):
-                state = "finished_with_errors"
-            else:
-                state = "finished"
-            ended = _now()
-            conn.execute(
-                "UPDATE recognition_runs SET state=?,ended_at=?,heartbeat_at=? WHERE id=?",
-                (state, ended, ended, run_id),
-            )
-            conn.execute(
-                "UPDATE jobs SET state=?,ended_at=?,heartbeat_at=? WHERE id=?",
-                ("finished" if state.startswith("finished") else "stopped", ended, ended, run["job_id"]),
-            )
+        counts = runstore.count_items(run_id)
+        if cancel.is_set():
+            state = "cancelled"
+        elif counts.get("failed", 0):
+            state = "finished_with_errors"
+        else:
+            state = "finished"
+        runstore.finish(
+            run_id,
+            run["job_id"],
+            state=state,
+            job_state="finished" if state.startswith("finished") else "stopped",
+            ended=_now(),
+        )
         if run["stop_policy"] == "disable_inference" and run["engine"] == "model":
             try:
                 cfg = inference.get_inference_config()
@@ -492,22 +391,12 @@ def _worker(run_id: int, cancel: threading.Event) -> None:
                 # Il riconoscimento e i suoi risultati sono già conclusi:
                 # un problema nel rilascio della GPU non deve trasformarli in
                 # una run fallita. Resta però uno stato visibile da risolvere.
-                with connect() as conn:
-                    conn.execute(
-                        "UPDATE recognition_runs SET state='finished_with_errors',error=? WHERE id=?",
-                        (f"risultati salvati, ma il modello non è stato arrestato: {exc}", run_id),
-                    )
+                runstore.set_error(
+                    run_id,
+                    f"risultati salvati, ma il modello non è stato arrestato: {exc}",
+                )
     except Exception as exc:  # noqa: BLE001
-        ended = _now()
-        with connect() as conn:
-            conn.execute(
-                "UPDATE recognition_runs SET state='failed',error=?,ended_at=?,heartbeat_at=? WHERE id=?",
-                (str(exc), ended, ended, run_id),
-            )
-            conn.execute(
-                "UPDATE jobs SET state='failed',error=?,ended_at=?,heartbeat_at=? WHERE id=?",
-                (str(exc), ended, ended, run["job_id"]),
-            )
+        runstore.fail(run_id, run["job_id"], error=str(exc), ended=_now())
     finally:
         with _LOCK:
             _ACTIVE.pop(run_id, None)
@@ -548,34 +437,17 @@ def retry_failed_run(run_id: int, *, owner_id: int | None = None, allow_stop: bo
 
 def reconcile_runs() -> None:
     """Un riavvio non perde i risultati finiti: marca solo la coda interrotta."""
-    ended = _now()
     # Il lifespan puo essere riaperto dallo stesso processo (test client,
     # reload controllati). In quel caso i thread ancora vivi non sono run
-    # interrotte e non vanno riconciliati come falliti.
+    # interrotte e non vanno riconciliate come fallite.
     with _LOCK:
         active_ids = set(_ACTIVE)
-    with connect() as conn:
-        rows = conn.execute(
-            "SELECT id,job_id FROM recognition_runs WHERE state IN ('queued','running')"
-        ).fetchall()
-        for row in rows:
-            if int(row["id"]) in active_ids:
-                continue
-            message = "backend riavviato durante il riconoscimento; riprova le sole pagine non completate"
-            conn.execute(
-                "UPDATE recognition_runs SET state='failed',error=?,ended_at=?,heartbeat_at=? WHERE id=?",
-                (message, ended, ended, row["id"]),
-            )
-            conn.execute(
-                "UPDATE recognition_run_items SET state='failed',error=?,ended_at=? "
-                "WHERE run_id=? AND state IN ('queued','running')",
-                (message, ended, row["id"]),
-            )
-            if row["job_id"]:
-                conn.execute(
-                    "UPDATE jobs SET state='failed',error=?,ended_at=?,heartbeat_at=? WHERE id=?",
-                    (message, ended, ended, row["job_id"]),
-                )
+    runstore.reconcile(
+        active_ids,
+        message="backend riavviato durante il riconoscimento; riprova le sole pagine non completate",
+        ended=_now(),
+    )
+
 
 
 def export_run(run_id: int, scope: str) -> dict[str, Any]:
@@ -583,29 +455,24 @@ def export_run(run_id: int, scope: str) -> dict[str, Any]:
     if scope not in {"raw", "reviewed"}:
         raise HTTPException(status_code=422, detail="export non valido")
     pages: list[dict[str, Any]] = []
-    with connect() as conn:
-        for item in run["items"]:
-            if scope == "raw":
-                blocks = item.get("result", {}).get("blocks", [])
-            else:
-                rows = conn.execute(
-                    "SELECT id,label,kind,points,content,order_idx,confirmed,prefill_source "
-                    "FROM blocks WHERE page_id=? ORDER BY COALESCE(order_idx,999999),id",
-                    (item["page_id"],),
-                ).fetchall()
-                blocks = []
-                for block in rows:
-                    value = dict(block)
-                    value["points"] = json.loads(value["points"] or "[]")
-                    blocks.append(value)
-            pages.append(
-                {
-                    "page_id": item["page_id"],
-                    "rel_path": item["rel_path"],
-                    "state": item["state"],
-                    "blocks": blocks,
-                }
-            )
+    for item in run["items"]:
+        if scope == "raw":
+            blocks = item.get("result", {}).get("blocks", [])
+        else:
+            blocks = []
+            for block in runstore.reviewed_blocks(item["page_id"]):
+                value = dict(block)
+                value["points"] = json.loads(value["points"] or "[]")
+                blocks.append(value)
+        pages.append(
+            {
+                "page_id": item["page_id"],
+                "rel_path": item["rel_path"],
+                "state": item["state"],
+                "blocks": blocks,
+            }
+        )
+
     return {
         "schema": "tabularium-recognition-export/v1",
         "scope": scope,

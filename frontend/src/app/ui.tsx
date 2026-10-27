@@ -1,14 +1,4 @@
-/**
- * Le primitive del mosaico.
- *
- * `Module` è il contenitore universale di questo sistema: un rettangolo
- * rigato con una linguetta che lo nomina. Tutto quello che la pagina mostra
- * — un form da 16 campi, una tabella di metriche, la rassegna dell'archivio,
- * un pannello dello studio — è lo stesso oggetto a densità diverse.
- *
- * Nominare le zone di lavoro senza ripetere il titolo sui contenitori di
- * impaginazione; mantenere esplicite le azioni.
- */
+/** Shared workspace sections, controls and feedback. */
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react'
@@ -20,9 +10,9 @@ import { useI18n } from '../i18n'
 /* ---------------------------------------------------------------- Module -- */
 
 interface ModuleProps {
-  /** Il nome stampato sulla linguetta. Obbligatorio: le zone si nominano. */
+  /** Accessible section title. */
   tab: string
-  /** Linguetta nera invece che rossa: il rosso segnala «qui è vivo». */
+  /** Secondary heading emphasis. */
   quiet?: boolean
   /** Contenuto allineato a destra nella testata (conteggi, stato, azioni). */
   aux?: ReactNode
@@ -43,7 +33,7 @@ export function Module({
   return (
     <section className={`mod ${className}`} aria-label={tab}>
       <header className="mod-head">
-        <span className={`mod-tab ${quiet ? 'mod-tab-quiet' : ''}`}>{tab}</span>
+        <h2 className={`mod-tab ${quiet ? 'mod-tab-quiet' : ''}`}>{tab}</h2>
         {aux && <div className="mod-head-aux">{aux}</div>}
       </header>
       <div className={flush ? 'mod-body-flush' : 'mod-body'}>{children}</div>
@@ -70,7 +60,7 @@ export function PageHeader({
 }) {
   const { t } = useI18n()
   return (
-    <div className={`border-b border-[color:var(--color-rule-strong)] ${className}`}>
+    <div className={`page-heading ${className}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <h1 className="text-[24px] font-bold leading-tight tracking-[-0.03em]">{title}</h1>
         <div className="ml-auto flex flex-wrap items-center gap-2">{aux}</div>
@@ -165,10 +155,10 @@ export function ErrorNotice({
   return (
     <div
       role="alert"
-      className="mod border-[color:var(--color-sig-plate)]"
+      className="mod notice-section notice-section-error"
       aria-label={t('errors.prefix', { title: e.titolo })}
     >
-      <div className="mod-head border-b-[color:var(--color-sig-plate)] !bg-[color:var(--color-sig-wash)]">
+      <div className="mod-head">
         <span className="mod-tab">
           <IconAlert size={12} />
           {e.titolo}
@@ -217,9 +207,9 @@ export function WarnNotice({
   children: ReactNode
 }) {
   return (
-    <div className="mod border-[color:var(--color-warn-rule)]">
-      <div className="mod-head border-b-[color:var(--color-warn-rule)] !bg-[color:var(--color-warn-wash)]">
-        <span className="mod-tab !bg-[color:var(--color-warn)]">
+    <div className="mod notice-section">
+      <div className="mod-head">
+        <span className="mod-tab">
           <IconWarn size={12} />
           {title}
         </span>
@@ -622,6 +612,9 @@ export function Modal({
   onClose,
   wide,
   extraWide,
+  closeOnBackdrop = true,
+  closeOnEscape = true,
+  headerAux,
   footer,
   children,
 }: {
@@ -630,6 +623,13 @@ export function Modal({
   wide?: boolean
   /** Finestra quasi a tutto schermo per strumenti di lavoro densi. */
   extraWide?: boolean
+  /** Un editor denso può richiedere una chiusura esplicita, senza perdere il
+   *  lavoro per un clic accidentale fuori dalla finestra. */
+  closeOnBackdrop?: boolean
+  /** Disattiva Esc quando la superficie interna possiede già molti gesti. */
+  closeOnEscape?: boolean
+  /** Compact status or controls that belong in the title row. */
+  headerAux?: ReactNode
   footer?: ReactNode
   children: ReactNode
 }) {
@@ -658,6 +658,11 @@ export function Modal({
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (!closeOnEscape) return
+        // Un editor annidato (per esempio la cella di Univer) può consumare
+        // Escape per annullare la modifica. In quel caso non chiudiamo anche
+        // la modale che lo contiene.
+        if (e.defaultPrevented || e.isComposing) return
         e.stopPropagation()
         closeRef.current()
         return
@@ -690,7 +695,7 @@ export function Modal({
     <div
       className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-[rgb(17_17_17/0.55)] p-4"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose()
+        if (closeOnBackdrop && e.target === e.currentTarget) onClose()
       }}
     >
       <div
@@ -709,14 +714,15 @@ export function Modal({
             {title}
           </h2>
           <div className="mod-head-aux">
+            {headerAux}
             <button
               type="button"
               onClick={onClose}
-              className="btn btn-sm"
+              className="btn btn-sm !px-2"
               aria-label={t('errors.closeModal')}
+              title={closeOnEscape ? `${t('errors.closeModal')} (Esc)` : t('errors.closeModal')}
             >
               <IconClose size={11} />
-              Esc
             </button>
           </div>
         </div>

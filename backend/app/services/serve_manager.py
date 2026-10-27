@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import config
+from ..adapters import jobs as jobstore
 from ..db import connect
 from . import hardware, local_runtime, mlx_runtime, process_probe, vendor_repos
 from .model_adapters import get_adapter
@@ -181,14 +182,7 @@ def log_tail(adapter_id: str, n: int = 4000) -> str:
 
 def _persisted_running() -> dict[str, Any] | None:
     """Recupera un server locale sopravvissuto al riavvio del backend."""
-    try:
-        with connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM jobs WHERE kind='serve' AND state='running' "
-                "ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-    except sqlite3.OperationalError:
-        return None
+    row = jobstore.running("serve")
     if row is None:
         return None
     pid = int(row["pid"] or 0)
@@ -198,12 +192,7 @@ def _persisted_running() -> dict[str, Any] | None:
         os.kill(pid, 0)
     except OSError:
         try:
-            with connect() as conn:
-                conn.execute(
-                    "UPDATE jobs SET state='failed', ended_at=datetime('now'), "
-                    "error=?, heartbeat_at=datetime('now') WHERE id=?",
-                    ("processo server non più presente dopo il riavvio", row["id"]),
-                )
+            jobstore.fail(row["id"], "processo server non più presente dopo il riavvio")
         except sqlite3.OperationalError:
             pass
         return None
@@ -225,14 +214,48 @@ def _mark_job(job_id: int | None, state: str, error: str | None = None, exit_cod
     if job_id is None:
         return
     try:
-        with connect() as conn:
-            conn.execute(
-                "UPDATE jobs SET state=?, ended_at=datetime('now'), exit_code=?, error=?, "
-                "heartbeat_at=datetime('now') WHERE id=?",
-                (state, exit_code, error, job_id),
-            )
+        jobstore.mark(job_id, state, error=error, exit_code=exit_code)
     except sqlite3.OperationalError:
         pass
+
+
+def _local_runner(adapter_id: str):
+    """The MLX runner this model declares, or the standard one.
+
+    `serve_recipes` owns the declaration (`local_serve` on the recipe); this table maps
+    the name to the module that implements it. Adding a model with its own MLX server is
+    a declaration plus one entry here, not another branch in `start()`.
+    """
+    from . import mineru_mlx_runtime, mlx_runtime, serve_recipes
+
+    def _standard(model_path: str, port: int, overrides: dict) -> list[str]:
+        return mlx_runtime.serve_argv(model_path, port=port, settings=overrides)
+
+    def _unlimited(model_path: str, port: int, overrides: dict) -> list[str]:
+        # The standard MLX server does not inject the image for this architecture
+        # (v. `unlimited_ocr_mlx_server.py`): it needs the dedicated one, and below
+        # 12 GB of memory the buffer cache must be off — on an 8 GB M1 with the
+        # browser open the GPU timed out with the cache on.
+        memory_gb = hardware.summary().get("memory_gb") or 0
+        return mlx_runtime.unlimited_ocr_serve_argv(
+            model_path, port=port, cache_limit_gb=0 if 0 < memory_gb <= 12 else None,
+        )
+
+    kinds = {
+        "": (mlx_runtime.log_tail, mlx_runtime.ensure_ready, _standard),
+        "mlx": (mlx_runtime.log_tail, mlx_runtime.ensure_ready, _standard),
+        "mlx-mineru": (
+            mineru_mlx_runtime.log_tail,
+            mineru_mlx_runtime.ensure_ready,
+            lambda model_path, port, overrides: mineru_mlx_runtime.serve_argv(
+                model_path, port=port, settings=overrides
+            ),
+        ),
+        "mlx-unlimited": (local_runtime.log_tail, mlx_runtime.ensure_ready, _unlimited),
+    }
+    recipe = serve_recipes.RECIPES.get(adapter_id)
+    kind = getattr(recipe, "local_serve", "") if recipe is not None else ""
+    return kinds.get(kind, kinds[""])
 
 
 def get_status() -> ServeStatus:
@@ -240,11 +263,8 @@ def get_status() -> ServeStatus:
     with _STARTING_LOCK:
         starting = dict(_STARTING_INFO)
     if starting:
-        adapter_id = starting.get("adapter_id")
-        runtime_log_tail = local_runtime.log_tail
-        if adapter_id == "mineru2.5":
-            from . import mineru_mlx_runtime
-            runtime_log_tail = mineru_mlx_runtime.log_tail
+        adapter_id = starting.get("adapter_id") or ""
+        runtime_log_tail = _local_runner(adapter_id)[0]
         return ServeStatus(
             running=False,
             starting=starting.get("phase") != "failed",
@@ -593,11 +613,7 @@ def start(
     local_runtime_id = hardware.pick_serve_runtime(adapter.capabilities)
     if local_runtime_id == hardware.RUNTIME_MLX:
         _set_phase(adapter_id, "preparing_runtime")
-        if adapter_id == "mineru2.5":
-            from . import mineru_mlx_runtime
-            mineru_mlx_runtime.ensure_ready()
-        else:
-            mlx_runtime.ensure_ready()
+        _local_runner(adapter_id)[1]()
         # La variante MLX è una scelta per modello (es. bf16 vs 8-bit): vince
         # quella salvata in Impostazioni, altrimenti la più grande che entra in
         # questa macchina — lo stesso criterio del verdetto del registro.
@@ -612,36 +628,15 @@ def start(
 
     try:
         if local_runtime_id == hardware.RUNTIME_MLX:
-            if adapter_id == "mineru2.5":
-                from . import mineru_mlx_runtime
-                argv = mineru_mlx_runtime.serve_argv(
-                    model_path, port=port, settings=model_config["effective"],
-                )
-            elif adapter_id == "unlimited-ocr":
-                # Il server MLX standard non inietta l'immagine per questa
-                # architettura (v. `unlimited_ocr_mlx_server.py`): serve il
-                # server dedicato, che usa l'API `mlx_vlm.generate`.
-                # Fino a 12 GB di memoria la cache dei buffer di MLX va spenta:
-                # su un M1 da 8 GB, con backend e browser aperti, la memoria
-                # libera scendeva al 2% e il GPU andava in timeout; senza cache
-                # la pagina passa in 42 s col 9% libero, ma con il browser
-                # aperto può ancora cedere (v. il riavvio in `recognition`).
-                # Passi di prefill più piccoli non abbassano il picco (misurato:
-                # 4,90 GB contro 4,89). Sui Mac più grandi nulla cambia.
-                memory_gb = hardware.summary().get("memory_gb") or 0
-                argv = mlx_runtime.unlimited_ocr_serve_argv(
-                    model_path, port=port, cache_limit_gb=0 if 0 < memory_gb <= 12 else None,
-                )
-            else:
-                # `repo` e `repetition_penalty` sono scelte per richiesta (il
-                # primo è già risolto in `model_path`, la seconda la applica il
-                # client), non flag del server: non vanno passati a `serve_argv`.
-                mlx_overrides = {
-                    key: value
-                    for key, value in model_settings.get_settings(adapter_id)["overrides"].get("mlx", {}).items()
-                    if key not in {"repo", "repetition_penalty"}
-                }
-                argv = mlx_runtime.serve_argv(model_path, port=port, settings=mlx_overrides)
+            # `repo` e `repetition_penalty` sono scelte per richiesta (il
+            # primo è già risolto in `model_path`, la seconda la applica il
+            # client), non flag del server: non vanno passati a `serve_argv`.
+            mlx_overrides = {
+                key: value
+                for key, value in model_settings.get_settings(adapter_id)["overrides"].get("mlx", {}).items()
+                if key not in {"repo", "repetition_penalty"}
+            }
+            argv = _local_runner(adapter_id)[2](model_path, port, mlx_overrides)
         elif adapter_id == "monkeyocrv2-parsing":
             # `scripts/serve_model.sh` legge queste due env var: se l'utente non
             # le ha già impostate (uso avanzato/ambiente esistente), le
@@ -821,20 +816,16 @@ def start(
             # I test usano processi finti senza un PID del sistema.
             process_group = proc.pid
     try:
-        with connect() as conn:
-            cur = conn.execute(
-                "INSERT INTO jobs(kind, owner_id, provider, pid, process_group, state, "
-                "heartbeat_at, command_json, log_path, recovery_strategy) "
-                "VALUES('serve', ?, 'local', ?, ?, 'running', datetime('now'), ?, ?, 'pid-process-group')",
-                (
-                    owner_id,
-                    proc.pid,
-                    process_group,
-                    json.dumps({"adapter_id": adapter_id, "port": port, "argv": argv}),
-                    str(log_file),
-                ),
-            )
-            job_id = int(cur.lastrowid)
+        job_id = jobstore.start_process_job(
+            kind="serve",
+            owner_id=owner_id,
+            provider="local",
+            pid=proc.pid,
+            process_group=process_group,
+            state="running",
+            command={"adapter_id": adapter_id, "port": port, "argv": argv},
+            log_path=str(log_file),
+        )
     except sqlite3.OperationalError as exc:
         try:
             proc.terminate()

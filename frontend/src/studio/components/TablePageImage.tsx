@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { IconFit, IconMinus, IconPlus } from '../../app/icons'
+import { IconFit, IconMinus, IconPlus, IconScan, IconTable } from '../../app/icons'
 import { useI18n } from '../../i18n'
+import { API_BASE } from '../../lib/endpoints'
 
 interface ImageView {
   x: number
@@ -13,10 +14,14 @@ export default function TablePageImage({
   src,
   pageId,
   imageSize,
+  mode = 'crop',
+  onModeChange,
 }: {
   src: string
   pageId?: number | null
   imageSize?: { w: number; h: number } | null
+  mode?: 'crop' | 'page'
+  onModeChange?: (mode: 'crop' | 'page') => void
 }) {
   const { t } = useI18n()
   const viewport = useRef<HTMLDivElement>(null)
@@ -91,7 +96,7 @@ export default function TablePageImage({
       for (let x = x0; x <= x1; x++) {
         visible.push({
           key: `${level}/${x}/${y}`,
-          src: `/api/pages/${pageId}/tile/${level}/${x}/${y}`,
+          src: `${API_BASE}/pages/${pageId}/tile/${level}/${x}/${y}`,
           x: x * 512 * factor,
           y: y * 512 * factor,
           w: Math.min(512, levelW - x * 512) * factor,
@@ -117,6 +122,97 @@ export default function TablePageImage({
       }
     })
   }
+  const zoomAtRef = useRef(zoomAt)
+  zoomAtRef.current = zoomAt
+
+  // React ascolta wheel in modo passivo: il preventDefault dell'handler React
+  // non basta a fermare lo zoom pagina di Chrome. Questi listener nativi sono
+  // non passivi e trasformano il pinch in zoom della sola scansione.
+  useEffect(() => {
+    const node = viewport.current
+    if (!node) return
+    let pinchDistance = 0
+    let pinchActive = false
+    let gestureScale = 1
+    const overScan = (x: number, y: number) => {
+      const rect = node.getBoundingClientRect()
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+    }
+    const pointInScan = (event: MouseEvent) => overScan(event.clientX, event.clientY)
+    const onWheel = (event: WheelEvent) => {
+      if (!pointInScan(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.ctrlKey || event.metaKey) {
+        const rect = node.getBoundingClientRect()
+        zoomAtRef.current(Math.exp(-event.deltaY * 0.0015), {
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top,
+        })
+      } else {
+        setView((current) => ({ ...current, x: current.x - event.deltaX, y: current.y - event.deltaY }))
+      }
+    }
+    const distance = (touches: TouchList) => Math.max(1, Math.hypot(
+      touches[1].clientX - touches[0].clientX,
+      touches[1].clientY - touches[0].clientY,
+    ))
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 2 || !overScan(event.touches[0].clientX, event.touches[0].clientY)) return
+      event.preventDefault()
+      event.stopPropagation()
+      pinchActive = true
+      pinchDistance = distance(event.touches)
+    }
+    const onTouchMove = (event: TouchEvent) => {
+      if (!pinchActive || event.touches.length !== 2) return
+      event.preventDefault()
+      event.stopPropagation()
+      const rect = node.getBoundingClientRect()
+      const nextDistance = distance(event.touches)
+      const center = {
+        x: (event.touches[0].clientX + event.touches[1].clientX) / 2 - rect.left,
+        y: (event.touches[0].clientY + event.touches[1].clientY) / 2 - rect.top,
+      }
+      zoomAtRef.current(nextDistance / pinchDistance, center)
+      pinchDistance = nextDistance
+    }
+    const onTouchEnd = (event: TouchEvent) => {
+      if (event.touches.length < 2) pinchActive = false
+    }
+    const onGestureStart = (event: Event) => {
+      const point = event as Event & { clientX?: number; clientY?: number; scale?: number }
+      if (typeof point.scale !== 'number' || typeof point.clientX !== 'number' || typeof point.clientY !== 'number' || !overScan(point.clientX, point.clientY)) return
+      event.preventDefault()
+      event.stopPropagation()
+      gestureScale = 1
+    }
+    const onGestureChange = (event: Event) => {
+      const point = event as Event & { clientX?: number; clientY?: number; scale?: number }
+      if (typeof point.scale !== 'number' || typeof point.clientX !== 'number' || typeof point.clientY !== 'number' || !overScan(point.clientX, point.clientY)) return
+      event.preventDefault()
+      event.stopPropagation()
+      const rect = node.getBoundingClientRect()
+      zoomAtRef.current(point.scale / Math.max(gestureScale, 0.01), { x: point.clientX - rect.left, y: point.clientY - rect.top })
+      gestureScale = point.scale
+    }
+    window.addEventListener('wheel', onWheel, { capture: true, passive: false })
+    window.addEventListener('touchstart', onTouchStart, { capture: true, passive: false })
+    window.addEventListener('touchmove', onTouchMove, { capture: true, passive: false })
+    window.addEventListener('touchend', onTouchEnd, { capture: true, passive: false })
+    window.addEventListener('touchcancel', onTouchEnd, { capture: true, passive: false })
+    window.addEventListener('gesturestart', onGestureStart, { capture: true, passive: false })
+    window.addEventListener('gesturechange', onGestureChange, { capture: true, passive: false })
+    return () => {
+      window.removeEventListener('wheel', onWheel, true)
+      window.removeEventListener('touchstart', onTouchStart, true)
+      window.removeEventListener('touchmove', onTouchMove, true)
+      window.removeEventListener('touchend', onTouchEnd, true)
+      window.removeEventListener('touchcancel', onTouchEnd, true)
+      window.removeEventListener('gesturestart', onGestureStart, true)
+      window.removeEventListener('gesturechange', onGestureChange, true)
+    }
+  }, [])
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return
@@ -142,7 +238,35 @@ export default function TablePageImage({
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col border border-[color:var(--color-rule)]" aria-label={t('table.pageImage')}>
       <div className="flex shrink-0 items-center gap-1 border-b border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-2 py-1">
-        <span className="lbl mb-0 mr-auto">{t('table.pageImage')}</span>
+        {onModeChange && (
+          <div role="group" aria-label={t('table.imageMode')} className="mr-auto inline-flex overflow-hidden rounded-[var(--radius-sm)] border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)]">
+            <button
+              type="button"
+              aria-pressed={mode === 'crop'}
+              aria-label={t('table.tableCrop')}
+              title={t('table.tableCrop')}
+              onClick={() => onModeChange('crop')}
+              className={`flex h-6 w-7 items-center justify-center border-r border-[color:var(--color-rule)] ${
+                mode === 'crop' ? 'bg-[color:var(--color-ink)] text-white' : 'text-[color:var(--color-ink-2)] hover:bg-[color:var(--color-fill-2)]'
+              }`}
+            >
+              <IconTable size={12} />
+            </button>
+            <button
+              type="button"
+              aria-pressed={mode === 'page'}
+              aria-label={t('table.wholePage')}
+              title={t('table.wholePage')}
+              onClick={() => onModeChange('page')}
+              className={`flex h-6 w-7 items-center justify-center ${
+                mode === 'page' ? 'bg-[color:var(--color-ink)] text-white' : 'text-[color:var(--color-ink-2)] hover:bg-[color:var(--color-fill-2)]'
+              }`}
+            >
+              <IconScan size={12} />
+            </button>
+          </div>
+        )}
+        {!onModeChange && <span className="mr-auto" />}
         <button type="button" className="btn btn-sm" title={t('table.zoomOut')} aria-label={t('table.zoomOut')} onClick={() => zoomAt(0.8)}><IconMinus size={12} /></button>
         <span className="mono w-12 text-center text-[11px]">{Math.round(view.scale * 100)}%</span>
         <button type="button" className="btn btn-sm" title={t('table.zoomIn')} aria-label={t('table.zoomIn')} onClick={() => zoomAt(1.25)}><IconPlus size={12} /></button>
@@ -156,15 +280,6 @@ export default function TablePageImage({
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
-        onWheel={(event) => {
-          event.preventDefault()
-          if (event.ctrlKey || event.metaKey) {
-            const rect = viewport.current?.getBoundingClientRect()
-            if (rect) zoomAt(Math.exp(-event.deltaY * 0.0015), { x: event.clientX - rect.left, y: event.clientY - rect.top })
-          } else {
-            setView((current) => ({ ...current, x: current.x - event.deltaX, y: current.y - event.deltaY }))
-          }
-        }}
       >
         <img
             data-fade

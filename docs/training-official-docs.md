@@ -872,5 +872,5 @@ Both stay `inference-only` in `train_recipes.py`.
 | `--vit_lr` | only if `--freeze_vit false` (MonkeyOCRv2 README) | never set with `freeze_vit true` |
 | `swift sft` | MonkeyOCRv2, Qwen3-VL, GLM-OCR(no), DeepSeek-OCR | **MinerU2.5** (`run_mineru.py sft`) |
 | dataset `messages`+`images` | ms-swift models | GLM-OCR (ShareGPT `data/`-relative), Qwen finetune (`image`+`conversations`), Unsloth (`<|User|>` roles) |
-| absolute image paths | MonkeyOCRv2 ("absolute ... recommended"), ms-swift | GLM-OCR wrapper? -> relative to `data/` |
+| absolute image paths | MonkeyOCRv2 ("absolute ... recommended"), ms-swift | GLM-OCR/LLaMA-Factory -> relative to the dataset directory (`images/<file>`) |
 | table format OTSL | MonkeyOCRv2 (`html2otsl.py`) | Qwen3-VL (Qwen HTML), DeepSeek-OCR-2 (grounded Markdown), GLM-OCR (unspecified) |

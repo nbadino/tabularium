@@ -78,15 +78,18 @@ training set.
 - A studio for layout blocks, reading order and transcription, with
   project-specific labels and transcription rules.
 - A spreadsheet-style workspace for tables, including the hard ones: no ruling
-  lines, drifting columns, merged cells, arithmetic checks on column sums.
+  lines, drifting columns, merged cells, arithmetic checks on column sums. Its
+  compact toolbar keeps back, undo/redo and save in reach; structural actions
+  stay under *Structure* and the crop/full-page switch sits on the scan.
 - Model output is a **draft** until someone confirms it; reports always say how
   much is still unverified.
 
 **Fine-tuning and evaluation**
 - One-click datasets in the exact format each model's official trainer
   expects, split by page.
-- Training with the official recipes (LoRA or full), live logs and loss
-  charts, and a VRAM check that refuses runs your GPU cannot fit.
+- Training with each model's official defaults (LoRA or full), a separate view for new
+  runs and run history, loss charts and logs on demand. A VRAM check blocks configurations
+  that cannot fit the selected GPU.
 - Benchmarks of several models, or several checkpoints, on your own approved
   pages: layout IoU, reading order, TEDS for tables, CER/WER for text.
 
@@ -127,6 +130,12 @@ remote GPU). Every model also runs remotely. The measured matrix, and the
 reason behind each cell, is in
 [local inference guide](docs/guide/local-inference.md); training
 support per model is in [training guide](docs/guide/training.md).
+
+**Hosted OCR:** **LlamaIndex OCRia-1** is available under Models → LlamaIndex
+OCRia-1. Each user supplies their own LlamaCloud API key, stored in the backend
+vault; the panel exposes the native routing, effort, table-quality, language,
+image, output and job-control settings that apply to single-page parsing.
+
 Missing a model? [Open an issue](https://github.com/nbadino/tabularium/issues/new?template=feature_request.yml).
 
 ## Quickstart
@@ -187,3 +196,33 @@ cite it ([CITATION.cff](CITATION.cff)).
 stack), [RapidOCR](https://github.com/RapidAI/RapidOCR) and
 [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) (CPU engines), and the
 authors of every model Tabularium can drive.
+
+### Workspace presentation
+
+Work pages use plain section headings and a readable content width. Recognition history,
+run comparisons, generated files and checkpoint paths open on request. Training leads with
+metrics and charts; logs remain available through an explicit control. Studio and table
+editors retain the full workspace width.
+
+Archive and registry searches cover every page, with additional rows loaded on request.
+Results keep all recognition runs in one selector. Benchmark page selection starts with ready
+pages and can also show pages needing review. These presentation choices preserve bulk actions,
+verification requirements and model-specific configuration.
+
+Local model setup reconciles startup progress with the verified active endpoint on the same
+model and port. Server logs stay available on request after startup. Model-specific settings
+keep official parameter names in tooltips alongside localized labels. Invalid invitation links
+include a return to the application.
+
+Real GPU workflow evidence: [Vast.ai trial, 22 October 2026](docs/VAST_WORKFLOW_TRIAL_20261022.md).
+
+### Automatic comparison on the training GPU
+
+Automatic MonkeyOCRv2 training compares the base and fine-tuned checkpoints sequentially
+on the same rented GPU, using the run’s frozen held-out samples, before downloading the model
+and releasing the instance. The monitor shows progress and metric deltas, with logs on demand.
+Training success and comparison success are reported separately. See
+[the comparison workflow](docs/TRAINING_COMPARISON_20261023.md).
+
+Approval verifies table content as well as layout. Dataset coverage is checked before GPU rental;
+see [the approved-table workflow repair](docs/APPROVAL_EXPORT_REPAIR_20261023.md).

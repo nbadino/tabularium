@@ -133,10 +133,11 @@ describe('ContentPane', () => {
 
     // La vista di lavoro monta la superficie e, accanto, i confini.
     await waitFor(() => expect(screen.getByTestId('univer-sheet')).toBeTruthy())
-    // In vista «Griglia 3 × 4»; la frase intera sta nel titolo al passaggio.
-    expect(screen.getByTitle(/righe ×/)).toHaveTextContent(/Griglia\s*\d+ × \d+/)
+    // Le dimensioni sono contesto di struttura, non un'altra riga di stato.
+    await userEvent.click(screen.getByText('Struttura'))
+    expect(screen.getByText(/\d+ righe × \d+ colonne/)).toBeTruthy()
     expect(screen.getByAltText(/Scansione della pagina/)).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Salva griglia' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Salvato' })).toBeTruthy()
   })
 
   it('vista di lavoro: le somme che non tornano arrivano al foglio e lo dice', async () => {
@@ -169,7 +170,7 @@ describe('ContentPane', () => {
       />,
     )
     await userEvent.click(screen.getByRole('button', { name: 'Apri la tabella' }))
-    await waitFor(() => expect(screen.getByTitle(/Somme: 1 su 2 tornano · 1 no/)).toHaveTextContent(/Somme\s*1\/2/))
+    await waitFor(() => expect(screen.getByTitle(/Somme: 1 su 2 tornano · 1 no/)).toHaveTextContent(/Σ\s*1\/2/))
     expect(screen.getByTestId('univer-sheet')).toHaveAttribute('data-suspects', '[[2,3]]')
     // Selezionata la cella, la riga dice quale somma non torna.
     await userEvent.click(screen.getByRole('button', { name: 'seleziona D3' }))
@@ -201,7 +202,7 @@ describe('ContentPane', () => {
       />,
     )
     await userEvent.click(screen.getByRole('button', { name: 'Apri la tabella' }))
-    await waitFor(() => expect(screen.getByTitle(/Somme: 0 su 1 tornano · 1 no/)).toHaveTextContent(/Somme\s*0\/1/))
+    await waitFor(() => expect(screen.getByTitle(/Somme: 0 su 1 tornano · 1 no/)).toHaveTextContent(/Σ\s*0\/1/))
     await userEvent.click(screen.getByRole('button', { name: 'seleziona D3' }))
     await userEvent.click(screen.getByRole('button', { name: 'Refuso della stampa' }))
     // La conferma entra nella griglia: le somme si ricalcolano con lei.

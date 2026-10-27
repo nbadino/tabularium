@@ -1,0 +1,32 @@
+# One instance per research group: a single process, a named data volume, the port.
+#
+#   docker compose -f docker/app/compose.yml up -d
+#
+# Behind a reverse proxy, keep the proxy on the same host and let it terminate TLS;
+# Tabularium does not need to know the public URL.
+services:
+  tabularium:
+    build:
+      context: ../..
+      dockerfile: docker/app/Dockerfile
+      args:
+        TABULARIUM_BASE_PATH: ${TABULARIUM_BASE_PATH:-/}
+    image: tabularium:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - tabularium-data:/data
+    environment:
+      # Local accounts; the first start shows the administrator setup screen.
+      TABULARIUM_AUTH: "on"
+      # Registration stays closed unless an administrator opens it in Settings.
+      TABULARIUM_REGISTRATION_OPEN: "0"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  tabularium-data:

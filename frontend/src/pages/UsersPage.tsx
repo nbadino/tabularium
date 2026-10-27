@@ -9,7 +9,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { apiDelete, apiGet, apiPatch, apiPost } from '../lib/api'
 import type { User, UserCreated } from '../lib/types'
-import { ErrorNotice, Field, Modal, Module, PageHeader } from '../app/ui'
+import { Collapsible, ErrorNotice, Field, Modal, Module, PageHeader } from '../app/ui'
 import { IconCopy } from '../app/icons'
 import { useAuth } from '../app/auth'
 import { useI18n } from '../i18n'
@@ -154,7 +154,7 @@ export default function UsersPage() {
       )}
 
       <div className="mb-3">
-        <Module tab={t('users.newUser')}>
+        <Collapsible tab={t('users.newUser')}>
           <form onSubmit={create}>
             <div className="grid gap-3 sm:grid-cols-3">
               <Field label={t('auth.username')}>
@@ -234,7 +234,7 @@ export default function UsersPage() {
               </button>
             </div>
           </form>
-        </Module>
+        </Collapsible>
       </div>
 
       <Module tab={t('users.list')} quiet flush aux={<span>{users.length}</span>}>

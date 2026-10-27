@@ -12,7 +12,7 @@ export default function PageWorkControl({ page, revision, beforeAction, onChange
   page: PageItem
   revision: number
   beforeAction: () => Promise<number>
-  onChanged: (work: PageWork) => void
+  onChanged: (work: PageWork, mutated?: boolean) => void
   onReview?: () => void
   disabled?: boolean
 }) {
@@ -53,7 +53,7 @@ export default function PageWorkControl({ page, revision, beforeAction, onChange
   if (!auth.enabled) return null
   const assigned = Boolean(work?.assignee_id || work?.reviewer_id)
   const label = work?.can_submit ? t('work.submit') : work?.can_review ? t('work.review') : assigned ? t(`work.state.${work!.state}`) : t(work?.can_assign ? 'work.assign' : 'work.title')
-  const update = (value: PageWork) => { setWork(value); onChanged(value) }
+  const update = (value: PageWork) => { setWork(value); onChanged(value, true) }
   const run = async (action: 'assign' | 'submit' | 'approved' | 'changes_requested') => {
     if (!work || busy) return
     if (action === 'assign' && work.state !== 'annotation' && (assignee !== String(work.assignee_id ?? '') || reviewer !== String(work.reviewer_id ?? ''))) {

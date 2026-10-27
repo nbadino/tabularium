@@ -1,10 +1,9 @@
 @import "tailwindcss";
 
 /* =============================================================================
-   Tabularium — sistema visivo «alta densità»
-   Un mosaico di moduli rigati, ciascuno con la sua linguetta, impacchettati
-   bordo a bordo. Filetti da 1px, niente ombre, niente card fluttuanti: la
-   pagina è un foglio stampato, non una superficie con oggetti sopra.
+   Tabularium — quiet work surfaces.
+   Use whitespace and plain headings for sections. Reserve containers for
+   documents, data grids, dialogs and actionable warnings.
    ========================================================================== */
 
 @font-face {
@@ -53,8 +52,8 @@
   --color-sheet: #ffffff;
   --color-fill: #f6f4f2;
   --color-fill-2: #edeae6;
-  --color-rule: #d6d0cc;
-  --color-rule-strong: #111111;
+  --color-rule: #e5e3e1;
+  --color-rule-strong: #d7d4d1;
   /* Alias verso i token esistenti: `--color-panel`/`--color-sheet-dim` erano
      referenziati in 29 punti (modali cloud/inferenza) ma mai definiti — ogni
      header, tab bar e pannello risultava trasparente. Nessun colore nuovo:
@@ -200,76 +199,81 @@
 }
 
 @layer components {
-  /* ---- il modulo: il contenitore universale di questo mondo -------------- */
-  /* Un rettangolo rigato con la sua linguetta. I moduli confinano bordo a
-     bordo e condividono i filetti: il mosaico è un foglio, non delle card. */
+  /* Sections use spacing and headings; borders belong to data and controls. */
   .mod {
     position: relative;
-    border: 1px solid var(--color-rule);
-    border-radius: var(--radius-lg);
-    background: var(--color-sheet);
     min-width: 0;
+    background: var(--color-sheet);
   }
-  /* La testata ha fondo pieno: segue l'angolo del modulo, sopra e — quando è
-     sola (soffietto chiuso) — anche sotto. */
-  .mod > .mod-head:first-child {
-    border-top-left-radius: calc(var(--radius-lg) - 1px);
-    border-top-right-radius: calc(var(--radius-lg) - 1px);
-  }
-  .mod > .mod-head:last-child {
-    border-bottom: 0;
-    border-bottom-left-radius: calc(var(--radius-lg) - 1px);
-    border-bottom-right-radius: calc(var(--radius-lg) - 1px);
-  }
-
   .mod-head {
     display: flex;
     flex-wrap: wrap;
-    align-items: stretch;
+    align-items: center;
     gap: 8px;
-    border-bottom: 1px solid var(--color-rule);
-    background: var(--color-fill);
-    min-height: 26px;
+    min-height: 32px;
+    margin-bottom: 8px;
   }
-
-  /* La linguetta: piastra piena a sinistra della testata del modulo. */
   .mod-tab {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 0 10px;
-    /* linguetta: attaccata all'angolo del modulo, morbida dove sporge */
-    border-radius: calc(var(--radius-lg) - 1px) 0 var(--radius-md) 0;
-    background: var(--color-sig);
-    color: #ffffff;
-    font-size: 11px;
+    color: var(--color-ink);
+    font-size: 14px;
+    line-height: 1.4;
     font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    white-space: nowrap;
   }
-
-  .mod-tab-quiet {
-    background: var(--color-ink);
-  }
-
+  .mod-tab-quiet { color: var(--color-ink-2); }
   .mod-head-aux {
     display: flex;
     min-width: 0;
     flex-wrap: wrap;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     margin-left: auto;
-    padding: 0 8px;
     color: var(--color-ink-2);
-    font-size: 11px;
+    font-size: 12px;
   }
-
-  .mod-body {
-    padding: 10px;
+  .mod-body, .mod-body-flush { padding: 0; }
+  .workspace-page > div {
+    max-width: 1280px;
+    margin-inline: auto;
+    padding: 28px 32px;
   }
-  .mod-body-flush {
-    padding: 0;
+  .section-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 20px;
+    padding: 6px 20px;
+    border-top: 1px solid var(--color-rule);
+  }
+  .section-link {
+    padding: 5px 0;
+    color: var(--color-ink-2);
+    font-size: 12px;
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+  }
+  .workspace-tab {
+    padding: 7px 10px;
+    border-bottom: 2px solid transparent;
+    color: var(--color-ink-2);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .workspace-tab.is-active { border-bottom-color: var(--color-ink); color: var(--color-ink); font-weight: 600; }
+  .section-link:hover { color: var(--color-ink); }
+  .section-link[aria-current='page'] {
+    color: var(--color-ink);
+    border-bottom-color: var(--color-ink);
+    font-weight: 600;
+  }
+  .notice-section { padding: 12px 16px; border-left: 3px solid var(--color-warn); background: var(--color-warn-wash); }
+  .notice-section .mod-head { margin-bottom: 4px; }
+  .notice-section .mod-tab { color: var(--color-warn); font-size: 13px; }
+  .notice-section-error { border-left-color: var(--color-sig); background: var(--color-sig-wash); }
+  .notice-section-error .mod-tab { color: var(--color-sig); }
+  @media (max-width: 640px) {
+    .workspace-page > div { padding: 20px 16px; }
   }
 
   /* ---- righe rigate ------------------------------------------------------ */
@@ -284,8 +288,7 @@
     color: var(--color-ink-2);
     font-size: 11px;
     font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    letter-spacing: 0;
   }
 
   /* ---- controlli --------------------------------------------------------- */
@@ -425,8 +428,7 @@
     font-weight: 600;
     letter-spacing: 0.01em;
     white-space: nowrap;
-    border-right: 1px solid var(--color-rule);
-    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    border-radius: var(--radius-sm);
     transition: background-color 120ms ease, color 120ms ease;
   }
   .navtab:hover {
@@ -434,8 +436,8 @@
     color: var(--color-ink);
   }
   .navtab[data-active='true'] {
-    background: var(--color-ink);
-    color: var(--color-sheet);
+    background: var(--color-fill);
+    color: var(--color-ink);
   }
   /* La piastra di segnale stampata sotto la linguetta viva (Impostazioni e
      ogni altra fila di linguette). Il rail principale non la stampa: ha una
@@ -975,6 +977,10 @@
      mentre lo scheletro sopra di lui sfuma in fretta. */
   .sheet-host {
     opacity: 0;
+    /* Il pinch viene gestito da UniverSheet e applicato al foglio, non alla
+       pagina: il browser può ancora fare pan, ma non zoomare il documento. */
+    touch-action: none;
+    overscroll-behavior: contain;
   }
   .sheet-host[data-ready] {
     opacity: 1;

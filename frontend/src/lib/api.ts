@@ -1,12 +1,9 @@
-/** Client API verso il backend. I percorsi possono avere o no il prefisso `/api`. */
-const API_BASE = '/api'
 
 import { getLocale } from '../i18n'
+import { apiUrl } from './endpoints'
 
-/** Evita il doppio `/api` quando il chiamante passa già il prefisso. */
 function joinPath(path: string): string {
-  if (path.startsWith('/api')) return path
-  return `${API_BASE}${path}`
+  return apiUrl(path)
 }
 
 /**

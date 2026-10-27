@@ -6,7 +6,8 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from PIL import Image
 
-from ..db import connect
+from ..adapters import annotations as annotationstore
+from ..adapters import projects as projectstore
 from ..services import auth as authsvc
 from .deps import require_resource
 from ..schemas import (
@@ -27,7 +28,8 @@ from ..schemas import (
     TableGridOut,
     TableSaveOut,
 )
-from ..services import inference, labeling, otsl, table_checks, table_detect
+from ..services import inference, labeling, table_checks, table_detect
+from ..domain import otsl
 from ..services import table_hint as table_hint_svc
 from ..services.table_provenance import with_cell_provenance
 from ..services import model_labels
@@ -44,24 +46,24 @@ router = APIRouter(
 )
 
 
-def _get_page_or_404(conn, page_id: int):
-    row = conn.execute("SELECT * FROM pages WHERE id=?", (page_id,)).fetchone()
+def _get_page_or_404(writer, page_id: int):
+    row = writer.page(page_id)
     if row is None:
         raise HTTPException(status_code=404, detail="pagina non trovata")
     return row
 
 
-def _get_block_or_404(conn, block_id: int):
-    row = conn.execute("SELECT * FROM blocks WHERE id=?", (block_id,)).fetchone()
+def _get_block_or_404(writer, block_id: int):
+    row = writer.block(block_id)
     if row is None:
         raise HTTPException(status_code=404, detail="blocco non trovato")
     return row
 
 
-def _advance_revision(conn, page_id: int, expected: int | None) -> None:
+def _advance_revision(writer, page_id: int, expected: int | None) -> None:
     if expected is None:
-        conn.execute("UPDATE pages SET annotation_revision=annotation_revision+1 WHERE id=?", (page_id,))
-    elif conn.execute("UPDATE pages SET annotation_revision=annotation_revision+1 WHERE id=? AND annotation_revision=?", (page_id, expected)).rowcount != 1:
+        writer.bump_revision(page_id)
+    elif writer.bump_revision(page_id, expected) != 1:
         raise HTTPException(409, msg('work_revision_changed'))
 
 
@@ -135,18 +137,13 @@ def delete_page_annotations(
     user: dict = Depends(require_resource(write=True)),
 ) -> dict:
     """Elimina tutti i blocchi della pagina, incluse le griglie collegate."""
-    with connect() as conn:
-        _get_page_or_404(conn, page_id)
-        count = conn.execute(
-            "SELECT COUNT(*) FROM blocks WHERE page_id=?", (page_id,)
-        ).fetchone()[0]
-        conn.execute("DELETE FROM blocks WHERE page_id=?", (page_id,))
-        _advance_revision(conn, page_id, expected_revision)
-        conn.execute("UPDATE pages SET status='new' WHERE id=?", (page_id,))
-        revision = conn.execute(
-            "SELECT annotation_revision FROM pages WHERE id=?", (page_id,)
-        ).fetchone()[0]
-        auditsvc.record(conn, user, "page.annotations_deleted", resource_type="page", resource_id=page_id, payload={"deleted": int(count)})
+    with annotationstore.writing() as writer:
+        _get_page_or_404(writer, page_id)
+        count = writer.delete_page_blocks(page_id)
+        _advance_revision(writer, page_id, expected_revision)
+        writer.mark_new(page_id)
+        revision = writer.revision(page_id)
+        auditsvc.record(writer.conn, user, "page.annotations_deleted", resource_type="page", resource_id=page_id, payload={"deleted": int(count)})
     _notify_live(page_id, int(revision), "clear", user)
     return {"deleted": int(count), "page_id": page_id, "annotation_revision": int(revision)}
 
@@ -154,10 +151,15 @@ def delete_page_annotations(
 @router.get("/api/blocks/{block_id}", response_model=BlockOut)
 def get_block(block_id: int, _auth: dict = Depends(require_resource())) -> BlockOut:
     """Contesto reale del blocco, anche quando la tabella è aperta da un link diretto."""
-    with connect() as conn:
-        block = _get_block_or_404(conn, block_id)
-        page = conn.execute("SELECT project_id, annotation_revision FROM pages WHERE id=?", (block["page_id"],)).fetchone()
-        return _block_out(block).model_copy(update={"project_id": page["project_id"], "annotation_revision": page["annotation_revision"]})
+    with annotationstore.writing() as writer:
+        block = _get_block_or_404(writer, block_id)
+        page = writer.page(block["page_id"])
+        return _block_out(block).model_copy(
+            update={
+                "project_id": page["project_id"],
+                "annotation_revision": page["annotation_revision"],
+            }
+        )
 
 
 @router.patch("/api/blocks/{block_id}", response_model=BlockOut)
@@ -174,19 +176,13 @@ def update_block(
         updates["points"] = json.dumps(updates["points"])
     if "confirmed" in updates:
         updates["confirmed"] = 1 if updates["confirmed"] else 0
-    sets = ", ".join(f"{k}=?" for k in updates)
-    with connect() as conn:
-        block = _get_block_or_404(conn, block_id)
-        conn.execute(
-            f"UPDATE blocks SET {sets}, updated_at=datetime('now') WHERE id=?",
-            (*updates.values(), block_id),
-        )
-        _advance_revision(conn, block['page_id'], expected_revision)
-        auditsvc.record(conn, user, "block.updated", resource_type="block", resource_id=block_id)
-        out = _block_out(_get_block_or_404(conn, block_id))
-        out.annotation_revision = conn.execute(
-            "SELECT annotation_revision FROM pages WHERE id=?", (out.page_id,)
-        ).fetchone()[0]
+    with annotationstore.writing() as writer:
+        block = _get_block_or_404(writer, block_id)
+        writer.update_fields(block_id, updates)
+        _advance_revision(writer, block["page_id"], expected_revision)
+        auditsvc.record(writer.conn, user, "block.updated", resource_type="block", resource_id=block_id)
+        out = _block_out(_get_block_or_404(writer, block_id))
+        out.annotation_revision = writer.revision(out.page_id)
     _notify_live(out.page_id, out.annotation_revision, "block", user)
     return out
 
@@ -197,14 +193,12 @@ def delete_block(
     expected_revision: int | None = Query(default=None, ge=0),
     user: dict = Depends(require_resource(write=True)),
 ) -> dict:
-    with connect() as conn:
-        block = _get_block_or_404(conn, block_id)
-        conn.execute("DELETE FROM blocks WHERE id=?", (block_id,))
-        _advance_revision(conn, block['page_id'], expected_revision)
-        revision = conn.execute(
-            "SELECT annotation_revision FROM pages WHERE id=?", (block["page_id"],)
-        ).fetchone()[0]
-        auditsvc.record(conn, user, "block.deleted", resource_type="block", resource_id=block_id)
+    with annotationstore.writing() as writer:
+        block = _get_block_or_404(writer, block_id)
+        writer.delete_block(block_id)
+        _advance_revision(writer, block["page_id"], expected_revision)
+        revision = writer.revision(block["page_id"])
+        auditsvc.record(writer.conn, user, "block.deleted", resource_type="block", resource_id=block_id)
         page_id = int(block["page_id"])
     _notify_live(page_id, int(revision), "block", user)
     return {"deleted": True, "id": block["id"], "annotation_revision": int(revision)}
@@ -218,22 +212,19 @@ def _label_schema(settings: dict) -> LabelSchemaOut:
     return schema
 
 
-def _load_settings(conn, project_id: int) -> dict:
-    from ..api.projects import _get_project_or_404  # noqa: PLC0415
+def _load_settings(project_id: int) -> dict:
+    settings = projectstore.settings_json_or_none(project_id)
+    if settings is None:
+        raise HTTPException(status_code=404, detail="progetto non trovato")
+    return settings
 
-    project = _get_project_or_404(conn, project_id)
-    return json.loads(project["settings_json"] or "{}")
 
-
-def _store_custom_labels(conn, project_id: int, settings: dict, customs: list[dict]) -> None:
+def _store_custom_labels(project_id: int, settings: dict, customs: list[dict]) -> None:
     if customs:
         settings["labels"] = customs
     else:
         settings.pop("labels", None)
-    conn.execute(
-        "UPDATE projects SET settings_json=? WHERE id=?",
-        (json.dumps(settings, ensure_ascii=False), project_id),
-    )
+    projectstore.put_settings(project_id, settings)
 
 
 def _validate_or_400(items, lang: str) -> list[dict]:
@@ -249,9 +240,7 @@ def project_labels(
     _auth: dict = Depends(require_resource(write=False)),
 ) -> LabelSchemaOut:
     """Classi del progetto (default + custom) con origine e modelli che le conoscono."""
-    with connect() as conn:
-        settings = _load_settings(conn, project_id)
-    return _label_schema(settings)
+    return _label_schema(_load_settings(project_id))
 
 
 @router.put("/api/projects/{project_id}/labels", response_model=LabelSchemaOut)
@@ -267,9 +256,8 @@ def put_project_labels(
     """
     lang = parse_lang(request.headers.get("accept-language"))
     cleaned = _validate_or_400(payload.labels, lang)
-    with connect() as conn:
-        settings = _load_settings(conn, project_id)
-        _store_custom_labels(conn, project_id, settings, cleaned)
+    settings = _load_settings(project_id)
+    _store_custom_labels(project_id, settings, cleaned)
     return _label_schema(settings)
 
 
@@ -288,14 +276,13 @@ def create_project_label(
     """
     lang = parse_lang(request.headers.get("accept-language"))
     cleaned = _validate_or_400([payload], lang)
-    with connect() as conn:
-        settings = _load_settings(conn, project_id)
-        customs = list(settings.get("labels") or [])
-        name = cleaned[0]["name"]
-        if any(str(c.get("name")) == name for c in customs):
-            raise HTTPException(status_code=409, detail=msg("label_name_duplicate", lang, name=name))
-        customs.append(cleaned[0])
-        _store_custom_labels(conn, project_id, settings, customs)
+    settings = _load_settings(project_id)
+    customs = list(settings.get("labels") or [])
+    name = cleaned[0]["name"]
+    if any(str(c.get("name")) == name for c in customs):
+        raise HTTPException(status_code=409, detail=msg("label_name_duplicate", lang, name=name))
+    customs.append(cleaned[0])
+    _store_custom_labels(project_id, settings, customs)
     return _label_schema(settings)
 
 
@@ -322,12 +309,9 @@ def block_table_get(
     block_id: int,
     _auth: dict = Depends(require_resource(write=False)),
 ) -> TableGridOut:
-    with connect() as conn:
-        block = _get_block_or_404(conn, block_id)
-        row = conn.execute(
-            "SELECT * FROM tables WHERE block_id=?", (block_id,)
-        ).fetchone()
-        grid = _get_table_grid(row)
+    with annotationstore.writing() as writer:
+        block = _get_block_or_404(writer, block_id)
+        grid = _get_table_grid(writer.table(block_id))
         if grid:
             grid = with_cell_provenance(grid, block["prefill_source"])
         return TableGridOut(grid=TableGrid.model_validate(grid) if grid else None)
@@ -398,21 +382,12 @@ def block_table_put(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    with connect() as conn:
-        block = _get_block_or_404(conn, block_id)
-        conn.execute(
-            "INSERT INTO tables (block_id, grid_json) VALUES (?, ?) "
-            "ON CONFLICT(block_id) DO UPDATE SET "
-            "grid_json=excluded.grid_json, updated_at=datetime('now')",
-            (block_id, json.dumps(grid)),
-        )
-        _advance_revision(conn, block['page_id'], expected_revision)
-        revision = conn.execute(
-            "SELECT annotation_revision FROM pages "
-            "WHERE id=(SELECT page_id FROM blocks WHERE id=?)",
-            (block_id,),
-        ).fetchone()[0]
-        auditsvc.record(conn, user, "table.updated", resource_type="block", resource_id=block_id)
+    with annotationstore.writing() as writer:
+        block = _get_block_or_404(writer, block_id)
+        writer.upsert_table(block_id, grid)
+        _advance_revision(writer, block["page_id"], expected_revision)
+        revision = writer.revision(block["page_id"])
+        auditsvc.record(writer.conn, user, "table.updated", resource_type="block", resource_id=block_id)
         page_id = int(block["page_id"])
     _notify_live(page_id, int(revision), "table", user)
     return TableSaveOut(
@@ -452,22 +427,15 @@ def block_table_detect(
     attestato, così si vede subito quali reggono e quali vanno controllati.
     """
     lang = parse_lang(request.headers.get("accept-language"))
-    with connect() as conn:
-        block = _get_block_or_404(conn, block_id)
-        page = conn.execute(
-            "SELECT * FROM pages WHERE id=?", (block["page_id"],)
-        ).fetchone()
+    with annotationstore.writing() as writer:
+        block = _get_block_or_404(writer, block_id)
+        page = writer.page(block["page_id"])
         if page is None:
             raise HTTPException(status_code=404, detail="pagina non trovata")
         image = pagesvc.crop_block_image(page, _block_bbox(block))
-        project = conn.execute(
-            "SELECT settings_json FROM projects WHERE id=?", (page["project_id"],)
-        ).fetchone()
-        try:
-            project_settings = json.loads(project["settings_json"] or "{}") if project else {}
-        except (TypeError, ValueError):
-            project_settings = {}
-        table_hint = table_hint_svc.get_table_hint(project_settings)
+        table_hint = table_hint_svc.get_table_hint(
+            projectstore.settings_json(page["project_id"])
+        )
 
     try:
         detection = table_detect.detect_grid(
@@ -607,16 +575,12 @@ def block_table_cell_recognize(
     fatto — e verificato — sulle altre.
     """
     lang = parse_lang(request.headers.get("accept-language"))
-    with connect() as conn:
-        block = _get_block_or_404(conn, block_id)
-        page = conn.execute(
-            "SELECT * FROM pages WHERE id=?", (block["page_id"],)
-        ).fetchone()
+    with annotationstore.writing() as writer:
+        block = _get_block_or_404(writer, block_id)
+        page = writer.page(block["page_id"])
         if page is None:
             raise HTTPException(status_code=404, detail="pagina non trovata")
-        grid = _get_table_grid(
-            conn.execute("SELECT * FROM tables WHERE block_id=?", (block_id,)).fetchone()
-        )
+        grid = _get_table_grid(writer.table(block_id))
     if not grid:
         raise HTTPException(
             status_code=422, detail=msg("table_grid_missing_skip", lang, id=block_id)
@@ -701,11 +665,9 @@ def block_crop(
     _auth: dict = Depends(require_resource(write=False)),
 ) -> Response:
     """Crop della regione del blocco (pixel pagina) come JPEG in memoria."""
-    with connect() as conn:
-        block = _get_block_or_404(conn, block_id)
-        page = conn.execute(
-            "SELECT * FROM pages WHERE id=?", (block["page_id"],)
-        ).fetchone()
+    with annotationstore.writing() as writer:
+        block = _get_block_or_404(writer, block_id)
+        page = writer.page(block["page_id"])
         if page is None:
             raise HTTPException(status_code=404, detail="pagina non trovata")
         data = pagesvc.crop_block_jpeg(page, _block_bbox(block))

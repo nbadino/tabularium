@@ -8,7 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from ..db import connect
+from ..adapters import pages as pagestore
+from ..adapters import projects as projectstore
 from ..services import inference as infmod
 from ..services import labeling
 from ..services import paddle_official
@@ -41,11 +42,8 @@ def playground_parse(
     request: Request,
     user: dict = Depends(authsvc.get_current_user),
 ) -> dict:
-    with connect() as conn:
-        page = conn.execute("SELECT * FROM pages WHERE id=?", (payload.page_id,)).fetchone()
-        project = conn.execute(
-            "SELECT * FROM projects WHERE id=?", (payload.project_id,)
-        ).fetchone()
+    page = pagestore.get(payload.page_id)
+    project = projectstore.get(payload.project_id)
     if page is None or project is None or page["project_id"] != payload.project_id:
         raise HTTPException(status_code=404, detail="pagina non trovata nel progetto")
     # project_id è nel body, non nel path: controllo manuale dell'accesso.

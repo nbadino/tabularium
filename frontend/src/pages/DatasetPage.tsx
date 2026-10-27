@@ -4,13 +4,14 @@ import type { DatasetReport, DatasetStatus, PageItem } from '../lib/types'
 import { formatDateTime } from '../lib/dates'
 import { Link } from 'react-router'
 import { familyLabel, lines as linesPlural, splitStrategyLabel } from '../lib/vocab'
-import { Badge, Collapsible, ErrorNotice, Field, Module, WarnNotice, PageHeader } from '../app/ui'
+import { Badge, Collapsible, ErrorNotice, Field, Module, Notice, WarnNotice, PageHeader } from '../app/ui'
 import { PipelineStrip } from '../app/PipelineView'
 import { buildPipeline, usePipelineState } from '../app/pipeline'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { IconDataset, IconPlus } from '../app/icons'
 import { useI18n, tn } from '../i18n'
 import { useInference } from '../app/inference'
+import { DEFAULT_MODEL_ID } from '../lib/constants'
 
 function fmtSize(n: number): string {
   if (n < 1024) return `${n} B`
@@ -27,7 +28,7 @@ export default function DatasetPage() {
   const [splitStrategy, setSplitStrategy] = useState('page')
   const [approvedOnly, setApprovedOnly] = useState(true)
   const [pilotOnly, setPilotOnly] = useState(false)
-  const [adapterId, setAdapterId] = useState('monkeyocrv2-parsing')
+  const [adapterId, setAdapterId] = useState(DEFAULT_MODEL_ID)
   const adapterTouched = useRef(false)
   const [adapters, setAdapters] = useState<Array<{ adapter_id: string; display_name: string; tasks: string[]; training_types: string[]; export_ready?: boolean }>>([])
   const [building, setBuilding] = useState(false)
@@ -155,7 +156,7 @@ export default function DatasetPage() {
   // approvata: il comando non può poi comportarsi come se fosse disponibile.
   // Con «solo pagine approvate» attivo e zero pagine approvate, un export
   // produrrebbe un dataset vuoto — e un dataset vuoto non è un successo.
-  const exportWouldBeEmpty = approvedOnly && (workflow?.approved_pages ?? 0) === 0
+  const exportWouldBeEmpty = approvedOnly && workflow != null && workflow.approved_pages === 0
 
   return (
     <div className="p-3">
@@ -167,7 +168,7 @@ export default function DatasetPage() {
         </div>
       )}
 
-      {projectId !== '' && <PipelineStrip stages={stages} here="dataset" />}
+      {projectId !== '' && workflow && <PipelineStrip stages={stages} here="dataset" />}
 
       {/* Che cosa entrerebbe nel dataset, prima di costruirlo: le bozze del
           modello non sono verità, e un corpus riconosciuto per intero può
@@ -258,7 +259,7 @@ export default function DatasetPage() {
                 </Field>
                   <Field label={t('dataset.adapter')} hint={t('dataset.adapterHint')}>
                   <select value={adapterId} onChange={(e) => { adapterTouched.current = true; setAdapterId(e.target.value) }} className="fld">
-                    {(adapters.length ? adapters : [{ adapter_id: 'monkeyocrv2-parsing', display_name: 'MonkeyOCRv2 Parsing', tasks: [], training_types: [] }]).map((a) => <option key={a.adapter_id} value={a.adapter_id}>{a.display_name}</option>)}
+                    {(adapters.length ? adapters : [{ adapter_id: DEFAULT_MODEL_ID, display_name: 'MonkeyOCRv2 Parsing', tasks: [], training_types: [] }]).map((a) => <option key={a.adapter_id} value={a.adapter_id}>{a.display_name}</option>)}
                   </select>
                 </Field>
                 <label className="flex items-center gap-2 self-end pb-2 text-[12px]">
@@ -382,24 +383,29 @@ export default function DatasetPage() {
 
           {report.warnings.length > 0 && (
             <WarnNotice title={tn('common.warningsCount', report.warnings.length)}>
-              <ul className="list-inside list-disc space-y-0.5">
-                {report.warnings.map((w, i) => (
-                  <li key={i}>{w}</li>
-                ))}
-              </ul>
-              <p className="mt-1.5">
-                <b className="font-semibold">{t('errors.whatToDo')}</b>
-                {t('dataset.warningsBody')}
-              </p>
+              <p>{t('dataset.warningSummary')}</p>
+              <Link to={`/annotazione?project=${projectId}`} className="btn btn-sm mt-2 no-underline">{t('dataset.material.openStudio')}</Link>
+              <details className="mt-3">
+                <summary className="cursor-pointer font-semibold">{t('dataset.warningDetails')}</summary>
+                <ul className="mt-2 list-inside list-disc space-y-0.5">
+                  {report.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                </ul>
+              </details>
             </WarnNotice>
           )}
 
-          <Module
+          {report.pages.with_blocks > 0 && report.pages.val === 0 && <Notice tone="warn">{t('dataset.needsHeldOut')}</Notice>}
+          {report.pages.with_blocks > 0 && <div className="flex flex-wrap items-center justify-between gap-3 py-4">
+            <p className="max-w-[75ch] text-[13px]">{t('dataset.trainingNext')}</p>
+            <Link to="/training?view=new" className="btn btn-primary no-underline">{t('ux.configureTraining')}</Link>
+          </div>}
+
+          <Collapsible
             tab={t('dataset.generatedFiles')}
             quiet
-            aux={<span className="mono truncate">{report.dataset_dir}</span>}
             flush
           >
+            <p className="mono mb-2 break-all text-[11px] text-[color:var(--color-ink-3)]">{report.dataset_dir}</p>
             <ul className="ruled">
               {report.files.map((f) => (
                 <li key={f.path} className="flex gap-3 px-2 py-1 text-[12px]">
@@ -415,7 +421,7 @@ export default function DatasetPage() {
                 </li>
               ))}
             </ul>
-          </Module>
+          </Collapsible>
 
           {Object.entries(report.sample_lines)
             .filter(([, lines]) => lines.length > 0)

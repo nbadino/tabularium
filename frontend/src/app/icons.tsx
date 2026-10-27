@@ -82,6 +82,14 @@ export const IconTraining = (p: IconProps) => (
   </Icon>
 )
 
+/** Modelli: livelli del catalogo e dell'endpoint attivo. */
+export const IconModels = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M2 4.5 8 1.8l6 2.7-6 2.7z" />
+    <path d="m2 8 6 2.7L14 8M2 11.5l6 2.7 6-2.7" />
+  </Icon>
+)
+
 /** Valutazione: la misura contro il bersaglio. */
 export const IconEvaluate = (p: IconProps) => (
   <Icon {...p}>

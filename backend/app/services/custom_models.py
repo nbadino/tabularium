@@ -18,9 +18,24 @@ import json
 from pathlib import Path
 
 from .. import config
+from ..adapters import custom_models as modelstore
 from ..db import connect
 
 _ID_PREFIX = "custom-"
+
+
+def _is_python_console_script(path: str | Path) -> bool:
+    """Un comando pip è uno script con shebang; `swift` su macOS è un binario.
+
+    Senza questo controllo `shutil.which("swift")` trova il compilatore Apple
+    e il merge LoRA prova a eseguire `swift export`, fallendo con un errore
+    che non ha niente a che vedere con ms-swift.
+    """
+    try:
+        with Path(path).open("rb") as stream:
+            return stream.read(2) == b"#!"
+    except OSError:
+        return False
 
 
 def _toolchain_cli(directory: str, command: str) -> str | None:
@@ -29,7 +44,58 @@ def _toolchain_cli(directory: str, command: str) -> str | None:
         candidate = Path(directory) / '.venv' / 'bin' / command
         if candidate.exists():
             return str(candidate)
-    return shutil.which(command)
+    found = shutil.which(command)
+    if found and command == "swift" and not _is_python_console_script(found):
+        return None
+    return found
+
+
+def toolchain_status(recipe) -> dict:
+    """Dove trovare il comando di merge *su questa macchina*.
+
+    Il merge LoRA non è un'operazione del backend: è il comando ufficiale del
+    toolchain e deve esistere dove gira il dashboard. Questa sonda serve alla
+    UI per dirlo prima di far cliccare un pulsante che fallirebbe.
+    """
+    toolchain = str(getattr(recipe, "toolchain", "ms-swift") or "ms-swift")
+    if toolchain == "llama-factory":
+        cli = _toolchain_cli(config.LLAMAFACTORY_DIR, "llamafactory-cli")
+        return {
+            "toolchain": toolchain,
+            "available": bool(cli),
+            "command": "llamafactory-cli",
+            "hint": "" if cli else (
+                "LLaMA-Factory non è installato qui: imposta TABULARIUM_LLAMAFACTORY_DIR "
+                "sul checkout usato per il training."
+            ),
+        }
+    if toolchain == "paddleformers":
+        cli = _toolchain_cli(config.PADDLEFORMERS_DIR, "paddleformers-cli")
+        return {
+            "toolchain": toolchain,
+            "available": bool(cli),
+            "command": "paddleformers-cli",
+            "hint": "" if cli else (
+                "PaddleFormers non è installato qui: imposta TABULARIUM_PADDLEFORMERS_DIR "
+                "sul checkout usato per il training."
+            ),
+        }
+    python = str(config.TRAIN_PYTHON or "").strip()
+    candidate = Path(python).with_name("swift") if python else None
+    cli = (
+        str(candidate)
+        if candidate and candidate.exists() and _is_python_console_script(candidate)
+        else _toolchain_cli("", "swift")
+    )
+    return {
+        "toolchain": toolchain,
+        "available": bool(cli),
+        "command": "swift",
+        "hint": "" if cli else (
+            "ms-swift non è installato qui: installa l'ambiente del modello "
+            "oppure esegui il merge sulla GPU remota."
+        ),
+    }
 
 
 def _has_weights(directory: Path) -> bool:
@@ -40,7 +106,7 @@ def _has_weights(directory: Path) -> bool:
     )
 
 
-def _merged_checkpoint(adapter_path: Path, recipe, cfg: dict) -> Path:
+def _merged_checkpoint(adapter_path: Path, recipe, cfg: dict, *, log_file: Path | None = None) -> Path:
     """Unisce un adapter LoRA in un checkpoint HF servibile da vLLM.
 
     Ogni toolchain ha il *proprio* comando di merge: `swift export` non sa
@@ -104,7 +170,11 @@ def _merged_checkpoint(adapter_path: Path, recipe, cfg: dict) -> Path:
         if not swift:
             python = str(config.TRAIN_PYTHON or '').strip()
             candidate = Path(python).with_name('swift') if python else None
-            swift = str(candidate) if candidate and candidate.exists() else None
+            swift = (
+                str(candidate)
+                if candidate and candidate.exists() and _is_python_console_script(candidate)
+                else None
+            )
         if not swift:
             raise ValueError('swift non disponibile: impossibile unire il checkpoint LoRA')
         output.mkdir(parents=True, exist_ok=True)
@@ -114,11 +184,26 @@ def _merged_checkpoint(adapter_path: Path, recipe, cfg: dict) -> Path:
         ]
         cwd = None
 
-    result = subprocess.run(
-        command, capture_output=True, text=True, timeout=3600, check=False, cwd=cwd
-    )
-    if result.returncode != 0 or not _has_weights(output):
+    detail = ""
+    if log_file is not None:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        with log_file.open("ab") as stream:
+            stream.write(f">> merge locale ({toolchain}) con il comando ufficiale\n".encode())
+            stream.flush()
+            result = subprocess.run(
+                command, stdout=stream, stderr=subprocess.STDOUT, text=True,
+                timeout=3600, check=False, cwd=cwd,
+            )
+        try:
+            detail = log_file.read_text(encoding="utf-8", errors="replace").strip()[-600:]
+        except OSError:
+            detail = ""
+    else:
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=3600, check=False, cwd=cwd
+        )
         detail = (result.stderr or result.stdout).strip()[-600:]
+    if result.returncode != 0 or not _has_weights(output):
         raise ValueError(
             f'unione LoRA fallita ({toolchain}){": " + detail if detail else ""}'
         )
@@ -132,7 +217,7 @@ def _slug(text: str) -> str:
 
 def _unique_id(conn, base_slug: str) -> str:
     candidate = f"{_ID_PREFIX}{base_slug}"
-    if not conn.execute("SELECT 1 FROM custom_models WHERE id=?", (candidate,)).fetchone():
+    if not modelstore.exists(candidate, conn):
         return candidate
     # Collisione (stesso repo/nome aggiunto due volte): un suffisso corto
     # basta, non serve un contatore leggibile.
@@ -145,7 +230,14 @@ def _out(row) -> dict:
     return d
 
 
-def register_training_checkpoint(project_id: int, run_id: str) -> dict:
+def register_training_checkpoint(
+    project_id: int,
+    run_id: str,
+    *,
+    merged_path: Path | str | None = None,
+    registered_type: str | None = None,
+    log_file: Path | None = None,
+) -> dict:
     """Registra l'ultimo checkpoint di una run terminata come modello locale.
 
     Il checkpoint resta nella cartella della run: non viene duplicato e la
@@ -193,7 +285,7 @@ def register_training_checkpoint(project_id: int, run_id: str) -> dict:
     checkpoint = max(candidates, key=lambda path: int(path.name.split('-', 1)[1]) if path.name.split('-', 1)[1].isdigit() else -1)
     train_type = str(cfg.get('train_type') or 'lora').strip().lower()
     source_path = checkpoint
-    registered_type = train_type
+    effective_type = train_type
     if train_type == 'lora':
         from . import train_recipes
 
@@ -203,27 +295,48 @@ def register_training_checkpoint(project_id: int, run_id: str) -> dict:
                 f"la ricetta {recipe.toolchain} non documenta un merge LoRA: "
                 "serve un checkpoint full-SFT"
             )
-        source_path = _merged_checkpoint(checkpoint, recipe, cfg)
+        if merged_path is not None:
+            # Il merge è già stato fatto altrove (tipicamente sulla GPU remota,
+            # dove vivono toolchain e pesi base) e scaricato: qui si registra
+            # soltanto, senza rieseguire il comando di export.
+            candidate = Path(merged_path).expanduser().resolve()
+            if not _has_weights(candidate):
+                raise ValueError('checkpoint unito non valido: mancano i pesi o config.json')
+            source_path = candidate
+        else:
+            source_path = _merged_checkpoint(checkpoint, recipe, cfg, log_file=log_file)
         # Dopo il merge il file registrato è un modello completo: il serving
         # non deve tentare di applicare di nuovo l'adapter.
-        registered_type = 'full'
+        effective_type = 'full'
+    if registered_type:
+        effective_type = registered_type
     with connect() as conn:
-        existing = conn.execute('SELECT * FROM custom_models WHERE source_run_id=?', (run_id,)).fetchone()
+        existing = modelstore.by_source_run(run_id, conn)
         if existing:
             return _out(existing)
         adapter_id = _unique_id(conn, _slug(f'{base.capabilities.display_name}-{run_id}'))
         display_name = f'{base.capabilities.display_name} · fine-tuned {run_id}'
         served_name = f'tabularium-{_slug(base_id)}-{_slug(run_id)}'
-        conn.execute(
-            'INSERT INTO custom_models '
-            '(id, display_name, hf_repo, hf_revision, served_model_name, trust_remote_code, '
-            'max_model_len, gpu_memory_utilization, extra_args, source_path, base_adapter_id, source_run_id, source_train_type) '
-            'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-            (adapter_id, display_name, base.capabilities.hf_repo or base_id, base.capabilities.hf_revision,
-             served_name, 0, base.capabilities.max_model_len, None, '', str(source_path), base_id, run_id,
-             registered_type),
+        modelstore.insert(
+            {
+                "id": adapter_id,
+                "display_name": display_name,
+                "hf_repo": base.capabilities.hf_repo or base_id,
+                "hf_revision": base.capabilities.hf_revision,
+                "served_model_name": served_name,
+                "trust_remote_code": 0,
+                "max_model_len": base.capabilities.max_model_len,
+                "gpu_memory_utilization": None,
+                "extra_args": "",
+                "source_path": str(source_path),
+                "base_adapter_id": base_id,
+                "source_run_id": run_id,
+                "source_train_type": effective_type,
+            },
+            merged=True,
+            conn=conn,
         )
-        row = conn.execute('SELECT * FROM custom_models WHERE id=?', (adapter_id,)).fetchone()
+        row = modelstore.get(adapter_id, conn)
     return _out(row)
 
 
@@ -233,11 +346,7 @@ def list_all() -> list[dict]:
     # adapter): un DB non ancora migrato equivale a "nessun modello custom",
     # non a un errore (stesso principio di `model_registry.install_state`).
     try:
-        with connect() as conn:
-            return [
-                _out(row)
-                for row in conn.execute("SELECT * FROM custom_models ORDER BY created_at DESC").fetchall()
-            ]
+        return [_out(row) for row in modelstore.list_all()]
     except Exception:  # noqa: BLE001
         return []
 
@@ -246,8 +355,7 @@ def get(adapter_id: str) -> dict | None:
     if not adapter_id.startswith(_ID_PREFIX):
         return None
     try:
-        with connect() as conn:
-            row = conn.execute("SELECT * FROM custom_models WHERE id=?", (adapter_id,)).fetchone()
+        row = modelstore.get(adapter_id)
     except Exception:  # noqa: BLE001
         return None
     return _out(row) if row else None
@@ -263,23 +371,21 @@ def create(payload: dict) -> dict:
     gpu_memory_utilization = payload.get("gpu_memory_utilization")
     with connect() as conn:
         adapter_id = _unique_id(conn, _slug(display_name or hf_repo))
-        conn.execute(
-            "INSERT INTO custom_models "
-            "(id, display_name, hf_repo, hf_revision, served_model_name, trust_remote_code, "
-            " max_model_len, gpu_memory_utilization, extra_args) VALUES (?,?,?,?,?,?,?,?,?)",
-            (
-                adapter_id,
-                display_name,
-                hf_repo,
-                str(payload.get("hf_revision") or "").strip() or None,
-                served_model_name,
-                1 if payload.get("trust_remote_code") else 0,
-                int(max_model_len) if max_model_len else None,
-                float(gpu_memory_utilization) if gpu_memory_utilization else None,
-                str(payload.get("extra_args") or "").strip(),
-            ),
+        modelstore.insert(
+            {
+                "id": adapter_id,
+                "display_name": display_name,
+                "hf_repo": hf_repo,
+                "hf_revision": str(payload.get("hf_revision") or "").strip() or None,
+                "served_model_name": served_model_name,
+                "trust_remote_code": 1 if payload.get("trust_remote_code") else 0,
+                "max_model_len": int(max_model_len) if max_model_len else None,
+                "gpu_memory_utilization": float(gpu_memory_utilization) if gpu_memory_utilization else None,
+                "extra_args": str(payload.get("extra_args") or "").strip(),
+            },
+            conn=conn,
         )
-        row = conn.execute("SELECT * FROM custom_models WHERE id=?", (adapter_id,)).fetchone()
+        row = modelstore.get(adapter_id, conn)
     return _out(row)
 
 
@@ -290,5 +396,4 @@ def delete(adapter_id: str) -> None:
     weights_dir = config.MODELS_DIR / adapter_id
     if weights_dir.exists():
         shutil.rmtree(weights_dir)
-    with connect() as conn:
-        conn.execute("DELETE FROM custom_models WHERE id=?", (adapter_id,))
+    modelstore.delete(adapter_id)

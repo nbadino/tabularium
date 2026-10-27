@@ -10,7 +10,7 @@
  */
 import { useMemo, useState } from 'react'
 import type { TableGrid } from '../../lib/types'
-import { splitColumn } from '../../lib/grid'
+import { splitColumn, splitHeaderAcrossRows, splitStartRow } from '../../lib/grid'
 import { Modal } from '../../app/ui'
 import { useI18n } from '../../i18n'
 
@@ -19,7 +19,7 @@ interface SplitColumnDialogProps {
   /** Colonna da dividere (0-based). */
   column: number
   /** Riceve il modello nuovo; `null` quando la divisione non è possibile. */
-  onApply: (next: TableGrid | null, parts: number) => void
+  onApply: (next: TableGrid | null, parts: number, mode?: 'columns' | 'headerRows') => void
   onClose: () => void
 }
 
@@ -39,29 +39,37 @@ export default function SplitColumnDialog({ grid, column, onApply, onClose }: Sp
   const [custom, setCustom] = useState('')
   const [parts, setParts] = useState(2)
   const [fromRight, setFromRight] = useState(false)
-  const [startRow, setStartRow] = useState(1)
+  const [splitHeader, setSplitHeader] = useState(true)
+  // Parte dai dati, non dalla testata. Le testate unite sono la ragione più
+  // frequente per cui la separazione veniva rifiutata prima ancora di vedere
+  // l'anteprima (per esempio «Year blt» sopra due colonne).
+  const [startRow, setStartRow] = useState(splitStartRow(grid, column) + 1)
   const [endRow, setEndRow] = useState(grid.rows)
 
   const effective = custom !== '' ? custom : separator
-  const result = useMemo(() => splitColumn(grid, column, { separator: effective, maxParts: parts, fromRight, startRow: startRow - 1, endRow: endRow - 1 }), [
+  const result = useMemo(() => splitColumn(grid, column, { separator: effective, maxParts: parts, fromRight, startRow: startRow - 1, endRow: endRow - 1, splitHeader }), [
     grid,
     column,
     effective,
-    parts, fromRight, startRow, endRow,
+    parts, fromRight, splitHeader, startRow, endRow,
   ])
+  const verticalHeader = useMemo(
+    () => splitHeaderAcrossRows(grid, column, { separator: effective, fromRight }),
+    [grid, column, effective, fromRight],
+  )
 
   /** Quante righe hanno davvero qualcosa da dividere: se sono zero, non c'è
    *  niente da fare e il pulsante non deve illudere. */
   const affected = useMemo(() => {
     if (!result) return 0
     let n = 0
-    for (let r = 0; r < grid.rows; r++) {
+    for (let r = startRow - 1; r < endRow; r++) {
       const before = grid.cells.find((c) => c.r === r && c.c === column)?.text ?? ''
       const after = result.cells.find((c) => c.r === r && c.c === column)?.text ?? ''
       if (after !== before) n += 1
     }
     return n
-  }, [grid, column, result])
+  }, [grid, column, result, startRow, endRow])
 
   const preview = useMemo(() => {
     const rows: { before: string; after: string[] }[] = []
@@ -77,6 +85,17 @@ export default function SplitColumnDialog({ grid, column, onApply, onClose }: Sp
     return rows
   }, [grid, column, parts, result, startRow, endRow])
 
+  const verticalPreview = useMemo(() => {
+    if (!verticalHeader) return []
+    return verticalHeader.cells
+      .filter((cell) => cell.c === column && cell.r < startRow - 1 && (cell.text ?? '').trim() !== '')
+      .sort((a, b) => a.r - b.r)
+      .map((cell) => cell.text)
+  }, [column, startRow, verticalHeader])
+
+  const verticalMode = affected === 0 && verticalHeader !== null
+  const chosenResult = verticalMode ? verticalHeader : result
+
   return (
     <Modal
       title={t('table.splitTitle')}
@@ -89,8 +108,8 @@ export default function SplitColumnDialog({ grid, column, onApply, onClose }: Sp
           </button>
           <button
             type="button"
-            disabled={!result || affected === 0}
-            onClick={() => onApply(result, parts)}
+            disabled={!chosenResult || (affected === 0 && !verticalHeader)}
+            onClick={() => onApply(chosenResult, verticalMode ? verticalPreview.length : parts, verticalMode ? 'headerRows' : 'columns')}
             className="btn btn-primary"
           >
             {t('table.splitRun')}
@@ -152,14 +171,27 @@ export default function SplitColumnDialog({ grid, column, onApply, onClose }: Sp
 
         <div className="flex flex-wrap items-end gap-3">
           <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={fromRight} onChange={(event) => setFromRight(event.target.checked)} />{t('table.splitFromRight')}</label>
+          <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={splitHeader} onChange={(event) => setSplitHeader(event.target.checked)} />{t('table.splitHeader')}</label>
           <label className="text-xs">{t('table.splitFirstRow')}<input aria-label={t('table.splitFirstRow')} type="number" min={1} max={grid.rows} value={startRow} onChange={(event) => setStartRow(Math.max(1, Math.min(grid.rows, Number(event.target.value) || 1)))} className="fld fld-mono ml-2 w-20" /></label>
           <label className="text-xs">{t('table.splitLastRow')}<input aria-label={t('table.splitLastRow')} type="number" min={startRow} max={grid.rows} value={endRow} onChange={(event) => setEndRow(Math.max(1, Math.min(grid.rows, Number(event.target.value) || grid.rows)))} className="fld fld-mono ml-2 w-20" /></label>
         </div>
         <p className="text-[11px] text-[color:var(--color-ink-2)]">{t('table.splitRangeHint')}</p>
-        {!result ? (
+        {!result && !verticalHeader ? (
           <p className="border border-[color:var(--color-warn)] px-2 py-1 text-[12px] text-[color:var(--color-warn)]">
             {t('table.splitMerged')}
           </p>
+        ) : verticalMode ? (
+          <>
+            <span className="lbl">{t('table.splitPreview')}</span>
+            <div className="flex flex-col gap-px border border-[color:var(--color-rule)] bg-[color:var(--color-rule)]">
+              {verticalPreview.map((text, i) => (
+                <span key={`${text}-${i}`} className="bg-[color:var(--color-sheet)] px-2 py-1 text-[12px]">
+                  {text}
+                </span>
+              ))}
+            </div>
+            <p className="text-[11px] text-[color:var(--color-ink-2)]">{t('table.splitHeaderRowsHint')}</p>
+          </>
         ) : affected === 0 ? (
           <p className="border border-[color:var(--color-warn)] px-2 py-1 text-[12px] text-[color:var(--color-warn)]">
             {t('table.splitEmpty')}

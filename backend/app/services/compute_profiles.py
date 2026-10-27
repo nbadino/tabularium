@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 
 from .. import config
+from ..adapters import compute_profiles as profilestore
+from ..adapters import store
 from ..db import connect
 from . import audit
 from .inference import VllmClient
@@ -50,42 +52,53 @@ def _credential(ref: str | None) -> str:
 
 
 def ensure_legacy_profile() -> None:
+    """Seed the row that mirrors the pre-v10 configuration, once per database."""
+    if profilestore.any_exists():
+        return
+    from . import inference
+
+    cfg = inference.get_inference_config()
     with connect() as conn:
-        if conn.execute("SELECT 1 FROM compute_profiles LIMIT 1").fetchone():
-            return
-        from . import inference
-        cfg = inference.get_inference_config()
-        credential_ref = "vault:inference" if cfg.get("api_key") else None
-        conn.execute(
-            "INSERT INTO compute_profiles(name,provider,purpose,model_adapter_id,served_model_name,endpoint,credential_ref,runtime_recipe_id,generation_profile_id,image_profile_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
-            ("legacy-active", "local", "both", cfg.get("adapter_id", "monkeyocrv2-parsing"), cfg.get("model", "MonkeyOCRv2"), cfg.get("url", config.VLLM_URL), credential_ref, "legacy", "default", "default"),
+        profilestore.insert(
+            {
+                "name": "legacy-active",
+                "provider": "local",
+                "purpose": "both",
+                "model_adapter_id": cfg.get("adapter_id", "monkeyocrv2-parsing"),
+                "served_model_name": cfg.get("model", "MonkeyOCRv2"),
+                "endpoint": cfg.get("url", config.VLLM_URL),
+                "credential_ref": "vault:inference" if cfg.get("api_key") else None,
+                "runtime_recipe_id": "legacy",
+                "generation_profile_id": "default",
+                "image_profile_id": "default",
+            },
+            conn,
         )
-        conn.execute("UPDATE compute_profiles SET active=1")
+        profilestore.activate_all(conn)
 
 
 def list_profiles() -> list[dict]:
     ensure_legacy_profile()
-    with connect() as conn:
-        return [_out(row) for row in conn.execute("SELECT * FROM compute_profiles ORDER BY active DESC, name").fetchall()]
+    return [_out(row) for row in profilestore.list_all()]
 
 
 def create_profile(payload: dict, actor: dict | None = None) -> dict:
     validate_endpoint(payload["endpoint"])
     get_adapter(payload["model_adapter_id"])
     with connect() as conn:
-        cur = conn.execute(
-            "INSERT INTO compute_profiles(name,provider,purpose,model_adapter_id,model_revision,served_model_name,endpoint,credential_ref,runtime_recipe_id,generation_profile_id,image_profile_id,hardware_profile_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-            (payload["name"], payload["provider"], payload["purpose"], payload["model_adapter_id"], payload.get("model_revision"), payload["served_model_name"], payload["endpoint"], payload.get("credential_ref"), payload.get("runtime_recipe_id"), payload.get("generation_profile_id"), payload.get("image_profile_id"), json.dumps(payload.get("hardware_profile") or {})),
+        profile_id = profilestore.insert(payload, conn)
+        row = profilestore.get(profile_id, conn)
+        audit.record(
+            conn, actor, "compute_profile.created",
+            resource_type="compute_profile", resource_id=profile_id,
         )
-        row = conn.execute("SELECT * FROM compute_profiles WHERE id=?", (cur.lastrowid,)).fetchone()
-        audit.record(conn, actor, "compute_profile.created", resource_type="compute_profile", resource_id=cur.lastrowid)
     return _out(row)
 
 
 def activate(profile_id: int, actor: dict | None = None) -> dict:
     ensure_legacy_profile()
     with connect() as conn:
-        row = conn.execute("SELECT * FROM compute_profiles WHERE id=?", (profile_id,)).fetchone()
+        row = profilestore.get(profile_id, conn)
         if row is None:
             raise HTTPException(status_code=404, detail="profilo compute non trovato")
         endpoint = validate_endpoint(row["endpoint"])
@@ -98,10 +111,13 @@ def activate(profile_id: int, actor: dict | None = None) -> dict:
         health = client.test_connection(timeout=10)
         now = _now()
         if not health.get("ok"):
-            conn.execute("UPDATE compute_profiles SET last_health_check=?, last_health_ok=0, last_health_error=?, updated_at=? WHERE id=?", (now, health.get("error", "health check fallito"), now, profile_id))
+            profilestore.mark_unhealthy(
+                profile_id, at=now, error=health.get("error", "health check fallito"), conn=conn
+            )
             raise HTTPException(status_code=409, detail={"message": "profilo non attivato: health check fallito", "health": health})
-        conn.execute("UPDATE compute_profiles SET active=0, updated_at=?", (now,))
-        conn.execute("UPDATE compute_profiles SET active=1, last_health_check=?, last_health_ok=1, last_health_error=NULL, updated_at=? WHERE id=?", (now, now, profile_id))
+        profilestore.deactivate_all(at=now, conn=conn)
+        profilestore.mark_healthy(profile_id, at=now, conn=conn)
+        profilestore.activate_only(profile_id, conn)
         # Aggiorna la vista legacy in una stessa transazione, mantenendo i
         # consumer esistenti mentre il frontend migra ai profili.
         for key, value in (
@@ -110,6 +126,6 @@ def activate(profile_id: int, actor: dict | None = None) -> dict:
             ("inference_adapter_id", row["model_adapter_id"]),
             ("inference_enabled", "1"),
         ):
-            conn.execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+            store.put_raw(key, value, conn)
         audit.record(conn, actor, "compute_profile.activated", resource_type="compute_profile", resource_id=profile_id, payload={"previous": "rollback_available_in_history"})
-        return _out(conn.execute("SELECT * FROM compute_profiles WHERE id=?", (profile_id,)).fetchone())
+        return _out(profilestore.get(profile_id, conn))

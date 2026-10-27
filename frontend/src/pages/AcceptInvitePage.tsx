@@ -58,7 +58,7 @@ export default function AcceptInvitePage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[color:var(--color-fill)] p-4">
-      <div className="mod w-full max-w-sm border-[color:var(--color-rule-strong)]">
+      <div className="mod w-full max-w-sm rounded-lg p-6">
         <div className="mod-head border-b-[color:var(--color-rule-strong)]">
           <span className="mod-tab">{t('auth.inviteTitle')}</span>
         </div>
@@ -69,6 +69,7 @@ export default function AcceptInvitePage() {
             <>
               <p className="text-[13px] font-semibold">{t('auth.inviteInvalidTitle')}</p>
               <p className="mt-1 text-[12px] text-[color:var(--color-ink-2)]">{t('auth.inviteInvalidBody')}</p>
+              <a href="/" className="btn mt-4 no-underline">{t('auth.returnToApp')}</a>
             </>
           ) : (
             <form onSubmit={submit} className="space-y-3">

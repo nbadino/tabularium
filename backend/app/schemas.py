@@ -91,18 +91,39 @@ class AuthStatusOut(BaseModel):
     allow_registration: bool = False
     instance_name: str = "Tabularium"
     user: UserOut | None = None
+    # The login page shows the SSO button only when the administrator enabled it.
+    oidc_enabled: bool = False
+    oidc_button_label: str = "SSO"
+
 
 
 class SettingsOut(BaseModel):
     instance_name: str
     allow_registration: bool
     default_new_user_role: str
+    oidc_enabled: bool = False
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_scopes: str = "openid profile email"
+    oidc_allowed_domains: list[str] = []
+    oidc_button_label: str = "SSO"
+    # Never the secret itself: the panel only needs to know that one exists.
+    oidc_client_secret_set: bool = False
 
 
 class SettingsIn(BaseModel):
     instance_name: str | None = Field(default=None, max_length=100)
     allow_registration: bool | None = None
     default_new_user_role: Literal["editor", "viewer"] | None = None
+    oidc_enabled: bool | None = None
+    oidc_issuer: str | None = Field(default=None, max_length=300)
+    oidc_client_id: str | None = Field(default=None, max_length=200)
+    oidc_scopes: str | None = Field(default=None, max_length=300)
+    oidc_allowed_domains: list[str] | None = None
+    oidc_button_label: str | None = Field(default=None, max_length=40)
+    # Write-only: stored in the vault, never returned.
+    oidc_client_secret: str | None = Field(default=None, max_length=500)
+    oidc_client_secret_clear: bool | None = None
 
     @field_validator("instance_name")
     @classmethod
@@ -174,7 +195,7 @@ class ProjectMemberOut(BaseModel):
 
 class ComputeProfileIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    provider: Literal["local", "ssh", "vast", "runpod", "modal", "custom"] = "local"
+    provider: Literal["local", "ssh", "vast", "runpod", "modal", "custom", "llamaindex"] = "local"
     purpose: Literal["inference", "training", "both"] = "inference"
     model_adapter_id: str = Field(min_length=1, max_length=120)
     model_revision: str | None = Field(default=None, max_length=300)
@@ -397,6 +418,7 @@ class TableCell(BaseModel):
     # non dall'output grezzo (le celle senza testo non sono interessate).
     source: Literal["manual", "ocr", "model"] = "manual"
     verified: bool = True
+    verification_source: Literal["page_approval"] | None = None
 
 
 class TableGrid(BaseModel):
@@ -524,6 +546,33 @@ class TableHintOut(BaseModel):
     accepts_hint: bool = False
 
 
+class KnownTableHeaderCell(BaseModel):
+    """Cella logica di un'intestazione riutilizzabile, relativa alla selezione."""
+
+    r: int = Field(ge=0, le=19)
+    c: int = Field(ge=0, le=255)
+    rowspan: int = Field(default=1, ge=1, le=20)
+    colspan: int = Field(default=1, ge=1, le=256)
+    text: str = ""
+
+
+class KnownTableHeaderIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    rows: int = Field(ge=1, le=20)
+    cols: int = Field(ge=1, le=256)
+    cells: list[KnownTableHeaderCell] = Field(default_factory=list, max_length=5120)
+
+
+class KnownTableHeaderOut(KnownTableHeaderIn):
+    id: str
+    created_at: str
+    updated_at: str
+
+
+class KnownTableHeadersOut(BaseModel):
+    items: list[KnownTableHeaderOut] = Field(default_factory=list)
+
+
 # --- Training -----------------------------------------------------------------
 class TrainConfig(BaseModel):
     executor: Literal["local", "ssh", "vast", "runpod"] = "local"
@@ -552,6 +601,12 @@ class TrainConfig(BaseModel):
     nproc: int = Field(default=1, ge=1, le=64)
     eval_steps: int = Field(default=200, ge=1, le=100000)
     output_dir: str | None = None
+    # Cache dei pesi e hub: la run e il merge remoto devono usare la stessa,
+    # altrimenti il merge riscarica il modello base in una cache diversa.
+    model_cache: str | None = Field(default=None, max_length=1000)
+    use_hf: bool = False
+    # Dopo il merge, valuta il modello sulla stessa GPU prima di spegnerla.
+    auto_evaluate: bool = False
 
 
 # --- Inferenza Cloud & Locale -------------------------------------------------
@@ -563,6 +618,8 @@ class InferenceConfigIn(BaseModel):
     extra_headers: dict[str, str] = Field(default_factory=dict)
     timeout: int = Field(default=180, ge=5, le=3600)
     max_pixels: int | None = Field(default=None, ge=1000, le=20000000)
+    adapter_id: str = "monkeyocrv2-parsing"
+    provider: str | None = None
 
 
 class InferenceConfigOut(BaseModel):
@@ -570,6 +627,7 @@ class InferenceConfigOut(BaseModel):
     url: str
     model: str
     adapter_id: str = "monkeyocrv2-parsing"
+    provider: str | None = None
     has_api_key: bool = False
     extra_headers: dict[str, str] = {}
     timeout: int = 180
@@ -587,6 +645,9 @@ class InferenceTestRequest(BaseModel):
     api_key: str | None = None
     extra_headers: dict[str, str] = Field(default_factory=dict)
     timeout: int = 10
+    adapter_id: str | None = None
+    provider: str | None = None
+    use_saved_credentials: bool = False
 
 
 class InferenceTestOut(BaseModel):

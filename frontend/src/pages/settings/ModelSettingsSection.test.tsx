@@ -2,8 +2,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import '@testing-library/jest-dom/vitest'
+import { readFileSync } from 'node:fs'
 import { apiGet, apiPut } from '../../lib/api'
 import ModelSettingsSection from './ModelSettingsSection'
+import type { WorkflowFieldSpec } from './WorkflowFields'
+
+const wf = (
+  key: string,
+  kind: WorkflowFieldSpec['kind'],
+  extra: Partial<WorkflowFieldSpec> = {},
+): WorkflowFieldSpec => ({ key, kind, default: null, ...extra })
+
+const MONKEY_WORKFLOW: WorkflowFieldSpec[] = [
+  wf('dflash_enabled', 'bool', { default: true, label: 'settings.monkeyDFlashEnabled' }),
+  wf('dflash_num_speculative_tokens', 'int', { minimum: 1, maximum: 16, nullable: true, label: 'settings.monkeyDFlashTokens' }),
+]
 
 vi.mock('../../lib/api', () => ({
   apiGet: vi.fn(async () => ({ items: [{
@@ -12,11 +25,14 @@ vi.mock('../../lib/api', () => ({
     overrides: {},
     effective: { serving: { gpu_memory_utilization: null, max_model_len: null, max_num_seqs: null, max_num_batched_tokens: null }, generation: {}, image: { max_pixels: null }, workflow: { dflash_enabled: true, dflash_num_speculative_tokens: null } },
     restart_required: false,
+    workflow_fields: MONKEY_WORKFLOW,
+    workflow_intro: 'settings.monkeyDFlashIntro',
   }] })),
   apiPut: vi.fn(async (_path: string, payload: Record<string, unknown>) => ({
     adapter_id: 'monkeyocrv2-parsing', display_name: 'MonkeyOCRv2-Parsing',
     recommended: { serving: { gpu_memory_utilization: null, max_model_len: null, max_num_seqs: null, max_num_batched_tokens: null }, generation: {}, image: { max_pixels: null }, workflow: { dflash_enabled: true, dflash_num_speculative_tokens: null } },
     overrides: payload, effective: payload, restart_required: Boolean(payload.serving || payload.workflow),
+    workflow_fields: MONKEY_WORKFLOW,
   })),
 }))
 
@@ -69,6 +85,11 @@ describe('ModelSettingsSection', () => {
   it('salva la modalità layout ufficiale di TeleOCR', async () => {
     vi.mocked(apiGet).mockResolvedValueOnce({ items: [{
       adapter_id: 'teleocr', display_name: 'TeleOCR',
+      workflow_fields: [wf('layout_mode', 'enum', {
+        default: 'Detection', values: ['Detection', 'Segmentation'],
+        label: 'settings.teleocrLayoutMode',
+        hints: [['Detection', 'settings.teleocrDetectionHint'], ['Segmentation', 'settings.teleocrSegmentationHint']],
+      })],
       recommended: { serving: { max_model_len: 16384, gpu_memory_utilization: 0.95 }, generation: {}, image: { max_pixels: 64000000 }, workflow: { layout_mode: 'Detection' } },
       overrides: {},
       effective: { serving: { max_model_len: 16384, gpu_memory_utilization: 0.95 }, generation: {}, image: { max_pixels: 64000000 }, workflow: { layout_mode: 'Detection' } },
@@ -88,6 +109,7 @@ describe('ModelSettingsSection', () => {
   it('nasconde a GLM-OCR le penalità non accettate dal suo SDK ufficiale', async () => {
     vi.mocked(apiGet).mockResolvedValueOnce({ items: [{
       adapter_id: 'glm-ocr', display_name: 'GLM-OCR',
+      generation_unsupported: ['presence_penalty', 'frequency_penalty'],
       recommended: { serving: {}, generation: {}, image: { max_pixels: null }, workflow: { speculative_tokens: 1 } },
       overrides: {},
       effective: { serving: {}, generation: {}, image: { max_pixels: null }, workflow: { speculative_tokens: 1 } },
@@ -110,8 +132,20 @@ describe('ModelSettingsSection', () => {
     workflow.layout_merge_bboxes_mode = null
     workflow.layout_shape_mode = null
     workflow.vl_rec_max_concurrency = null
+    const paddleFields: WorkflowFieldSpec[] = [
+      ...['use_layout_detection', 'use_doc_orientation_classify', 'use_doc_unwarping',
+        'use_chart_recognition', 'use_seal_recognition', 'use_ocr_for_image_block',
+        'format_block_content', 'merge_layout_blocks', 'use_queues',
+      ].map((key) => wf(key, 'bool', { nullable: true, label: `settings.paddleWorkflow.${key}` })),
+      wf('layout_threshold', 'float', { minimum: 0, maximum: 1, nullable: true }),
+      wf('layout_unclip_ratio', 'float', { minimum: 0.01, maximum: 10, nullable: true }),
+      wf('vl_rec_max_concurrency', 'int', { minimum: 1, maximum: 128, nullable: true }),
+      wf('layout_merge_bboxes_mode', 'enum', { nullable: true, values: ['large', 'small', 'union'], label: 'settings.paddleWorkflow.layout_merge_bboxes_mode' }),
+      wf('layout_shape_mode', 'enum', { nullable: true, values: ['auto', 'poly', 'quad', 'rect'], label: 'settings.paddleWorkflow.layout_shape_mode' }),
+    ]
     vi.mocked(apiGet).mockResolvedValueOnce({ items: [{
       adapter_id: 'paddleocr-vl', display_name: 'PaddleOCR-VL-1.6',
+      workflow_fields: paddleFields,
       recommended: { serving: { max_model_len: null }, generation: {}, image: { max_pixels: null }, workflow },
       overrides: {},
       effective: { serving: { max_model_len: null }, generation: {}, image: { max_pixels: null }, workflow },
@@ -156,4 +190,11 @@ describe('ModelSettingsSection', () => {
     ))
   })
 
+
+  it('genera il workflow dallo schema, senza regole per modello', () => {
+    // The acceptance criterion of program.md P2c: adding a model must not require
+    // touching this component. Comparing the id with a literal is the smell.
+    const source = readFileSync('src/pages/settings/ModelSettingsSection.tsx', 'utf8')
+    expect(source).not.toMatch(/adapter_id === '/)
+  })
 })

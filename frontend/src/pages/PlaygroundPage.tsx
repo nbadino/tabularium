@@ -10,9 +10,10 @@ import { IconCopy, IconPlayground } from '../app/icons'
 import { useI18n, tn } from '../i18n'
 import { pageLabel } from '../lib/pageLabel'
 import { useModelNames } from '../app/models/names'
+import { API_BASE } from '../lib/endpoints'
 
 function providerLabel(provider: string | null | undefined, t: (key: string) => string): string {
-  if (provider && ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom'].includes(provider)) {
+  if (provider && ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom', 'llamaindex'].includes(provider)) {
     return t(`recognition.provider.${provider}`)
   }
   return provider || t('recognition.locationLocal')
@@ -72,7 +73,7 @@ export default function PlaygroundPage() {
       setResult(res)
       const im = new Image()
       im.onload = () => setImg({ w: im.naturalWidth, h: im.naturalHeight })
-      im.src = `/api/pages/${pageId}/preview`
+      im.src = `${API_BASE}/pages/${pageId}/preview`
     } catch (e) {
       setError(e)
     } finally {
@@ -107,8 +108,8 @@ export default function PlaygroundPage() {
       <PageHeader title={t('playground.title')} intro={t('playground.intro')} />
       <div className="mb-3 flex flex-wrap items-center gap-3 border border-[color:var(--color-rule)] p-3">
         <p className="max-w-[85ch] text-[13px] text-[color:var(--color-ink-2)]">{t('workflow.tryHint')}</p>
-        <Link to="/" className="btn no-underline">{t('workflow.saveRecognition')}</Link>
-        <Link to="/progetti" className="btn btn-sm no-underline">{t('workflow.addPages')}</Link>
+        <Link to={projectId !== '' && pageId ? `/?project=${projectId}&pages=${pageId}` : '/'} className="btn no-underline">{t('workflow.saveRecognition')}</Link>
+        <Link to={projectId !== '' ? `/progetti/${projectId}` : '/progetti'} className="btn btn-sm no-underline">{t('workflow.addPages')}</Link>
       </div>
 
       {activeEngine === 'model' && !inference.enabled && (
@@ -218,7 +219,7 @@ export default function PlaygroundPage() {
               <figure className="m-0">
                 <div className="lighttable relative overflow-hidden border border-[color:var(--color-rule)]">
                   <img
-                    src={`/api/pages/${pageId}/preview`}
+                    src={`${API_BASE}/pages/${pageId}/preview`}
                     alt={t('playground.overlayAltPred')}
                     className="block w-full"
                   />

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 
-from ..db import connect
+from ..adapters import annotations as annotationstore
 from . import audit as auditsvc
 
 if TYPE_CHECKING:
@@ -39,8 +39,8 @@ def _block_out(row) -> "BlockOut":
     )
 
 
-def _get_page_or_404(conn, page_id: int):
-    row = conn.execute("SELECT * FROM pages WHERE id=?", (page_id,)).fetchone()
+def _get_page_or_404(writer, page_id: int):
+    row = writer.page(page_id)
     if row is None:
         raise HTTPException(status_code=404, detail="pagina non trovata")
     return row
@@ -49,14 +49,12 @@ def _get_page_or_404(conn, page_id: int):
 def list_page_blocks(page_id: int) -> "BlockListOut":
     from ..schemas import BlockListOut  # noqa: PLC0415
 
-    with connect() as conn:
-        page = _get_page_or_404(conn, page_id)
-        rows = conn.execute(
-            "SELECT * FROM blocks WHERE page_id=? "
-            "ORDER BY COALESCE(order_idx, 2147483647), id",
-            (page_id,),
-        ).fetchall()
-        return BlockListOut(items=[_block_out(r) for r in rows], annotation_revision=page["annotation_revision"])
+    with annotationstore.writing() as writer:
+        page = _get_page_or_404(writer, page_id)
+        return BlockListOut(
+            items=[_block_out(row) for row in writer.blocks(page_id)],
+            annotation_revision=page["annotation_revision"],
+        )
 
 
 def sync_annotations(page_id: int, payload: "BlockBulkWrite", actor: dict | None = None) -> "BlockListOut":
@@ -72,15 +70,11 @@ def sync_annotations(page_id: int, payload: "BlockBulkWrite", actor: dict | None
     """
     from ..schemas import BlockListOut  # noqa: PLC0415
 
-    with connect() as conn:
-        page = _get_page_or_404(conn, page_id)
+    with annotationstore.writing() as writer:
+        _get_page_or_404(writer, page_id)
         expected = payload.expected_revision
         if expected is not None:
-            changed = conn.execute(
-                "UPDATE pages SET annotation_revision=annotation_revision+1 "
-                "WHERE id=? AND annotation_revision=?",
-                (page_id, expected),
-            ).rowcount
+            changed = writer.bump_revision(page_id, expected)
             if changed != 1:
                 remote = list_page_blocks(page_id)
                 raise HTTPException(
@@ -95,11 +89,8 @@ def sync_annotations(page_id: int, payload: "BlockBulkWrite", actor: dict | None
         else:
             # Backward-compatible clients still work, but every new client is
             # expected to send expected_revision.
-            conn.execute("UPDATE pages SET annotation_revision=annotation_revision+1 WHERE id=?", (page_id,))
-        rows_existing = conn.execute(
-            "SELECT id, prefill_source, confirmed FROM blocks WHERE page_id=?",
-            (page_id,),
-        ).fetchall()
+            writer.bump_revision(page_id)
+        rows_existing = writer.identities(page_id)
         existing = {int(row["id"]) for row in rows_existing}
         # Le bozze di prefill non verificate NON stanno sul canvas (le filtra
         # `applyBlocks` lato client): non arrivano mai nel payload, quindi
@@ -114,36 +105,35 @@ def sync_annotations(page_id: int, payload: "BlockBulkWrite", actor: dict | None
         kept: set[int] = set()
         assigned: list[int] = []
         for item in payload.items:
-            values = (
-                item.label,
-                item.kind,
-                json.dumps(item.points),
-                item.content,
-                item.order_idx,
-                1 if item.confirmed else 0,
-            )
             if item.id is not None:
                 if item.id not in existing:
                     raise HTTPException(
                         status_code=409,
                         detail=f"blocco {item.id} non appartiene alla pagina {page_id}",
                     )
-                conn.execute(
-                    "UPDATE blocks SET label=?, kind=?, points=?, content=?, "
-                    "order_idx=?, confirmed=?, updated_at=datetime('now') WHERE id=?",
-                    (*values, item.id),
+                writer.update_block(
+                    item.id,
+                    label=item.label,
+                    kind=item.kind,
+                    points=item.points,
+                    content=item.content,
+                    order_idx=item.order_idx,
+                    confirmed=item.confirmed,
                 )
                 kept.add(item.id)
                 assigned.append(item.id)
             else:
-                cursor = conn.execute(
-                    "INSERT INTO blocks "
-                    "(page_id, label, kind, points, content, order_idx, confirmed) "
-                    "VALUES (?,?,?,?,?,?,?)",
-                    (page_id, *values),
+                new_id = writer.insert_block(
+                    page_id,
+                    label=item.label,
+                    kind=item.kind,
+                    points=item.points,
+                    content=item.content,
+                    order_idx=item.order_idx,
+                    confirmed=item.confirmed,
                 )
-                kept.add(int(cursor.lastrowid))
-                assigned.append(int(cursor.lastrowid))
+                kept.add(new_id)
+                assigned.append(new_id)
         # Una bozza si cancella solo se il client lo chiede per nome: è la
         # ragione per cui `deleted_ids` esiste. Un id tornato in `items`
         # (annullamento della cancellazione prima del salvataggio) non viene
@@ -151,23 +141,16 @@ def sync_annotations(page_id: int, payload: "BlockBulkWrite", actor: dict | None
         explicit = {int(i) for i in payload.deleted_ids} & existing
         removed = ((existing - kept - drafts) | explicit) - kept
         if removed:
-            placeholders = ",".join("?" for _ in removed)
-            conn.execute(
-                f"DELETE FROM blocks WHERE id IN ({placeholders})", sorted(removed)
-            )
-        conn.execute(
-            "UPDATE pages SET status='annotated' WHERE id=? AND status='new'",
-            (page_id,),
+            writer.delete_blocks(sorted(removed))
+        writer.mark_annotated(page_id)
+        revision = writer.revision(page_id)
+        auditsvc.record(
+            writer.conn, actor, "page.annotations_saved",
+            resource_type="page", resource_id=page_id,
+            payload={"revision": revision, "blocks": len(payload.items)},
         )
-        rows = conn.execute(
-            "SELECT * FROM blocks WHERE page_id=? "
-            "ORDER BY COALESCE(order_idx, 2147483647), id",
-            (page_id,),
-        ).fetchall()
-        revision = conn.execute("SELECT annotation_revision FROM pages WHERE id=?", (page_id,)).fetchone()[0]
-        auditsvc.record(conn, actor, "page.annotations_saved", resource_type="page", resource_id=page_id, payload={"revision": revision, "blocks": len(payload.items)})
         return BlockListOut(
-            items=[_block_out(r) for r in rows],
+            items=[_block_out(row) for row in writer.blocks(page_id)],
             annotation_revision=revision,
             assigned_ids=assigned,
         )

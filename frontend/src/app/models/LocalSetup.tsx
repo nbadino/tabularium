@@ -9,10 +9,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { apiDelete, apiGet, apiPost, apiPut } from '../../lib/api'
+import type { InferenceConfig } from '../../lib/types'
 import { localRuntimeLabel } from '../../lib/vocab'
 import { useCanAdminister } from '../auth'
 import { useI18n } from '../../i18n'
-import { Module, Notice, Progress } from '../ui'
+import { ErrorNotice, Loading, Module, Notice, Progress } from '../ui'
 import { ChecklistItem, type ChecklistState } from './Checklist'
 import { syncInferenceFromBackend } from '../inference'
 import { IconWarn } from '../icons'
@@ -84,6 +85,8 @@ interface LocalSetupProps {
 export function LocalSetup({ model, onChanged }: LocalSetupProps) {
   const { t } = useI18n()
   const [serve, setServe] = useState<ServeStatus>({ running: false, adapter_id: null, port: null, pid: null, error: null })
+  const [serveLoaded, setServeLoaded] = useState(false)
+  const [serveLoadError, setServeLoadError] = useState<unknown>(null)
   const [hf, setHf] = useState<HuggingFaceAuthState>({ state: 'disconnected' })
   const [port, setPort] = useState('8889')
   const [busy, setBusy] = useState(false)
@@ -104,9 +107,27 @@ export function LocalSetup({ model, onChanged }: LocalSetupProps) {
 
   const loadServe = async () => {
     try {
-      setServe(await apiGet<ServeStatus>('/models/serve/status'))
-    } catch {
-      /* lo stato precedente resta visibile */
+      const status = await apiGet<ServeStatus>('/models/serve/status')
+      // The endpoint check also validates the served model. A stale startup
+      // phase must not override a verified endpoint on the same local port.
+      if (status.adapter_id === model.adapter_id && status.running && !status.ready && status.port) {
+        try {
+          const endpoint = await apiGet<InferenceConfig>('/system/inference')
+          const url = new URL(endpoint.url)
+          const sameEndpoint = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+            && Number(url.port) === status.port && url.pathname.replace(/\/$/, '') === '/v1'
+          if (sameEndpoint && endpoint.adapter_id === status.adapter_id && !endpoint.is_cloud && endpoint.enabled && endpoint.available) {
+            status.ready = true
+            status.starting = false
+            status.phase = 'ready'
+          }
+        } catch { /* Keep the process status if endpoint verification fails. */ }
+      }
+      setServe(status)
+      setServeLoaded(true)
+      setServeLoadError(null)
+    } catch (error) {
+      setServeLoadError(error)
     }
   }
   const loadHf = async () => {
@@ -118,11 +139,13 @@ export function LocalSetup({ model, onChanged }: LocalSetupProps) {
   }
 
   useEffect(() => {
+    setServeLoaded(false)
+    setServeLoadError(null)
     void loadServe()
     void loadHf()
     const id = setInterval(() => void loadServe(), 3000)
     return () => clearInterval(id)
-  }, [])
+  }, [model.adapter_id])
 
   useEffect(() => {
     if (hf.state !== 'awaiting_authorization') return
@@ -296,6 +319,10 @@ export function LocalSetup({ model, onChanged }: LocalSetupProps) {
       {hf.error && <span className="text-[color:var(--color-sig-text)]">{hf.error}</span>}
     </div>
   )
+
+  if (!serveLoaded) return <Module tab={t('modelsHub.local.serverTitle')} quiet>
+    {serveLoadError ? <><ErrorNotice error={serveLoadError} /><button type="button" className="btn mt-3" onClick={() => void loadServe()}>{t('common.retry')}</button></> : <Loading label={t('common.loading')} />}
+  </Module>
 
   return (
     <Module
@@ -484,8 +511,8 @@ export function LocalSetup({ model, onChanged }: LocalSetupProps) {
             </div>
           )}
           {thisServing && serve.error && <p className="mt-1 text-[11px] text-[color:var(--color-sig-text)]">{serve.error}</p>}
-          {thisServing && serve.log_tail && (starting || failed) && (
-            <details className="mt-1.5" open={failed}>
+          {thisServing && serve.log_tail && (
+            <details className="mt-1.5">
               <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.04em] text-[color:var(--color-ink-3)]">
                 {t('cloud.models.serveLog')}
               </summary>
@@ -504,9 +531,6 @@ export function LocalSetup({ model, onChanged }: LocalSetupProps) {
           {ready ? (
             <div className="flex flex-wrap items-center gap-2">
               <span>{t('modelsHub.local.readyBody', { model: model.display_name })}</span>
-              <Link to="/" className="btn btn-primary no-underline">
-                {t('modelsHub.goRecognize')}
-              </Link>
               <Link to="/playground" className="btn no-underline">
                 {t('modelsHub.tryPlayground')}
               </Link>

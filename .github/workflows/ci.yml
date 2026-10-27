@@ -36,6 +36,10 @@ jobs:
           pip install -r requirements.txt -r requirements-dev.txt
       - name: Test
         run: python -m pytest tests -q
+      # The generated manifest is the cheap proof that a model is complete across
+      # the whole application, not only in the file a pull request touched.
+      - name: Model surface invariants
+        run: python ../scripts/surfaces.py --check
 
   frontend:
     runs-on: ubuntu-latest
@@ -111,6 +115,30 @@ jobs:
             git status --porcelain
             exit 1
           fi
+
+  container:
+    # The image is the deployment artifact for a server installation, and this job is
+    # where it is actually verified: build it, start it, wait for /api/health.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the application image
+        run: docker build -f docker/app/Dockerfile -t tabularium:ci .
+      - name: Start it and wait for health
+        run: |
+          docker run -d --name tabularium-ci -p 8788:8787 -e TABULARIUM_AUTH=off tabularium:ci
+          for _ in {1..60}; do
+            if curl -fsS http://127.0.0.1:8788/api/health >/dev/null 2>&1; then
+              echo "container healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs tabularium-ci
+          exit 1
+      - name: Logs on failure
+        if: failure()
+        run: docker logs tabularium-ci || true
 
   e2e:
     runs-on: ubuntu-latest

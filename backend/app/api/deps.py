@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from fastapi import Depends, HTTPException, Request
 
-from ..db import connect
+from ..adapters import pages as pagestore
 from ..services import auth as authsvc
 
 
@@ -21,23 +21,15 @@ def _resolve_project(request: Request, params: dict) -> int | None:
     if "project_id" in params:
         return int(params["project_id"])
     if "page_id" in params:
-        with connect() as conn:
-            row = conn.execute(
-                "SELECT project_id FROM pages WHERE id=?", (int(params["page_id"]),)
-            ).fetchone()
-        if row is None:
+        project_id = pagestore.project_of_page(int(params["page_id"]))
+        if project_id is None:
             raise HTTPException(status_code=404, detail="pagina non trovata")
-        return row["project_id"]
+        return project_id
     if "block_id" in params:
-        with connect() as conn:
-            row = conn.execute(
-                "SELECT p.project_id FROM blocks b JOIN pages p ON p.id=b.page_id "
-                "WHERE b.id=?",
-                (int(params["block_id"]),),
-            ).fetchone()
-        if row is None:
+        project_id = pagestore.project_of_block(int(params["block_id"]))
+        if project_id is None:
             raise HTTPException(status_code=404, detail="blocco non trovato")
-        return row["project_id"]
+        return project_id
     return None
 
 

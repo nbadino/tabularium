@@ -42,7 +42,7 @@ export default function SetPasswordPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[color:var(--color-fill)] p-4">
-      <div className="mod w-full max-w-sm border-[color:var(--color-rule-strong)]">
+      <div className="mod w-full max-w-sm rounded-lg p-6">
         <div className="mod-head border-b-[color:var(--color-rule-strong)]">
           <span className="mod-tab">{t('account.setTitle')}</span>
         </div>

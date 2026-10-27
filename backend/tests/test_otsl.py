@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.otsl import grid_to_otsl, looks_like_otsl, normalize_cells, otsl_to_grid
+from app.domain.otsl import grid_to_otsl, looks_like_otsl, normalize_cells, otsl_to_grid
 
 
 def test_otsl_trailing_newline_does_not_create_phantom_row():

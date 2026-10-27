@@ -13,7 +13,8 @@ from pathlib import Path
 
 from app import config
 from app.db import connect, init_db
-from app.services import inference, otsl, pages
+from app.services import inference, pages
+from app.domain import otsl
 
 
 def _page_rows(project_id: int, ids: list[int] | None):

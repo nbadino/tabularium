@@ -6,7 +6,15 @@ import tailwindcss from '@tailwindcss/vite'
 // backend quando la 8787 è occupata da altro.
 const apiTarget = process.env.TABULARIUM_API ?? 'http://127.0.0.1:8787'
 
+// Base path for a reverse proxy that serves the interface under a sub-path, e.g.
+// `TABULARIUM_BASE_PATH=/tabularium/ npm run build`. Vite rewrites asset URLs and
+// exposes the same value as `import.meta.env.BASE_URL`, which the API client and the
+// router use, so one build serves both `/` and `/tabularium/`. The proxy must strip
+// the prefix before forwarding (see docs/guide/installation.md).
+const base = process.env.TABULARIUM_BASE_PATH || '/'
+
 export default defineConfig({
+  base,
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,

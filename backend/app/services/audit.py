@@ -26,3 +26,30 @@ def record(
             json.dumps(payload or {}, ensure_ascii=False),
         ),
     )
+
+
+def record_event(
+    action: str,
+    actor: dict | None = None,
+    *,
+    resource_type: str | None = None,
+    resource_id: int | None = None,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    """Record an event outside an existing transaction.
+
+    Services that write a single key-value document (model settings) have no
+    connection of their own anymore; this keeps the audit trail in one call without
+    handing them a database handle.
+    """
+    from ..db import connect
+
+    with connect() as conn:
+        record(
+            conn,
+            actor,
+            action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            payload=payload,
+        )

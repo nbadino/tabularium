@@ -3,6 +3,8 @@ import {
   deleteTrack,
   dropBoundary,
   emptyGrid,
+  applyHeaderTemplate,
+  extractHeaderTemplate,
   insertBoundary,
   fillDown,
   insertTrack,
@@ -12,6 +14,8 @@ import {
   normalizeColumn,
   setVerified,
   splitColumn,
+  splitHeaderAcrossRows,
+  splitStartRow,
   transformColumnCase,
   resizeGrid,
   splitCell,
@@ -30,12 +34,100 @@ describe('table grid operations', () => {
     expect(split?.cells.find((c) => c.r === 0 && c.c === 0)?.text).toBe('header')
   })
 
+  it('conserva una testata verticale quando il testo sta sotto l angolo vuoto', () => {
+    const base = emptyGrid(2, 2)
+    base.cells = base.cells.map((cell) =>
+      cell.r === 1 && cell.c === 0
+        ? { ...cell, text: 'Fig', source: 'model' as const, verified: true }
+        : cell,
+    )
+    const merged = mergeRange(base, 0, 0, 1, 0)
+    const header = merged?.cells.find((cell) => cell.r === 0 && cell.c === 0)
+    expect(header).toMatchObject({ rowspan: 2, colspan: 1, text: 'Fig', source: 'model', verified: true })
+  })
+
   it('keeps adjustable ruling positions when resizing', () => {
     const grid = emptyGrid(2, 2)
     grid.vlines![1] = 0.42
     const resized = resizeGrid(grid, 3, 2)
     expect(resized.vlines?.[1]).toBe(0.42)
     expect(resized.hlines).toHaveLength(4)
+  })
+})
+
+describe('intestazioni riutilizzabili', () => {
+  const source = (): TableGrid => {
+    const grid = emptyGrid(4, 3)
+    grid.header_rows = 2
+    grid.cells = [
+      { r: 0, c: 0, rowspan: 2, colspan: 1, text: 'Vessel' },
+      { r: 0, c: 1, rowspan: 1, colspan: 2, text: 'Year' },
+      { r: 1, c: 1, rowspan: 1, colspan: 1, text: 'Built' },
+      { r: 1, c: 2, rowspan: 1, colspan: 1, text: 'Gross' },
+      { r: 2, c: 0, rowspan: 1, colspan: 1, text: 'Achilles' },
+      { r: 2, c: 1, rowspan: 1, colspan: 1, text: '22' },
+      { r: 2, c: 2, rowspan: 1, colspan: 1, text: '998' },
+      { r: 3, c: 0, rowspan: 1, colspan: 1, text: 'Achroite' },
+      { r: 3, c: 1, rowspan: 1, colspan: 1, text: '98' },
+      { r: 3, c: 2, rowspan: 1, colspan: 1, text: '1196' },
+    ]
+    return grid
+  }
+
+  it('estrae merge e testi relativi alla selezione', () => {
+    const header = extractHeaderTemplate(source(), { startRow: 0, startColumn: 0, endRow: 1, endColumn: 2 })!
+    expect(header.rows).toBe(2)
+    expect(header.cols).toBe(3)
+    expect(header.cells).toEqual([
+      { r: 0, c: 0, rowspan: 2, colspan: 1, text: 'Vessel' },
+      { r: 0, c: 1, rowspan: 1, colspan: 2, text: 'Year' },
+      { r: 1, c: 1, rowspan: 1, colspan: 1, text: 'Built' },
+      { r: 1, c: 2, rowspan: 1, colspan: 1, text: 'Gross' },
+    ])
+  })
+
+  it('sostituisce solo il rettangolo scelto e conserva le righe dati', () => {
+    const target = source()
+    target.cells = target.cells.map((cell) => cell.r >= 2 ? cell : { ...cell, text: 'old' })
+    const header = extractHeaderTemplate(source(), { startRow: 0, startColumn: 0, endRow: 1, endColumn: 2 })!
+    const out = applyHeaderTemplate(target, header, { startRow: 0, startColumn: 0, endRow: 1, endColumn: 2 })!
+    expect(out.header_rows).toBe(2)
+    expect(out.cells.find((cell) => cell.r === 0 && cell.c === 0)?.text).toBe('Vessel')
+    expect(out.cells.filter((cell) => cell.verified && cell.r < 2)).toHaveLength(4)
+    expect(out.cells.find((cell) => cell.r === 2 && cell.c === 0)?.text).toBe('Achilles')
+  })
+
+  it('rifiuta una selezione che taglia un merge', () => {
+    expect(extractHeaderTemplate(source(), { startRow: 0, startColumn: 1, endRow: 0, endColumn: 1 })).toBeNull()
+  })
+
+  it('con un header più alto sposta i dati sotto invece di sovrascriverli', () => {
+    const header = extractHeaderTemplate(source(), { startRow: 0, startColumn: 0, endRow: 1, endColumn: 2 })!
+    const target = emptyGrid(3, 3)
+    target.cells = [
+      { r: 0, c: 0, rowspan: 1, colspan: 1, text: 'old header' },
+      { r: 0, c: 1, rowspan: 1, colspan: 1, text: '' },
+      { r: 0, c: 2, rowspan: 1, colspan: 1, text: '' },
+      { r: 1, c: 0, rowspan: 1, colspan: 1, text: 'first ship' },
+      { r: 1, c: 1, rowspan: 1, colspan: 1, text: '22' },
+      { r: 1, c: 2, rowspan: 1, colspan: 1, text: '998' },
+      { r: 2, c: 0, rowspan: 1, colspan: 1, text: 'second ship' },
+      { r: 2, c: 1, rowspan: 1, colspan: 1, text: '98' },
+      { r: 2, c: 2, rowspan: 1, colspan: 1, text: '1196' },
+    ]
+    const out = applyHeaderTemplate(target, header, { startRow: 0, startColumn: 0, endRow: 0, endColumn: 2 })!
+    expect(out.rows).toBe(4)
+    expect(out.cells.find((cell) => cell.r === 2 && cell.c === 0)?.text).toBe('first ship')
+    expect(out.cells.find((cell) => cell.r === 3 && cell.c === 0)?.text).toBe('second ship')
+  })
+
+  it('non elimina una colonna eccedente quando il foglio ne ha più dell header', () => {
+    const header = extractHeaderTemplate(source(), { startRow: 0, startColumn: 0, endRow: 1, endColumn: 2 })!
+    const target = emptyGrid(3, 4)
+    target.cells = target.cells.map((cell) => ({ ...cell, text: cell.c === 3 ? 'keep' : '' }))
+    const out = applyHeaderTemplate(target, header, { startRow: 0, startColumn: 0, endRow: 0, endColumn: 3 })!
+    expect(out.cols).toBe(4)
+    expect(out.cells.find((cell) => cell.r === 3 && cell.c === 3)?.text).toBe('keep')
   })
 })
 
@@ -300,6 +392,11 @@ describe('separare una colonna sul separatore', () => {
   it('limita la separazione alle righe scelte lasciando intatta una testata unita', () => {
     const grid = register()
     grid.cells = grid.cells.map((cell) => cell.r === 0 && cell.c === 1 ? { ...cell, rowspan: 2, text: 'VESSEL Owner' } : cell).filter((cell) => !(cell.r === 1 && cell.c === 1))
+    // La finestra propone già la prima riga di dati: una testata unita non
+    // deve obbligare l'utente a correggere a mano l'intervallo.
+    expect(splitStartRow(grid, 1)).toBe(2)
+    const fromDefault = splitColumn(grid, 1, { separator: ' ', startRow: splitStartRow(grid, 1) })!
+    expect(fromDefault).not.toBeNull()
     const out = splitColumn(grid, 1, { separator: ' ', startRow: 2, endRow: 3 })!
     expect(out).not.toBeNull()
     expect(at(out, 0, 1)?.text).toBe('VESSEL Owner')
@@ -319,6 +416,62 @@ describe('separare una colonna sul separatore', () => {
     // Righe senza separatore: intatte.
     expect(at(out, 2, 1)?.text).toBe('Nettuno')
     expect(at(out, 2, 2)?.text).toBe('')
+  })
+
+  it('separa anche la testata quando i dati vengono realmente divisi', () => {
+    const grid = emptyGrid(4, 3)
+    grid.rows = 4
+    grid.cols = 3
+    grid.cells = [
+      { r: 0, c: 0, rowspan: 2, colspan: 1, text: 'Vessel', source: 'model' },
+      { r: 0, c: 1, rowspan: 2, colspan: 1, text: 'Fig Reg', source: 'model', verified: true },
+      { r: 0, c: 2, rowspan: 2, colspan: 1, text: 'Year', source: 'model' },
+      { r: 2, c: 0, rowspan: 1, colspan: 1, text: 'Achilles', source: 'model' },
+      { r: 2, c: 1, rowspan: 1, colspan: 1, text: 'Ge G', source: 'model' },
+      { r: 2, c: 2, rowspan: 1, colspan: 1, text: '22', source: 'model' },
+      { r: 3, c: 0, rowspan: 1, colspan: 1, text: 'Achroite', source: 'model' },
+      { r: 3, c: 1, rowspan: 1, colspan: 1, text: 'Br Sw', source: 'model' },
+      { r: 3, c: 2, rowspan: 1, colspan: 1, text: '98', source: 'model' },
+    ]
+    const out = splitColumn(grid, 1, { separator: ' ', splitHeader: true, startRow: splitStartRow(grid, 1) })!
+    expect(at(out, 0, 1)?.text).toBe('Fig')
+    expect(at(out, 0, 1)?.rowspan).toBe(2)
+    expect(at(out, 0, 2)?.text).toBe('Reg')
+    expect(at(out, 0, 2)?.rowspan).toBe(2)
+    expect(out.cells.some((cell) => cell.r === 1 && cell.c === 2)).toBe(false)
+    expect(at(out, 2, 1)?.text).toBe('Ge')
+    expect(at(out, 2, 2)?.text).toBe('G')
+    expect(at(out, 3, 1)?.text).toBe('Br')
+    expect(at(out, 3, 2)?.text).toBe('Sw')
+  })
+
+  it('distribuisce una testata unita verticalmente sulle righe che occupa', () => {
+    const grid = emptyGrid(4, 4)
+    grid.cells = [
+      { r: 0, c: 0, rowspan: 2, colspan: 1, text: 'Vessel', source: 'model' },
+      { r: 0, c: 1, rowspan: 2, colspan: 1, text: 'Fig Reg', source: 'model' },
+      { r: 0, c: 2, rowspan: 2, colspan: 1, text: 'Year blt', source: 'model' },
+      { r: 0, c: 3, rowspan: 1, colspan: 2, text: 'Tons', source: 'model' },
+      { r: 1, c: 3, rowspan: 1, colspan: 1, text: 'Gross', source: 'model' },
+      { r: 1, c: 4, rowspan: 1, colspan: 1, text: 'Net', source: 'model' },
+      { r: 2, c: 0, rowspan: 1, colspan: 1, text: 'Achilles', source: 'model' },
+      { r: 2, c: 1, rowspan: 1, colspan: 1, text: 'Ge', source: 'model' },
+      { r: 2, c: 2, rowspan: 1, colspan: 1, text: '22', source: 'model' },
+      { r: 2, c: 3, rowspan: 1, colspan: 1, text: '998', source: 'model' },
+      { r: 2, c: 4, rowspan: 1, colspan: 1, text: '591', source: 'model' },
+      { r: 3, c: 0, rowspan: 1, colspan: 1, text: 'Achroite', source: 'model' },
+      { r: 3, c: 1, rowspan: 1, colspan: 1, text: 'Br', source: 'model' },
+      { r: 3, c: 2, rowspan: 1, colspan: 1, text: '98', source: 'model' },
+      { r: 3, c: 3, rowspan: 1, colspan: 1, text: '1196', source: 'model' },
+      { r: 3, c: 4, rowspan: 1, colspan: 1, text: '710', source: 'model' },
+    ]
+    const out = splitHeaderAcrossRows(grid, 2, { separator: ' ' })!
+    expect(out.cols).toBe(grid.cols)
+    expect(at(out, 0, 2)?.text).toBe('Year')
+    expect(at(out, 0, 2)?.rowspan).toBe(1)
+    expect(at(out, 1, 2)?.text).toBe('blt')
+    expect(at(out, 1, 2)?.rowspan).toBe(1)
+    expect(at(out, 2, 2)?.text).toBe('22')
   })
 
   it('le sequenze di spazi sono un separatore solo', () => {
@@ -499,14 +652,15 @@ describe('unire celle senza perdere testo', () => {
 
   it('passa quando l unico testo è quello che sopravvive', () => {
     expect(mergeKeepsEveryText(g(), 0, 0, 0, 1)).toBe(true)
-    expect(mergeKeepsEveryText(g(), 2, 1, 2, 2)).toBe(false)
+    expect(mergeKeepsEveryText(g(), 2, 1, 2, 2)).toBe(true)
   })
 
-  it('rifiuta quando il testo sta in un altra cella dell intervallo', () => {
+  it('accetta un solo valore anche quando non è nell angolo, ma rifiuta più valori', () => {
     // Riga 1: due celle con testo.
     expect(mergeKeepsEveryText(g(), 1, 1, 1, 2)).toBe(false)
-    // Riga 2: il testo è nella cella accanto all'ancora, che è vuota.
-    expect(mergeKeepsEveryText(g(), 2, 1, 2, 2)).toBe(false)
+    // Riga 2: il testo è nella cella accanto all'ancora, che è vuota: unendo,
+    // il testo può essere riportato nell'ancora senza perdite.
+    expect(mergeKeepsEveryText(g(), 2, 1, 2, 2)).toBe(true)
     // In verticale: l'ancora è piena, ma sotto c'è un altro valore.
     expect(mergeKeepsEveryText(g(), 1, 0, 2, 0)).toBe(false)
     // E in verticale quando sotto non c'è niente, unire è sicuro.

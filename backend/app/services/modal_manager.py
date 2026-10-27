@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import config
+from ..adapters import jobs as jobstore
 from ..db import connect
 
 REPO_ROOT = config.RESOURCE_DIR
@@ -183,11 +184,9 @@ def _watch(task: ModalTask) -> None:
     task.ok = task.proc.returncode == 0
     if task.job_id is not None:
         try:
-            with connect() as conn:
-                conn.execute(
-                    "UPDATE jobs SET state=?, ended_at=datetime('now'), exit_code=?, heartbeat_at=datetime('now') WHERE id=?",
-                    ("finished" if task.ok else "failed", task.proc.returncode, task.job_id),
-                )
+            jobstore.finish(
+                task.job_id, "finished" if task.ok else "failed", task.proc.returncode
+            )
         except sqlite3.OperationalError:
             pass
     _token_cache = None  # il setup/deploy può aver cambiato lo stato del token
@@ -196,13 +195,7 @@ def _watch(task: ModalTask) -> None:
 
 def _persisted_running() -> dict | None:
     """Recupera il minimo stato osservabile di un task sopravvissuto al restart."""
-    try:
-        with connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM jobs WHERE kind='modal' AND state='running' ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-    except sqlite3.OperationalError:
-        return None
+    row = jobstore.running("modal")
     if row is None:
         return None
     pid = int(row["pid"] or 0)
@@ -212,11 +205,7 @@ def _persisted_running() -> dict | None:
         os.kill(pid, 0)
     except OSError:
         try:
-            with connect() as conn:
-                conn.execute(
-                    "UPDATE jobs SET state='failed', ended_at=datetime('now'), error=?, heartbeat_at=datetime('now') WHERE id=?",
-                    ("processo Modal non più presente dopo il riavvio", row["id"]),
-                )
+            jobstore.fail(row["id"], "processo Modal non più presente dopo il riavvio")
         except sqlite3.OperationalError:
             pass
         return None
@@ -265,14 +254,13 @@ def _start(
             env=env,
         )
         try:
-            with connect() as conn:
-                cur = conn.execute(
-                    "INSERT INTO jobs(kind, owner_id, provider, pid, process_group, state, heartbeat_at, command_json, log_path, recovery_strategy) "
-                    "VALUES('modal', ?, 'modal', ?, ?, 'running', datetime('now'), ?, ?, 'pid-process-group')",
-                    (owner_id, proc.pid, os.getpgid(proc.pid) if hasattr(os, "getpgid") else proc.pid,
-                     json.dumps({"kind": kind, "template_id": template_id, "args": args}), str(log_path)),
-                )
-                job_id = int(cur.lastrowid)
+            job_id = jobstore.start_modal_job(
+                owner_id=owner_id,
+                pid=proc.pid,
+                process_group=os.getpgid(proc.pid) if hasattr(os, "getpgid") else proc.pid,
+                command={"kind": kind, "template_id": template_id, "args": args},
+                log_path=str(log_path),
+            )
         except sqlite3.OperationalError as exc:
             proc.terminate()
             raise RuntimeError("tabella jobs non disponibile: eseguire init_db()") from exc
@@ -461,11 +449,7 @@ def _cancel_deploy_if_running(template_id: str) -> None:
             task.proc.kill()
         if task.job_id is not None:
             try:
-                with connect() as conn:
-                    conn.execute(
-                        "UPDATE jobs SET state='stopped', ended_at=datetime('now'), heartbeat_at=datetime('now'), error=? WHERE id=?",
-                        ("deploy interrotto prima dello stop dell’app", task.job_id),
-                    )
+                jobstore.stop(task.job_id, "deploy interrotto prima dello stop dell’app")
             except sqlite3.OperationalError:
                 pass
         return
@@ -482,11 +466,7 @@ def _cancel_deploy_if_running(template_id: str) -> None:
     except OSError:
         pass
     try:
-        with connect() as conn:
-            conn.execute(
-                "UPDATE jobs SET state='stopped', ended_at=datetime('now'), heartbeat_at=datetime('now'), error=? WHERE id=?",
-                ("deploy interrotto prima dello stop dell’app", persisted["id"]),
-            )
+        jobstore.stop(persisted["id"], "deploy interrotto prima dello stop dell’app")
     except sqlite3.OperationalError:
         pass
 

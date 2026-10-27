@@ -7,6 +7,7 @@ import { Badge, Collapsible, Field, Modal, Module, Notice, Progress } from './ui
 import { useConfirm } from './confirm'
 import { saveInferenceToBackend, testInferenceConnection, useInference } from './inference'
 import { ChecklistItem, type ChecklistState } from './models/Checklist'
+import { DEFAULT_MODEL_ID } from '../lib/constants'
 
 interface CloudControlModalProps {
   open: boolean
@@ -241,7 +242,7 @@ export function guessModalTemplate(url: string): string {
 
 /** Modello servito + adapter da attivare quando si usa l'endpoint di una template. */
 export const MODAL_TEMPLATE_TARGET: Record<string, { model: string; adapterId: string }> = {
-  monkeyocrv2: { model: 'MonkeyOCRv2', adapterId: 'monkeyocrv2-parsing' },
+  monkeyocrv2: { model: 'MonkeyOCRv2', adapterId: DEFAULT_MODEL_ID },
   'paddleocr-vl': { model: 'PaddleOCR-VL-1.6', adapterId: 'paddleocr-vl' },
   mineru: { model: 'mineru2.5', adapterId: 'mineru2.5' },
   'unlimited-ocr': { model: 'Unlimited-OCR', adapterId: 'unlimited-ocr' },
@@ -334,7 +335,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   // afferma cose sull'account che non ha verificato.
   const [vastLoaded, setVastLoaded] = useState(false)
   const [vastModels, setVastModels] = useState<VastModel[]>([])
-  const [vastAdapter, setVastAdapter] = useState('monkeyocrv2-parsing')
+  const [vastAdapter, setVastAdapter] = useState(DEFAULT_MODEL_ID)
   const [vastModelCustom, setVastModelCustom] = useState('')
   // Il nome da chiedere all'endpoint dopo un refresh: quello del lavoro in
   // corso, altrimenti quello del profilo Vast attivo. Il vecchio default fisso
@@ -440,7 +441,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   const [manualUrl, setManualUrl] = useState(inf.url)
   const [manualModel, setManualModel] = useState(inf.model)
   const [manualKey, setManualKey] = useState(inf.apiKey)
-  const showMonkeyRunner = vastAdapter === 'monkeyocrv2-parsing' || vastAdapter.startsWith('custom-')
+  const showMonkeyRunner = vastAdapter === DEFAULT_MODEL_ID || vastAdapter.startsWith('custom-')
 
   const [copied, setCopied] = useState<string | null>(null)
   const copy = (text: string, id: string) => copyToClipboard(text, () => { setCopied(id); setTimeout(() => setCopied(null), 2000) })
@@ -483,7 +484,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   useEffect(() => {
     if (vastModels.length === 0) return
     if (!vastModels.some((item) => item.adapter_id === vastAdapter)) {
-      setVastAdapter('monkeyocrv2-parsing')
+      setVastAdapter(DEFAULT_MODEL_ID)
     }
   }, [vastModels, vastAdapter])
 

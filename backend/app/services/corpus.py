@@ -3,12 +3,11 @@ from __future__ import annotations
 
 from collections import Counter
 
-from ..db import connect
+from ..adapters import pages as pagestore
 
 
 def corpus_map(project_id: int) -> dict:
-    with connect() as conn:
-        rows = conn.execute("SELECT * FROM pages WHERE project_id=? ORDER BY rel_path, pdf_page", (project_id,)).fetchall()
+    rows = pagestore.all_for_project(project_id)
     years = Counter((str(r["issue_date"] or "")[:4] or "unknown") for r in rows)
     page_types = Counter(str(r["page_type"] or "unclassified") for r in rows)
     statuses = Counter(str(r["status"] or "new") for r in rows)

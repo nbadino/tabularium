@@ -1,5 +1,5 @@
 /** Helper sulle griglie di tabelle: matrice fisica, merge, split, resize. */
-import type { TableCell, TableGrid } from './types'
+import type { HeaderTemplate, TableCell, TableGrid } from './types'
 import { toFractionGlyphs } from './fractions'
 
 /** Normalizza griglie provenienti da versioni precedenti del backend.
@@ -35,6 +35,117 @@ function isSingular(cell: TableCell | undefined): cell is TableCell {
   return !!cell && cell.rowspan === 1 && cell.colspan === 1
 }
 
+/** Estrae una selezione come intestazione autonoma, mantenendo merge e testi
+ *  relativi al suo angolo. Rifiuta i merge che attraversano il bordo: una
+ *  selezione parziale non descrive una struttura riutilizzabile. */
+export function extractHeaderTemplate(
+  grid: TableGrid,
+  selection: { startRow: number; startColumn: number; endRow: number; endColumn: number },
+): HeaderTemplate | null {
+  const minR = Math.max(0, Math.min(selection.startRow, selection.endRow))
+  const maxR = Math.min(grid.rows - 1, Math.max(selection.startRow, selection.endRow))
+  const minC = Math.max(0, Math.min(selection.startColumn, selection.endColumn))
+  const maxC = Math.min(grid.cols - 1, Math.max(selection.startColumn, selection.endColumn))
+  if (maxR < minR || maxC < minC) return null
+
+  const map = ownerMap(grid)
+  const logical = new Map<string, TableCell>()
+  for (let r = minR; r <= maxR; r++) {
+    for (let c = minC; c <= maxC; c++) {
+      const owner = map[r]?.[c]
+      if (!owner) continue
+      const inside = owner.r >= minR && owner.c >= minC
+        && owner.r + owner.rowspan - 1 <= maxR
+        && owner.c + owner.colspan - 1 <= maxC
+      if (!inside) return null
+      logical.set(`${owner.r}:${owner.c}`, owner)
+    }
+  }
+  // Materializza anche le posizioni vuote: l'intestazione applicata deve
+  // sostituire l'intero rettangolo, non lasciare buchi con celle precedenti.
+  for (let r = minR; r <= maxR; r++) {
+    for (let c = minC; c <= maxC; c++) {
+      if (!logical.has(`${r}:${c}`) && !map[r]?.[c]) logical.set(`${r}:${c}`, { r, c, rowspan: 1, colspan: 1, text: '' })
+    }
+  }
+  return {
+    rows: maxR - minR + 1,
+    cols: maxC - minC + 1,
+    cells: [...logical.values()]
+      .sort((a, b) => a.r - b.r || a.c - b.c)
+      .map((cell) => ({
+        r: cell.r - minR,
+        c: cell.c - minC,
+        rowspan: cell.rowspan,
+        colspan: cell.colspan,
+        text: cell.text ?? '',
+      })),
+  }
+}
+
+/** Sostituisce un rettangolo con un'intestazione nota. Il punto di partenza è
+ *  l'angolo selezionato; i dati sotto restano intatti. */
+export function applyHeaderTemplate(
+  grid: TableGrid,
+  header: HeaderTemplate,
+  selection: { startRow: number; startColumn: number; endRow: number; endColumn: number },
+): TableGrid | null {
+  const startRow = Math.max(0, Math.min(selection.startRow, selection.endRow))
+  const startColumn = Math.max(0, Math.min(selection.startColumn, selection.endColumn))
+  const selectedEndRow = Math.max(selection.startRow, selection.endRow)
+  if (startRow < 0 || startColumn < 0 || header.rows < 1 || header.cols < 1) return null
+
+  // Il rettangolo selezionato è ciò che viene sostituito. Se l'header noto è
+  // più alto o più largo, la differenza diventa una vera inserzione/rimozione:
+  // le righe dati sotto scorrono, non vengono sovrascritte.
+  let adjusted: TableGrid = grid
+  const rowDelta = header.rows - (selectedEndRow - startRow + 1)
+  if (rowDelta > 0) {
+    for (let i = 0; i < rowDelta; i++) adjusted = insertTrack(adjusted, 'row', selectedEndRow + 1 + i)
+  } else if (rowDelta < 0) {
+    for (let i = 0; i < -rowDelta; i++) {
+      const next = deleteTrack(adjusted, 'row', startRow + header.rows)
+      if (!next) return null
+      adjusted = next
+    }
+  }
+  const endRow = startRow + header.rows - 1
+  const endColumn = startColumn + header.cols - 1
+  const grown = growGrid(adjusted, Math.max(adjusted.rows, endRow + 1), Math.max(adjusted.cols, endColumn + 1))
+  const map = ownerMap(grown)
+  const toRemove = new Set<TableCell>()
+  for (let r = startRow; r <= endRow; r++) {
+    for (let c = startColumn; c <= endColumn; c++) {
+      const owner = map[r]?.[c]
+      if (!owner) continue
+      const fullyInside = owner.r >= startRow && owner.c >= startColumn
+        && owner.r + owner.rowspan - 1 <= endRow
+        && owner.c + owner.colspan - 1 <= endColumn
+      if (!fullyInside) return null
+      toRemove.add(owner)
+    }
+  }
+  const cells: TableCell[] = grown.cells.filter((cell) => !toRemove.has(cell))
+  for (const cell of header.cells) {
+    if (cell.r < 0 || cell.c < 0 || cell.r + cell.rowspan > header.rows || cell.c + cell.colspan > header.cols) return null
+    cells.push({
+      r: startRow + cell.r,
+      c: startColumn + cell.c,
+      rowspan: cell.rowspan,
+      colspan: cell.colspan,
+      text: cell.text,
+      source: 'manual',
+      verified: true,
+      verification_source: null,
+    })
+  }
+  return {
+    ...grown,
+    cells,
+    header_rows: startRow === 0 ? Math.max(grown.header_rows ?? 0, header.rows) : grown.header_rows,
+  }
+}
+
 /** Unisce l'area rettangolare selezionata in una singola cella.
  *  Richiede che ogni posizione dell'area sia coperta da una sola cella 1x1.
  */
@@ -58,7 +169,19 @@ export function mergeRange(
     }
   }
 
-  const anchor = map[minR][minC] ?? { r: minR, c: minC, rowspan: 1, colspan: 1, text: '' }
+  // L'ancora geometrica è in alto a sinistra, ma per una testata verticale il
+  // testo può stare nella seconda riga (per esempio `Fig` sotto una cella
+  // vuota). In quel caso conservarlo è sicuro: l'intervallo contiene un solo
+  // valore. Prendiamo la prima cella non vuota in ordine di lettura.
+  const textCell = (() => {
+    for (let rr = minR; rr <= maxR; rr++) {
+      for (let cc = minC; cc <= maxC; cc++) {
+        const cell = map[rr]?.[cc]
+        if (cell && (cell.text ?? '').trim() !== '') return cell
+      }
+    }
+    return map[minR][minC] ?? { r: minR, c: minC, rowspan: 1, colspan: 1, text: '' }
+  })()
   const cells = grid.cells.filter(
     (cell) =>
       !(
@@ -75,7 +198,10 @@ export function mergeRange(
     c: minC,
     rowspan: maxR - minR + 1,
     colspan: maxC - minC + 1,
-    text: anchor.text,
+    text: textCell.text,
+    source: textCell.source,
+    verified: textCell.verified,
+    verification_source: textCell.verification_source,
   })
   return { ...grid, cells }
 }
@@ -533,9 +659,32 @@ export interface SplitColumnOptions {
   fromRight?: boolean
   startRow?: number
   endRow?: number
+  /** Separa anche la testata della colonna quando il suo testo usa lo stesso
+   *  separatore e almeno una riga di dati viene effettivamente divisa. */
+  splitHeader?: boolean
 }
 
 const MAX_SPLIT_PARTS = 8
+
+/** Prima riga che «Separa per separatore» può trattare, 0-based.
+ *
+ * Le righe di testata dichiarate non sono dati. Se il modello non le ha
+ * dichiarate, si saltano comunque le celle unite che occupano l'inizio della
+ * colonna: sono intestazioni a più colonne, non valori da dividere. Fermarsi
+ * alla prima riga non unita evita di saltare per errore una cella unita che
+ * compare più in basso, nel corpo della tabella.
+ */
+export function splitStartRow(grid: TableGrid, at: number): number {
+  if (at < 0 || at >= grid.cols || grid.rows < 1) return 0
+  const map = ownerMap(grid)
+  let row = Math.min(grid.rows - 1, Math.max(0, grid.header_rows ?? 0))
+  while (row < grid.rows) {
+    const owner = map[row]?.[at]
+    if (!owner || (owner.rowspan <= 1 && owner.colspan <= 1)) break
+    row += 1
+  }
+  return Math.min(row, grid.rows - 1)
+}
 
 /** I pezzi di un testo, al massimo `maxParts`.
  *
@@ -572,6 +721,97 @@ function splitParts(text: string, separator: string, maxParts: number, fromRight
   return parts.map((part) => part.trim()).filter((part) => part !== '')
 }
 
+/** La testata che può seguire la separazione dei dati. Si accetta solo una
+ *  cella che occupa una sola colonna: una testata già unita su più colonne è
+ *  un raggruppamento voluto, non testo da spezzare. Lo `rowspan` verticale è
+ *  invece normale nelle testate su due righe e viene conservato. */
+function splitHeaderFor(
+  grid: TableGrid,
+  at: number,
+  separator: string,
+  maxParts: number,
+  fromRight: boolean,
+): { anchor: TableCell; parts: string[] } | null {
+  const firstDataRow = splitStartRow(grid, at)
+  if (firstDataRow < 1) return null
+  const map = ownerMap(grid)
+  for (let r = 0; r < firstDataRow; r++) {
+    const anchor = map[r]?.[at]
+    if (!anchor || anchor.c !== at || anchor.colspan !== 1) continue
+    const parts = splitParts(anchor.text ?? '', separator, maxParts, fromRight)
+    if (parts.length > 1) return { anchor, parts }
+  }
+  return null
+}
+
+/** Riscrive la testata sulle colonne appena inserite. Le celle vuote createsi
+ *  con l'inserimento vengono sostituite da un'unica testata con lo stesso
+ *  `rowspan`, così l'allineamento verticale resta quello delle colonne vicine. */
+function applyHeaderSplit(
+  grid: TableGrid,
+  at: number,
+  header: { anchor: TableCell; parts: string[] },
+): TableGrid {
+  const { anchor, parts } = header
+  const headerEnd = anchor.r + anchor.rowspan
+  const cells = grid.cells
+    .filter((cell) => !(cell.c > at && cell.c < at + parts.length && cell.r >= anchor.r && cell.r < headerEnd))
+    .map((cell) =>
+      cell.r === anchor.r && cell.c === at
+        ? { ...cell, text: parts[0], source: 'manual' as const, verified: false, verification_source: null }
+        : cell,
+    )
+  for (let k = 1; k < parts.length; k++) {
+    cells.push({
+      ...anchor,
+      c: at + k,
+      text: parts[k],
+      source: 'manual',
+      verified: false,
+      verification_source: null,
+    })
+  }
+  return { ...grid, cells }
+}
+
+/** Cella di testata che ancora una colonna e può essere distribuita sulle
+ *  righe che occupa. È il caso di «Year blt» su due righe di testata. */
+export function splitHeaderAcrossRows(
+  grid: TableGrid,
+  at: number,
+  options: { separator: string; fromRight?: boolean },
+): TableGrid | null {
+  if (at < 0 || at >= grid.cols || !options.separator) return null
+  const firstDataRow = splitStartRow(grid, at)
+  if (firstDataRow < 1) return null
+  const map = ownerMap(grid)
+  let anchor: TableCell | null = null
+  for (let r = 0; r < firstDataRow; r++) {
+    const candidate = map[r]?.[at]
+    if (candidate?.c === at && candidate.colspan === 1 && candidate.rowspan > 1) {
+      anchor = candidate
+      break
+    }
+  }
+  if (!anchor) return null
+  const parts = splitParts(anchor.text ?? '', options.separator, Math.min(MAX_SPLIT_PARTS, anchor.rowspan), options.fromRight)
+  if (parts.length < 2) return null
+
+  const cells = grid.cells.filter((cell) => !(cell.r === anchor!.r && cell.c === anchor!.c))
+  for (let row = 0; row < anchor.rowspan; row++) {
+    cells.push({
+      ...anchor,
+      r: anchor.r + row,
+      rowspan: 1,
+      text: parts[row] ?? '',
+      source: 'manual',
+      verified: false,
+      verification_source: null,
+    })
+  }
+  return { ...grid, cells }
+}
+
 /**
  * Divide una colonna in più colonne sul separatore scelto.
  *
@@ -604,6 +844,10 @@ export function splitColumn(
 
   const map = ownerMap(grid)
   const rowParts = new Map<number, string[]>()
+  const header = options.splitHeader
+    ? splitHeaderFor(grid, at, separator, maxParts, Boolean(options.fromRight))
+    : null
+  let dataWillSplit = false
   const start = options.startRow ?? 0
   const end = options.endRow ?? grid.rows - 1
   if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end >= grid.rows || start > end) return null
@@ -612,7 +856,9 @@ export function splitColumn(
     if (owner && (owner.rowspan > 1 || owner.colspan > 1)) return null
     // Oltre il tetto il resto resta unito nell'ultima colonna: spezzare una
     // descrizione in otto colonne non è quello che l'utente ha chiesto.
-    rowParts.set(r, splitParts(owner?.text ?? '', separator, maxParts, options.fromRight))
+    const parts = splitParts(owner?.text ?? '', separator, maxParts, options.fromRight)
+    if (parts.length > 1) dataWillSplit = true
+    rowParts.set(r, parts)
   }
 
   // Una inserzione alla volta **nella stessa posizione**: la seconda spinge a
@@ -626,15 +872,16 @@ export function splitColumn(
     if (parts.length < 2) return cell
     const index = cell.c - at
     if (index === 0) {
-      return { ...cell, text: parts[0], source: 'manual' as const, verified: false }
+      return { ...cell, text: parts[0], source: 'manual' as const, verified: false, verification_source: null }
     }
     const text = parts[index] ?? ''
     // Vuota resta vuota: non si marca come correzione ciò che non ha testo.
     if (!text) return cell
-    return { ...cell, text, source: 'manual' as const, verified: false }
+    return { ...cell, text, source: 'manual' as const, verified: false, verification_source: null }
   })
 
-  return { ...next, cells }
+  const result = { ...next, cells }
+  return header && dataWillSplit ? applyHeaderSplit(result, at, header) : result
 }
 
 /** Un testo riscritto è una correzione umana da verificare; se non è cambiato
@@ -647,11 +894,12 @@ function withText(cell: TableCell, text: string): TableCell {
 /**
  * Vero quando unire quell'intervallo non perde niente.
  *
- * `mergeRange` tiene il testo della cella in alto a sinistra e scarta quello
- * delle altre. Su un registro questo è quasi sempre un valore perso — e per
- * giunta la cella resterebbe `verified` — quindi la fusione si rifiuta invece
- * di sceglierlo per l'utente. Il caso normale passa: un'intestazione sopra
- * celle vuote, che è il motivo per cui si unisce.
+ * `mergeRange` può conservare il testo della prima cella non vuota, ma non può
+ * tenere più valori diversi in una cella sola. Su un registro questo sarebbe
+ * quasi sempre una perdita — e per giunta la cella resterebbe `verified` —
+ * quindi la fusione si rifiuta invece di sceglierlo per l'utente. Passa il caso
+ * normale delle intestazioni: zero o un solo valore nell'intervallo, anche
+ * quando quel valore sta sotto l'angolo vuoto in alto a sinistra.
  */
 export function mergeKeepsEveryText(
   grid: TableGrid,
@@ -664,11 +912,13 @@ export function mergeKeepsEveryText(
   const maxR = Math.max(r1, r2)
   const minC = Math.min(c1, c2)
   const maxC = Math.max(c1, c2)
+  let keptText: string | null = null
   for (const cell of grid.cells) {
     if (cell.r < minR || cell.r > maxR || cell.c < minC || cell.c > maxC) continue
-    // La cella in alto a sinistra è quella che sopravvive: il suo testo resta.
-    if (cell.r === minR && cell.c === minC) continue
-    if ((cell.text ?? '').trim() !== '') return false
+    const text = (cell.text ?? '').trim()
+    if (!text) continue
+    if (keptText != null) return false
+    keptText = text
   }
   return true
 }

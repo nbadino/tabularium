@@ -44,12 +44,12 @@ flags, official notes and `script_ready`.
 | Adapter | Model | Toolchain | Training | Data view | Maturity |
 |---|---|---|---|---|---|
 | `monkeyocrv2-parsing` | `zenosai/MonkeyOCRv2-B-Parsing` | ms-swift (bundled fork) | LoRA, full | `ms-swift-jsonl` | **verified** (1-step run + merge) |
-| `qwen3-vl-8b` | `Qwen/Qwen3-VL-8B-Instruct` | ms-swift | LoRA, full | `ms-swift-jsonl` | experimental |
-| `unlimited-ocr` | `baidu/Unlimited-OCR` | ms-swift | LoRA, full | `ms-swift-jsonl` | experimental |
-| `deepseek-ocr` | `deepseek-ai/DeepSeek-OCR-2` | ms-swift | LoRA, full | `ms-swift-jsonl` | experimental |
-| `dots-ocr` | `dots-studio/dots.mocr` | ms-swift | LoRA, full | `ms-swift-jsonl` | experimental |
-| `glm-ocr` | `zai-org/GLM-OCR` | LLaMA-Factory | LoRA, full | `llamafactory-sharegpt` | experimental |
-| `paddleocr-vl` | `PaddlePaddle/PaddleOCR-VL-1.6` | PaddleFormers | LoRA, full | `paddleformers-messages` | experimental |
+| `qwen3-vl-8b` | `Qwen/Qwen3-VL-8B-Instruct` | ms-swift | LoRA, full | `ms-swift-jsonl` | **verified** (3-step run + merge) |
+| `unlimited-ocr` | `baidu/Unlimited-OCR` | ms-swift | LoRA, full | `ms-swift-jsonl` | **verified** (3-step run + merge) |
+| `deepseek-ocr` | `deepseek-ai/DeepSeek-OCR-2` | ms-swift | LoRA, full | `ms-swift-jsonl` | **verified** (3-step run + merge) |
+| `dots-ocr` | `dots-studio/dots.mocr` | ms-swift | LoRA, full | `ms-swift-jsonl` | **verified** (3-step run + merge) |
+| `glm-ocr` | `zai-org/GLM-OCR` | LLaMA-Factory | LoRA, full | `llamafactory-sharegpt` | **verified** (2-step run + merge) |
+| `paddleocr-vl` | `PaddlePaddle/PaddleOCR-VL-1.6` | PaddleFormers | LoRA, full | `paddleformers-messages` | **verified** (3-step run + merge) |
 | `mineru2.5` | `opendatalab/MinerU2.5-Pro-2605-1.2B` | official `run_mineru.py` wrapper | — | `ms-swift-jsonl` | planned (bundle required) |
 | `teleocr` | `StarDoc-AI/TeleOCR` | — | — | — | inference-only |
 | `lightonocr-3` | `lightonai/LightOnOCR-3-1B` | — | — | — | inference-only |
@@ -188,14 +188,25 @@ prompts are restored; otherwise the canonical ones are kept.
   MonkeyOCRv2 and PaddleOCR-VL. Qwen3-VL, dots.ocr, Unlimited-OCR and DeepSeek-OCR-2 generate HTML
   or grounded Markdown at inference, and their native path is full-page end-to-end: the per-crop
   OTSL recipe improves recognition when those prompts are used, but it does not train the native
-  full-page parser. Those recipes are `experimental` for this reason; the fix is an end-to-end
-  dataset family (full page + native HTML/Markdown target), not a silent format conversion.
+  full-page parser. `verified` covers the per-crop recipe that was actually run, not the native
+  parser; the fix is an end-to-end dataset family (full page + native HTML/Markdown target), not a
+  silent format conversion.
 - **GLM-OCR's table target is unspecified by the vendor.** The official README defines only the
   three prompt names; Tabularium teaches OTSL because it is the dataset's canonical table format.
-- **LoRA merge runs where Tabularium runs.** A checkpoint trained on a remote GPU is downloaded,
-  but `llamafactory-cli` / `paddleformers-cli` / `swift` must exist on the dashboard machine too.
-- **No GPU run has verified a non-Monkey recipe yet.** The matrix says `experimental`; the test log
-  below is the place where that changes.
+- **LoRA merge runs where the toolchain lives.** For a remote run the merge now runs on the GPU
+  host and only the merged model is downloaded; if that host is gone (or its run directory was
+  cleaned) Tabularium falls back to a local merge, which still needs `swift` /
+  `llamafactory-cli` / `paddleformers-cli` and the base weights on the dashboard. The plan shown
+  before the click says which of the two will happen and what is missing.
+- **Automatic provisioning is a fresh environment per rental.** It installs the recipe's
+  toolchain and pins; a second rental starts from the image, not from a warm cache. `dots.ocr`'s
+  flash-attn build can take 20–30 minutes and is the slowest profile. Manual rent still prepares
+  only MonkeyOCRv2; other recipes use the automatic card.
+- **Environment pins are per model, not per toolchain.** Qwen3-VL needs transformers ≥ 5;
+  Unlimited-OCR and DeepSeek-OCR-2 only import on 4.46.3 (their remote code still uses
+  `is_torch_fx_available` / `LlamaFlashAttention2`); GLM-OCR's LLaMA-Factory path needs
+  transformers ≤ 5.8 (`warmup_ratio` is gone in 5.20); PaddleOCR-VL needs Triton. The recipe
+  carries these pins in `environment`; installing one ms-swift env for all five models cannot work.
 
 ## Environment
 
@@ -208,6 +219,12 @@ model's environment.
 | ms-swift, other models | `swift` in the training env | `TABULARIUM_TRAIN_PYTHON`, or `swift` on `PATH` |
 | LLaMA-Factory | checkout + `llamafactory-cli` | `TABULARIUM_LLAMAFACTORY_DIR` |
 | PaddleFormers | checkout + `paddleformers-cli` | `TABULARIUM_PADDLEFORMERS_DIR` |
+
+These are the toolchain environments. The **exact pins are per recipe** (`environment` in
+`GET /api/system/train-recipes`), because two models can need incompatible transformers:
+Qwen3-VL needs ≥ 5, Unlimited-OCR/DeepSeek-OCR-2 need 4.46.3 with ms-swift 4.6.0, GLM-OCR needs
+≤ 5.8, dots.ocr needs 4.51.0 plus flash-attn, PaddleOCR-VL needs Triton. The measured values are
+in the test log below.
 
 MonkeyOCRv2 installation (official):
 
@@ -252,19 +269,84 @@ or Paddle, provision the toolchain's checkout on the host and point
 1. **Annotate and approve.** The dataset is built from annotations; on approved
    pages only confirmed blocks count.
 2. **Build the dataset.** Dataset page → *Build*. The snapshot is immutable.
-3. **Fine-tuning → Training.** Choose the model: selecting it applies its
-   recipe's defaults and train types. The preflight tells you what is missing
+3. **Fine-tuning → Training → New training.** Choose the model and training type.
+   The official recipe supplies the parameters; Advanced lets you edit or restore them.
+   MonkeyOCRv2 LoRA also has a measured 8 GB configuration in Advanced. The preflight tells you what is missing
    (toolchain path, GPU, VRAM, dataset families, an unavailable recipe).
-4. **Run.** Logs stream via SSE; loss and GPU usage are charted. Stop and resume
-   from the checkpoint.
-5. **Register the checkpoint.** After a finished run, the checkpoint is
-   registered as a servable model. LoRA is merged with the toolchain's own
-   command: `swift export` (ms-swift), `llamafactory-cli export`
-   (LLaMA-Factory), `paddleformers-cli export` (PaddleFormers).
+4. **Rent a GPU on Vast.ai.** Set the hourly budget and press *Rent and train*. Tabularium
+   searches Vast.ai within that ceiling, picks the best GPU (most VRAM, then newest compute
+   capability, then reliability), rents it, installs the model's own environment on the host,
+   waits for the readiness file and starts the run. The card shows rent → SSH → environment →
+   training and a Cancel button. Open *Show logs* when you need setup details. No host, Python
+   path or repository to type.
+5. **Runs and results.** Select the run above its dashboard. Progress, loss and GPU use stay visible. Open *Show logs* for the
+   streamed raw output. Stop and resume from the checkpoint.
+6. **Prepare the checkpoint — automatically.** The finished panel shows the final train/eval
+   loss, the steps, the duration and **where the weights are on this machine**, with their size.
+   Preparation starts by itself at the end of the run (disable *Prepare and register when training
+   ends* under Advanced): a LoRA adapter is merged with the toolchain's official command
+   (`swift export`, `llamafactory-cli export`, `paddleformers-cli export`). For a remote run the
+   merge happens **on the GPU host**, where the toolchain and the base weights live, and the
+   merged model is downloaded into the run; only then is it registered. A local run merges here.
+   The job has a phase (merge → download → register), and the HTTP request returns immediately.
+   Open the preparation log for technical details. If the plan is not ready (host gone, no local toolchain), the panel says why and
+   leaves the manual button.
+7. **Serve and evaluate.** The registered checkpoint is a model artifact; choose its inference
+   destination separately in Models (supported local CUDA, Apple Silicon MLX, or compatible remote
+   GPU/endpoint options for that model). The training executor does not choose where inference runs.
+   Evaluation then measures the active model on approved pages. The finished panel links to both
+   steps and says that serving comes first.
+
+The history selector in Runs and results lists every run of the project (date, model, state);
+selecting one loads its metrics, log and checkpoint, and *Resume from this run* copies its
+checkpoints into the next run. The form always configures a **new** run, which is why it does not
+silently inherit the selected run's model. Selecting Resume explicitly copies that run's configuration.
+
+For an existing local, Vast.ai, RunPod or SSH GPU, expand *Use an existing GPU*
+inside the launch section. Local training requires NVIDIA CUDA; Apple Silicon MLX is an
+inference destination for supported models. Remote telemetry never makes local CUDA available.
+Training completion, checkpoint preparation and inference readiness are separate states.
+The overview directs incomplete preparation back to the checkpoint, then opens the registered
+model's own inference setup before offering evaluation. After training, evaluation requires
+held-out validation pages; a dataset with no validation pages says so before launch.
 
 Presets are GPU budgets, not recipes: they change epochs, batch, accumulation,
 LoRA rank and length, and never the learning rate, which stays the one from the
 official recipe.
+### One-click environments (per recipe)
+
+The automatic path installs a **different environment per model**, because the measured pins are
+incompatible (transformers 4.46 vs 5.20, ms-swift fork vs upstream, LLaMA-Factory vs PaddleFormers).
+`scripts/cloud/setup_train_env.sh` receives a profile and writes `ready.json` with the Python and
+repository to use:
+
+| Profile | Recipes | What is installed |
+|---|---|---|
+| `monkey` | MonkeyOCRv2 | **prebuilt image** `ghcr.io/nbadino/tabularium-train-monkey:monkey-v3`: torch 2.6.0, transformers 4.57.1, bundled ms-swift fork (no runtime pip) |
+| `qwen` | Qwen3-VL | prebuilt `tabularium-train-qwen:qwen-v1`; upstream ms-swift 4.6, transformers 5.20 |
+| `legacy` | Unlimited-OCR, DeepSeek-OCR-2 | prebuilt `tabularium-train-legacy:legacy-v1`; ms-swift 4.6, transformers 4.46.3 |
+| `dots` | dots.ocr | **runtime provisioning** (flash-attn ABI still blocks a reliable image); ms-swift 4.6, transformers 4.57.1 |
+| `glm` | GLM-OCR | prebuilt `tabularium-train-glm:glm-v1`; LLaMA-Factory, transformers 5.8 |
+| `paddle` | PaddleOCR-VL | prebuilt `tabularium-train-paddle:paddle-v1`; PaddleFormers, Triton |
+
+Every trainable profile except dots.ocr boots a versioned image instead of installing at rental; the
+images are built by `.github/workflows/train-image-monkey.yml` and
+`.github/workflows/train-images.yml` and are public on GHCR. dots.ocr still uses runtime
+provisioning because its flash-attn wheel did not load against the torch 2.6 base (ABI mismatch). Only the **environment** is baked in for Qwen/legacy/dots/GLM/Paddle; their weights
+come from HuggingFace at the first run, because an 8B checkpoint would exceed the GitHub runner
+disk and produce a 20 GB image. MonkeyOCRv2 additionally has its 1.5 GB weights baked in.
+
+The budget is the only infrastructure decision left to the user: the backend ranks offers by
+**VRAM first**, then compute capability, reliability and price, so a slightly more expensive
+24 GB card wins over a slower one at the same price, and a 40 GB card wins when it fits the budget.
+The GPU is destroyed automatically if rental, provisioning or training fails; after the remote
+merge/download and registration it is destroyed too, so the one-click path leaves no instance
+running. The merged model stays locally and in Models.
+
+The SSH/provider fields and the manual rent button remain under the advanced section for existing
+instances; manual provision still prepares only MonkeyOCRv2, and says to use the automatic card
+for the other recipes.
+
 
 ## Verifying a recipe
 
@@ -343,6 +425,145 @@ code as a consequence.
 - **Outcome**: ❌ provisioning works, the real run is not verifiable on those
   hosts.
 
+### 2026-10-20 — every trainable recipe on a real GPU (1–3 steps per adapter)
+
+- **Hosts**: Vast.ai **A100 PCIE 40 GB** ($0.42/h, driver 595.71.05, Ubuntu 24.04, 150 GB disk) for
+  the five ms-swift models and their merges; Vast.ai **RTX 3090 24 GB** ($0.157/h) with the
+  `paddlepaddle/paddle:3.3.0-gpu-cuda12.6-cudnn9.5` image for PaddleOCR-VL.
+- **Data**: the immutable snapshot of project 1, reduced to one train + one val row per family
+  (2–3 samples per model). Images were the real crops; no synthetic
+  data.
+- **What ran**: the script generated by `trainer_script.generate_script` for each adapter, LoRA,
+  `max_length 8192` (4096 for the smaller models), one epoch, batch 1, `save_steps 1`. Nothing was
+  hand-edited except the environment (`ssh_python`) and, for dots.ocr, the measured pins below.
+- **Evidence**: the training logs are in `data/smoke/logs/` (gitignored) and the commands in the
+  table; every adapter produced `checkpoint-N/adapter_model.safetensors` and a merged checkpoint
+  through its own export command.
+
+| Adapter | Toolchain | Environment actually used | Steps | Train loss | Peak | Merge |
+|---|---|---|---|---|---|---|
+| `qwen3-vl-8b` | ms-swift | transformers 5.20.2, torch 2.11+cu128 | 3 | 1.476 (eval 0.693) | 24.2 GiB | `swift export` 17 GB |
+| `unlimited-ocr` | ms-swift 4.6.0 | transformers 4.46.3, torch 2.11 | 3 | 3.287 (eval 2.447) | 19.1 GiB | `swift export` 6.3 GB |
+| `deepseek-ocr` | ms-swift 4.6.0 | transformers 4.46.3, torch 2.11 | 3 | 2.523 | 15.6 GiB | `swift export` 6.4 GB |
+| `dots-ocr` | ms-swift 4.6.0 | transformers 4.57.1, flash-attn 2.8.3, torch 2.11 | 3 | 2.170 (eval 2.983) | 16.9 GiB | `swift export` 5.7 GB |
+| `glm-ocr` | LLaMA-Factory 0.9.6 | transformers 5.8.0, torch 2.11 | 2 | 5.406 (eval 0.682) | — | `llamafactory-cli export` 2.1 GB |
+| `paddleocr-vl` | PaddleFormers | paddlepaddle-gpu 3.3.0, triton 3.8 | 3 | 0.271 | — | `paddleformers-cli export` 1.8 GB |
+
+MonkeyOCRv2 is not repeated: the 2026-10-18 run above already covered its bundled fork. A 1–3 step
+run proves the recipe, the data view, the model's collator and the checkpoint/merge path; **it does
+not measure quality**.
+
+**Found and fixed as a consequence**
+
+1. **A per-model environment is mandatory.** One ms-swift venv cannot train all five:
+   - Unlimited-OCR and DeepSeek-OCR-2 import `is_torch_fx_available` and `LlamaFlashAttention2`
+     from transformers 4.46, removed in 5.x; they need `ms-swift==4.6.0` + `transformers==4.46.3`.
+   - Qwen3-VL needs transformers ≥ 5.
+   - GLM-OCR's LLaMA-Factory path uses `warmup_ratio`, removed in transformers 5.20: pin 5.8.0.
+   - dots.ocr declares 4.51 but its custom code breaks on ms-swift 4.6 with 4.51; 4.57.1 works.
+   The pins now live in `TrainRecipe.environment` and are returned by `GET /api/system/train-recipes`.
+2. **dots.ocr cannot use `--attn_impl flash_attention_2`.** transformers rejects it
+   (`DotsVisionTransformer does not support Flash Attention 2 yet`), even though the vision tower
+   imports flash-attn directly. The recipe now sets `eager`; flash-attn must still be installed.
+3. **dots.ocr needs an image cap.** A full 11 MP page made the forward pass request 30 GiB and OOM
+   on a 40 GB card; `max_pixels 1000000` (added to its defaults) makes the same page train in
+   16.9 GiB. On the recipe's `max_length 16384` a register crop can still be large: the cap is what
+   keeps it bounded.
+4. **A short `max_length` crashes the DeepSeek-derived models** instead of truncating: with 4096
+   the vision tower emitted 4850/6839 tokens and the loss raised
+   `The expanded size of the tensor (4096) must match the existing size`. Their recipe default is
+   8192; the smoke test used 8192 and passed. Do not shrink it as a memory trick.
+5. **PaddleOCR-VL needs Triton.** `paddleformers` imports `paddleformers.triton_kernels` at module
+   load and dies with `NameError: name 'triton' is not defined`. The official Paddle image plus
+   `triton>=3.1` and `use-triton-in-paddle` (or the image's own Triton) is the working setup.
+6. **A remote run had no pixels.** The JSONL kept the local absolute crop paths, which do not exist
+   on the GPU host. `training_views` now materialises the referenced images under
+   `dataset/images/` when `images_prefix` is set and writes the host-side path; `start_run` sets it
+   for SSH/Vast/RunPod. Verified end-to-end: 59 images synced, the remote JSONL pointed at
+   `/tmp/tabularium-runs/<run>/dataset/images/…`, and the generated script started on the A100
+   (the run was then stopped because it re-downloaded the 17 GB model into the run's own cache).
+7. **The model cache was inside the run.** Every run re-downloaded the weights, and a remote run
+   lives in `/tmp`, so a restart lost them. The cache is now shared
+   (`$HOME/.cache/modelscope` remote, `<data>/cache/modelscope` local), overridable with
+   `model_cache`; `use_hf` selects HuggingFace instead of ModelScope on hosts outside China.
+
+**Not covered**: full SFT (LoRA only), multi-GPU, resume across a real epoch, and quality. MinerU2.5
+remains `planned` (its config ships only in a ZIP), TeleOCR/LightOnOCR-3 remain `inference-only`.
+
+### 2026-10-20 — one-click environments (implementation)
+
+- **What**: `scripts/cloud/setup_train_env.sh` with six profiles, `auto_training` (rent → wait SSH →
+  install → start run), `POST/GET /training/auto`, a budget field in the Training page and
+  automatic checkpoint preparation at the end of the run.
+- **Budget**: the backend ranks offers by VRAM, then compute capability, reliability and price;
+  the hourly ceiling is a hard filter, not a target.
+- **Verified**: unit tests for the profile map, onstart embedding, offer ranking, job start and
+  SSH retry; the UI card was checked in Chrome with a seeded job (phases, log, budget, cancel,
+  390 px layout). A real auto-start with the copied test database selected an A100 40 GB within
+  the budget and was cancelled immediately, confirming the rent path and the destroy-on-cancel.
+- **Not verified live**: the provisioning script itself. Two Vast.ai instances stayed in
+  `loading` for more than 7 minutes with no SSH and were destroyed; that is a provider/host
+  problem, but the profile commands still need one successful real run per toolchain before
+  calling the profiles verified. The auto job's UI and state machine are covered by mocks.
+
+### 2026-10-20 — training dashboard
+
+The Training page now opens with a dashboard above the form: KPI cards (GPU, estimated cost, loss, eval
+loss, steps, peak VRAM), a loss area chart, GPU utilization/memory history (sampled over SSH for
+remote runs), a graphical download bar and area chart fed by `prepare_job.progress`, a performance
+section (evaluation metrics, token accuracy and run comparison). Raw training, provisioning and
+checkpoint logs are opened on demand with dedicated buttons. The download progress is persisted in `run.json` every second by
+`checkpoint_prepare._download_with_progress`; no more guessing from the rsync tail.
+
+### 2026-10-20 — prebuilt images, end-to-end on a real GPU
+
+- **Image**: `ghcr.io/nbadino/tabularium-train-monkey:monkey-v3`, built by GitHub Actions from
+  `docker/train-monkey/Dockerfile`. Base PyTorch 2.6.0/CUDA 12.4 runtime, bundled ms-swift fork,
+  transformers 4.57.1 and the **model weights** baked in; no pip and no model download at rental.
+- **Live run**: an RTX A100/4080 host pulled the image, exposed `ready.json` (torch 2.6.0+cu124,
+  transformers 4.57.1), trained 4 steps (`train_loss 1.6068`, 13.5 GiB, checkpoint-4, 61.9 MB),
+  merged on the host and downloaded a 1.46 GB model, registered it and **destroyed the instance**.
+- **Bugs found by the run**:
+  1. The SSH launch command left the background process attached to the SSH stdout/stderr, so
+     `start_run` hung forever; all fds are now redirected and the launch has a timeout.
+  2. The automatic path did not wait for the container to be `running` and did not mark the job
+     `provisioning`/`running`; fixed.
+  3. ModelScope stalled at 16 MB on the first attempt; the auto path now uses HuggingFace
+     (`use_hf`) and the image carries the weights, so it is not on the critical path.
+- **GLM-OCR**: `tabularium-train-glm:glm-v1` booted, trained 4 steps (`train_loss 6.0107`,
+  `eval_loss 3.7909`), merged on the host and downloaded a 2.1 GB model; registered and the
+  instance was destroyed. The SSH launch timeout (the channel stays open after the PID is
+  printed) was fixed and covered by a test.
+- **Images published**: qwen, legacy, glm, paddle (environment-only; weights from HuggingFace).
+- **Not yet**: dots.ocr still uses runtime provisioning; its flash-attn wheel does not load
+  against the torch 2.6 base (undefined `c10::Error` symbol), so the image was not published.
+
+### 2026-10-20 — post-training UX in a real browser (isolated data root)
+
+- **What**: Chrome via Playwright on an isolated copy of the database, with two finished run
+  records (one remote, one local) and real checkpoint folders. No GPU was involved.
+- **Verified**: the finished panel shows `train_loss`, `eval_loss`, steps, duration and the
+  **absolute local checkpoint path with its size**; the history selector lists both runs; selecting
+  an old one loads its own metrics/log; *Resume from this run* fills `resume_run_id`; the remote plan
+  says the merge will run on the GPU host; a local plan with a stub `swift` ran the background job,
+  showed the phases, registered a custom model and linked to Models and Evaluation; GLM-OCR + Vast
+  hides the rent button and explains that provisioning is Monkey-only; the environment pins are
+  visible; no horizontal overflow at 390 px.
+- **Found while doing it**:
+  1. macOS ships `/usr/bin/swift` (the Apple compiler); `shutil.which("swift")` mistook it for
+     ms-swift, so the "local merge" path tried to run `swift export` and failed with a shell error.
+     The probe now accepts only Python console scripts for `swift`; the local plan correctly says
+     ms-swift is missing.
+  2. A failed preparation rendered the raw `ApiError: API POST …` string and left the button
+     enabled. It is now a titled *Preparation failed* notice with the job's log and a retry.
+  3. The finished panel never said where the weights were; it now shows the run-relative path,
+     bytes and whether a merged model exists.
+  4. The config form could be showing a new run while the status panel described another one; run
+     history makes the selection explicit and the form says it configures a new run.
+- **Not exercised**: the remote merge/download against a live GPU (the command builder, plan,
+  download and registration are covered by unit tests with a fake executor). The local success path
+  was exercised with a stub `swift`, not a real export.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -355,8 +576,30 @@ code as a consequence.
 | `stima VRAM non disponibile` | model geometry unknown | only free memory is checked; set `model_path` so the estimate can read `config.json` |
 | OOM on a small card | logits dominate at long sequences | lower `max_length`, batch 1, raise `grad_accum`; the preflight suggests the largest fitting length for known geometries |
 | `JSONDecodeError` in `register_dataset_info` when `swift sft` starts | the MonkeyOCRv2 fork does not ship `swift/llm/dataset/data/dataset_info.json` | re-run `scripts/cloud/setup_cloud_train.sh`: it creates the empty registry; local JSONL datasets do not need any entry |
-| LoRA merge fails after a remote run | the merge runs where Tabularium runs, not on the GPU host | install LLaMA-Factory/PaddleFormers there too, or merge on the GPU host and register the resulting path |
+| `ImportError: cannot import name 'is_torch_fx_available'` or `LlamaFlashAttention2` | Unlimited-OCR / DeepSeek-OCR-2 remote code predates transformers 5 | install the recipe's `environment` (`ms-swift==4.6.0`, `transformers==4.46.3`) |
+| `ValueError: Some keys are not used by the HfArgumentParser: ['warmup_ratio']` | transformers newer than LLaMA-Factory supports | pin `transformers==5.8.0` for GLM-OCR |
+| `NameError: name 'triton' is not defined` in PaddleOCR-VL modeling | PaddleFormers imports Triton kernels unconditionally | install `triton>=3.1` and `use-triton-in-paddle`, or use the official Paddle image |
+| `expanded size ... must match the existing size` at the second step | `max_length` truncated the image tokens, the vision tower emitted more | use the recipe's `max_length` (8192 for Unlimited-OCR and DeepSeek-OCR-2) instead of shrinking it |
+| The model is downloaded again on every run | old generated scripts put the cache inside the run | fixed: the cache is shared (`$HOME/.cache/modelscope` remote, `<data>/cache/modelscope` local); override with `model_cache` |
+| The checkpoint cannot be prepared | no remote run left and the local toolchain is missing | the panel says which command/environment is missing; install it or keep the remote host until preparation ends |
+| “run remota non è più raggiungibile” when preparing | the remote run directory was cleaned or the host is gone | do not clean before preparation, or install the toolchain locally and retry |
 
-Images stay at their absolute crop paths in every view, including the LLaMA-Factory
+Locally, images stay at their absolute crop paths in every view, including the LLaMA-Factory
 `dataset_info.json`: LLaMA-Factory accepts absolute paths and resolves relative ones against its
-`dataset_dir`. Copying the crops per run would duplicate gigabytes without changing a byte.
+`dataset_dir`. For a **remote** run those paths do not exist on the GPU host, so the view copies the
+referenced pixels into `dataset/images/` (hardlink when possible) and writes the path under which the
+host will see them; the executor syncs them with the run. This is the only duplication, and only for
+the pixels a run actually reads.
+
+### 22 October 2026 — interrupted-run recovery
+
+See [the researcher workflow trial](../VAST_WORKFLOW_TRIAL_20261022.md) for browser evidence, training metrics and the distinction between a saved LoRA checkpoint and a complete merged model. The automatic monitor reconciles provider state on restart; replay falls back to persisted logs if the metrics file is empty. The Monkey legacy launcher normalizes the vLLM 0.11.x version tuple before serving.
+
+### Automatic held-out comparison before GPU release
+
+For automatic MonkeyOCRv2 runs, checkpoint preparation now runs the base and merged models
+sequentially on the training GPU before downloading/registering the model and releasing the
+instance. It uses the frozen validation images and official prompts, records both predictions
+and metric deltas, and shows sample progress with logs on demand. Inference uses a separate
+environment on the same host. Training completion is distinct from evaluation success.
+See [the recovery trial and comparison protocol](../TRAINING_COMPARISON_20261023.md).

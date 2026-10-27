@@ -14,7 +14,7 @@
  * leggibile da uno screen reader, che è la ragione per cui esisteva
  * l'elenco dei livelli. Le regole vivono dietro il loro pulsante.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Menu, Modal, Module, Select } from '../../app/ui'
 import { IconDown, IconTrash, IconUp } from '../../app/icons'
 import { useI18n } from '../../i18n'
@@ -26,6 +26,7 @@ import LiveStream from './LiveStream'
 import ConventionsChecklist from './ConventionsChecklist'
 import LabelsEditor from './LabelsEditor'
 import TableHintEditor from './TableHintEditor'
+import { API_BASE } from '../../lib/endpoints'
 
 /** Le classi che portano testo da trascrivere. Le altre (Picture, Column)
  *  entrano solo nel layout: la riga lo dichiara invece di fingere un editor. */
@@ -34,7 +35,7 @@ const NO_CONTENT_LABELS = new Set(['Picture', 'Column'])
 /** Il ritaglio è servito dal bbox corrente del blocco: cambiata la regione,
  *  l'URL è lo stesso e il browser mostrerebbe l'immagine vecchia. */
 const cropUrlFor = (serverId: number, version = 0) =>
-  version ? `/api/blocks/${serverId}/crop?v=${version}` : `/api/blocks/${serverId}/crop`
+  version ? `${API_BASE}/blocks/${serverId}/crop?v=${version}` : `${API_BASE}/blocks/${serverId}/crop`
 
 /** La tabella non vive nel rail: nel rail ci sta la sua scheda, con il
  *  ritaglio e il comando che la apre.
@@ -43,18 +44,25 @@ const cropUrlFor = (serverId: number, version = 0) =>
  *  una sola superficie ampia, mentre il ritaglio resta visibile nella scheda. */
 function TableBlockEditor({
   serverId,
+  projectId,
   pageId,
   pageImageUrl,
   pageImageSize,
   onSaveTable,
+  tableVersion,
   confirmed,
   onConfirmed,
 }: {
   serverId: number | null
+  projectId?: number | null
   pageId?: number | null
   pageImageUrl?: string | null
   pageImageSize?: { w: number; h: number } | null
   onSaveTable: (serverId: number, grid: TableGrid) => Promise<string>
+  /** Cambia quando il server ha una nuova versione della griglia (redetect o
+   *  riallineamento live). Non deve rimontare l'intero editor: chiuderebbe la
+   *  modale mentre l'annotatore ci sta lavorando. */
+  tableVersion?: number
   /** «Verificata» del blocco, la stessa casella della scheda. */
   confirmed: boolean
   onConfirmed: (confirmed: boolean) => void
@@ -104,13 +112,21 @@ function TableBlockEditor({
         </button>
       </div>
       {open && (
-        <Modal title={t('table.workspaceTitle')} extraWide onClose={close}>
+        <Modal
+          title={t('table.workspaceTitle')}
+          extraWide
+          closeOnBackdrop={false}
+          closeOnEscape={false}
+          onClose={close}
+          headerAux={<VerifiedToggle checked={confirmed} onChange={onConfirmed} compact />}
+        >
           {/* La griglia si rilegge dal server all'apertura: la scheda non tiene
               una seconda copia del modello da tenere allineata. */}
           <div className="flex min-h-0 flex-1 flex-col p-3">
-            <VerifiedToggle checked={confirmed} onChange={onConfirmed} className="mb-2" />
             <TableWorkspacePanel
               serverId={serverId}
+              projectId={projectId ?? null}
+              version={tableVersion}
               flushRef={flushRef}
               pageImageUrl={pageImageUrl ?? null}
               pageId={pageId ?? null}
@@ -125,13 +141,33 @@ function TableBlockEditor({
 }
 
 /** La casella «Verificata» del blocco, anche dentro le viste della tabella. */
-export function VerifiedToggle({ checked, onChange, className = '' }: { checked: boolean; onChange: (checked: boolean) => void; className?: string }) {
+export function VerifiedToggle({
+  checked,
+  onChange,
+  className = '',
+  compact = false,
+}: {
+  checked: boolean
+  onChange: (checked: boolean) => void
+  className?: string
+  compact?: boolean
+}) {
   const { t } = useI18n()
+  const hintId = useId()
   return (
-    <label className={`flex w-fit cursor-pointer items-center gap-1.5 text-[12px] text-[color:var(--color-ink-2)] ${className}`}>
+    <div className={className}>
+    <label
+      className="flex w-fit cursor-pointer items-center gap-1.5 text-[12px] text-[color:var(--color-ink-2)]"
+      title={compact ? t('table.blockVerifiedHint') : undefined}
+      aria-describedby={compact ? hintId : undefined}
+    >
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-[color:var(--color-sig)]" />
-      {t('content.confirmDraft')}
+      {t('table.blockVerified')}
     </label>
+    {compact
+      ? <span id={hintId} className="sr-only">{t('table.blockVerifiedHint')}</span>
+      : <p className="mt-1 max-w-[95ch] text-[11px] text-[color:var(--color-ink-3)]">{t('table.blockVerifiedHint')}</p>}
+    </div>
   )
 }
 
@@ -340,7 +376,7 @@ function RowShell({
             onChange={(e) => onConfirmed(e.target.checked)}
             className="accent-[color:var(--color-sig)]"
           />
-          {t('content.confirmDraft')}
+          {t(label === 'Table' ? 'table.blockVerified' : 'content.confirmDraft')}
         </label>
 
         <span className="ml-auto flex shrink-0 items-center gap-1">
@@ -611,6 +647,8 @@ export default function ContentPane({
                       )}
                       <TableBlockEditor
                         serverId={block.serverId}
+                        projectId={projectId}
+                        tableVersion={block.serverId ? tableVersions?.[block.serverId] ?? 0 : 0}
                         pageId={pageId ?? null}
                         pageImageUrl={pageImageUrl ?? null}
                         pageImageSize={pageImageSize ?? null}
@@ -662,6 +700,7 @@ export default function ContentPane({
                   {isTable ? (
                     <TableBlockEditor
                       serverId={draft.serverId}
+                      projectId={projectId}
                       pageId={pageId ?? null}
                       pageImageUrl={pageImageUrl ?? null}
                       pageImageSize={pageImageSize ?? null}

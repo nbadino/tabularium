@@ -60,14 +60,14 @@ export interface ModelItem {
   runtime_error?: string | null
 }
 
-export type Destination = 'local' | 'vast' | 'runpod' | 'modal' | 'manual'
+export type Destination = 'local' | 'llamaindex' | 'vast' | 'runpod' | 'modal' | 'manual'
 
 /** Ordine di presentazione e di raccomandazione: prima ciò che non costa
  *  niente, poi il serverless (si spegne da solo), poi le GPU a noleggio,
  *  infine l'endpoint già esistente, che presuppone un server altrui. */
-export const DESTINATIONS: readonly Destination[] = ['local', 'modal', 'vast', 'runpod', 'manual']
+export const DESTINATIONS: readonly Destination[] = ['local', 'llamaindex', 'modal', 'vast', 'runpod', 'manual']
 
-export const REMOTE_DESTINATIONS: readonly Destination[] = ['vast', 'runpod', 'modal']
+export const REMOTE_DESTINATIONS: readonly Destination[] = ['vast', 'runpod', 'modal', 'llamaindex']
 
 export const CUSTOM_ID_PREFIX = 'custom-'
 
@@ -112,6 +112,10 @@ export function destinationVerdict(model: ModelItem, dest: Destination): Destina
       return model.local?.runnable
         ? { ok: true }
         : { ok: false, reasonKey: `localCompute.reason.${model.local?.reason ?? 'no_local_runtime'}` }
+    case 'llamaindex':
+      return model.serve_backend === 'llamaindex-api'
+        ? { ok: true }
+        : { ok: false, reasonKey: 'modelsHub.why.notLlamaIndexModel' }
     case 'vast':
       if (isCustom(model)) return { ok: true, publish: !model.cloud_serve_ready }
       return model.cloud_serve_ready ? { ok: true } : { ok: false, reasonKey: 'modelsHub.why.noCloudRecipe' }
@@ -126,6 +130,9 @@ export function destinationVerdict(model: ModelItem, dest: Destination): Destina
       // parsing il riconoscimento non saprebbe leggerne l'output. Un gateway
       // con protocollo proprio (Google `generateContent` via OpenCode) ha il
       // suo parser nell'adapter e almeno i prompt testo/tabella verificati.
+      if (model.serve_backend === 'llamaindex-api') {
+        return { ok: false, reasonKey: 'modelsHub.why.useLlamaIndexDestination' }
+      }
       if (model.serve_backend === 'opencode-gateway') return { ok: true }
       return model.supports_native ? { ok: true } : { ok: false, reasonKey: 'modelsHub.why.noParser' }
   }

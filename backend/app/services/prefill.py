@@ -15,10 +15,24 @@ from dataclasses import dataclass
 
 from fastapi import HTTPException
 
-from ..db import connect
-from . import labeling, ocr as ocrmod, otsl, table_detect, table_headers, table_hint
+from ..adapters import blocks as blockstore
+from ..adapters import projects as projectstore
+from . import labeling, ocr as ocrmod, table_detect, table_hint
+from ..domain import otsl, table_headers
+from ..domain.prefill import (
+    _TABLE_MIN_COLS,
+    _TABLE_MIN_ROWS,
+    _iou,
+    _nms_lite,
+    _table_cluster,
+    _scale_bbox,
+    _containment,
+    _box_of,
+    _label_of,
+    _drop_nested_duplicates,
+    _dedupe_model_items,
+)
 from . import model_labels
-from . import paddle_official
 from .inference import OutputTruncated
 from .model_adapters import supported_prefill_modes
 from . import pages as pagesvc
@@ -40,65 +54,6 @@ class PrelabelOptions:
     # Collega ogni bozza alla sua provenienza senza cambiare il comportamento
     # storico del prefill sulla singola pagina.
     recognition_run_id: int | None = None
-
-
-def _replaced_blocks(conn, page_id: int, mode: str) -> dict:
-    """Cancella i blocchi esistenti secondo la modalità richiesta.
-
-    Restituisce quanto è stato rimosso (blocchi e griglie tabellari collegate,
-    che seguono via ``ON DELETE CASCADE``) così che la risposta possa dichiarare
-    l'entità della sostituzione invece di cancellare in silenzio.
-    """
-    if mode == "merge":
-        return {"blocks": 0, "grids": 0}
-    if mode == "replace_drafts":
-        # Solo le bozze del prefill: un blocco generato dall'OCR/modello e non
-        # ancora confermato. Il lavoro umano (blocchi disegnati a mano o
-        # confermati) non è mai una bozza, qualunque sia la sua provenienza.
-        rows = conn.execute(
-            "SELECT id FROM blocks WHERE page_id=? AND prefill_source IS NOT NULL "
-            "AND confirmed=0",
-            (page_id,),
-        ).fetchall()
-    else:  # replace / replace_all
-        rows = conn.execute(
-            "SELECT id FROM blocks WHERE page_id=?", (page_id,)
-        ).fetchall()
-    ids = [row["id"] for row in rows]
-    if not ids:
-        return {"blocks": 0, "grids": 0}
-    placeholders = ",".join("?" for _ in ids)
-    grids = conn.execute(
-        f"SELECT COUNT(*) FROM tables WHERE block_id IN ({placeholders})", ids
-    ).fetchone()[0]
-    conn.execute(f"DELETE FROM blocks WHERE id IN ({placeholders})", ids)
-    return {"blocks": len(ids), "grids": int(grids)}
-
-
-def _iou(a: list[float], b: list[float]) -> float:
-    x1, y1 = max(a[0], b[0]), max(a[1], b[1])
-    x2, y2 = min(a[2], b[2]), min(a[3], b[3])
-    inter = max(0, x2 - x1) * max(0, y2 - y1)
-    area_a = max(0, a[2] - a[0]) * max(0, a[3] - a[1])
-    area_b = max(0, b[2] - b[0]) * max(0, b[3] - b[1])
-    union = area_a + area_b - inter
-    return inter / union if union > 0 else 0.0
-
-
-def _nms_lite(items: list[dict], thr: float = 0.85) -> list[dict]:
-    kept: list[dict] = []
-    for item in sorted(items, key=lambda x: -x["score"]):
-        if any(_iou(item["bbox"], k["bbox"]) > thr for k in kept):
-            continue
-        kept.append(item)
-    return kept
-
-
-# Un blocco è una tabella se la geometria mostra una griglia regolare: almeno
-# tre colonne separate e un buon numero di righe alla stessa spaziatura. Sotto
-# queste soglie è un paragrafo, o una colonna di testo.
-_TABLE_MIN_COLS = 3
-_TABLE_MIN_ROWS = 6
 
 
 def _looks_like_table(image, bbox: list[int]) -> bool:
@@ -139,34 +94,6 @@ def _recognize_table(client, image, bbox: list[int], on_delta=None, cancel_event
     return client.table_grid(crop, row_bounds=row_bounds, on_delta=on_delta, cancel_event=cancel_event, hint=hint)
 
 
-def _table_cluster(kept: list[dict]) -> tuple[list[int], list[int]] | None:
-    """Il più grande cluster verticale di righe consecutive, candidato tabella.
-
-    L'OCR di riga non sa che è una tabella, ma le righe del registro si
-    riconoscono per contiguità: il passo fra una riga e la successiva è
-    dell'ordine dell'altezza di riga, mentre sopra (testata, numero del
-    fascicolo) c'è un salto. Prendere il cluster più grande evita il difetto
-    misurato di passare al rilevatore la pagina intera, testata compresa.
-    """
-    if len(kept) < _TABLE_MIN_ROWS:
-        return None
-    heights = sorted(b["bbox"][3] - b["bbox"][1] for b in kept)
-    med_h = max(1, heights[len(heights) // 2])
-    order = sorted(range(len(kept)), key=lambda i: kept[i]["bbox"][1])
-    clusters: list[list[int]] = []
-    for i in order:
-        if clusters and kept[i]["bbox"][1] - kept[clusters[-1][-1]]["bbox"][3] <= 1.5 * med_h:
-            clusters[-1].append(i)
-        else:
-            clusters.append([i])
-    best = max(clusters, key=len)
-    if len(best) < _TABLE_MIN_ROWS:
-        return None
-    xs1 = [kept[i]["bbox"][0] for i in best]
-    ys1 = [kept[i]["bbox"][1] for i in best]
-    xs2 = [kept[i]["bbox"][2] for i in best]
-    ys2 = [kept[i]["bbox"][3] for i in best]
-    return [min(xs1), min(ys1), max(xs2), max(ys2)], best
 
 
 def _ocr_table_grid(
@@ -210,115 +137,16 @@ def _ocr_table_grid(
     }
 
 
-def _scale_bbox(item: dict, width: int, height: int) -> list[int]:
-    """bbox normalizzato 0–1000 → pixel pagina, clamped ai bordi."""
-    x1, y1, x2, y2 = item["bbox"]
-    return [
-        max(0, min(round(x1 / 1000 * width), width)),
-        max(0, min(round(y1 / 1000 * height), height)),
-        max(0, min(round(x2 / 1000 * width), width)),
-        max(0, min(round(y2 / 1000 * height), height)),
-    ]
 
 
-def _containment(inner: list[float], outer: list[float]) -> float:
-    """Quanta parte di ``inner`` sta dentro ``outer``, 0–1."""
-    x1, y1 = max(inner[0], outer[0]), max(inner[1], outer[1])
-    x2, y2 = min(inner[2], outer[2]), min(inner[3], outer[3])
-    inter = max(0, x2 - x1) * max(0, y2 - y1)
-    area = max(0, inner[2] - inner[0]) * max(0, inner[3] - inner[1])
-    return inter / area if area > 0 else 0.0
 
 
-def _box_of(item: dict) -> list[float] | None:
-    bbox = item.get("bbox")
-    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
-        return None
-    try:
-        return [float(value) for value in bbox]
-    except (TypeError, ValueError):
-        return None
 
 
-def _label_of(item: dict) -> str:
-    return str(item.get("label") or item.get("category") or "")
 
 
-def _drop_nested_duplicates(items: list[dict], threshold: float = 0.9) -> list[dict]:
-    """Scarta i blocchi contenuti in un altro blocco della stessa classe.
-
-    Il risultato ufficiale di PaddleX porta la stessa regione a due livelli —
-    la lista di parsing finale e le detection grezze del layout — e il bridge
-    (`paddle_official._items`) raccoglie ricorsivamente entrambi. Sul registro
-    del campione la colonna di sinistra arrivava così quattro volte: una intera,
-    con testo e griglia, più tre fasce che la ritagliano. L'IoU non le vede
-    (una fascia sovrapposta al 100% con l'intero ha IoU 0,25), il contenimento
-    sì.
-
-    Si tiene sempre il blocco più grande: è quello su cui il pipeline ha
-    riconosciuto il contenuto, e la fascia interna non aggiunge nulla che la
-    griglia dell'intero non abbia già.
-    """
-    boxes = [(item, _box_of(item)) for item in items]
-    kept: list[dict] = []
-    for item, box in boxes:
-        if box is None:
-            kept.append(item)
-            continue
-        area = max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
-        swallowed = False
-        for other, other_box in boxes:
-            if other is item or other_box is None:
-                continue
-            other_area = max(0.0, other_box[2] - other_box[0]) * max(0.0, other_box[3] - other_box[1])
-            if other_area <= area or _label_of(other) != _label_of(item):
-                continue
-            if _containment(box, other_box) >= threshold:
-                swallowed = True
-                break
-        if not swallowed:
-            kept.append(item)
-    return kept
 
 
-def _dedupe_model_items(items: list[dict], iou_threshold: float = 0.92) -> list[dict]:
-    """Rimuove duplicati evidenti dalla lista generata dal modello.
-
-    Alcuni server/vLLM possono ripetere lo stesso record durante una
-    generazione end2end lunga. Non è corretto creare decine di bozze identiche
-    né mostrarle come blocchi distinti: conserviamo il primo record nell'ordine
-    di lettura e lasciamo intatti i blocchi realmente diversi.
-
-    Al duplicato esatto si aggiunge quello *annidato*: v. ``_drop_nested_duplicates``.
-    """
-    items = _drop_nested_duplicates(items)
-    kept: list[dict] = []
-    for item in items:
-        bbox = item.get("bbox")
-        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
-            kept.append(item)
-            continue
-        try:
-            box = [float(value) for value in bbox]
-        except (TypeError, ValueError):
-            kept.append(item)
-            continue
-        label = str(item.get("label") or item.get("category") or "")
-        duplicate = False
-        for previous in kept:
-            previous_box = previous.get("bbox")
-            previous_label = str(previous.get("label") or previous.get("category") or "")
-            if (
-                isinstance(previous_box, (list, tuple))
-                and len(previous_box) == 4
-                and previous_label == label
-                and _iou(box, [float(value) for value in previous_box]) >= iou_threshold
-            ):
-                duplicate = True
-                break
-        if not duplicate:
-            kept.append(item)
-    return kept
 
 
 def native_mode(adapter) -> str:
@@ -353,65 +181,37 @@ def native_mode(adapter) -> str:
     )
 
 
-def native_page_items(client, image) -> list[dict]:
+def native_page_items(client, image, *, on_delta=None, cancel_event=None) -> list[dict]:
     """Blocchi di una pagina dal percorso nativo «official» dell'adapter.
 
-    Qwen3-VL, PaddleOCR-VL, MinerU2.5, GLM-OCR e TeleOCR non hanno un prompt di
-    layout: il loro percorso in esercizio è la pipeline del produttore, che
-    restituisce bbox 0–1000 + label + contenuto in una volta. Estratto da
-    `model_prelabel_events` perché lo usino sia il prefill sia la valutazione e
-    il benchmark (altrimenti un adapter «official» non è misurabile).
+    The adapter declares which client method runs its official pipeline
+    (`native_runner`), so adding a model is a declaration, not a branch here. The
+    methods return bbox 0–1000 + label + content in one pass; the client adapts each
+    vendor's coordinate convention before returning.
     """
-    adapter_id = client.adapter.adapter_id
-    if adapter_id == "teleocr":
-        return client.teleocr_native_page(image)
-    if adapter_id == "glm-ocr":
-        return client.glmocr_native_page(image)
-    if adapter_id == "mineru2.5":
-        return client.mineru_native_page(image)
-    if adapter_id == "qwen3-vl-8b":
-        return client.qwen_native_page(image)
-    # PaddleOCR-VL: pipeline ufficiale Paddle (layout + riconoscimento).
-    paddle_backend = "vllm-server"
-    if getattr(client, "provider", None) == "local":
-        from . import hardware
-
-        if hardware.pick_serve_runtime(client.adapter.capabilities) == hardware.RUNTIME_MLX:
-            paddle_backend = "mlx-vlm-server"
-    items = paddle_official.parse_page(
-        image, client.url, client.model, image.width, image.height,
-        vl_rec_backend=paddle_backend,
-    )
-    for item in items:
-        bbox = item.get("bbox") or []
-        if len(bbox) == 4:
-            item["bbox"] = [
-                round(float(bbox[0]) / image.width * 1000),
-                round(float(bbox[1]) / image.height * 1000),
-                round(float(bbox[2]) / image.width * 1000),
-                round(float(bbox[3]) / image.height * 1000),
-            ]
-    return items
+    runner = getattr(client.adapter, "native_runner", None)
+    if not runner:
+        raise RuntimeError(
+            f"adapter '{client.adapter.adapter_id}': workflow nativo del produttore "
+            "non ancora integrato nel prefill"
+        )
+    method = getattr(client, f"{runner}_native_page", None)
+    if not callable(method):
+        raise RuntimeError(
+            f"adapter '{client.adapter.adapter_id}': runner nativo "
+            f"'{runner}_native_page' non esiste nel client"
+        )
+    return method(image, on_delta=on_delta, cancel_event=cancel_event)
 
 
 def _project_schema_labels(project_id: int) -> list:
     """Classi del progetto (default + custom) per il bridge nativa → canonica."""
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT settings_json FROM projects WHERE id=?", (project_id,)
-        ).fetchone()
-    settings = json.loads(row["settings_json"] or "{}") if row else {}
-    return labeling.project_schema(settings).labels
+    return labeling.project_schema(projectstore.settings_json(project_id)).labels
 
 
 def _project_table_hint(project_id: int) -> str:
     """Hint di schema tabella del progetto (v. `services/table_hint.py`)."""
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT settings_json FROM projects WHERE id=?", (project_id,)
-        ).fetchone()
-    settings = json.loads(row["settings_json"] or "{}") if row else {}
-    return table_hint.get_table_hint(settings)
+    return table_hint.get_table_hint(projectstore.settings_json(project_id))
 
 
 def model_prelabel_events(
@@ -445,13 +245,11 @@ def model_prelabel_events(
     # `Text` in silenzio.
     schema_labels = _project_schema_labels(project_id)
     table_hint_text = _project_table_hint(project_id)
-    with connect() as conn:
+    with blockstore.writing() as conn:
         for pid in page_ids:
             if cancel_event is not None and cancel_event.is_set():
                 return
-            page = conn.execute(
-                "SELECT * FROM pages WHERE id=? AND project_id=?", (pid, project_id)
-            ).fetchone()
+            page = conn.page(pid, project_id)
             if page is None:
                 raise HTTPException(status_code=404, detail=msg("page_not_in_project", lang, id=pid))
             # Il SELECT apre una transazione di lettura. Chiuderla prima di
@@ -508,47 +306,12 @@ def model_prelabel_events(
                             return method(*args)
 
                 if mm == "official":
-                    if client.adapter.adapter_id == "teleocr":
-                        # TeleOCR's own async client owns layout preparation,
-                        # block crops, recognition and post-processing. Its
-                        # gateway already returns normalized 0–1000 boxes.
-                        items = client.teleocr_native_page(image)
-                    elif client.adapter.adapter_id == "glm-ocr":
-                        # GLM-OCR's official SDK owns PP-DocLayout, region OCR,
-                        # and document-order formatting for self-hosted vLLM.
-                        items = client.glmocr_native_page(image)
-                    elif client.adapter.adapter_id == "mineru2.5":
-                        # MinerUClient owns layout resize, crop preparation,
-                        # concurrent recognition, HTML table output and its
-                        # post-processing; keep the full page in that runner.
-                        items = client.mineru_native_page(image)
-                    elif client.adapter.adapter_id == "qwen3-vl-8b":
-                        # Qwen's document parser returns its native HTML with
-                        # normalized data-bbox coordinates in one generation.
-                        items = client.qwen_native_page(
-                            image,
-                            on_delta=lambda delta: emit(delta, "layout"),
-                            cancel_event=cancel_event,
-                        )
-                    else:
-                        paddle_backend = "vllm-server"
-                        if client.provider == "local":
-                            from . import hardware
-                            if hardware.pick_serve_runtime(client.adapter.capabilities) == hardware.RUNTIME_MLX:
-                                paddle_backend = "mlx-vlm-server"
-                        items = paddle_official.parse_page(
-                            image, client.url, client.model, image.width, image.height,
-                            vl_rec_backend=paddle_backend,
-                        )
-                        for item in items:
-                            bbox = item.get("bbox") or []
-                            if len(bbox) == 4:
-                                item["bbox"] = [
-                                    round(float(bbox[0]) / image.width * 1000),
-                                    round(float(bbox[1]) / image.height * 1000),
-                                    round(float(bbox[2]) / image.width * 1000),
-                                    round(float(bbox[3]) / image.height * 1000),
-                                ]
+                    items = native_page_items(
+                        client,
+                        image,
+                        on_delta=lambda delta: emit(delta, "layout"),
+                        cancel_event=cancel_event,
+                    )
                 elif mm == "end2end":
                     try:
                         items = call_live(
@@ -653,11 +416,19 @@ def model_prelabel_events(
                     kept.append({"bbox": table_bbox, "label": "Table", "content": ""})
                     kept.sort(key=lambda k: (k["bbox"][1], k["bbox"][0]))
             for k in kept:
-                if k["label"] in ("Table", "Text") and _looks_like_table(image, k["bbox"]):
+                if (
+                    adapter_id != "llamaindex-ocria-1"
+                    and k["label"] in ("Table", "Text")
+                    and _looks_like_table(image, k["bbox"])
+                ):
                     k["label"] = "Table"
                     tables += 1
+            # Native runners return Table blocks directly; the loop above only
+            # counts geometric promotions. Report the actual number of table
+            # drafts regardless of which path classified them.
+            tables = sum(1 for k in kept if k["label"] == "Table")
 
-            replaced = _replaced_blocks(conn, pid, opts.mode)
+            replaced = conn.replace_blocks(pid, opts.mode)
             # Il DELETE di `_replaced_blocks` apre una transazione di
             # scrittura che, senza commit, resterebbe aperta attraverso TUTTA
             # l'inferenza della pagina (minuti): ogni altra scrittura concorrente
@@ -699,19 +470,14 @@ def model_prelabel_events(
                     # blocco (sotto) ogni INSERT è già definitivo, quindi qui
                     # non esiste più un rollback che possa rimediare.
                     return
-                cur = conn.execute(
-                    "INSERT INTO blocks (page_id, label, kind, points, content, order_idx, "
-                    "prefill_source, confirmed, recognition_run_id) VALUES (?,?,?,?,?,?,?,0,?)",
-                    (
-                        pid,
-                        k["label"],
-                        "rect",
-                        json.dumps([[k["bbox"][0], k["bbox"][1]], [k["bbox"][2], k["bbox"][3]]]),
-                        k.get("content", ""),
-                        i,
-                        f"model:{client.model}:{page_mode}",
-                        opts.recognition_run_id,
-                    ),
+                block_id = conn.insert_block(
+                    pid,
+                    label=k["label"],
+                    points=[[k["bbox"][0], k["bbox"][1]], [k["bbox"][2], k["bbox"][3]]],
+                    content=k.get("content", ""),
+                    order_idx=i,
+                    prefill_source=f"model:{client.model}:{page_mode}",
+                    recognition_run_id=opts.recognition_run_id,
                 )
                 grid_json = None
                 if k["label"] == "Table":
@@ -741,7 +507,9 @@ def model_prelabel_events(
                             grid = None
                     try:
                         if grid is None:
-                            if page_mode == "official" and client.adapter.adapter_id in {"teleocr", "mineru2.5"}:
+                            if page_mode == "official" and client.adapter.adapter_id in {
+                                "teleocr", "mineru2.5", "llamaindex-ocria-1",
+                            }:
                                 # These producer-owned runners have already
                                 # recognized and post-processed the table.
                                 # Do not substitute a separate crop workflow
@@ -759,12 +527,7 @@ def model_prelabel_events(
                         grid = None
                     if grid and grid["rows"]:
                         grid = with_cell_provenance(grid, f"model:{client.model}", generated=True)
-                        conn.execute(
-                            "INSERT INTO tables (block_id, grid_json) VALUES (?, ?) "
-                            "ON CONFLICT(block_id) DO UPDATE SET grid_json=excluded.grid_json, "
-                            "updated_at=datetime('now')",
-                            (cur.lastrowid, json.dumps(grid)),
-                        )
+                        conn.upsert_grid(block_id, grid)
                         grids += 1
                         source = "end2end" if used_end2end_content else "table_crop_fallback"
                         k["table_source"] = source
@@ -782,7 +545,7 @@ def model_prelabel_events(
                     "type": "block",
                     "page_id": pid,
                     "block": {
-                        "id": cur.lastrowid,
+                        "id": block_id,
                         "label": k["label"],
                         "points": [[k["bbox"][0], k["bbox"][1]], [k["bbox"][2], k["bbox"][3]]],
                         "content": k.get("content", ""),
@@ -848,11 +611,9 @@ def ocr_prelabel_events(
     project_id: int, page_ids: list[int], opts: PrelabelOptions, engine, lang: str
 ):
     """Versione a eventi di `ocr_prelabel_pages` (v. `model_prelabel_events`)."""
-    with connect() as conn:
+    with blockstore.writing() as conn:
         for pid in page_ids:
-            page = conn.execute(
-                "SELECT * FROM pages WHERE id=? AND project_id=?", (pid, project_id)
-            ).fetchone()
+            page = conn.page(pid, project_id)
             if page is None:
                 raise HTTPException(status_code=404, detail=msg("page_not_in_project", lang, id=pid))
             conn.commit()
@@ -934,38 +695,28 @@ def ocr_prelabel_events(
             # stessa convenzione dell'annotazione manuale.
             outputs.sort(key=lambda o: (o["bbox"][1], o["bbox"][0]))
 
-            replaced = _replaced_blocks(conn, pid, opts.mode)
+            replaced = conn.replace_blocks(pid, opts.mode)
             # Come in model_prelabel_events: rilasciare subito il lock di
             # scrittura aperto dal DELETE, prima dell'inferenza sui crop.
             conn.commit()
             grids = 0
             for i, o in enumerate(outputs, start=1):
-                cur = conn.execute(
-                    "INSERT INTO blocks (page_id, label, kind, points, content, order_idx, "
-                    "prefill_source, confirmed, recognition_run_id) VALUES (?,?,?,?,?,?,?,0,?)",
-                    (
-                        pid,
-                        o["label"],
-                        "rect",
-                        json.dumps(
+                block_id = conn.insert_block(
+                    pid,
+                    label=o["label"],
+                    points=
                             [[o["bbox"][0], o["bbox"][1]], [o["bbox"][2], o["bbox"][3]]]
-                        ),
-                        o["content"],
-                        i,
-                        o["prefill"],
-                        opts.recognition_run_id,
-                    ),
+                        ,
+                    content=o["content"],
+                    order_idx=i,
+                    prefill_source=o["prefill"],
+                    recognition_run_id=opts.recognition_run_id,
                 )
                 grid_json = None
                 if o["label"] == "Table":
                     grid = _ocr_table_grid(image, o["bbox"], engine, min_score=0.0)
                     if grid:
-                        conn.execute(
-                            "INSERT INTO tables (block_id, grid_json) VALUES (?, ?) "
-                            "ON CONFLICT(block_id) DO UPDATE SET grid_json=excluded.grid_json, "
-                            "updated_at=datetime('now')",
-                            (cur.lastrowid, json.dumps(grid)),
-                        )
+                        conn.upsert_grid(block_id, grid)
                         grids += 1
                         grid_json = grid
                 # Commit per blocco: v. model_prelabel_events.
@@ -975,7 +726,7 @@ def ocr_prelabel_events(
                     "type": "block",
                     "page_id": pid,
                     "block": {
-                        "id": cur.lastrowid,
+                        "id": block_id,
                         "label": o["label"],
                         "points": [[o["bbox"][0], o["bbox"][1]], [o["bbox"][2], o["bbox"][3]]],
                         "content": o["content"],

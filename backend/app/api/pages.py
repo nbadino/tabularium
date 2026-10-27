@@ -5,11 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
 from .. import config
-from ..db import connect
+from ..adapters import annotations as annotationstore
+from ..adapters import pages as pagestore
+from ..db import connect  # noqa: F401  (approvals, reviews, deskew: P7.1)
 from ..schemas import PageList, PageOut, PageSums, PageUpdate, ProjectSumsOut
 from ..services import pages as pagesvc
 from ..services import images, table_checks
-from ..services import otsl as otslmod
+from ..domain import otsl as otslmod
 from ..services.i18n import msg, parse_lang
 from ..services import auth as authsvc
 from ..services import audit as auditsvc
@@ -34,8 +36,8 @@ PAGE_STATUSES = ["new", "annotated", "qa", "review", "approved", "exported"]
 MANUAL_PAGE_STATUSES = {"new", "annotated", "review"}
 
 
-def _get_page_or_404(conn, page_id: int):
-    row = conn.execute("SELECT * FROM pages WHERE id=?", (page_id,)).fetchone()
+def _get_page_or_404(page_id: int):
+    row = pagestore.get(page_id)
     if row is None:
         raise HTTPException(status_code=404, detail="pagina non trovata")
     return row
@@ -52,33 +54,10 @@ def list_pages(
     limit: int = Query(default=10000, ge=1, le=10000),
     _auth: dict = Depends(require_resource(write=False)),
 ) -> PageList:
-    sql = "SELECT * FROM pages WHERE project_id=?"
-    params: list = [project_id]
-    if page_type:
-        sql += " AND page_type=?"
-        params.append(page_type)
-    if status:
-        sql += " AND status=?"
-        params.append(status)
-    else:
-        # Una nuova scan marca come mancanti le sorgenti rimosse, preservando
-        # annotazioni e risultati ma evitando di mostrarle nel lavoro attivo.
-        sql += " AND status != 'missing'"
-    count_sql = sql.replace("SELECT *", "SELECT COUNT(*)", 1)
-    count_params = list(params)
-    sql = sql.replace(
-        "SELECT * FROM pages",
-        "SELECT pages.*, COALESCE(b.blocks, 0) AS blocks, COALESCE(b.drafts, 0) AS drafts FROM pages "
-        "LEFT JOIN (SELECT page_id, COUNT(*) AS blocks, "
-        "SUM(CASE WHEN confirmed=0 AND prefill_source IS NOT NULL THEN 1 ELSE 0 END) AS drafts "
-        "FROM blocks GROUP BY page_id) b ON b.page_id = pages.id",
-        1,
+    rows, total = pagestore.list_for_project(
+        project_id, page_type=page_type, status=status, limit=limit
     )
-    sql += " ORDER BY rel_path, pdf_page LIMIT ?"
-    params.append(limit)
     with connect() as conn:
-        rows = conn.execute(sql, params).fetchall()
-        total = conn.execute(count_sql, count_params).fetchone()[0]
         work_items = worksvc.project_work(conn, project_id, _auth)
         items = [
             PageOut(
@@ -120,13 +99,7 @@ def project_sum_failures(
     """Quante somme non tornano, pagina per pagina: la lista delle pagine lo
     mostra accanto allo stato, così si sa dove guardare senza aprire ogni
     tabella. A parte dalla lista perché costa ~8 ms per tabella la prima volta."""
-    with connect() as conn:
-        rows = conn.execute(
-            "SELECT b.page_id, t.block_id, t.grid_json FROM tables t "
-            "JOIN blocks b ON b.id = t.block_id JOIN pages p ON p.id = b.page_id "
-            "WHERE p.project_id = ?",
-            (project_id,),
-        ).fetchall()
+    rows = pagestore.sum_failures_inputs(project_id)
     pages: dict[int, PageSums] = {}
     for page_id, block_id, grid_json in rows:
         key = hash(grid_json)
@@ -172,11 +145,10 @@ def update_page(
                     "l'endpoint /approve"
                 ),
             )
-    sets = ", ".join(f"{k}=?" for k in updates)
-    with connect() as conn:
-        _get_page_or_404(conn, page_id)
-        conn.execute(f"UPDATE pages SET {sets} WHERE id=?", (*updates.values(), page_id))
-        row = _get_page_or_404(conn, page_id)
+    _get_page_or_404(page_id)
+    pagestore.update_fields(page_id, updates)
+    if True:
+        row = _get_page_or_404(page_id)
         return PageOut(
             id=row["id"], project_id=row["project_id"], rel_path=row["rel_path"],
             abs_path=row["abs_path"], source_kind=row["source_kind"],
@@ -199,8 +171,7 @@ def page_readiness(
     _auth: dict = Depends(require_resource(write=False)),
 ) -> dict:
     lang = parse_lang(request.headers.get("accept-language"))
-    with connect() as conn:
-        return pagesvc.compute_readiness(conn, page_id, lang=lang)
+    return pagesvc.compute_readiness(page_id, lang=lang)
 
 
 @router.post("/api/pages/{page_id}/approve")
@@ -212,32 +183,17 @@ def approve_page(
 ) -> dict:
     lang = parse_lang(request.headers.get("accept-language"))
     confirm_drafts = bool(payload and payload.confirm_drafts)
-    with connect() as conn:
-        if worksvc.configured(conn, page_id):
-            worksvc.fail('work_use_review', lang)
-        # Conferma delle bozze su richiesta esplicita (`confirm_drafts`): le
-        # bozze del modello diventano verità, quindi è una scelta dell'utente,
-        # non un automatismo. Senza, la pagina con bozze non è approvabile.
-        if confirm_drafts:
-            conn.execute("UPDATE blocks SET confirmed=1 WHERE page_id=? AND confirmed=0", (page_id,))
-        readiness = pagesvc.compute_readiness(conn, page_id, lang=lang)
-        page = _get_page_or_404(conn, page_id)
-        project = conn.execute("SELECT settings_json FROM projects WHERE id=?", (page["project_id"],)).fetchone()
-        try:
-            gold_pages = set(json.loads(project["settings_json"] or "{}").get("study_protocol", {}).get("gold_pages", [])) if project else set()
-        except (TypeError, ValueError):
-            gold_pages = set()
-        if page_id in {int(value) for value in gold_pages}:
-            passed = conn.execute("SELECT 1 FROM page_reviews WHERE page_id=? AND status='pass' LIMIT 1", (page_id,)).fetchone()
-            if not passed:
-                readiness["errors"].append(msg("gold_review", lang))
-                readiness["ready"] = False
-        if not readiness["ready"]:
-            raise HTTPException(status_code=409, detail={"message": msg("page_not_ready", lang), **readiness})
-        conn.execute("UPDATE pages SET status='approved' WHERE id=?", (page_id,))
-        auditsvc.record(conn, user, "page.approved", resource_type="page", resource_id=page_id)
-        readiness["status"] = "approved"
-        return readiness
+    readiness = pagesvc.approve_page(
+        page_id, confirm_drafts=confirm_drafts, lang=lang, actor=user
+    )
+    accepted = {
+        key: readiness[key] for key in ("confirmed_blocks", "confirmed_cells", "annotation_revision")
+        if key in readiness
+    }
+    if accepted:
+        from .blocks import _notify_live
+        _notify_live(page_id, accepted.get('annotation_revision'), 'approval', user)
+    return readiness
 
 
 class BulkApproveIn(BaseModel):
@@ -258,43 +214,18 @@ def approve_pages_bulk(
 ) -> dict:
     """Approva in blocco le pagine del progetto (con `confirm_drafts` anche le bozze)."""
     lang = parse_lang(request.headers.get("accept-language"))
-    with connect() as conn:
-        rows = conn.execute(
-            "SELECT id FROM pages WHERE project_id=? AND status != 'missing' ORDER BY id",
-            (project_id,),
-        ).fetchall()
-        ids = [int(r["id"]) for r in rows]
-        if payload.page_ids is not None:
-            wanted = set(int(v) for v in payload.page_ids)
-            ids = [pid for pid in ids if pid in wanted]
-        approved = 0
-        confirmed_blocks = 0
-        skipped: list[dict] = []
-        for pid in ids:
-            if worksvc.configured(conn, pid):
-                skipped.append({"page_id": pid, "reasons": [msg('work_use_review', lang)]})
-                continue
-            readiness = pagesvc.compute_readiness(conn, pid, lang=lang)
-            if not readiness["ready"] and payload.confirm_drafts:
-                confirmed_blocks += conn.execute(
-                    "UPDATE blocks SET confirmed=1 WHERE page_id=? AND confirmed=0", (pid,)
-                ).rowcount
-                readiness = pagesvc.compute_readiness(conn, pid, lang=lang)
-            if readiness["ready"]:
-                conn.execute("UPDATE pages SET status='approved' WHERE id=?", (pid,))
-                approved += 1
-            else:
-                skipped.append({"page_id": pid, "reasons": readiness.get("errors") or []})
-        auditsvc.record(
-            conn, user, "pages.approved_bulk", resource_type="project", resource_id=project_id,
-            payload={"approved": approved, "confirmed_blocks": confirmed_blocks, "skipped": len(skipped)},
-        )
-    return {
-        "approved": approved,
-        "confirmed_blocks": confirmed_blocks,
-        "skipped_count": len(skipped),
-        "skipped": skipped[:50],
-    }
+    report = pagesvc.approve_pages(
+        project_id,
+        payload.page_ids,
+        confirm_drafts=payload.confirm_drafts,
+        lang=lang,
+        actor=user,
+    )
+    accepted_revisions = report.pop("accepted_revisions")
+    from .blocks import _notify_live
+    for pid, revision in accepted_revisions.items():
+        _notify_live(pid, revision, 'approval', user)
+    return report
 
 
 @router.get("/api/pages/{page_id}/reviews")
@@ -302,10 +233,14 @@ def page_reviews(
     page_id: int,
     _auth: dict = Depends(require_resource(write=False)),
 ) -> dict:
-    with connect() as conn:
-        _get_page_or_404(conn, page_id)
-        rows = conn.execute("SELECT * FROM page_reviews WHERE page_id=? ORDER BY id DESC", (page_id,)).fetchall()
-    return {"page_id": page_id, "items": [dict(row) | {"errors": json.loads(row["errors_json"] or "[]")} for row in rows]}
+    _get_page_or_404(page_id)
+    return {
+        "page_id": page_id,
+        "items": [
+            row | {"errors": json.loads(row.get("errors_json") or "[]")}
+            for row in pagestore.reviews(page_id)
+        ],
+    }
 
 
 @router.post("/api/pages/{page_id}/reviews")
@@ -314,16 +249,18 @@ def add_page_review(
     payload: ReviewIn,
     _auth: dict = Depends(require_resource(write=True)),
 ) -> dict:
+    _get_page_or_404(page_id)
     with connect() as conn:
-        _get_page_or_404(conn, page_id)
         if worksvc.configured(conn, page_id):
-            worksvc.fail('work_use_review', 'it')
-        cur = conn.execute("INSERT INTO page_reviews (page_id, reviewer, status, errors_json, notes) VALUES (?,?,?,?,?)", (page_id, payload.reviewer, payload.status, json.dumps(payload.errors, ensure_ascii=False), payload.notes))
-        if payload.status == "pass":
-            conn.execute("UPDATE pages SET status='qa' WHERE id=? AND status IN ('annotated','review')", (page_id,))
-        elif payload.status == "fail":
-            conn.execute("UPDATE pages SET status='review' WHERE id=? AND status != 'approved'", (page_id,))
-        return {"id": cur.lastrowid, "page_id": page_id, **payload.model_dump()}
+            worksvc.fail("work_use_review", "it")
+    review_id = pagestore.add_review(
+        page_id,
+        reviewer=payload.reviewer,
+        status=payload.status,
+        errors=payload.errors,
+        notes=payload.notes,
+    )
+    return {"id": review_id, "page_id": page_id, **payload.model_dump()}
 
 
 @router.get("/api/pages/{page_id}/thumbnail")
@@ -331,9 +268,8 @@ def page_thumbnail(
     page_id: int,
     _auth: dict = Depends(require_resource(write=False)),
 ) -> FileResponse:
-    with connect() as conn:
-        page = _get_page_or_404(conn, page_id)
-        thumb = pagesvc.ensure_thumbnail(conn, page)
+    page = _get_page_or_404(page_id)
+    thumb = pagesvc.ensure_thumbnail(page)
     # Archivio, Riconosci e Studio mostrano le stesse centinaia di miniature:
     # senza una cache anche breve il browser le rivalidava una per una a ogni
     # cambio di schermata. Un minuto basta a un giro fra le schermate, e dopo un nuovo master la
@@ -346,9 +282,8 @@ def page_preview(
     page_id: int,
     _auth: dict = Depends(require_resource(write=False)),
 ) -> FileResponse:
-    with connect() as conn:
-        page = _get_page_or_404(conn, page_id)
-        preview = pagesvc.ensure_preview(conn, page)
+    page = _get_page_or_404(page_id)
+    preview = pagesvc.ensure_preview(page)
     return FileResponse(preview, media_type="image/jpeg")
 
 
@@ -374,17 +309,15 @@ def deskew_page(
     senza blocchi, oppure ?confirm=true per cancellarli e ripartire."""
     from ..services import images as imgmod
 
-    with connect() as conn:
-        page = _get_page_or_404(conn, page_id)
-        n_blocks = conn.execute(
-            "SELECT COUNT(*) AS n FROM blocks WHERE page_id=?", (page_id,)
-        ).fetchone()["n"]
-        if n_blocks and not confirm:
-            raise HTTPException(
-                status_code=409,
-                detail=f"la pagina ha {n_blocks} blocchi: il deskew cambia le coordinate. "
-                "Passa ?confirm=true per eliminarli e ripartire.",
-            )
+    page = _get_page_or_404(page_id)
+    with annotationstore.writing() as writer:
+        n_blocks = writer.count_blocks(page_id)
+    if n_blocks and not confirm:
+        raise HTTPException(
+            status_code=409,
+            detail=f"la pagina ha {n_blocks} blocchi: il deskew cambia le coordinate. "
+            "Passa ?confirm=true per eliminarli e ripartire.",
+        )
 
     img = pagesvc.load_original_source_image(page)
     if img is None:
@@ -392,8 +325,8 @@ def deskew_page(
     out, angle = imgmod.deskew(img)
 
     if confirm:
-        with connect() as conn:
-            conn.execute("DELETE FROM blocks WHERE page_id=?", (page_id,))
+        with annotationstore.writing() as writer:
+            writer.delete_page_blocks(page_id)
     _invalidate_page_cache(page_id)
 
     desk = pagesvc.deskew_path(page_id)
@@ -420,11 +353,9 @@ def deskew_remove(
     _auth: dict = Depends(require_resource(write=True)),
 ) -> dict:
     """Rimuove ogni trasformazione salvata e torna all'immagine originale."""
-    with connect() as conn:
-        _get_page_or_404(conn, page_id)
-        n_blocks = conn.execute(
-            "SELECT COUNT(*) AS n FROM blocks WHERE page_id=?", (page_id,)
-        ).fetchone()["n"]
+    _get_page_or_404(page_id)
+    with annotationstore.writing() as writer:
+        n_blocks = writer.count_blocks(page_id)
         if n_blocks and not confirm:
             raise HTTPException(
                 status_code=409,
@@ -432,7 +363,7 @@ def deskew_remove(
                 "Passa ?confirm=true per eliminarli e ripartire.",
             )
         if confirm:
-            conn.execute("DELETE FROM blocks WHERE page_id=?", (page_id,))
+            writer.delete_page_blocks(page_id)
     pagesvc.deskew_path(page_id).unlink(missing_ok=True)
     pagesvc.legacy_deskew_path(page_id).unlink(missing_ok=True)
     pagesvc.transform_meta_path(page_id).unlink(missing_ok=True)
@@ -464,16 +395,14 @@ def align_page_endpoint(
     Cambia le coordinate: richiede pagina senza blocchi o ?confirm=true."""
     from ..services import dewarp
 
-    with connect() as conn:
-        page = _get_page_or_404(conn, page_id)
-        n_blocks = conn.execute(
-            "SELECT COUNT(*) AS n FROM blocks WHERE page_id=?", (page_id,)
-        ).fetchone()["n"]
-        if n_blocks and not confirm:
-            raise HTTPException(
-                status_code=409,
-                detail=f"la pagina ha {n_blocks} blocchi: l'allineamento cambia le coordinate. Passa ?confirm=true.",
-            )
+    page = _get_page_or_404(page_id)
+    with annotationstore.writing() as writer:
+        n_blocks = writer.count_blocks(page_id)
+    if n_blocks and not confirm:
+        raise HTTPException(
+            status_code=409,
+            detail=f"la pagina ha {n_blocks} blocchi: l'allineamento cambia le coordinate. Passa ?confirm=true.",
+        )
 
     img = pagesvc.load_original_source_image(page)
     if img is None:
@@ -481,8 +410,8 @@ def align_page_endpoint(
     aligned, angle = dewarp.align_page(img, payload.level, payload.strength)
 
     if confirm:
-        with connect() as conn:
-            conn.execute("DELETE FROM blocks WHERE page_id=?", (page_id,))
+        with annotationstore.writing() as writer:
+            writer.delete_page_blocks(page_id)
     _invalidate_page_cache(page_id)
 
     desk = pagesvc.deskew_path(page_id)
@@ -538,7 +467,7 @@ def transform_state(
     _auth: dict = Depends(require_resource(write=False)),
 ) -> dict:
     with connect() as conn:
-        _get_page_or_404(conn, page_id)
+        _get_page_or_404(page_id)
     return _transform_state(page_id)
 
 
@@ -549,7 +478,7 @@ def transform_preview(
     _auth: dict = Depends(require_resource(write=False)),
 ) -> FileResponse:
     with connect() as conn:
-        page = _get_page_or_404(conn, page_id)
+        page = _get_page_or_404(page_id)
         preview = pagesvc.ensure_transform_preview(page, kind)
     return FileResponse(preview, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
 
@@ -564,7 +493,7 @@ def generate_transform_candidate(
     from ..services import dewarp
 
     with connect() as conn:
-        page = _get_page_or_404(conn, page_id)
+        page = _get_page_or_404(page_id)
     image = pagesvc.load_original_source_image(page)
     if image is None:
         raise pagesvc.source_missing(page)
@@ -624,20 +553,18 @@ def accept_transform_candidate(
             image.verify()
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"transform_candidate_corrupt: {exc}") from exc
-    with connect() as conn:
-        page = _get_page_or_404(conn, page_id)
-        if candidate_size != (int(page["width"]), int(page["height"])):
-            raise HTTPException(status_code=422, detail="transform_candidate_size_mismatch")
-        n_blocks = conn.execute(
-            "SELECT COUNT(*) AS n FROM blocks WHERE page_id=?", (page_id,)
-        ).fetchone()["n"]
+    page = _get_page_or_404(page_id)
+    if candidate_size != (int(page["width"]), int(page["height"])):
+        raise HTTPException(status_code=422, detail="transform_candidate_size_mismatch")
+    with annotationstore.writing() as writer:
+        n_blocks = writer.count_blocks(page_id)
         if n_blocks and not confirm:
             raise HTTPException(
                 status_code=409,
                 detail=f"la pagina ha {n_blocks} blocchi: accettare la trasformazione cambia le coordinate. Passa ?confirm=true.",
             )
         if confirm:
-            conn.execute("DELETE FROM blocks WHERE page_id=?", (page_id,))
+            writer.delete_page_blocks(page_id)
     active = pagesvc.deskew_path(page_id)
     active.parent.mkdir(parents=True, exist_ok=True)
     candidate.replace(active)
@@ -659,7 +586,7 @@ def reject_transform_candidate(
     _auth: dict = Depends(require_resource(write=True)),
 ) -> dict:
     with connect() as conn:
-        _get_page_or_404(conn, page_id)
+        _get_page_or_404(page_id)
     pagesvc.clear_candidate(page_id)
     return _transform_state(page_id) | {"rejected": True}
 
@@ -673,6 +600,6 @@ def page_tile(
     _auth: dict = Depends(require_resource(write=False)),
 ) -> FileResponse:
     with connect() as conn:
-        page = _get_page_or_404(conn, page_id)
+        page = _get_page_or_404(page_id)
         tile = pagesvc.ensure_tile(page, level, x, y)
     return FileResponse(tile, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=31536000, immutable"})

@@ -21,13 +21,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import labeling
-from . import otsl as otslmod
+from ..domain import otsl as otslmod
 from . import pages as pagesvc
 from .model_adapters import get_adapter
 from . import train_recipes
 from .i18n import msg
 from .. import config
-from ..db import connect
+from ..adapters import exports as exportstore
+from ..adapters import projects as projectstore
 
 LAYOUT_PROMPT = "Please output the categories and coordinates of the document elements in reading order."
 TEXT_PROMPT = "Please output the text content from the image."
@@ -69,11 +70,7 @@ def _project_label_info(project_id: int) -> dict:
     Le custom vivono in `settings_json["labels"]`; senza questo, una classe
     creata dal ricercatore verrebbe saltata in silenzio in text_rec.
     """
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT settings_json FROM projects WHERE id=?", (project_id,)
-        ).fetchone()
-    settings = json.loads(row["settings_json"] or "{}") if row else {}
+    settings = projectstore.settings_json(project_id)
     return {label.name: label for label in labeling.project_schema(settings).labels}
 
 
@@ -278,53 +275,19 @@ def _project_dir(project_id: int) -> Path:
 
 def collect_pages_with_blocks(project_id: int) -> dict[int, dict]:
     """Raccoglie pagine con blocchi: {page_id: {"page", "blocks", "tables"}}."""
-    page_data: dict[int, dict] = {}
-    with connect() as conn:
-        pages = conn.execute(
-            "SELECT * FROM pages WHERE project_id=? AND status != 'missing' ORDER BY id",
-            (project_id,),
-        ).fetchall()
-        for page in pages:
-            # Su una pagina approvata la verità è ciò che una persona ha
-            # approvato: una bozza del modello arrivata dopo (un riconoscimento
-            # rilanciato sulla pagina) non è confermata e non ne fa parte.
-            # Altrimenti valutazione e dataset la prenderebbero per gold, e il
-            # modello verrebbe misurato e addestrato sul proprio output.
-            gold = page["status"] in {"approved", "exported"}
-            blocks = conn.execute(
-                "SELECT * FROM blocks WHERE page_id=? "
-                + ("AND NOT (prefill_source IS NOT NULL AND confirmed=0) " if gold else "")
-                + "ORDER BY COALESCE(order_idx, 2147483647), id",
-                (page["id"],),
-            ).fetchall()
-            if not blocks:
-                continue
-            tables: dict[int, dict] = {}
-            if blocks:
-                placeholders = ",".join("?" for _ in blocks)
-                for row in conn.execute(
-                    "SELECT * FROM tables WHERE block_id IN (" + placeholders + ")",
-                    [b["id"] for b in blocks],
-                ).fetchall():
-                    try:
-                        tables[row["block_id"]] = json.loads(row["grid_json"] or "{}")
-                    except (TypeError, ValueError):
-                        tables[row["block_id"]] = {}
-            for block in blocks:
-                if block["id"] in tables:
-                    tables[block["id"]] = with_cell_provenance(tables[block["id"]], block["prefill_source"])
-            page_data[page["id"]] = {"page": page, "blocks": blocks, "tables": tables}
+    page_data = exportstore.pages_with_blocks(project_id)
+    for entry in page_data.values():
+        tables = entry["tables"]
+        for block in entry["blocks"]:
+            if block["id"] in tables:
+                tables[block["id"]] = with_cell_provenance(tables[block["id"]], block["prefill_source"])
     return page_data
 
 
 def gold_page_ids(project_id: int) -> set[int]:
     """Pagine protette dal protocollo: non entrano accidentalmente nel tuning."""
-    with connect() as conn:
-        row = conn.execute("SELECT settings_json FROM projects WHERE id=?", (project_id,)).fetchone()
-    if not row:
-        return set()
     try:
-        settings = json.loads(row["settings_json"] or "{}")
+        settings = projectstore.settings_json(project_id)
         return {int(value) for value in settings.get("study_protocol", {}).get("gold_pages", [])}
     except (TypeError, ValueError, KeyError):
         return set()
@@ -332,12 +295,8 @@ def gold_page_ids(project_id: int) -> set[int]:
 
 def pilot_page_ids(project_id: int) -> set[int]:
     """Restituisce il campione pilot salvato nel protocollo di studio."""
-    with connect() as conn:
-        row = conn.execute("SELECT settings_json FROM projects WHERE id=?", (project_id,)).fetchone()
-    if not row:
-        return set()
     try:
-        settings = json.loads(row["settings_json"] or "{}")
+        settings = projectstore.settings_json(project_id)
         values = settings.get("study_protocol", {}).get("pilot_pages", [])
         return {int(value) for value in values}
     except (TypeError, ValueError, KeyError):
@@ -448,11 +407,7 @@ def build_datasets(
             if data["page"]["status"] in {"approved", "exported"}
         }
     pages = [d["page"] for d in page_data.values()]
-    with connect() as conn:
-        total_pages = conn.execute(
-            "SELECT COUNT(*) AS n FROM pages WHERE project_id=? AND status != 'missing'",
-            (project_id,),
-        ).fetchone()["n"]
+    total_pages = exportstore.page_count(project_id)
 
     # --- split per pagina ----------------------------------------------------
     train_ids, val_ids = compute_split(
@@ -471,6 +426,7 @@ def build_datasets(
     # Provenienza del testo nelle celle esportate: il prefill non verificato è
     # la parte del dataset che un umano non ha ancora guardato, e va dichiarata.
     table_cells = {"total": 0, "verified": 0, "prefill_unverified": 0}
+    table_exclusions: list[dict] = []
 
     for pid in page_ids:
         split = "train" if pid in train_ids else "val"
@@ -523,6 +479,7 @@ def build_datasets(
             elif label == "Table":
                 grid = data["tables"].get(block["id"])
                 if not grid or not grid.get("cells"):
+                    table_exclusions.append({'page_id': pid, 'block_id': block['id'], 'reason': 'missing_grid'})
                     warnings.append(
                         msg("table_grid_missing_skip", lang, id=block["id"])
                     )
@@ -530,6 +487,7 @@ def build_datasets(
                 try:
                     otsl_str = otslmod.grid_to_otsl(grid)
                 except ValueError as exc:
+                    table_exclusions.append({'page_id': pid, 'block_id': block['id'], 'reason': 'invalid_grid'})
                     warnings.append(msg("table_error", lang, id=block["id"], exc=exc))
                     continue
                 # Conteggio per il report, con avviso quando il testo proposto
@@ -538,6 +496,24 @@ def build_datasets(
                     c for c in grid.get("cells", []) if (c.get("text") or "").strip()
                 ]
                 unverified = [c for c in text_cells if c.get("verified") is False]
+                # Su una build "solo approvate" il target deve essere ciò che
+                # una persona ha verificato. Una cella con prefill non
+                # verificato non è ground truth: meglio perdere quella
+                # tabella (e dirlo) che addestrare il modello sul proprio
+                # output. Con approved_only=False resta l'export esplorativo,
+                # ma il warning dice quante celle non sono state controllate.
+                if approved_only and unverified:
+                    table_exclusions.append({'page_id': pid, 'block_id': block['id'], 'reason': 'unverified_cells', 'unverified_cells': len(unverified), 'text_cells': len(text_cells)})
+                    warnings.append(
+                        msg(
+                            "table_unverified_skip",
+                            lang,
+                            id=block["id"],
+                            n=len(unverified),
+                            total=len(text_cells),
+                        )
+                    )
+                    continue
                 table_cells["total"] += len(text_cells)
                 table_cells["verified"] += len(text_cells) - len(unverified)
                 table_cells["prefill_unverified"] += len(unverified)
@@ -557,6 +533,8 @@ def build_datasets(
                         families["table"][split].append(_sample(img, _training_prompt(recipe, adapter, "table", label), otsl_str))
                         crops_generated += 1
                         table_variants["full"] += 1
+                    else:
+                        table_exclusions.append({'page_id': pid, 'block_id': block['id'], 'reason': 'crop_failed'})
 
                 windows = table_band_windows(
                     grid, rows_per_band=table_band_rows, overlap=table_band_overlap
@@ -564,7 +542,9 @@ def build_datasets(
                 hlines = [float(value) for value in grid.get("hlines", [])]
                 if windows and len(hlines) != int(grid.get("rows", 0)) + 1:
                     table_variants["without_boundaries"] += 1
-                    warnings.append(msg("table_band_no_boundaries", lang, id=block["id"]))
+                    if not include_full_tables:
+                        table_exclusions.append({'page_id': pid, 'block_id': block['id'], 'reason': 'missing_verified_boundaries'})
+                        warnings.append(msg("table_band_no_boundaries", lang, id=block["id"]))
                     windows = []
                 for start, end in windows:
                     band_grid = _slice_table_grid(grid, start, end)
@@ -659,6 +639,7 @@ def build_datasets(
         pilot_pages=len(pilot_ids),
         table_variants=table_variants,
         table_cells=table_cells,
+        table_exclusions=table_exclusions,
         table_band_rows=table_band_rows,
         table_band_overlap=table_band_overlap,
         include_full_tables=include_full_tables,
@@ -708,6 +689,7 @@ def _report(
     pilot_pages: int = 0,
     table_variants: dict | None = None,
     table_cells: dict | None = None,
+    table_exclusions: list[dict] | None = None,
     table_band_rows: int = 15,
     table_band_overlap: int = 2,
     include_full_tables: bool = True,
@@ -734,6 +716,7 @@ def _report(
         "pilot_only": pilot_only,
         "pilot_pages": pilot_pages,
         "table_variants": table_variants or {"full": 0, "bands": 0, "without_boundaries": 0},
+        "table_exclusions": table_exclusions or [],
         "table_cells": table_cells or {"total": 0, "verified": 0, "prefill_unverified": 0},
         "table_strategy": {
             "experimental": True,

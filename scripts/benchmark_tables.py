@@ -419,7 +419,8 @@ def _page_image(page):
 
 def _read_page(client, image, width, height, mode: str) -> list[dict]:
     """Stessi passi di `prefill.model_prelabel_events`, senza database."""
-    from app.services import labeling, otsl, table_headers
+    from app.services import labeling
+    from app.domain import otsl, table_headers
     from app.services import prefill as pf
 
     opts = pf.PrelabelOptions()

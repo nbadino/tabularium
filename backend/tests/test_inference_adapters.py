@@ -8,7 +8,7 @@ import pytest
 
 from app.services import inference as infmod
 from app.services import model_adapters
-from app.services import otsl
+from app.domain import otsl
 
 
 def test_default_client_keeps_monkeyocrv2_prompts():

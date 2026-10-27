@@ -7,6 +7,7 @@ import { Field, Select } from '../../app/ui'
 import { IconCheck, IconNext, IconPrev, IconWarn } from '../../app/icons'
 import { t as translate, useI18n, tn } from '../../i18n'
 import { pageLabel } from '../../lib/pageLabel'
+import { API_BASE } from '../../lib/endpoints'
 
 interface PageSidebarProps {
   projects: Project[]
@@ -236,7 +237,7 @@ export default function PageSidebar({
                 }`}
               >
                 <img data-fade
-                  src={`/api/pages/${p.id}/thumbnail`}
+                  src={`${API_BASE}/pages/${p.id}/thumbnail`}
                   alt=""
                   loading="lazy"
                   className="h-14 w-11 shrink-0 rounded-sm border border-[color:var(--color-rule)] bg-white object-cover object-top"

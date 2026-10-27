@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { matchPreset, PRESETS, recipeDefaults } from './presets'
+import { MONKEYOCR_8GB, recipeDefaults } from './presets'
 import type { TrainRecipeInfo } from '../../lib/types'
 
 const glm: TrainRecipeInfo = {
@@ -37,15 +37,10 @@ describe('recipe defaults', () => {
     expect(recipeDefaults(glm, 'full').learning_rate).toBe(1e-5)
   })
 
-  it('does not let a preset overwrite the learning rate', () => {
-    for (const preset of PRESETS) {
-      expect('learning_rate' in preset.cfg).toBe(false)
-    }
-  })
-
-  it('matches a preset only when every field agrees', () => {
-    const preset = PRESETS[0]
-    expect(matchPreset({ ...preset.cfg })).toBe(preset.id)
-    expect(matchPreset({ ...preset.cfg, learning_rate: 2e-5 })).toBe(preset.id)
+  it('keeps the official learning rate when adapting MonkeyOCRv2 LoRA to an 8 GB GPU', () => {
+    expect(MONKEYOCR_8GB.train_type).toBe('lora')
+    expect(MONKEYOCR_8GB.max_length).toBe(8192)
+    expect(MONKEYOCR_8GB.batch_size).toBe(1)
+    expect('learning_rate' in MONKEYOCR_8GB).toBe(false)
   })
 })

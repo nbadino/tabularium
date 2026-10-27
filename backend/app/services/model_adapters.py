@@ -12,6 +12,7 @@ all'inferenza e al fine-tuning resta dichiarato separatamente nelle capacità.
 from __future__ import annotations
 
 import json
+import math
 import re
 import shlex
 from dataclasses import asdict, dataclass, field, replace
@@ -25,6 +26,7 @@ from .. import config
 from .model_labels import (
     DEEPSEEK_LABELS,
     GLM_LABELS,
+    LLAMAINDEX_LABELS,
     LIGHTON_LABELS,
     MINERU_LAYOUT_LABELS,
     MINERU_NATIVE_LABELS,
@@ -271,6 +273,9 @@ class MinerU2_5Adapter(_StubAdapter):
     """
 
     adapter_id = "mineru2.5"
+    # Which client method runs this model's official pipeline (
+    # `VllmClient.<runner>_native_page`). Declared once, here.
+    native_runner = "mineru"
     native_prefill_mode = "official"
     page_layout_fallback = "official-pipeline"
     # Il client ufficiale MinerUClient prepara il layout a 1036x1036
@@ -766,6 +771,9 @@ class GlmOcrAdapter(_StubAdapter):
     checkpoint molto piccolo (~2.7 GB) su una GPU da 8 GB."""
 
     adapter_id = "glm-ocr"
+    # Which client method runs this model's official pipeline (
+    # `VllmClient.<runner>_native_page`). Declared once, here.
+    native_runner = "glmocr"
     native_prefill_mode = "official"
     # Self-hosted SDK runs PP-DocLayout, parallel region OCR and its native
     # result formatter against the local vLLM server.
@@ -1026,6 +1034,9 @@ class PaddleOcrVlAdapter(_StubAdapter):
     una 8GB, da validare empiricamente."""
 
     adapter_id = "paddleocr-vl"
+    # Which client method runs this model's official pipeline (
+    # `VllmClient.<runner>_native_page`). Declared once, here.
+    native_runner = "paddle"
     native_prefill_mode = "official"
     # Il pipeline ufficiale contiene già il layout detector PaddleX; il
     # fallback OCR locale appartiene solo alla modalità ocr separata.
@@ -1159,6 +1170,9 @@ class Qwen3VlAdapter(_StubAdapter):
     il tetto nativo (256K, estendibile a 1M con YaRN)."""
 
     adapter_id = "qwen3-vl-8b"
+    # Which client method runs this model's official pipeline (
+    # `VllmClient.<runner>_native_page`). Declared once, here.
+    native_runner = "qwen"
     native_prefill_mode = "official"
     page_layout_fallback = "official-pipeline"
     # The official Qwen3-VL card's VL sampling preset, surfaced in Settings
@@ -1322,6 +1336,9 @@ class TeleOcrAdapter(_StubAdapter):
     """Adapter cloud StarDoc-AI/TeleOCR con runner nativo upstream."""
 
     adapter_id = "teleocr"
+    # Which client method runs this model's official pipeline (
+    # `VllmClient.<runner>_native_page`). Declared once, here.
+    native_runner = "teleocr"
     # The cloud sidecar invokes TeleOCRClient.aio_batch_two_step_extract, which
     # owns layout, crop preparation, concurrent OCR and post-processing.
     native_prefill_mode = "official"
@@ -1680,6 +1697,211 @@ class GeminiArgonAdapter(_StubAdapter):
         )
 
 
+class LlamaIndexOcriaAdapter(_StubAdapter):
+    """OCRia-1 through LlamaCloud's native asynchronous parsing API.
+
+    OCRia is a hosted parser, not an OpenAI-compatible chat model. The client
+    uploads one page, starts a parse job and maps the native page items back to
+    Tabularium's normalized block contract. LlamaParse coordinates are pixels
+    in the uploaded page; they are converted per page before this parser
+    returns them.
+    """
+
+    adapter_id = "llamaindex-ocria-1"
+    # Which client method runs this model's official pipeline (
+    # `VllmClient.<runner>_native_page`). Declared once, here.
+    native_runner = "llamaindex"
+    native_prefill_mode = "official"
+    page_layout_fallback = "official-pipeline"
+    supports_dataset_export = False
+    capabilities = ModelCapabilities(
+        adapter_id=adapter_id,
+        display_name="OCRia-1 (LlamaIndex)",
+        tasks=("layout", "text", "table"),
+        coordinate_system="normalized-0-1000",
+        table_format="html",
+        training_types=(),
+        inference_modes=("api",),
+        hardware=("remote-api",),
+        languages=("multilingual",),
+        hf_repo="",
+        approx_size_gb=None,
+        license_note="Servizio LlamaCloud: è richiesta una API key dell'utente.",
+        train_toolchain="none",
+        serve_backend="llamaindex-api",
+        served_model_name="ocria-1",
+        local_runtimes=(),
+        maturity="experimental",
+    )
+
+    @staticmethod
+    def _content(item: dict) -> str:
+        value = item.get("value")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            for key in ("text", "content", "markdown", "md"):
+                text = value.get(key)
+                if isinstance(text, str) and text.strip():
+                    return text.strip()
+        for key in ("content", "text", "md"):
+            text = item.get(key)
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+        return ""
+
+    @classmethod
+    def _nested_content(cls, items: object) -> str:
+        if not isinstance(items, list):
+            return ""
+        parts: list[str] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            own = cls._content(item)
+            if own:
+                parts.append(own)
+            nested = cls._nested_content(item.get("items"))
+            if nested:
+                parts.append(nested)
+        return "\n".join(dict.fromkeys(parts))
+
+    @staticmethod
+    def _rotated_box(box: dict) -> tuple[float, float, float, float] | None:
+        try:
+            x = float(box.get("x"))
+            y = float(box.get("y"))
+            width = float(box.get("w", box.get("width")))
+            height = float(box.get("h", box.get("height")))
+        except (TypeError, ValueError):
+            return None
+        if width <= 0 or height <= 0:
+            return None
+        try:
+            angle = math.radians(float(box.get("r", box.get("rotation", 0)) or 0))
+        except (TypeError, ValueError):
+            angle = 0.0
+        cx, cy = x + width / 2, y + height / 2
+        cos_a, sin_a = math.cos(angle), math.sin(angle)
+        points = []
+        for dx, dy in ((-width / 2, -height / 2), (width / 2, -height / 2),
+                       (width / 2, height / 2), (-width / 2, height / 2)):
+            points.append((cx + dx * cos_a - dy * sin_a, cy + dx * sin_a + dy * cos_a))
+        xs = [point[0] for point in points]
+        ys = [point[1] for point in points]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    @classmethod
+    def _bbox_union(cls, raw: object) -> tuple[float, float, float, float] | None:
+        if isinstance(raw, dict):
+            raw = [raw]
+        if not isinstance(raw, (list, tuple)):
+            return None
+        if len(raw) == 4 and all(isinstance(value, (int, float)) for value in raw):
+            values = [float(value) for value in raw]
+            if values[2] > values[0] and values[3] > values[1]:
+                return values[0], values[1], values[2], values[3]
+            return None
+        boxes = [cls._rotated_box(box) for box in raw if isinstance(box, dict)]
+        boxes = [box for box in boxes if box is not None]
+        if not boxes:
+            return None
+        return (
+            min(box[0] for box in boxes),
+            min(box[1] for box in boxes),
+            max(box[2] for box in boxes),
+            max(box[3] for box in boxes),
+        )
+
+    def parse_native_result(
+        self,
+        pages: object,
+        image_width: int | None = None,
+        image_height: int | None = None,
+    ) -> list[dict]:
+        """Map LlamaParse pages/items to blocks normalized to 0–1000."""
+        if isinstance(pages, dict):
+            pages = pages.get("pages")
+        if not isinstance(pages, list):
+            return []
+
+        result: list[dict] = []
+        for page in pages:
+            if not isinstance(page, dict):
+                continue
+            try:
+                page_width = float(page.get("page_width") or image_width or 0)
+                page_height = float(page.get("page_height") or image_height or 0)
+            except (TypeError, ValueError):
+                page_width = page_height = 0.0
+            if page_width <= 0 or page_height <= 0:
+                continue
+
+            def walk(items: object, *, suppress_children: bool = False) -> None:
+                if not isinstance(items, list):
+                    return
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    kind = str(item.get("type") or "").strip().lower().replace(" ", "_")
+                    box = self._bbox_union(item.get("bbox"))
+                    if suppress_children:
+                        continue
+                    if box is None:
+                        # A container without its own box can still contain
+                        # placeable children; never discard the whole subtree.
+                        walk(item.get("items"))
+                        continue
+
+                    if kind == "table":
+                        label = "Table"
+                        content = str(item.get("html") or item.get("md") or self._content(item)).strip()
+                    elif kind == "image":
+                        label = "Picture"
+                        content = ""
+                    elif kind == "heading":
+                        raw_level = item.get("level", item.get("depth", 1))
+                        try:
+                            level = int(raw_level)
+                        except (TypeError, ValueError):
+                            level = 1
+                        label = "Title" if level <= 2 else "Section-header"
+                        content = self._content(item)
+                    elif kind in {"header", "page_header"}:
+                        label = "Page-header"
+                        content = self._content(item) or self._nested_content(item.get("items"))
+                    elif kind in {"footer", "page_footer"}:
+                        label = "Page-footer"
+                        content = self._content(item) or self._nested_content(item.get("items"))
+                    elif kind in {"list", "list_item"}:
+                        label = "List-item"
+                        content = self._content(item) or self._nested_content(item.get("items"))
+                    else:
+                        label = LLAMAINDEX_LABELS.get(kind, kind or "Text")
+                        content = self._content(item)
+
+                    x1, y1, x2, y2 = box
+                    values = [
+                        max(0, min(1000, round(x1 / page_width * 1000))),
+                        max(0, min(1000, round(y1 / page_height * 1000))),
+                        max(0, min(1000, round(x2 / page_width * 1000))),
+                        max(0, min(1000, round(y2 / page_height * 1000))),
+                    ]
+                    if values[0] >= values[2] or values[1] >= values[3]:
+                        continue
+                    result.append({"bbox": values, "label": label, "content": content})
+
+                    # Header/footer/list containers and their children describe
+                    # the same region. Keeping both would create duplicate
+                    # drafts that cannot be distinguished in the Studio.
+                    walk(item.get("items"), suppress_children=kind in {
+                        "header", "page_header", "footer", "page_footer", "list", "list_item",
+                    })
+
+            walk(page.get("items"))
+        return result
+
+
 class CustomVllmAdapter(_StubAdapter):
     """Un modello aggiunto liberamente dall'utente (repo Hugging Face
     qualsiasi), riga della tabella `custom_models` — stesso principio di LM
@@ -1786,6 +2008,7 @@ _ADAPTERS: dict[str, ModelAdapter] = {
         PaddleOcrVlAdapter(),
         Qwen3VlAdapter(),
         TeleOcrAdapter(),
+        LlamaIndexOcriaAdapter(),
         LightOnOcr3Adapter(),
         GeminiArgonAdapter(),
     )

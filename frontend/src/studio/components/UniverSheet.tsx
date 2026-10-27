@@ -29,20 +29,23 @@ import {
   UniverSheetsCorePreset,
 } from '@univerjs/preset-sheets-core'
 import type { SpreadsheetSkeleton, UniverRenderingContext } from '@univerjs/preset-sheets-core'
-import { CommandType, ICommandService } from '@univerjs/core'
+import { CommandType, ICommandService, IUndoRedoService } from '@univerjs/core'
+import type { ICellData } from '@univerjs/core'
 import UniverItIT from '@univerjs/preset-sheets-core/locales/it-IT'
 import UniverEnUS from '@univerjs/preset-sheets-core/locales/en-US'
 import UniverFrFR from '@univerjs/preset-sheets-core/locales/fr-FR'
 import type { FUniver } from '@univerjs/core/lib/facade'
 import type { IScale, Univer } from '@univerjs/core'
+import { IContextMenuService } from '@univerjs/ui'
 import '@univerjs/preset-sheets-core/lib/index.css'
 
 import type { TableGrid } from '../../lib/types'
-import { gridToUniver, univerGridSignature, univerToGrid } from '../../lib/univerGrid'
+import { gridToUniver, univerGridSignature, univerToGrid, UNIVER_SHEET_ID } from '../../lib/univerGrid'
 import { setVerified } from '../../lib/grid'
 import { useI18n } from '../../i18n'
 import { commandAffectsGrid } from '../../lib/univerEvents'
 import { toFractionGlyphs } from '../../lib/fractions'
+import { wheelZoomFactor } from '../canvasGeometry'
 
 /** I comandi nostri: ognuno esegue un'operazione sulla selezione.
  *
@@ -95,6 +98,13 @@ export type TrackOp =
   | 'insertColRight'
   | 'deleteCol'
 
+type HeaderOp = 'saveHeader' | 'applyHeader'
+
+const HEADER_COMMANDS: { op: HeaderOp; id: string; title: string; order: number }[] = [
+  { op: 'saveHeader', id: 'tabularium.command.save-known-header', title: 'tabularium.saveKnownHeader', order: 50 },
+  { op: 'applyHeader', id: 'tabularium.command.apply-known-header', title: 'tabularium.applyKnownHeader', order: 51 },
+]
+
 const TRACK_COMMANDS: { op: TrackOp; id: string; title: string; order: number }[] = [
   { op: 'insertRowAbove', id: 'tabularium.command.insert-row-above', title: 'tabularium.insertRowAbove', order: 100 },
   { op: 'insertRowBelow', id: 'tabularium.command.insert-row-below', title: 'tabularium.insertRowBelow', order: 101 },
@@ -107,6 +117,8 @@ const TRACK_COMMANDS: { op: TrackOp; id: string; title: string; order: number }[
 /** Le etichette che Univer disegna nel suo menù: si registrano nella sua
  *  lingua, altrimenti al posto della voce comparirebbe la chiave. */
 const LABELS_IT = {
+  saveKnownHeader: 'Salva intestazione selezionata…',
+  applyKnownHeader: 'Sostituisci con intestazione nota…',
   verify: 'Segna come verificata',
   unverify: 'Segna come non verificata',
   insertRowAbove: 'Inserisci una riga sopra',
@@ -126,6 +138,8 @@ const LABELS_IT = {
   unmerge: 'Separa la cella unita',
 }
 const LABELS_EN = {
+  saveKnownHeader: 'Save selected header…',
+  applyKnownHeader: 'Replace with known header…',
   verify: 'Mark as verified',
   unverify: 'Mark as not verified',
   insertRowAbove: 'Insert row above',
@@ -145,6 +159,8 @@ const LABELS_EN = {
   unmerge: 'Unmerge the cell',
 }
 const LABELS_FR = {
+  saveKnownHeader: 'Enregistrer l’en-tête sélectionné…',
+  applyKnownHeader: 'Remplacer par un en-tête connu…',
   verify: 'Marquer comme vérifiée',
   unverify: 'Marquer comme non vérifiée',
   insertRowAbove: 'Insérer une ligne au-dessus',
@@ -213,6 +229,13 @@ export interface SheetSelection {
   endColumn: number
 }
 
+/** Il ponte imperativo per sostituire il contenuto del foglio senza smontarlo.
+ *  Serve alle operazioni strutturali: cambiare righe, colonne e merge non deve
+ *  azzerare scroll, selezione o cronologia visibile all'annotatore. */
+export interface UniverController {
+  applyGrid: (grid: TableGrid) => boolean
+}
+
 /** Una tinta su un insieme di celle — le sospette dei controlli aritmetici,
  *  le verificate dall'annotatore — dipinta **sul canvas** e non
  *  nel documento: uno stile scritto con i comandi di Univer entrerebbe nella
@@ -261,20 +284,28 @@ interface UniverSheetProps {
   /** Il modello di partenza: si carica una volta, poi comanda Univer. */
   grid: TableGrid
   /** Chiamata a ogni cambiamento reale (celle, merge, dimensioni). */
-  onGridChange: (grid: TableGrid) => void
+  onGridChange: (grid: TableGrid, beforeEdit?: TableGrid) => void
   /** Invocata da una voce di operazione di colonna, con la selezione corrente. */
   onColumnOp: (op: ColumnOp, selection: SheetSelection) => void
   /** Invocata da una voce su righe/colonne (struttura), con la selezione corrente. */
   onTrackOp: (op: TrackOp, selection: SheetSelection) => void
+  /** Salva o applica un'intestazione nota alla selezione corrente. */
+  onSaveHeader?: (selection: SheetSelection) => void
+  onApplyHeader?: (selection: SheetSelection) => void
   /** Celle da evidenziare (controlli aritmetici), [riga, colonna]. */
   suspects?: [number, number][]
   /** La cella attiva, per dire accanto al foglio perché è evidenziata. */
   onSelectionChange?: (selection: SheetSelection) => void
+  /** Controller mounted with the sheet; `null` while it is not ready. */
+  onControllerChange?: (controller: UniverController | null) => void
+  /** Undo/redo owned by the workspace's snapshot history. */
+  onUndo?: () => void
+  onRedo?: () => void
   /** Mostra lo scheletro soltanto finché la tela del foglio è pronta. */
   intro?: boolean
 }
 
-export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp, suspects, onSelectionChange, intro = false }: UniverSheetProps) {
+export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp, onSaveHeader, onApplyHeader, suspects, onSelectionChange, onControllerChange, onUndo, onRedo, intro = false }: UniverSheetProps) {
   const { t, locale } = useI18n()
   const host = useRef<HTMLDivElement | null>(null)
   const [failed, setFailed] = useState(false)
@@ -288,12 +319,35 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
   opRef.current = onColumnOp
   const trackOpRef = useRef(onTrackOp)
   trackOpRef.current = onTrackOp
+  const saveHeaderRef = useRef(onSaveHeader)
+  saveHeaderRef.current = onSaveHeader
+  const applyHeaderRef = useRef(onApplyHeader)
+  applyHeaderRef.current = onApplyHeader
   const selectRef = useRef(onSelectionChange)
   selectRef.current = onSelectionChange
+  const controllerChangeRef = useRef(onControllerChange)
+  controllerChangeRef.current = onControllerChange
+  const undoRef = useRef(onUndo)
+  undoRef.current = onUndo
+  const redoRef = useRef(onRedo)
+  redoRef.current = onRedo
+  const applyingGridRef = useRef(false)
   /** Ridipinge le celle sospette; `null` finché il foglio non è montato. */
   const paintRef = useRef<((cells: [number, number][]) => void) | null>(null)
   const suspectsRef = useRef(suspects ?? [])
   suspectsRef.current = suspects ?? []
+
+  // Durante il lavoro sul foglio il pinch deve essere un gesto dell'editor,
+  // non lo zoom della pagina. Il meta viewport vale solo finché il foglio è
+  // montato e viene ripristinato appena si torna all'app.
+  useEffect(() => {
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]')
+    const previous = meta?.content
+    if (meta) meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'
+    return () => {
+      if (meta && previous != null) meta.content = previous
+    }
+  }, [])
 
   useEffect(() => {
     const container = host.current
@@ -301,10 +355,33 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
     let univer: Univer | null = null
     let unsubscribe: { dispose?: () => void } | null = null
     let selectionListener: { dispose: () => void } | null = null
+    let editStartedListener: { dispose: () => void } | null = null
     let editListener: { dispose: () => void } | null = null
+    let disposeSheetGestures: (() => void) | null = null
     let cancelled = false
     let readyTimeout: number | undefined
+    let apiRef: FUniver | null = null
+        /** Stato stabile precedente all'edit: Univer può emettere più comandi
+         *  durante lo stesso gesto, ma l'undo deve tornare a prima del gesto e
+         *  non a uno stato intermedio già marcato come non verificato. */
+        let editBase: TableGrid | null = null
     const language = univerLanguage(locale)
+
+    /** Deve essere registrato prima di `createUniver`: il motore installa i
+     *  propri shortcut su `window` e, se arrivasse prima lui, eseguirebbe
+     *  l'undo nativo sul documento invece della cronologia della tabella. */
+    const onUndoRedo = (event: KeyboardEvent) => {
+      if (!apiRef || (!event.ctrlKey && !event.metaKey) || event.altKey) return
+      const key = event.key.toLowerCase()
+      if (key !== 'z' && key !== 'y') return
+      const target = event.target
+      if (target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      if (key === 'y' || (key === 'z' && event.shiftKey)) redoRef.current?.()
+      else undoRef.current?.()
+    }
+    window.addEventListener('keydown', onUndoRedo, true)
 
     // Univer legge la dimensione del contenitore quando monta: dentro una
     // modale appena aperta il layout non è ancora assestato, e montarlo subito
@@ -340,7 +417,123 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
         })
         univer = created.univer
         const api: FUniver = created.univerAPI
+        apiRef = api
         api.createWorkbook(gridToUniver(gridRef.current))
+        const injector = univer.__getInjector()
+        const undoRedo = injector.get(IUndoRedoService)
+
+        /** Ctrl+rotella e il pinch del touchpad arrivano al browser come wheel
+         *  con ctrlKey. Senza fermarli qui, Chrome zooma l'intera pagina e la
+         *  modale sembra cambiare dimensione invece del solo foglio. I listener
+         *  stanno su window in cattura: alcuni browser consegnano il gesto al
+         *  documento invece che al canvas sotto il puntatore. */
+        let gestureBaseZoom = 1
+        let touchBaseZoom = 1
+        let touchStartDistance = 0
+        const pointIsOverSheet = (x: number, y: number) => {
+          const rect = container.getBoundingClientRect()
+          return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+        }
+        const eventIsOverSheet = (event: Event) => {
+          const target = event.target
+          if (target instanceof Node && container.contains(target)) return true
+          const point = event as Event & { clientX?: number; clientY?: number }
+          return typeof point.clientX === 'number' && typeof point.clientY === 'number'
+            ? pointIsOverSheet(point.clientX, point.clientY)
+            : false
+        }
+        const zoomSheet = (factor: number) => {
+          const sheet = api.getActiveSheet()
+          if (!sheet) return
+          sheet.worksheet.zoom(Math.min(4, Math.max(0.1, sheet.worksheet.getZoom() * factor)))
+        }
+        const onSheetWheel = (event: WheelEvent) => {
+          if ((!event.ctrlKey && !event.metaKey) || !eventIsOverSheet(event)) return
+          event.preventDefault()
+          event.stopPropagation()
+          const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? Math.max(1, container.clientHeight) : 1
+          zoomSheet(wheelZoomFactor(event.deltaY * unit))
+        }
+        const onGestureStart = (event: Event) => {
+          if (typeof (event as Event & { scale?: number }).scale !== 'number' || !eventIsOverSheet(event)) return
+          event.preventDefault()
+          event.stopPropagation()
+          gestureBaseZoom = api.getActiveSheet()?.worksheet.getZoom() ?? 1
+        }
+        const onGestureChange = (event: Event) => {
+          const scale = (event as Event & { scale?: number }).scale
+          if (typeof scale !== 'number' || !eventIsOverSheet(event)) return
+          event.preventDefault()
+          event.stopPropagation()
+          const sheet = api.getActiveSheet()
+          if (sheet) sheet.worksheet.zoom(Math.min(4, Math.max(0.1, gestureBaseZoom * scale)))
+        }
+        const onSheetTouchStart = (event: TouchEvent) => {
+          if (event.touches.length !== 2 || !pointIsOverSheet(event.touches[0].clientX, event.touches[0].clientY)) return
+          event.preventDefault()
+          event.stopPropagation()
+          touchBaseZoom = api.getActiveSheet()?.worksheet.getZoom() ?? 1
+          touchStartDistance = Math.max(1, Math.hypot(
+            event.touches[1].clientX - event.touches[0].clientX,
+            event.touches[1].clientY - event.touches[0].clientY,
+          ))
+        }
+        const onSheetTouchMove = (event: TouchEvent) => {
+          if (event.touches.length !== 2 || touchStartDistance <= 0) return
+          event.preventDefault()
+          event.stopPropagation()
+          const distance = Math.max(1, Math.hypot(
+            event.touches[1].clientX - event.touches[0].clientX,
+            event.touches[1].clientY - event.touches[0].clientY,
+          ))
+          const sheet = api.getActiveSheet()
+          if (sheet) sheet.worksheet.zoom(Math.min(4, Math.max(0.1, touchBaseZoom * distance / touchStartDistance)))
+        }
+        const onSheetTouchEnd = (event: TouchEvent) => {
+          if (event.touches.length < 2) touchStartDistance = 0
+        }
+        window.addEventListener('wheel', onSheetWheel, { capture: true, passive: false })
+        window.addEventListener('gesturestart', onGestureStart, { capture: true, passive: false })
+        window.addEventListener('gesturechange', onGestureChange, { capture: true, passive: false })
+        window.addEventListener('touchstart', onSheetTouchStart, { capture: true, passive: false })
+        window.addEventListener('touchmove', onSheetTouchMove, { capture: true, passive: false })
+        window.addEventListener('touchend', onSheetTouchEnd, { capture: true, passive: false })
+        window.addEventListener('touchcancel', onSheetTouchEnd, { capture: true, passive: false })
+
+        /** Escape prima annulla la modifica della cella o chiude un menu/popup
+         *  di Univer; solo un Escape fuori da questi livelli deve poter chiudere
+         *  la modale che contiene il foglio. */
+        let escapeWasEditing = false
+        let escapeWasInSheet = false
+        let escapeWasContextMenu = false
+        const onEscapeCapture = (event: KeyboardEvent) => {
+          if (event.key !== 'Escape') return
+          escapeWasEditing = Boolean(api.getActiveWorkbook()?.isCellEditing())
+          escapeWasInSheet = container.contains(document.activeElement)
+            || (event.target instanceof Node && container.contains(event.target))
+          escapeWasContextMenu = contextMenus.visible
+        }
+        const onEscape = (event: KeyboardEvent) => {
+          if (event.key !== 'Escape' || (!escapeWasEditing && !escapeWasInSheet && !escapeWasContextMenu)) return
+          if (escapeWasContextMenu) contextMenus.hideContextMenu()
+          escapeWasEditing = false
+          escapeWasInSheet = false
+          escapeWasContextMenu = false
+          event.stopPropagation()
+        }
+        container.addEventListener('keydown', onEscapeCapture, true)
+        container.addEventListener('keydown', onEscape)
+        disposeSheetGestures = () => {
+          window.removeEventListener('wheel', onSheetWheel, true)
+          window.removeEventListener('gesturestart', onGestureStart, true)
+          window.removeEventListener('gesturechange', onGestureChange, true)
+          window.removeEventListener('touchstart', onSheetTouchStart, true)
+          window.removeEventListener('touchmove', onSheetTouchMove, true)
+          window.removeEventListener('touchend', onSheetTouchEnd, true)
+          window.removeEventListener('touchcancel', onSheetTouchEnd, true)
+          container.removeEventListener('keydown', onEscapeCapture, true)
+          container.removeEventListener('keydown', onEscape)
+        }
 
         // Pronto quando la tela del foglio (non quella della barra della
         // formula, che arriva prima) ha preso le sue dimensioni, più un frame
@@ -393,6 +586,7 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
         // Solo le mutazioni del dato ricostruiscono il modello; selezione e
         // scorrimento restano a costo della vista, senza snapshot completo.
         unsubscribe = api.onCommandExecuted((command) => {
+          if (applyingGridRef.current) return
           if (!commandAffectsGrid(command.id)) return
           const data = api.getActiveWorkbook()?.save()
           if (!data) return
@@ -401,7 +595,11 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
           if (signature === known) return
           known = signature
           gridRef.current = next
-          changeRef.current(next)
+          changeRef.current(next, editBase ?? undefined)
+          // La cronologia visibile è quella dello workspace. Lasciare in vita
+          // anche la pila nativa significherebbe avere due “Annulla” diversi:
+          // uno può ricostruire il foglio e l'altro no.
+          undoRedo.clearUndoRedo(api.getActiveWorkbook()?.getId() ?? '')
           // Una cella riscritta perde la verifica: la tinta la segue.
           paintVerified(verifiedCells(next))
           refreshActive()
@@ -409,9 +607,9 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
 
         // Il telaio di Univer non ha l'unisci nel menù contestuale (sta nella
         // barra strumenti, che qui non c'è): si aggiunge la voce riusando i
-        // suoi comandi, così l'undo resta il suo.
-        const injector = univer.__getInjector()
+        // suoi comandi, mentre la cronologia visibile resta dello workspace.
         const commands = injector.get(ICommandService)
+        const contextMenus = injector.get(IContextMenuService)
 
         // La selezione si legge al momento del comando: il menù si apre su una
         // scelta che cambia, e un intervallo serve intero (per unire) o solo la
@@ -442,6 +640,71 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
           active.value = value
           active.listeners.forEach((listener) => listener())
         }
+
+        /** Sostituisce testo, merge e dimensioni mantenendo montata la vista.
+         *  Tutti i comandi passano dalla stessa pila undo di Univer come un
+         *  solo passo; la cronologia funzionale resta però quella dello
+         *  workspace, che conserva anche `source`/`verified` per cella. */
+        const applyGrid = (next: TableGrid): boolean => {
+          const workbook = api.getActiveWorkbook()
+          const sheet = workbook?.getActiveSheet()
+          if (!workbook || !sheet) return false
+
+          const snapshot = gridToUniver(next)
+          const source = snapshot.sheets?.[UNIVER_SHEET_ID]
+          const rows = Math.max(1, source?.rowCount ?? next.rows)
+          const cols = Math.max(1, source?.columnCount ?? next.cols)
+          const header = Math.min(Math.max(0, next.header_rows ?? 0), rows)
+          const cellData = source?.cellData ?? {}
+          const matrix: ICellData[][] = Array.from({ length: rows }, (_, r) =>
+            Array.from({ length: cols }, (_, c) => ({ ...(cellData[r]?.[c] ?? {}) })),
+          )
+          const before = sheet.getSelection()?.getActiveRange()?.getRange() ?? null
+          const zoom = sheet.getZoom()
+          const oldRows = sheet.getMaxRows()
+          const oldCols = sheet.getMaxColumns()
+
+          applyingGridRef.current = true
+          const batch = undoRedo.__tempBatchingUndoRedo(workbook.getId())
+          try {
+            // Prima si crea spazio sufficiente, poi si azzera l'intera vecchia
+            // area: ridurre le dimensioni prima del clear lascerebbe fuori le
+            // celle che stanno per scomparire.
+            sheet.setRowCount(Math.max(oldRows, rows))
+            sheet.setColumnCount(Math.max(oldCols, cols))
+            for (const range of sheet.getMergeData()) range.breakApart()
+            sheet.getRange(0, 0, Math.max(oldRows, rows), Math.max(oldCols, cols)).clear()
+            sheet.setRowCount(rows)
+            sheet.setColumnCount(cols)
+            sheet.getRange(0, 0, rows, cols).setValues(matrix)
+            for (const range of source?.mergeData ?? []) sheet.getRange(range).merge({ isForceMerge: true })
+            sheet.setFrozenRows(header)
+            sheet.zoom(zoom)
+            if (before) {
+              const startRow = Math.min(before.startRow, rows - 1)
+              const endRow = Math.min(before.endRow, rows - 1)
+              const startColumn = Math.min(before.startColumn, cols - 1)
+              const endColumn = Math.min(before.endColumn, cols - 1)
+              sheet.getRange(startRow, startColumn, endRow - startRow + 1, endColumn - startColumn + 1).activate()
+            }
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error('Impossibile aggiornare il foglio senza rimontarlo', error)
+            return false
+          } finally {
+            batch.dispose()
+            applyingGridRef.current = false
+          }
+          undoRedo.clearUndoRedo(workbook.getId())
+
+          gridRef.current = next
+          known = univerGridSignature(next)
+          paintVerified(verifiedCells(next))
+          refreshActive()
+          return true
+        }
+        controllerChangeRef.current?.({ applyGrid })
+
         const verify = (verified: boolean) => {
           const next = setVerified(gridRef.current, selection(), verified)
           const signature = univerGridSignature(next)
@@ -500,10 +763,15 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
           }
         })
 
+        editStartedListener = api.addEvent(api.Event.SheetEditStarted, () => {
+          editBase = gridRef.current
+        })
+
         // «8 1/8» → «8⅛» alla conferma della cella (v. `lib/fractions.ts`).
         // La conversione è un comando a sé, dopo quello della cella: Ctrl+Z la
         // annulla da sola e restituisce la frazione come l'hai digitata.
         editListener = api.addEvent(api.Event.SheetEditEnded, ({ worksheet, row, column, isConfirm }) => {
+          editBase = null
           if (!isConfirm) return
           const range = worksheet.getRange(row, column)
           const text = range.getValue()
@@ -532,6 +800,17 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
             },
           })
         }
+        for (const entry of HEADER_COMMANDS) {
+          commands.registerCommand({
+            id: entry.id,
+            type: CommandType.COMMAND,
+            handler: () => {
+              if (entry.op === 'saveHeader') saveHeaderRef.current?.(selection())
+              else applyHeaderRef.current?.(selection())
+              return true
+            },
+          })
+        }
 
         const entry = (key: string, title: string, commandId: string, order: number) => ({
           [key]: {
@@ -539,7 +818,7 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
             menuItemFactory: () => ({ id: key, type: MenuItemType.BUTTON, title, commandId }),
           },
         })
-        const group = [...TRACK_COMMANDS, ...COLUMN_COMMANDS].reduce(
+        const group = [...HEADER_COMMANDS, ...TRACK_COMMANDS, ...COLUMN_COMMANDS].reduce(
           (acc, item) => ({ ...acc, ...entry(item.id, item.title, item.id, item.order) }),
           {},
         )
@@ -562,10 +841,15 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
 
     return () => {
       cancelled = true
+      apiRef = null
       window.clearTimeout(readyTimeout)
+      window.removeEventListener('keydown', onUndoRedo, true)
       paintRef.current = null
       selectionListener?.dispose()
+      editStartedListener?.dispose()
       editListener?.dispose()
+      controllerChangeRef.current?.(null)
+      disposeSheetGestures?.()
       cancelAnimationFrame(frame)
       unsubscribe?.dispose?.()
       // Univer monta una **sua** radice React dentro il contenitore: chiuderla

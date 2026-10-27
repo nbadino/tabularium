@@ -4,7 +4,7 @@
  * si ri-renderizza da solo (polling della sessione) passando un `imageSize`
  * nuovo a ogni giro: lo zoom dell'annotatore non deve tornare a «adatta».
  */
-import { afterEach, beforeAll, expect, it } from 'vitest'
+import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import TablePageImage from './TablePageImage'
 
@@ -29,4 +29,19 @@ it('keeps the zoom when the parent re-renders with an equal imageSize', () => {
   expect(label()).toBe('24%')
   rerender(view({ w: 2000, h: 2000 }))
   expect(label()).toBe('24%')
+})
+
+it('switches between the table crop and the full page from the scan header', () => {
+  const onModeChange = vi.fn()
+  render(
+    <TablePageImage
+      src="/p.jpg"
+      pageId={1}
+      imageSize={{ w: 2000, h: 2000 }}
+      mode="crop"
+      onModeChange={onModeChange}
+    />,
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Pagina intera' }))
+  expect(onModeChange).toHaveBeenCalledWith('page')
 })

@@ -10,6 +10,8 @@ from fastapi import HTTPException
 from PIL import Image
 
 from .. import config
+from ..adapters import pages as pagestore
+from ..db import connect
 from . import images as imgmod
 from . import scan as scanmod
 
@@ -260,7 +262,7 @@ def clear_candidate(page_id: int) -> None:
     candidate_preview_path(page_id).unlink(missing_ok=True)
 
 
-def ensure_thumbnail(conn: sqlite3.Connection, page: sqlite3.Row) -> Path:
+def ensure_thumbnail(page: dict) -> Path:
     """Ritorna (generate se mancante) la thumbnail JPEG della pagina."""
     _purge_invalid_transform(page)
     expected = thumb_path(page["id"])
@@ -273,11 +275,11 @@ def ensure_thumbnail(conn: sqlite3.Connection, page: sqlite3.Row) -> Path:
     img = img.convert("RGB")
     img.thumbnail((THUMB_SIDE, THUMB_SIDE), Image.LANCZOS)
     img.save(expected, "JPEG", quality=82)
-    conn.execute("UPDATE pages SET thumb_path=? WHERE id=?", (str(expected), page["id"]))
+    pagestore.set_thumb(conn, page["id"], str(expected))
     return expected
 
 
-def ensure_preview(conn: sqlite3.Connection, page: sqlite3.Row) -> Path:
+def ensure_preview(page: dict) -> Path:
     """Ritorna (generate se mancante) un'anteprima a risoluzione maggiore."""
     _purge_invalid_transform(page)
     expected = preview_path(page["id"])
@@ -371,7 +373,36 @@ def ensure_tile(page: sqlite3.Row, level: int, x: int, y: int) -> Path:
     return out
 
 
-def compute_readiness(conn, page_id: int, lang: str = "it") -> dict:
+def _confirm_page_content(conn, page_id: int, *, confirmed_only: bool = False) -> dict:
+    """Accept page content after explicit human approval, including table cells."""
+    from .table_provenance import with_cell_provenance
+
+    blocks = 0 if confirmed_only else pagestore.confirm_blocks(page_id, conn)
+    cells = 0
+    tables = 0
+    rows = pagestore.confirmed_tables(page_id, conn)
+    for row in rows:
+        grid = with_cell_provenance(json.loads(row['grid_json'] or '{}'), row['prefill_source'])
+        changed = 0
+        for cell in grid.get('cells', []):
+            if cell.get('verified') is False:
+                cell.update(verified=True, verification_source='page_approval')
+                changed += 1
+        if changed:
+            pagestore.set_table_grid(row["id"], json.dumps(grid, ensure_ascii=False), conn)
+            cells += changed
+            tables += 1
+    revision = (
+        pagestore.bump_revision(page_id, conn) if (blocks or cells)
+        else pagestore.revision(page_id, conn)
+    )
+    return {'confirmed_blocks': blocks, 'confirmed_cells': cells, 'confirmed_tables': tables,
+            'annotation_revision': revision}
+
+
+def _compute_readiness(
+    conn, page_id: int, lang: str = "it", *, require_verified_cells: bool = True
+) -> dict:
     """Passaggi di annotazione completati per una pagina e blocco all'approvazione.
 
     È la definizione di «pagina pronta» condivisa da readiness, approvazione
@@ -379,13 +410,13 @@ def compute_readiness(conn, page_id: int, lang: str = "it") -> dict:
     (trascrizioni), tabelle (griglia OTSL valida) e revisione. Il router la
     espone via HTTP; la logica sta qui.
     """
-    from . import otsl as otslmod  # noqa: PLC0415
+    from ..domain import otsl as otslmod  # noqa: PLC0415
     from .i18n import msg  # noqa: PLC0415
 
-    page = conn.execute("SELECT * FROM pages WHERE id=?", (page_id,)).fetchone()
+    page = pagestore.get(page_id)
     if page is None:
         raise HTTPException(status_code=404, detail="pagina non trovata")
-    blocks = conn.execute("SELECT * FROM blocks WHERE page_id=? ORDER BY id", (page_id,)).fetchall()
+    blocks = pagestore.ordered_blocks(page_id, conn)
     errors: list[str] = []
     warnings: list[str] = []
     content_ok = True
@@ -411,14 +442,23 @@ def compute_readiness(conn, page_id: int, lang: str = "it") -> dict:
             content_ok = False
             errors.append(msg("empty_transcription", lang, id=block["id"]))
         if label == "Table":
-            row = conn.execute("SELECT grid_json FROM tables WHERE block_id=?", (block["id"],)).fetchone()
-            if not row:
+            grid_json = pagestore.table_grid(block["id"], conn)
+            if grid_json is None:
                 tables_ok = False
                 errors.append(msg("table_grid_missing", lang, id=block["id"]))
             else:
                 try:
-                    grid = json.loads(row["grid_json"] or "{}")
+                    grid = json.loads(grid_json or "{}")
+                    from .table_provenance import with_cell_provenance
+                    grid = with_cell_provenance(grid, block['prefill_source'])
                     otslmod.grid_to_otsl(grid)
+                    text_cells = [cell for cell in grid.get('cells', []) if (cell.get('text') or '').strip()]
+                    unverified = sum(cell.get('verified') is False for cell in text_cells)
+                    if unverified:
+                        if require_verified_cells:
+                            tables_ok = False
+                        target = errors if require_verified_cells else warnings
+                        target.append(msg('table_unverified_cells', lang, id=block['id'], n=unverified, total=len(text_cells)))
                 except (TypeError, ValueError) as exc:
                     tables_ok = False
                     errors.append(msg("table_grid_invalid", lang, id=block["id"], exc=exc))
@@ -433,3 +473,146 @@ def compute_readiness(conn, page_id: int, lang: str = "it") -> dict:
             "review": not errors and not warnings,
         },
     }
+
+
+def confirm_page_content(
+    page_id: int, *, confirmed_only: bool = False, conn=None
+) -> dict:
+    """Accept page content (and table cells) after explicit human approval.
+
+    Pass a connection when the caller is inside a transaction that must stay
+    atomic with the approval; leave it out and the service owns one.
+    """
+    if conn is not None:
+        return _confirm_page_content(conn, page_id, confirmed_only=confirmed_only)
+    with connect() as own:
+        return _confirm_page_content(own, page_id, confirmed_only=confirmed_only)
+
+
+def compute_readiness(
+    page_id: int, lang: str = "it", *, require_verified_cells: bool = True, conn=None
+) -> dict:
+    """Whether a page is ready to approve. Same connection rule as above."""
+    if conn is not None:
+        return _compute_readiness(
+            conn, page_id, lang=lang, require_verified_cells=require_verified_cells
+        )
+    with connect() as own:
+        return _compute_readiness(
+            own, page_id, lang=lang, require_verified_cells=require_verified_cells
+        )
+
+
+def approve_page(
+    page_id: int,
+    *,
+    confirm_drafts: bool = False,
+    lang: str = "it",
+    actor: dict | None = None,
+) -> dict:
+    """Approve one page: readiness, optional draft confirmation, status, audit.
+
+    One transaction, because "approved" must never survive without the content it
+    claims: confirming the drafts and writing the status are the same act.
+    """
+    from . import audit as auditsvc
+    from . import page_work as worksvc
+    from .i18n import msg
+
+    with connect() as conn:
+        if worksvc.configured(conn, page_id):
+            worksvc.fail("work_use_review", lang)
+        accepted = _confirm_page_content(conn, page_id) if confirm_drafts else {}
+        readiness = _compute_readiness(conn, page_id, lang=lang)
+        page = pagestore.get(page_id)
+        if page is None:
+            raise HTTPException(status_code=404, detail="pagina non trovata")
+        gold = _gold_pages(conn, page["project_id"])
+        if page_id in gold:
+            if not pagestore.has_passing_review(page_id, conn):
+                readiness["errors"].append(msg("gold_review", lang))
+                readiness["ready"] = False
+        if not readiness["ready"]:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": msg("page_not_ready", lang), **readiness},
+            )
+        pagestore.set_status(page_id, "approved", conn)
+        auditsvc.record(
+            conn, actor, "page.approved", resource_type="page", resource_id=page_id,
+            payload=accepted,
+        )
+    readiness["status"] = "approved"
+    readiness.update(accepted)
+    return readiness
+
+
+def approve_pages(
+    project_id: int,
+    page_ids: list[int] | None = None,
+    *,
+    confirm_drafts: bool = False,
+    lang: str = "it",
+    actor: dict | None = None,
+) -> dict:
+    """Bulk approval: the same act as `approve_page`, page by page, with one report."""
+    from . import audit as auditsvc
+    from .i18n import msg
+
+    with connect() as conn:
+        ids = pagestore.ids_of_project(project_id, conn)
+        if page_ids is not None:
+            wanted = {int(value) for value in page_ids}
+            ids = [pid for pid in ids if pid in wanted]
+        approved = 0
+        confirmed_blocks = 0
+        confirmed_cells = 0
+        accepted_revisions: dict[int, int] = {}
+        skipped: list[dict] = []
+        from . import page_work as worksvc
+
+        for pid in ids:
+            if worksvc.configured(conn, pid):
+                skipped.append({"page_id": pid, "reasons": [msg("work_use_review", lang)]})
+                continue
+            readiness = _compute_readiness(conn, pid, lang=lang)
+            if not readiness["ready"] and confirm_drafts:
+                accepted = _confirm_page_content(conn, pid)
+                confirmed_blocks += accepted["confirmed_blocks"]
+                confirmed_cells += accepted["confirmed_cells"]
+                accepted_revisions[pid] = accepted["annotation_revision"]
+                readiness = _compute_readiness(conn, pid, lang=lang)
+            if readiness["ready"]:
+                pagestore.set_status(pid, "approved", conn)
+                approved += 1
+            else:
+                skipped.append({"page_id": pid, "reasons": readiness.get("errors") or []})
+        auditsvc.record(
+            conn, actor, "pages.approved_bulk", resource_type="project", resource_id=project_id,
+            payload={
+                "approved": approved,
+                "confirmed_blocks": confirmed_blocks,
+                "confirmed_cells": confirmed_cells,
+                "skipped": len(skipped),
+            },
+        )
+    return {
+        "approved": approved,
+        "confirmed_blocks": confirmed_blocks,
+        "confirmed_cells": confirmed_cells,
+        "skipped_count": len(skipped),
+        "skipped": skipped[:50],
+        "accepted_revisions": accepted_revisions,
+    }
+
+
+def _gold_pages(conn, project_id: int) -> set[int]:
+    """Pages protected by the study protocol: they need a passing review to approve."""
+    from ..adapters import projects as projectstore  # noqa: PLC0415
+
+    settings = projectstore.settings_json(project_id)
+    try:
+        return {int(value) for value in settings.get("study_protocol", {}).get("gold_pages", [])}
+    except (TypeError, ValueError, KeyError):
+        return set()
+

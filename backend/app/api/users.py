@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..db import connect
+from ..adapters import users as userstore
+from ..db import connect  # noqa: F401  (the user service still takes a connection)
 from ..schemas import ResetPasswordIn, UserCreate, UserCreatedOut, UserOut, UserUpdate
 from ..services import auth as authsvc
 from ..services import security
@@ -87,10 +88,7 @@ def update_user(
         if payload.active is False and admin["id"] == target["id"]:
             raise HTTPException(status_code=400, detail="non si può disattivare il proprio account")
         if payload.active is False:
-            owned = conn.execute(
-                "SELECT COUNT(*) AS n FROM projects WHERE owner_id=?", (user_id,)
-            ).fetchone()["n"]
-            if owned:
+            if userstore.owned_projects(user_id, conn):
                 raise HTTPException(
                     status_code=409,
                     detail="trasferisci prima la proprietà dei progetti dell’utente",
@@ -117,7 +115,7 @@ def reset_password(
         # primo accesso, così l'admin non resta a conoscere la password vera.
         usersvc.set_password(conn, user_id, payload.password, must_change=True)
         # Le sessioni esistenti dell'utente decadono: la password è cambiata.
-        conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+        userstore.delete_sessions(user_id, conn)
         auditsvc.record(conn, _admin, "user.password_reset", resource_type="user", resource_id=user_id)
         user = usersvc.get_user(conn, user_id)
     return UserOut(**usersvc.user_out(user))
@@ -133,8 +131,7 @@ def delete_user(user_id: int, admin: dict = Depends(_admin)) -> None:
             raise HTTPException(status_code=400, detail="non si può eliminare il proprio account")
         if target["role"] == "admin":
             _guard_demote(conn, target["id"])
-        owned = conn.execute("SELECT COUNT(*) AS n FROM projects WHERE owner_id=?", (user_id,)).fetchone()["n"]
-        if owned:
+        if userstore.owned_projects(user_id, conn):
             raise HTTPException(
                 status_code=409,
                 detail="trasferisci prima la proprietà dei progetti dell'utente",

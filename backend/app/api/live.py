@@ -14,7 +14,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
-from ..db import connect
+from ..adapters import pages as pagestore
 from ..services import auth as authsvc
 from ..services import live
 
@@ -28,11 +28,7 @@ WS_NOT_FOUND = 4404
 
 def page_info(page_id: int) -> tuple[int, int] | None:
     """(project_id, annotation_revision) della pagina, o None se non esiste."""
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT project_id, annotation_revision FROM pages WHERE id=?",
-            (page_id,),
-        ).fetchone()
+    row = pagestore.get(page_id)
     if row is None:
         return None
     return int(row["project_id"]), int(row["annotation_revision"])

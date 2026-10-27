@@ -64,6 +64,22 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def remote_shell_path(value: str) -> str:
+    """Quota un percorso remoto lasciando espandere `$HOME`.
+
+    Il noleggio Vast restituisce `$HOME/tabularium-train/...`: quotarlo con
+    `shlex.quote` lo renderebbe letterale e `cd`/`dirname` cercherebbero una
+    cartella chiamata `$HOME`. Le virgolette doppie espandono la variabile e
+    proteggono comunque gli spazi.
+    """
+    text = str(value or "")
+    if text.startswith("$HOME/") or text.startswith("${HOME}/") or text.startswith("~/"):
+        if text.startswith("~/"):
+            text = "$HOME/" + text[2:]
+        return f'"{text}"'
+    return shlex.quote(text)
+
+
 def _dataset_source(project_id: int) -> tuple[Path, str | None]:
     """Risolvi l'ultimo snapshot immutabile, con fallback al dataset pubblico."""
     base = _project_dir(project_id) / "dataset"
@@ -129,6 +145,8 @@ def prepare_training_files(
     destination_dir: Path | None = None,
     adapter_id: str = "monkeyocrv2-parsing",
     train_type: str = "lora",
+    *,
+    images_prefix: str | None = None,
 ) -> tuple[Path, Path]:
     """Materializza la vista dati della ricetta e ne restituisce train/val.
 
@@ -140,7 +158,7 @@ def prepare_training_files(
         raise ValueError(f"nessuna vista dati per '{adapter_id}'")
     source, _snapshot_id = _dataset_source(project_id)
     target = destination_dir or (_project_dir(project_id) / "dataset")
-    view = build_view(recipe, source, target)
+    view = build_view(recipe, source, target, images_prefix=images_prefix)
     # Manifest della vista: dice quali famiglie sono entrate, con quali
     # prompt e cosa era vuoto. Il run lo allega, così un checkpoint ha la sua
     # provenienza dati senza doverla ricostruire.
@@ -161,7 +179,7 @@ def _python_bootstrap(cfg: dict, *, remote: bool, toolchain: str) -> str:
     """
     python_path = str(cfg.get("ssh_python") or "") if remote else config.TRAIN_PYTHON
     if python_path:
-        return f'export PATH="$(dirname {shlex.quote(python_path)}):$PATH"\n'
+        return f'export PATH="$(dirname {remote_shell_path(python_path)}):$PATH"\n'
     if toolchain == "ms-swift" and str(cfg.get("adapter_id") or "") == "monkeyocrv2-parsing":
         return (
             'if command -v conda >/dev/null 2>&1; then\n'
@@ -205,7 +223,7 @@ def _preamble(
         'RUN_DIR="$(cd "$(dirname "$0")" && pwd)"',
     ]
     if workdir:
-        lines.append(f"cd {shlex.quote(workdir)}")
+        lines.append(f"cd {remote_shell_path(workdir)}")
     lines.append("")
     return "\n".join(lines)
 
@@ -303,16 +321,31 @@ def _ms_swift_script(cfg: dict, recipe: recipes.TrainRecipe, run_dir: Path, trai
         env_lines.append(f'export IMAGE_MAX_TOKEN_NUM={int(flags["image_max_token_num"])}')
     if cfg.get("max_pixels") and "max_pixels" in recipe.defaults:
         env_lines.append(f'export MAX_PIXELS={int(cfg["max_pixels"])}')
+    # La cache dei pesi è condivisa e persistente, non una cartella della run:
+    # un checkpoint è immutabile e riscaricarlo a ogni run costa decine di GB
+    # (e su un host remoto la run vive in /tmp, quindi si perde al riavvio).
+    # `model_cache` permette di puntarla esplicitamente (disco dati, NFS…).
+    explicit_cache = str(cfg.get("model_cache") or "").strip()
     if remote:
-        env_lines.append('export MODELSCOPE_CACHE="$RUN_DIR/cache"')
+        env_lines.append(
+            f"export MODELSCOPE_CACHE={shlex.quote(explicit_cache)}"
+            if explicit_cache
+            else 'export MODELSCOPE_CACHE="${MODELSCOPE_CACHE:-$HOME/.cache/modelscope}"'
+        )
     else:
-        env_lines.append(f"export MODELSCOPE_CACHE={shlex.quote(str(run_dir / 'cache'))}")
+        env_lines.append(
+            f"export MODELSCOPE_CACHE={shlex.quote(explicit_cache or str(config.ROOT_DIR / 'cache' / 'modelscope'))}"
+        )
 
     args: list[str] = [
         f"  --model {shlex.quote(model_ref)} \\",
         f"  --model_type {recipe.swift_model_type} \\",
         f"  --template {recipe.swift_template} \\",
     ]
+    if cfg.get("use_hf"):
+        # I repo delle ricette sono HuggingFace: su un host fuori dalla Cina
+        # ModelScope è solo un mirror più lento e può non avere il checkpoint.
+        args.append("  --use_hf true \\")
     if flags.get("attn_impl"):
         args.append('  --attn_impl "$ATTN" \\')
     args += [
@@ -326,7 +359,7 @@ def _ms_swift_script(cfg: dict, recipe: recipes.TrainRecipe, run_dir: Path, trai
         # l'hook del motore (`Can't pickle ... _module_forward_post_hook`):
         # il run muore al primo batch. 0 worker è più lento ma esegue; il
         # valore ufficiale 4 resta quando DeepSpeed non è in uso.
-        f"  --dataloader_num_workers {0 if flags.get('deepspeed') else 4} \\",
+        f"  --dataloader_num_workers {0 if (flags.get('deepspeed') and not cfg.get('disable_deepspeed')) else 4} \\",
         "  --dataset_num_proc 4 \\",
         "  --dataset_shuffle True \\",
         "  --streaming False \\",
@@ -363,7 +396,7 @@ def _ms_swift_script(cfg: dict, recipe: recipes.TrainRecipe, run_dir: Path, trai
     args += [
         f"  --torch_dtype {flags.get('torch_dtype', 'bfloat16')} \\",
     ]
-    if flags.get("deepspeed"):
+    if flags.get("deepspeed") and not cfg.get("disable_deepspeed"):
         args.append(f"  --deepspeed {flags['deepspeed']} \\")
     args += [
         f"  --per_device_train_batch_size {int(cfg['batch_size'])} \\",

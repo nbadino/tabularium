@@ -13,6 +13,7 @@ import { describeError } from '../../lib/errors'
 import { useI18n } from '../../i18n'
 import type { SectionProps } from './SettingsPage'
 import { formatDateTime } from '../../lib/dates'
+import { API_BASE } from '../../lib/endpoints'
 
 interface BackupItem {
   name: string
@@ -151,7 +152,7 @@ export default function DataSection({ isAdmin }: SectionProps) {
                   {formatDateTime(item.modified_at, locale)}
                 </time>
                 <span className="ml-auto flex items-center gap-2">
-                  <a className="btn btn-sm" href={`/api/system/backup/${encodeURIComponent(item.name)}`}>
+                  <a className="btn btn-sm" href={`${API_BASE}/system/backup/${encodeURIComponent(item.name)}`}>
                     {t('settings.backupDownload')}
                   </a>
                   <button

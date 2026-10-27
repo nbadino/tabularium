@@ -26,8 +26,13 @@ RUN cd /opt/tabularium/MonkeyOCRv2/parsing/train \
     && { [ -f ms-swift/swift/llm/dataset/data/dataset_info.json ] || printf '[]\n' > ms-swift/swift/llm/dataset/data/dataset_info.json; } \
     && python -m pip install -e ./ms-swift
 RUN python -m pip install "transformers==4.57.1" "accelerate==1.11.0" "qwen_vl_utils==0.0.14"
-# vLLM 0.11 è il ramo legacy che serve.py accetta per MonkeyOCRv2.
+# Training retains its pinned environment; comparison uses a separate serving environment.
 RUN python -m pip install "vllm==0.11.0"
+
+# Preinstall serving separately so evaluation can start immediately after training.
+RUN python -m venv --system-site-packages /opt/tabularium/eval-venv \
+    && /opt/tabularium/eval-venv/bin/python -m pip install \
+       "vllm==0.11.2" "transformers==4.57.1" "qwen_vl_utils==0.0.14"
 RUN python - <<'PY'
 import json, pathlib
 import torch, transformers, swift
@@ -37,6 +42,7 @@ marker={
  'python':str(root/'venv/bin/python'),
  'repo':str(root/'MonkeyOCRv2/parsing/train'),
  'serve_repo':str(root/'MonkeyOCRv2/parsing'),
+ 'eval_python':str(root/'eval-venv/bin/python'),
  'torch':torch.__version__,'transformers':transformers.__version__,
  'ms_swift':getattr(swift,'__version__','unknown'),
 }

@@ -17,12 +17,12 @@ from pathlib import Path
 from . import dataset_builder as builder
 from . import inference as infmod
 from . import labeling
-from . import otsl as otslmod
+from ..domain import otsl as otslmod
 from . import pages as pagesvc
 from . import table_hint as table_hint_svc
 from .i18n import msg
 from .. import config
-from ..db import connect
+from ..adapters import projects as projectstore
 
 _TEXT_LABELS = {l.name for l in labeling.DEFAULT_LABELS if l.prompt_kind == "text"}
 STRICT_IOU = 0.75
@@ -31,15 +31,9 @@ STRICT_IOU = 0.75
 
 
 def _edit_distance(a, b) -> int:
-    if a == b:
-        return 0
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        cur = [i]
-        for j, cb in enumerate(b, 1):
-            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
-        prev = cur
-    return prev[-1]
+    """Exact Levenshtein distance without quadratic Python loops on full tables."""
+    from rapidfuzz.distance import Levenshtein
+    return Levenshtein.distance(a, b)
 
 
 def cer(ref: str, hyp: str) -> float:
@@ -158,7 +152,7 @@ def _grid_rows(grid: dict) -> list[list[tuple]]:
     return [[label for _, label in row] for row in out]
 
 
-def teds(gt_grid: dict, pred_grid: dict) -> float:
+def row_aligned_similarity(gt_grid: dict, pred_grid: dict) -> float:
     """Similarità di tabella 0–1 (TEDS ad allineamento per riga).
 
     Il TEDS classico è la tree edit distance tra le due tabelle, normalizzata.
@@ -182,6 +176,12 @@ def teds(gt_grid: dict, pred_grid: dict) -> float:
     if denom == 0:
         return 1.0
     return max(0.0, 1.0 - cost / denom)
+
+
+def teds(gt_grid: dict, pred_grid: dict) -> float:
+    """Standard tree edit similarity; the previous row-aligned proxy stays separate."""
+    from ..domain.table_similarity import teds as tree_teds
+    return tree_teds(gt_grid, pred_grid)
 
 
 def table_metrics(gt_grid: dict, pred_otsl: str, lang: str = "it") -> dict:
@@ -211,6 +211,8 @@ def table_metrics(gt_grid: dict, pred_otsl: str, lang: str = "it") -> dict:
         "structure_ok": bool(structure_ok),
         "cell_cer": sum(cers) / len(cers) if cers else 1.0,
         "teds": teds(gt_grid, pred),
+        "teds_method": "tree_edit_distance_apted",
+        "row_aligned_similarity": row_aligned_similarity(gt_grid, pred),
     }
 
 
@@ -225,33 +227,12 @@ def _norm(points: list) -> list[float]:
 
 def _project_table_hint(project_id: int) -> str:
     """Hint di schema tabella del progetto (v. `services/table_hint.py`)."""
-    try:
-        with connect() as conn:
-            row = conn.execute(
-                "SELECT settings_json FROM projects WHERE id=?", (project_id,)
-            ).fetchone()
-    except Exception:  # noqa: BLE001 - DB non ancora inizializzato nei test
-        return ""
-    if not row:
-        return ""
-    try:
-        settings = json.loads(row["settings_json"] or "{}")
-    except (TypeError, ValueError):
-        return ""
-    return table_hint_svc.get_table_hint(settings)
+    return table_hint_svc.get_table_hint(projectstore.settings_json(project_id))
 
 
 def _schema_labels(project_id: int) -> list:
     """Classi del progetto (default + custom) per il bridge nativa → canonica."""
-    try:
-        with connect() as conn:
-            row = conn.execute(
-                "SELECT settings_json FROM projects WHERE id=?", (project_id,)
-            ).fetchone()
-    except Exception:  # noqa: BLE001 - DB non ancora inizializzato nei test
-        return labeling.DEFAULT_LABELS
-    settings = json.loads(row["settings_json"] or "{}") if row else {}
-    return labeling.project_schema(settings).labels
+    return labeling.project_schema(projectstore.settings_json(project_id)).labels
 
 
 # --- valutazione pagina -------------------------------------------------------

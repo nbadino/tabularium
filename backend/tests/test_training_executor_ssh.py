@@ -37,6 +37,9 @@ def test_ssh_executor_uses_checksum_and_strict_host_key(tmp_path: Path):
     assert "mkdir -p" in executor.mkdir_argv(recipe)[-1]
     assert any("UserKnownHostsFile=" in item for item in launch)
     assert "bash train.sh" in launch[-1]
+    # I fd del processo in background devono essere chiusi, altrimenti ssh
+    # resta appeso e start_run non ritorna mai.
+    assert "> /dev/null 2>&1 < /dev/null" in launch[-1]
 
 
 def test_executor_factory_rejects_unknown_provider(tmp_path: Path):
@@ -95,3 +98,61 @@ def test_reconcile_does_not_kill_remote_job_on_backend_restart():
     with db.connect() as conn:
         state = conn.execute("SELECT state FROM jobs WHERE remote_job_id='4242'").fetchone()[0]
     assert state == "running"
+
+
+def test_launch_recovers_the_remote_pid_when_ssh_does_not_close(tmp_path: Path, monkeypatch):
+    import subprocess
+
+    known = tmp_path / "known_hosts"
+    known.write_text("gpu.example ssh-ed25519 AAAA\n", encoding="utf-8")
+    executor = SshExecutor("gpu.example", known_hosts=known)
+    recipe = _recipe(tmp_path)
+    synced: list[list[str]] = []
+
+    # The sync is a stream of file progress; what this test is about is what happens
+    # after it. Standing in for `_stream` keeps the test on one question.
+    monkeypatch.setattr(
+        SshExecutor,
+        "_stream",
+        lambda self, command, stream, on_line: synced.append(command) or 0,
+    )
+
+    def fake_run(argv, **kwargs):
+        if "printf" not in " ".join(argv):
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        # ssh stays attached after printing the PID; the training has started anyway.
+        raise subprocess.TimeoutExpired(argv, 60, output="4242\n")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    proc = executor.launch(recipe, tmp_path / "train.log")
+
+    assert proc.pid == 4242
+    assert synced and synced[0][0] == "rsync"
+
+
+def test_the_sync_stream_reports_each_file_to_the_activity_file(tmp_path: Path, monkeypatch):
+    import json
+    import subprocess
+
+    known = tmp_path / "known_hosts"
+    known.write_text("gpu.example ssh-ed25519 AAAA\n", encoding="utf-8")
+    executor = SshExecutor("gpu.example", known_hosts=known)
+    recipe = _recipe(tmp_path)
+
+    def fake_stream(self, command, stream, on_line):
+        on_line("TABULARIUM_FILE:120:12:epoch_1.jsonl")
+        on_line("TABULARIUM_FILE:80:8:checkpoints/")
+        return 0
+
+    monkeypatch.setattr(SshExecutor, "_stream", fake_stream)
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "4242\n", ""),
+    )
+    executor.launch(recipe, tmp_path / "train.log")
+
+    activity = json.loads((recipe.run_dir / "activity.json").read_text(encoding="utf-8"))
+    # A directory announcement is not a finished file; only the file counts.
+    assert activity["files_done"] == 1
+    assert activity["bytes_done"] == 120
+    assert activity["stage"] == "model_loading"

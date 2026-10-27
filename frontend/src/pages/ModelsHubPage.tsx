@@ -21,6 +21,7 @@ import { apiGet, apiPut } from '../lib/api'
 import type { SystemInfo } from '../lib/types'
 import { syncInferenceFromBackend, useInference } from '../app/inference'
 import { CloudControlModal } from '../app/CloudControlModal'
+import { LlamaIndexSetup } from '../app/models/LlamaIndexSetup'
 import { ModelPicker } from '../app/models/ModelPicker'
 import { DestinationPicker } from '../app/models/DestinationPicker'
 import { LocalSetup } from '../app/models/LocalSetup'
@@ -168,7 +169,7 @@ export default function ModelsHubPage() {
   ]
 
   return (
-    <div className="p-3">
+    <div className="p-4">
       <PageHeader title={t('nav.models')} intro={t('modelsHub.intro')} />
 
       {error != null && <div className="mb-3"><ErrorNotice error={error} /></div>}
@@ -233,44 +234,20 @@ export default function ModelsHubPage() {
       {/* I tre passi: la linguetta porta la scelta fatta, così tornare
           indietro non costa rileggere la pagina per ricordarla. */}
       <nav ref={stepsRef} aria-label={t('modelsHub.stepsLabel')} className="mt-3 scroll-mt-3">
-        <ol className="grid border border-[color:var(--color-rule)] sm:grid-cols-3">
+        <ol className="grid gap-4 border-b border-[color:var(--color-rule)] sm:grid-cols-3">
           {stepTabs.map((s) => {
             const active = s.id === step
-            return (
-              <li key={s.id} className="border-b border-[color:var(--color-rule)] last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
-                <button
-                  type="button"
-                  disabled={!s.enabled}
-                  aria-current={active ? 'step' : undefined}
-                  onClick={() => go({ step: s.id })}
-                  className={`relative flex w-full items-center gap-2.5 px-3 py-2 text-left disabled:cursor-not-allowed ${
-                    active ? 'bg-[color:var(--color-ink)] text-white' : 'bg-[color:var(--color-sheet)] hover:bg-[color:var(--color-fill)] disabled:hover:bg-[color:var(--color-sheet)]'
-                  }`}
-                >
-                  <span
-                    className={`flex h-6 w-6 shrink-0 items-center justify-center text-[12px] font-bold ${
-                      active
-                        ? 'bg-[color:var(--color-sig-plate)] text-white'
-                        : s.value
-                          ? 'bg-[color:var(--color-ink)] text-white'
-                          : 'border border-[color:var(--color-rule)] text-[color:var(--color-ink-3)]'
-                    }`}
-                    aria-hidden
-                  >
-                    {s.n}
-                  </span>
-                  <span className="min-w-0">
-                    <span className={`block text-[11px] font-semibold uppercase tracking-[0.04em] ${active ? 'text-white/80' : s.enabled ? 'text-[color:var(--color-ink-2)]' : 'text-[color:var(--color-ink-3)]'}`}>
-                      {s.label}
-                    </span>
-                    <span className={`block truncate text-[13px] font-semibold ${active ? 'text-white' : s.enabled ? '' : 'text-[color:var(--color-ink-3)]'}`}>
-                      {s.value ?? (active ? t('modelsHub.stepNow') : '—')}
-                    </span>
-                  </span>
-                  {active && <span className="absolute inset-x-0 bottom-0 h-[3px] bg-[color:var(--color-sig)]" aria-hidden />}
-                </button>
-              </li>
-            )
+            return <li key={s.id}>
+              <button type="button" disabled={!s.enabled} aria-current={active ? 'step' : undefined}
+                onClick={() => go({ step: s.id })}
+                className={`flex w-full items-baseline gap-3 border-b-2 py-3 text-left disabled:cursor-not-allowed ${active ? 'border-[color:var(--color-ink)]' : 'border-transparent hover:border-[color:var(--color-rule)]'}`}>
+                <span aria-hidden className="text-[12px] text-[color:var(--color-ink-3)]">{s.n}</span>
+                <span className="min-w-0">
+                  <span className="block text-[12px] text-[color:var(--color-ink-2)]">{s.label}</span>
+                  <span className={`block truncate text-[13px] ${active ? 'font-semibold' : s.enabled ? '' : 'text-[color:var(--color-ink-3)]'}`}>{s.value ?? (active ? t('modelsHub.stepNow') : '—')}</span>
+                </span>
+              </button>
+            </li>
           })}
         </ol>
       </nav>
@@ -321,21 +298,32 @@ export default function ModelsHubPage() {
                 <Link to="/">{t('modelsHub.goRecognize')}</Link>
               </Notice>
             )}
-            <CloudControlModal
-              key={`${dest}:${model.adapter_id}`}
-              open
-              inline
-              onlyProvider={dest}
-              focusProvider={dest}
-              focusAdapterId={model.adapter_id}
-              focusModelLabel={model.display_name}
-              onClose={() => {
-                // In linea «chiudere» vuol dire «configurazione salvata»: si
-                // resta sul passo e lo si dice.
-                void syncInferenceFromBackend().catch(() => {})
-                setRemoteDone(true)
-              }}
-            />
+            {dest === 'llamaindex' ? (
+              <LlamaIndexSetup
+                key={`llamaindex:${model.adapter_id}`}
+                model={model}
+                onClose={() => {
+                  void syncInferenceFromBackend().catch(() => {})
+                  setRemoteDone(true)
+                }}
+              />
+            ) : (
+              <CloudControlModal
+                key={`${dest}:${model.adapter_id}`}
+                open
+                inline
+                onlyProvider={dest}
+                focusProvider={dest}
+                focusAdapterId={model.adapter_id}
+                focusModelLabel={model.display_name}
+                onClose={() => {
+                  // In linea «chiudere» vuol dire «configurazione salvata»: si
+                  // resta sul passo e lo si dice.
+                  void syncInferenceFromBackend().catch(() => {})
+                  setRemoteDone(true)
+                }}
+              />
+            )}
           </div>
         )}
 
@@ -369,26 +357,7 @@ export default function ModelsHubPage() {
         </Modal>
       )}
 
-      <div className="mt-3">
-        <Module tab={t('ux.modelTools')} quiet>
-          <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('modelsHub.toolsIntro')}</p>
-          <ul className="mt-3 grid border-t border-[color:var(--color-rule)] sm:grid-cols-2">
-            {(
-              [
-                { to: '/fine-tuning', label: t('nav.training'), hint: t('ux.refineToolHint') },
-                { to: '/playground', label: t('nav.playground'), hint: t('modelsHub.toolPlaygroundHint') },
-              ] as const
-            ).map((tool) => (
-              <li key={tool.to} className="border-b border-[color:var(--color-rule)]">
-                <Link to={tool.to} className="block px-1 py-1.5 no-underline hover:bg-[color:var(--color-fill)]">
-                  <span className="text-[13px] font-semibold text-[color:var(--color-ink)]">{tool.label}</span>
-                  <span className="mt-0.5 block text-[13px] text-[color:var(--color-ink-2)]">{tool.hint}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </Module>
-      </div>
+
     </div>
   )
 }

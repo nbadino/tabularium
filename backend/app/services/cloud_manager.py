@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 
 from .. import config
+from ..adapters import jobs as jobstore
 from ..db import connect
 from . import process_probe
 
@@ -94,35 +95,23 @@ def _is_ssh_process(pid: int) -> bool:
 
 
 def _persist_tunnel_job(info: dict[str, Any], pid: int) -> int:
-    with connect() as conn:
-        conn.execute(
-            "UPDATE jobs SET state='stopped', ended_at=datetime('now'), heartbeat_at=datetime('now') "
-            "WHERE kind='ssh_tunnel' AND state='running'"
-        )
-        cur = conn.execute(
-            "INSERT INTO jobs(kind, owner_id, provider, pid, process_group, state, heartbeat_at, command_json, recovery_strategy) "
-            "VALUES('ssh_tunnel', ?, 'ssh', ?, ?, 'running', datetime('now'), ?, 'pid-process-group')",
-            (info.get("owner_id"), pid, os.getpgid(pid) if hasattr(os, "getpgid") else pid, json.dumps(info)),
-        )
-        return int(cur.lastrowid)
+    jobstore.stop_running("ssh_tunnel")
+    return jobstore.start_tunnel_job(
+        owner_id=info.get("owner_id"),
+        pid=pid,
+        process_group=os.getpgid(pid) if hasattr(os, "getpgid") else pid,
+        command=info,
+    )
 
 
 def _update_tunnel_job(job_id: int | None, state: str, error: str | None = None) -> None:
     if job_id is None:
         return
-    with connect() as conn:
-        conn.execute(
-            "UPDATE jobs SET state=?, heartbeat_at=datetime('now'), ended_at=CASE WHEN ? IN ('stopped','failed') THEN datetime('now') ELSE ended_at END, error=? WHERE id=?",
-            (state, state, error, job_id),
-        )
+    jobstore.touch(job_id, state, error=error)
 
 
 def _persisted_tunnel() -> tuple[int, dict[str, Any]] | None:
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT id, pid, process_group, command_json FROM jobs "
-            "WHERE kind='ssh_tunnel' AND state='running' ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+    row = jobstore.latest_running("ssh_tunnel", columns="id, pid, process_group, command_json")
     if row is None:
         return None
     pid = int(row["pid"] or 0)
@@ -375,11 +364,7 @@ def reconcile_tunnel() -> None:
     Il job va letto PRIMA di ogni controllo di liveness: `_persisted_tunnel`
     marca lo stantio come 'failed' e cancellebbe l'intento da ripristinare.
     """
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT id, pid, state, error, command_json FROM jobs WHERE kind='ssh_tunnel' "
-            "ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+    row = jobstore.latest_of_kind("ssh_tunnel", columns="id, pid, state, error, command_json")
     if row is None:
         return  # mai partito, o fermato/visto fallire esplicitamente
     # Un fallimento di avvio o la morte del processo non sono uno stop
@@ -451,51 +436,22 @@ def track_cloud_resource(
     if hourly_rate is not None and float(hourly_rate) >= 0:
         cost["hourly_rate"] = float(hourly_rate)
     terminal = state in {"stopped", "deleted", "failed"}
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT id FROM jobs WHERE kind='cloud_resource' AND provider=? AND remote_job_id=? "
-            "ORDER BY id DESC LIMIT 1",
-            (provider, remote_id),
-        ).fetchone()
-        if row is None:
-            conn.execute(
-                "INSERT INTO jobs(kind, owner_id, provider, remote_job_id, state, heartbeat_at, cost_json, recovery_strategy, ended_at) "
-                "VALUES('cloud_resource', ?, ?, ?, ?, datetime('now'), ?, 'provider-api', CASE WHEN ? THEN datetime('now') ELSE NULL END)",
-                (owner_id, provider, remote_id, state, json.dumps(cost), terminal),
-            )
-        else:
-            conn.execute(
-                "UPDATE jobs SET state=?, heartbeat_at=datetime('now'), cost_json=?, ended_at=CASE WHEN ? THEN COALESCE(ended_at, datetime('now')) ELSE NULL END WHERE id=?",
-                (state, json.dumps(cost), terminal, row["id"]),
-            )
+    jobstore.cloud_upsert(
+        owner_id=owner_id,
+        provider=provider,
+        remote_id=remote_id,
+        state=state,
+        cost=cost,
+        terminal=terminal,
+    )
 
 
 def cloud_resource_cost(provider: str, remote_id: str | int) -> dict[str, float] | None:
     """Calcola il costo stimato della risorsa dal suo record persistito."""
-    try:
-        with connect() as conn:
-            row = conn.execute(
-                "SELECT started_at, ended_at, cost_json FROM jobs "
-                "WHERE kind='cloud_resource' AND provider=? AND remote_job_id=? ORDER BY id DESC LIMIT 1",
-                (provider, str(remote_id).strip()),
-            ).fetchone()
-    except sqlite3.OperationalError:
-        # Pure contract tests may exercise the provider adapter before the
-        # application lifecycle has created the optional jobs table.
+    usage = jobstore.cloud_usage(provider, str(remote_id))
+    if usage is None:
         return None
-    if row is None:
-        return None
-    try:
-        cost = json.loads(row["cost_json"] or "{}")
-        rate = float(cost.get("hourly_rate"))
-    except (TypeError, ValueError, KeyError):
-        return None
-    with connect() as conn:
-        elapsed = conn.execute(
-            "SELECT MAX(0.0, (julianday(COALESCE(?, datetime('now'))) - julianday(?)) * 24.0)",
-            (row["ended_at"], row["started_at"]),
-        ).fetchone()[0]
-    hours = float(elapsed or 0.0)
+    hours, rate = usage
     return {"hours": hours, "hourly_rate": rate, "estimated_usd": hours * rate}
 
 
@@ -699,6 +655,7 @@ def rent_vast_instance(
     tabularium_ref: str = "",
     prepare_server: bool = False,
     prepare_training: bool = False,
+    onstart_script: str = "",
 ) -> dict[str, Any]:
     """Noleggia un'offerta esplicita. L'azione è separata dalla ricerca."""
     token = api_key.strip()
@@ -712,7 +669,8 @@ def rent_vast_instance(
     if prepare_server and not pinned_ref:
         raise ValueError("monkeyocr_ref obbligatorio per preparare il server con una recipe riproducibile")
     pinned_tabularium_ref = str(tabularium_ref).strip()
-    if (prepare_server or prepare_training) and not pinned_tabularium_ref:
+    custom_onstart = str(onstart_script or "").strip()
+    if (prepare_server or prepare_training) and not pinned_tabularium_ref and not custom_onstart:
         raise ValueError("tabularium_ref obbligatorio per preparare la risorsa con una recipe riproducibile")
     if pinned_ref and any(ch in pinned_ref for ch in " \t\r\n;|&`$\\'"):
         raise ValueError("monkeyocr_ref non valido")
@@ -735,7 +693,11 @@ def rent_vast_instance(
         # Il training non serve una porta HTTP: basta SSH.
         "env": "-p 22:22/tcp" if prepare_training else f"-p {int(port)}:{int(port)}/http -p 22:22/tcp",
     }
-    if prepare_server:
+    if custom_onstart:
+        # L'onstart è generato dal backend (script di provisioning del profilo
+        # della ricetta): non serve una release pubblicata su GitHub.
+        body["onstart"] = custom_onstart
+    elif prepare_server:
         secret = api_key_for_server.strip()
         if secret:
             body["env"] += f" -e TABULARIUM_SERVER_API_KEY={shlex.quote(secret)}"
@@ -1147,6 +1109,7 @@ def _normalize_vast_instance(inst: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": inst.get("id"),
         "status": inst.get("actual_status") or inst.get("status_msg") or "unknown",
+        "status_message": str(inst.get("status_msg") or "")[-2000:],
         "gpu_name": inst.get("gpu_name"),
         "num_gpus": inst.get("num_gpus", 1),
         "dph_total": inst.get("dph_total"),

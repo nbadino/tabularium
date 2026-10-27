@@ -83,6 +83,22 @@ describe('destinationVerdict', () => {
     expect(recommendedDestination(argon)).toBe('manual')
   })
 
+  it('OCRia-1 usa la destinazione LlamaIndex, non un endpoint generico', () => {
+    const ocria = model({
+      adapter_id: 'llamaindex-ocria-1',
+      display_name: 'OCRia-1 (LlamaIndex)',
+      serve_backend: 'llamaindex-api',
+      supports_native: true,
+      local_serve_ready: false,
+      cloud_serve_ready: false,
+      cloud_template: null,
+    })
+    expect(destinationVerdict(ocria, 'llamaindex')).toEqual({ ok: true })
+    expect(destinationVerdict(ocria, 'manual').ok).toBe(false)
+    expect(isSelectable(ocria)).toBe(true)
+    expect(recommendedDestination(ocria)).toBe('llamaindex')
+  })
+
   it('raccomanda il serverless prima delle GPU a noleggio', () => {
     expect(recommendedDestination(model())).toBe('modal')
   })
@@ -94,6 +110,7 @@ describe('destinationForProvider', () => {
     // nell'hub è «Endpoint»: senza mappatura l'hub non riconosceva la scelta.
     expect(destinationForProvider('custom')).toBe('manual')
     expect(destinationForProvider('modal')).toBe('modal')
+    expect(destinationForProvider('llamaindex')).toBe('llamaindex')
     expect(destinationForProvider('local')).toBe('local')
     expect(destinationForProvider(null)).toBeNull()
     expect(destinationForProvider('boh')).toBeNull()

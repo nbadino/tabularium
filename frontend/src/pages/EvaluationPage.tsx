@@ -1,17 +1,18 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
-import { apiPost } from '../lib/api'
+import { apiGet, apiPost } from '../lib/api'
 import type { EvalPage, EvalReport } from '../lib/types'
 import { pages } from '../lib/vocab'
 import { ErrorNotice, Field, Loading, Module, Notice, WarnNotice, PageHeader } from '../app/ui'
 import { PipelineStrip } from '../app/PipelineView'
 import { buildPipeline, usePipelineState } from '../app/pipeline'
 import { useProjects, writeActiveProject } from '../app/activeProject'
-import { useInference } from '../app/inference'
+import { setInference, testInferenceConnection, useInference } from '../app/inference'
 import { IconEvaluate, IconPlayground } from '../app/icons'
 import { useI18n, tn } from '../i18n'
 import { pageLabel } from '../lib/pageLabel'
 import { useModelNames } from '../app/models/names'
+import { API_BASE } from '../lib/endpoints'
 
 const pct = (v: number | null | undefined) => (v == null ? '—' : `${(v * 100).toFixed(1)}%`)
 const num = (v: number | null | undefined, d = 3) => (v == null ? '—' : v.toFixed(d))
@@ -49,6 +50,20 @@ export default function EvaluationPage() {
   const [report, setReport] = useState<EvalReport | null>(null)
   const [selPage, setSelPage] = useState<EvalPage | null>(null)
   const [error, setError] = useState<unknown>(null)
+  const [checkingModel, setCheckingModel] = useState(true)
+  const [startingModel, setStartingModel] = useState(false)
+  const [localStartAllowed, setLocalStartAllowed] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    setLocalStartAllowed(false)
+    apiGet<{ items: { adapter_id: string; local?: { runnable: boolean } }[] }>('/models')
+      .then(({ items }) => {
+        if (active) setLocalStartAllowed(items.find((item) => item.adapter_id === inference.adapterId)?.local?.runnable === true)
+      })
+      .catch(() => { /* Keep model setup available when runtime capabilities cannot be loaded. */ })
+    return () => { active = false }
+  }, [inference.adapterId])
 
   const onProject = (pid: number | '') => {
     setProjectId(pid)
@@ -59,8 +74,74 @@ export default function EvaluationPage() {
 
   const projects = useProjects(onProject, setError)
 
+  const refreshModel = async () => {
+    setCheckingModel(true)
+    try {
+      const health = await testInferenceConnection({
+        url: inference.url,
+        model: inference.model,
+        adapterId: inference.adapterId,
+      })
+      setInference({
+        available: health.ok,
+        latencyMs: health.latency_ms ?? null,
+        modelsAvailable: health.models_available ?? [],
+        error: health.error ?? null,
+      })
+    } catch (e) {
+      setInference({ available: false, error: String(e) })
+    } finally {
+      setCheckingModel(false)
+    }
+  }
+
+  useEffect(() => {
+    void refreshModel()
+    const timer = window.setInterval(() => void refreshModel(), 15000)
+    return () => window.clearInterval(timer)
+  }, [inference.url, inference.model, inference.adapterId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const startLocalModel = async () => {
+    setStartingModel(true)
+    setError(null)
+    try {
+      await apiPost(`/models/${encodeURIComponent(inference.adapterId)}/serve/start`, {})
+      for (let i = 0; i < 150; i += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000))
+        const health = await testInferenceConnection({
+          url: inference.url,
+          model: inference.model,
+          adapterId: inference.adapterId,
+        })
+        if (health.ok) {
+          setInference({
+            available: true,
+            latencyMs: health.latency_ms ?? null,
+            error: null,
+            modelsAvailable: health.models_available ?? [],
+          })
+          break
+        }
+      }
+    } catch (e) {
+      setError(e)
+    } finally {
+      setStartingModel(false)
+    }
+  }
+
   const run = async () => {
     if (projectId === '') return
+    const health = await testInferenceConnection({
+      url: inference.url,
+      model: inference.model,
+      adapterId: inference.adapterId,
+    }).catch((e) => ({ ok: false, error: String(e) }))
+    if (!health.ok) {
+      setInference({ available: false, error: health.error ?? null })
+      setError(new Error(t('evaluate.modelUnreachableBody', { url: inference.url })))
+      return
+    }
     setRunning(true)
     setError(null)
     setReport(null)
@@ -90,6 +171,7 @@ export default function EvaluationPage() {
   // battere, e serve anche a scegliere fra i modelli del catalogo.
   const goldPages = workflow?.approved_pages ?? 0
   const goldReady = goldPages > 0
+  const heldOutReady = !trainingReady || (dataset?.report?.pages.val ?? 0) > 0
 
   const a = report?.aggregates
 
@@ -164,17 +246,30 @@ export default function EvaluationPage() {
           {projectId !== '' && goldReady && !trainingReady && (
             <Notice>{t('evaluate.baselineNote', { n: goldPages })}</Notice>
           )}
+          {projectId !== '' && trainingReady && !heldOutReady && <Notice tone="warn">
+            {t('evaluate.needsHeldOut')}{' '}<Link to="/dataset" className="font-semibold underline underline-offset-2">{t('pipeline.steps.datasetAction')}</Link>
+          </Notice>}
           {inference.enabled && !inferenceReady && (
-            <Notice tone="warn">
-              <span>{t('recognition.unreachableModel', { model: nameOf(inference.adapterId) ?? inference.model, url: inference.url })}</span>{' '}
-              <Link to="/modelli" className="font-semibold underline underline-offset-2">
-                {t('recognition.changeModel')}
-              </Link>
-            </Notice>
+            <WarnNotice title={t('evaluate.modelUnreachableTitle', { model: nameOf(inference.adapterId) ?? inference.model })}>
+              <p>{t('evaluate.modelUnreachableBody', { url: inference.url })}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {inference.provider === 'local' && localStartAllowed && (
+                  <button type="button" className="btn btn-sm" onClick={() => void startLocalModel()} disabled={startingModel || checkingModel}>
+                    {startingModel ? t('evaluate.startingModel') : t('evaluate.startModel')}
+                  </button>
+                )}
+                <button type="button" className="btn btn-sm" onClick={() => void refreshModel()} disabled={checkingModel}>
+                  {t('evaluate.recheckModel')}
+                </button>
+                <Link to="/modelli" className="font-semibold no-underline">
+                  {t('recognition.changeModel')}
+                </Link>
+              </div>
+            </WarnNotice>
           )}
           <button
             onClick={() => void run()}
-            disabled={running || projectId === '' || !goldReady || !inferenceReady}
+            disabled={running || checkingModel || projectId === '' || !goldReady || !heldOutReady || !inferenceReady}
             className="btn btn-primary mt-3"
           >
             <IconPlayground size={13} />
@@ -401,7 +496,7 @@ function PageOverlay({
     setImg(null)
     const im = new Image()
     im.onload = () => setImg({ w: im.naturalWidth, h: im.naturalHeight })
-    im.src = `/api/pages/${pageId}/preview`
+    im.src = `${API_BASE}/pages/${pageId}/preview`
   }, [pageId])
 
   if (!img) {
@@ -419,7 +514,7 @@ function PageOverlay({
     <figure className="m-0">
       <div className="lighttable relative overflow-hidden border border-[color:var(--color-rule)]">
         <img
-          src={`/api/pages/${pageId}/preview`}
+          src={`${API_BASE}/pages/${pageId}/preview`}
           alt={t('evaluate.overlayAlt')}
           className="block w-full"
         />

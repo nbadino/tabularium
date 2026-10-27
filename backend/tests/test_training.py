@@ -24,6 +24,9 @@ def test_generate_script_lora(tmp_path: Path):
     assert "--lora_rank 8" in script
     assert "--freeze_vit True" in script
     assert "CUDA_VISIBLE_DEVICES=\"1\"" in script
+    # La cache dei pesi non è dentro la run: un checkpoint è immutabile.
+    assert "cache/modelscope" in script
+    assert str(tmp_path / "run" / "cache") not in script
     assert "NPROC_PER_NODE=2" in script
     # DeepSpeed + worker del DataLoader = pickle dell'hook del motore.
     assert "--dataloader_num_workers 0" in script
@@ -82,6 +85,7 @@ def test_generate_script_remote_uses_recipe_paths_and_remote_runtime(tmp_path: P
     assert 'cd /opt/MonkeyOCRv2/parsing/train' in script
     assert 'dirname /opt/venv/bin/python' in script
     assert f'MODELSCOPE_CACHE="{run_dir}' not in script
+    assert 'MODELSCOPE_CACHE="${MODELSCOPE_CACHE:-$HOME/.cache/modelscope}"' in script
     assert str(run_dir) not in script
 
 
@@ -186,7 +190,7 @@ def test_start_requires_dataset():
 # Stima VRAM: il preflight deve sapere se la configurazione entra nella GPU
 # --------------------------------------------------------------------------
 
-from app.services import vram  # noqa: E402
+from app.domain import vram  # noqa: E402
 
 
 def test_the_dominant_term_is_the_vocabulary_not_the_weights():
@@ -333,3 +337,48 @@ def test_preflight_for_a_remote_gpu_does_not_ask_for_a_local_one(monkeypatch):
         "it",
     )
     assert not any("host SSH" in e or "repo di training" in e for e in ready["errors"])
+
+
+def test_generate_script_can_force_hf_and_explicit_cache(tmp_path: Path):
+    script = trainer.generate_script(
+        {
+            "executor": "vast",
+            "adapter_id": "qwen3-vl-8b",
+            "ssh_host": "gpu.example",
+            "ssh_python": "/opt/venv/bin/python",
+            "model_cache": "/data/models",
+            "use_hf": True,
+        },
+        tmp_path / "run",
+        tmp_path / "train.jsonl",
+        tmp_path / "val.jsonl",
+    )
+    assert "export MODELSCOPE_CACHE=/data/models" in script
+    assert "--use_hf true" in script
+
+
+def test_remote_paths_expand_home_from_the_rent_flow(tmp_path: Path):
+    """Il noleggio Vast restituisce `$HOME/...`: non deve diventare letterale."""
+    script = trainer.generate_script(
+        {
+            "executor": "vast",
+            "ssh_python": "$HOME/tabularium-train/venv/bin/python",
+            "ssh_train_repo": "$HOME/tabularium-train/MonkeyOCRv2/parsing/train",
+        },
+        tmp_path / "run",
+        tmp_path / "train.jsonl",
+        tmp_path / "val.jsonl",
+    )
+    assert 'export PATH="$(dirname "$HOME/tabularium-train/venv/bin/python"):$PATH"' in script
+    assert 'cd "$HOME/tabularium-train/MonkeyOCRv2/parsing/train"' in script
+
+
+def test_single_gpu_auto_run_can_disable_deepspeed(tmp_path: Path):
+    script = trainer.generate_script(
+        {"adapter_id": "monkeyocrv2-parsing", "disable_deepspeed": True},
+        tmp_path / "run",
+        tmp_path / "train.jsonl",
+        tmp_path / "val.jsonl",
+    )
+    assert "--deepspeed zero1" not in script
+    assert "--dataloader_num_workers 4" in script

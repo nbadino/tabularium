@@ -18,30 +18,34 @@ from app.services.training_views import build_view
 def _canonical_dataset(root: Path) -> Path:
     """Un dataset canonico minimo: una famiglia per file, split train/val."""
     root.mkdir(parents=True, exist_ok=True)
+    source_images = root / "source-images"
+    source_images.mkdir()
+    for name in ("p1.png", "crop-text.png", "crop-table.png", "crop-formula.png"):
+        (source_images / name).write_bytes(b"\x89PNG\r\n\x1a\nnot-really")
     rows = {
         "layout": {
-            "images": ["/data/p1.png"],
+            f"images": [str(source_images / 'p1.png')],
             "messages": [
                 {"role": "user", "content": "<image>Please output the categories and coordinates of the document elements in reading order."},
                 {"role": "assistant", "content": "[{\"bbox\":[1,2,3,4],\"label\":\"Text\"}]"},
             ],
         },
         "text_rec": {
-            "images": ["/data/crop-text.png"],
+            f"images": [str(source_images / 'crop-text.png')],
             "messages": [
                 {"role": "user", "content": "<image>Please output the text content from the image."},
                 {"role": "assistant", "content": "Abava (m. tank) Ru 71"},
             ],
         },
         "table": {
-            "images": ["/data/crop-table.png"],
+            f"images": [str(source_images / 'crop-table.png')],
             "messages": [
                 {"role": "user", "content": "<image>Please extract the table from the image and represent it in OTSL format."},
                 {"role": "assistant", "content": "<fcel>Abava<fcel>Ru<nl><fcel>71<ecel><nl>"},
             ],
         },
         "formula": {
-            "images": ["/data/crop-formula.png"],
+            f"images": [str(source_images / 'crop-formula.png')],
             "messages": [
                 {"role": "user", "content": "<image>Please write out the expression of the formula in the image using LaTeX format."},
                 {"role": "assistant", "content": "$C_{0}$"},
@@ -75,7 +79,8 @@ def test_llamafactory_view_uses_official_glm_prompts_and_drops_layout(tmp_path: 
     # Il target resta quello canonico, non viene rigenerato.
     table = next(row for row in rows if "Table Recognition" in row["messages"][0]["content"])
     assert table["messages"][1]["content"].startswith("<fcel>Abava")
-    assert table["images"] == ["/data/crop-table.png"]
+    assert table["images"][0].startswith("images/")
+    assert (destination / table["images"][0]).is_file()
     # Il dataset_info è quello che LLaMA-Factory legge dal dataset_dir.
     info = json.loads((destination / "dataset_info.json").read_text(encoding="utf-8"))
     entry = info["tabularium_glm-ocr_train"]
@@ -137,3 +142,46 @@ def test_missing_family_is_declared_not_invented(tmp_path: Path):
     view = build_view(recipe, source, tmp_path / "view")
     assert view.counts["table"]["train"] == 0
     assert any("table" in warning for warning in view.warnings)
+
+
+def test_remote_view_materializes_images_and_rewrites_the_prefix(tmp_path: Path):
+    """Su host remoto i crop locali non esistono: la run deve portarli con sé."""
+    recipe = train_recipes.get_recipe("monkeyocrv2-parsing")
+    assert recipe is not None
+    source = _canonical_dataset(tmp_path / "canonical")
+    image = tmp_path / "crops" / "crop.png"
+    image.parent.mkdir()
+    image.write_bytes(b"\x89PNG\r\n\x1a\nnot-really")
+    for path in source.glob("*.jsonl"):
+        row = json.loads(path.read_text(encoding="utf-8"))
+        row["images"] = [str(image)]
+        path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    destination = tmp_path / "view"
+    prefix = "/tmp/tabularium-runs/run_1/dataset/images"
+    view = build_view(recipe, source, destination, images_prefix=prefix)
+
+    rows = [json.loads(line) for line in view.train.read_text(encoding="utf-8").splitlines()]
+    assert rows
+    for row in rows:
+        assert len(row["images"]) == 1
+        assert row["images"][0].startswith(prefix + "/")
+        materialized = destination / "images" / Path(row["images"][0]).name
+        assert materialized.is_file()
+        assert materialized.read_bytes() == image.read_bytes()
+    # Lo stesso sorgente è materializzato una volta sola, non una per famiglia.
+    assert len(list((destination / "images").iterdir())) == 1
+
+
+def test_remote_view_fails_loudly_on_a_missing_crop(tmp_path: Path):
+    recipe = train_recipes.get_recipe("glm-ocr")
+    assert recipe is not None
+    source = _canonical_dataset(tmp_path / "canonical")
+    for path in source.glob("*.jsonl"):
+        row = json.loads(path.read_text(encoding="utf-8"))
+        row["images"] = [str(tmp_path / "does-not-exist.png")]
+        path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    import pytest
+
+    with pytest.raises(FileNotFoundError, match="immagine del dataset non trovata"):
+        build_view(recipe, source, tmp_path / "view", images_prefix="/remote/images")

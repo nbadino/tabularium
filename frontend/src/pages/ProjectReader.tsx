@@ -8,6 +8,7 @@ import { useI18n } from '../i18n'
 import { Badge, ErrorNotice, Field, Loading, Module, PageHeader } from '../app/ui'
 import { connectPage, disconnectPage, onAnnotationsChanged } from '../app/live'
 import { writeActiveProject } from '../app/activeProject'
+import { API_BASE } from '../lib/endpoints'
 
 function TablePreview({ block }: { block: BlockOut }) {
   const { t } = useI18n()
@@ -74,7 +75,7 @@ export default function ProjectReader({ project, projects }: { project: Project;
     {!pages && !error && <Loading label={t('common.loading')} />}
     {pages && !page && <p className="p-3 text-[13px]">{t(requested ? 'team.pageUnavailable' : 'project.emptyTitle')}</p>}
     {page && <div className="grid items-start gap-3 lg:grid-cols-2">
-      <Module tab={pageLabel(page)} quiet><img src={`/api/pages/${page.id}/preview`} alt={t('team.pagePreview', { name: pageLabel(page) })} className="w-full" /></Module>
+      <Module tab={pageLabel(page)} quiet><img src={`${API_BASE}/pages/${page.id}/preview`} alt={t('team.pagePreview', { name: pageLabel(page) })} className="w-full" /></Module>
       <Module tab={t('team.savedContent')} quiet>
         {!blocks && !error && <Loading label={t('common.loading')} />}
         {blocks?.length === 0 && <p className="text-[13px]">{t('team.noBlocks')}</p>}

@@ -3,9 +3,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { apiGet, apiPut } from '../../lib/api'
 import { useI18n } from '../../i18n'
 import { Badge, ErrorNotice, Module, Notice, SkeletonLines } from '../../app/ui'
+import { useInference } from '../../app/inference'
 import type { SectionProps } from './SettingsPage'
+import WorkflowFields, { type SettingValue, type WorkflowFieldSpec } from './WorkflowFields'
 
-type SettingValue = number | string | boolean | number[] | null
 type Values = Record<string, Record<string, SettingValue>>
 interface ModelSettingsItem {
   adapter_id: string
@@ -14,11 +15,22 @@ interface ModelSettingsItem {
   overrides: Values
   effective: Values
   restart_required: boolean
+  /** Vero quando il modello espone il pannello MLX (letto dal payload, non da una lista). */
+  mlx_available?: boolean
+  /** Campi di sampling che il vendor rifiuta: il pannello li nasconde. */
+  generation_unsupported?: string[]
+  /** Il vendor non espone `dtype` (wrapper ufficiale MonkeyOCRv2). */
+  serving_dtype?: boolean
+  /** Il modello ha un logits processor n-gram: solo allora `no_repeat_ngram_size` ha senso. */
+  no_repeat_ngram?: boolean
+  /** Schema dei campi workflow: il pannello si genera da qui. */
+  workflow_fields?: WorkflowFieldSpec[]
+  workflow_intro?: string
+  sections?: string[]
   /** Varianti MLX selezionabili della stessa conversione (es. bf16, 8-bit). */
   mlx_repo_choices?: { variant: string; repo: string }[]
 }
 
-const MLX_MODELS = ['paddleocr-vl', 'qwen3-vl-8b', 'unlimited-ocr']
 
 const SERVING_FIELDS = [
   { key: 'gpu_memory_utilization', min: 0.2, max: 0.98, step: 0.01 },
@@ -36,19 +48,9 @@ const GENERATION_FIELDS = [
   { key: 'frequency_penalty', min: -2, max: 2, step: 0.005 },
   { key: 'no_repeat_ngram_size', min: 0, max: 512, step: 1 },
 ] as const
-const PADDLE_WORKFLOW_FIELDS = [
-  'use_layout_detection', 'layout_nms', 'use_doc_orientation_classify', 'use_doc_unwarping',
-  'use_chart_recognition', 'use_seal_recognition', 'use_ocr_for_image_block',
-  'format_block_content', 'merge_layout_blocks', 'use_queues',
-] as const
-const PADDLE_LAYOUT_NUMBERS = [
-  { key: 'layout_threshold', min: 0, max: 1, step: 0.01 },
-  { key: 'layout_unclip_ratio', min: 0.01, max: 10, step: 0.05 },
-] as const
-const PADDLE_LAYOUT_SHAPES = ['auto', 'rect', 'quad', 'poly'] as const
-
 export default function ModelSettingsSection({ isAdmin }: SectionProps) {
   const { t } = useI18n()
+  const inference = useInference()
   const [items, setItems] = useState<ModelSettingsItem[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [draft, setDraft] = useState<Values>({})
@@ -56,9 +58,6 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [saved, setSaved] = useState(false)
-  const mineruLayoutSize = Array.isArray(draft.workflow?.layout_image_size)
-    ? draft.workflow.layout_image_size as number[]
-    : [1036, 1036]
 
   const load = async () => {
     setLoading(true)
@@ -66,7 +65,7 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
     try {
       const res = await apiGet<{ items: ModelSettingsItem[] }>('/system/model-settings')
       setItems(res.items)
-      const nextId = selectedId || res.items[0]?.adapter_id || ''
+      const nextId = selectedId || res.items.find((item) => item.adapter_id === inference.adapterId)?.adapter_id || res.items[0]?.adapter_id || ''
       setSelectedId(nextId)
       const next = res.items.find((item) => item.adapter_id === nextId)
       setDraft(next ? JSON.parse(JSON.stringify(next.effective)) : {})
@@ -123,10 +122,10 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
     const recommended = selected?.recommended[section]?.[key]
     return (
       <label key={`${section}.${key}`} className="block border-t border-[color:var(--color-rule)] pt-2">
-        <span className="lbl">{label}</span>
+        <span className="lbl" title={`${section}.${key}`}>{label}</span>
         <input
           type="number" min={min} max={max} step={step}
-          value={typeof value === 'boolean' || Array.isArray(value) ? '' : value ?? ''}
+          value={typeof value === 'boolean' || Array.isArray(value) || (typeof value === 'object' && value !== null) ? '' : value ?? ''}
           placeholder={automatic ? t('settings.modelAuto') : recommended == null ? t('settings.modelAuto') : String(recommended)}
           disabled={!isAdmin || loading || saving}
           onChange={(event) => update(section, key, event.target.value)}
@@ -166,7 +165,7 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
               <section>
                 <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelRemoteRuntime')}</h3>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-                  {selected.adapter_id !== 'monkeyocrv2-parsing' && (
+                  {selected.serving_dtype !== false && (
                     <label className="block border-t border-[color:var(--color-rule)] pt-2">
                       <span className="lbl">{t('settings.modelField.dtype')}</span>
                       <select className="fld mt-1 w-full" value={String(draft.serving?.dtype ?? '')} disabled={!isAdmin || loading || saving}
@@ -184,8 +183,8 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
                 <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelGeneration')}</h3>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
                   {GENERATION_FIELDS.filter((field) => {
-                    if (field.key === 'no_repeat_ngram_size') return ['teleocr', 'mineru2.5'].includes(selected.adapter_id)
-                    if (selected.adapter_id === 'glm-ocr' && ['presence_penalty', 'frequency_penalty'].includes(field.key)) return false
+                    if (field.key === 'no_repeat_ngram_size') return selected.no_repeat_ngram === true
+                    if (selected.generation_unsupported?.includes(field.key)) return false
                     return true
                   }).map((field) => numberField('generation', field.key, t(`settings.modelField.${field.key}`), field.min, field.max, field.step, true))}
                 </div>
@@ -199,7 +198,7 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
                 <p className="mt-2 text-[10px] text-[color:var(--color-ink-3)]">{t('settings.modelPixelsHint')}</p>
               </section>
             </div>
-            {MLX_MODELS.includes(selected.adapter_id) && (
+            {selected.mlx_available && (
               <section className="mt-4 border-t border-[color:var(--color-rule)] pt-3">
                 <h3 className="mb-1 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelMlxRuntime')}</h3>
                 <p className="mb-3 max-w-[75ch] text-[11px] text-[color:var(--color-ink-2)]">{t('settings.modelMlxIntro')}</p>
@@ -241,201 +240,22 @@ export default function ModelSettingsSection({ isAdmin }: SectionProps) {
                 )}
               </section>
             )}
-            {selected.adapter_id === 'teleocr' && (
-              <section className="mt-4 max-w-xl border-t border-[color:var(--color-rule)] pt-3">
-                <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelWorkflow')}</h3>
-                <label className="block">
-                  <span className="lbl">{t('settings.teleocrLayoutMode')}</span>
-                  <select
-                    className="fld mt-1 w-full"
-                    value={String(draft.workflow?.layout_mode ?? 'Detection')}
-                    disabled={!isAdmin || loading || saving}
-                    onChange={(event) => {
-                      setDraft((current) => ({
-                        ...current,
-                        workflow: { ...(current.workflow ?? {}), layout_mode: event.target.value },
-                      }))
-                      setSaved(false)
-                    }}
-                  >
-                    <option value="Detection">Detection · {t('settings.teleocrDetectionHint')}</option>
-                    <option value="Segmentation">Segmentation · {t('settings.teleocrSegmentationHint')}</option>
-                  </select>
-                </label>
-                <p className="mt-1 text-[10px] text-[color:var(--color-ink-3)]">{t('settings.teleocrLayoutOfficial')}</p>
-              </section>
-            )}
-            {selected.adapter_id === 'mineru2.5' && (
-              <section className="mt-4 max-w-3xl border-t border-[color:var(--color-rule)] pt-3">
-                <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelWorkflow')}</h3>
-                <p className="mb-3 max-w-[75ch] text-[11px] text-[color:var(--color-ink-2)]">MinerUClient ufficiale: dimensione del layout, preparazione dei ritagli, post-processing e riconoscimento di formule/immagini.</p>
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {numberField('workflow', 'min_image_edge', 'min_image_edge', 1, 4096, 1)}
-                  {numberField('workflow', 'max_image_edge_ratio', 'max_image_edge_ratio', 1, 200, 1)}
-                  {(['simple_post_process', 'handle_equation_block', 'abandon_list', 'abandon_paratext', 'image_analysis', 'enable_table_formula_eq_wrap'] as const).map((key) => (
-                    <label key={key} className="block border-t border-[color:var(--color-rule)] pt-2">
-                      <span className="lbl">{key}</span>
-                      <select className="fld mt-1 w-full" value={String(draft.workflow?.[key] ?? (key === 'handle_equation_block'))} disabled={!isAdmin || loading || saving}
-                        onChange={(event) => { setDraft((current) => ({ ...current, workflow: { ...(current.workflow ?? {}), [key]: event.target.value === 'true' } })); setSaved(false) }}>
-                        <option value="true">{t('settings.paddleEnabled')}</option>
-                        <option value="false">{t('settings.paddleDisabled')}</option>
-                      </select>
-                    </label>
-                  ))}
-                  {(['width', 'height'] as const).map((axis, index) => (
-                    <label key={axis} className="block border-t border-[color:var(--color-rule)] pt-2">
-                      <span className="lbl">layout_image_size {axis}</span>
-                      <input className="fld mt-1 w-full" type="number" min={256} max={4096} step={1}
-                        value={Number(mineruLayoutSize[index] ?? 1036)} disabled={!isAdmin || loading || saving}
-                        onChange={(event) => {
-                          const size = [...mineruLayoutSize]
-                          size[index] = Number(event.target.value)
-                          setDraft((current) => ({ ...current, workflow: { ...(current.workflow ?? {}), layout_image_size: size } }))
-                          setSaved(false)
-                        }} />
-                    </label>
-                  ))}
-                </div>
-              </section>
-            )}
-            {selected.adapter_id === 'monkeyocrv2-parsing' && (
-              <section className="mt-4 max-w-xl border-t border-[color:var(--color-rule)] pt-3">
-                <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelWorkflow')}</h3>
-                <p className="mb-3 max-w-[75ch] text-[11px] text-[color:var(--color-ink-2)]">{t('settings.monkeyDFlashIntro')}</p>
-                <label className="block border-t border-[color:var(--color-rule)] pt-2">
-                  <span className="lbl">{t('settings.monkeyDFlashEnabled')}</span>
-                  <select
-                    className="fld mt-1 w-full"
-                    value={String(draft.workflow?.dflash_enabled ?? true)}
-                    disabled={!isAdmin || loading || saving}
-                    onChange={(event) => {
-                      setDraft((current) => ({
-                        ...current,
-                        workflow: { ...(current.workflow ?? {}), dflash_enabled: event.target.value === 'true' },
-                      }))
-                      setSaved(false)
-                    }}
-                  >
-                    <option value="true">{t('settings.paddleEnabled')}</option>
-                    <option value="false">{t('settings.paddleDisabled')}</option>
-                  </select>
-                </label>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  {numberField('workflow', 'dflash_num_speculative_tokens', t('settings.monkeyDFlashTokens'), 1, 16, 1, true)}
-                </div>
-              </section>
-            )}
-            {selected.adapter_id === 'glm-ocr' && (
-              <section className="mt-4 max-w-xl border-t border-[color:var(--color-rule)] pt-3">
-                <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelWorkflow')}</h3>
-                <p className="mb-3 max-w-[75ch] text-[11px] text-[color:var(--color-ink-2)]">{t('settings.glmWorkflowIntro')}</p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {numberField('workflow', 'speculative_tokens', t('settings.glmSpeculativeTokens'), 1, 16, 1)}
-                </div>
-              </section>
-            )}
-            {selected.adapter_id === 'deepseek-ocr' && (
-              <section className="mt-4 max-w-xl border-t border-[color:var(--color-rule)] pt-3">
-                <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelWorkflow')}</h3>
-                <p className="mb-3 max-w-[75ch] text-[11px] text-[color:var(--color-ink-2)]">{t('settings.deepseekWorkflowIntro')}</p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {numberField('workflow', 'ngram_size', t('settings.deepseekNgramSize'), 1, 256, 1)}
-                  {numberField('workflow', 'window_size', t('settings.deepseekWindowSize'), 1, 1024, 1)}
-                </div>
-              </section>
-            )}
-            {selected.adapter_id === 'unlimited-ocr' && (
-              <section className="mt-4 max-w-xl border-t border-[color:var(--color-rule)] pt-3">
-                <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelWorkflow')}</h3>
-                <p className="mb-3 max-w-[75ch] text-[11px] text-[color:var(--color-ink-2)]">{t('settings.unlimitedWorkflowIntro')}</p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {numberField('workflow', 'ngram_size', t('settings.unlimitedNgramSize'), 1, 512, 1)}
-                  {numberField('workflow', 'window_size', t('settings.unlimitedWindowSize'), 1, 2048, 1)}
-                  <label className="block border-t border-[color:var(--color-rule)] pt-2">
-                    <span className="lbl">{t('settings.unlimitedImageMode')}</span>
-                    <select className="fld mt-1 w-full" value={String(draft.workflow?.image_mode ?? 'gundam')} disabled={!isAdmin || loading || saving}
-                      onChange={(event) => {
-                        setDraft((current) => ({ ...current, workflow: { ...(current.workflow ?? {}), image_mode: event.target.value } }))
-                        setSaved(false)
-                      }}>
-                      <option value="gundam">gundam · {t('settings.unlimitedGundamHint')}</option>
-                      <option value="base">base · {t('settings.unlimitedBaseHint')}</option>
-                    </select>
-                  </label>
-                </div>
-              </section>
-            )}
-            {selected.adapter_id === 'paddleocr-vl' && (
+            {(selected.workflow_fields?.length ?? 0) > 0 && (
               <section className="mt-4 border-t border-[color:var(--color-rule)] pt-3">
-                <h3 className="mb-1 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelWorkflow')}</h3>
-                <p className="mb-3 max-w-[75ch] text-[11px] text-[color:var(--color-ink-2)]">{t('settings.paddleWorkflowIntro')}</p>
+                <h3 className="mb-2 text-[12px] font-bold uppercase tracking-wide">{t('settings.modelWorkflow')}</h3>
+                {selected.workflow_intro && (
+                  <p className="mb-3 max-w-[75ch] text-[11px] text-[color:var(--color-ink-2)]">{t(selected.workflow_intro)}</p>
+                )}
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {PADDLE_WORKFLOW_FIELDS.map((key) => (
-                    <label key={key} className="block border-t border-[color:var(--color-rule)] pt-2">
-                      <span className="lbl">{t(`settings.paddleWorkflow.${key}`)}</span>
-                      <select
-                        className="fld mt-1 w-full"
-                        value={draft.workflow?.[key] == null ? 'auto' : String(draft.workflow[key])}
-                        disabled={!isAdmin || loading || saving}
-                        onChange={(event) => {
-                          const raw = event.target.value
-                          setDraft((current) => ({
-                            ...current,
-                            workflow: { ...(current.workflow ?? {}), [key]: raw === 'auto' ? null : raw === 'true' },
-                          }))
-                          setSaved(false)
-                        }}
-                      >
-                        <option value="auto">{t('settings.modelAuto')}</option>
-                        <option value="true">{t('settings.paddleEnabled')}</option>
-                        <option value="false">{t('settings.paddleDisabled')}</option>
-                      </select>
-                    </label>
-                  ))}
-                  {PADDLE_LAYOUT_NUMBERS.map((field) => numberField(
-                    'workflow', field.key, field.key,
-                    field.min, field.max, field.step, true,
-                  ))}
-                  {numberField('workflow', 'vl_rec_max_concurrency', t('settings.paddleConcurrency'), 1, 128, 1, true)}
-                  <label className="block border-t border-[color:var(--color-rule)] pt-2">
-                    <span className="lbl">{t('settings.paddleWorkflow.layout_shape_mode')}</span>
-                    <select
-                      className="fld mt-1 w-full"
-                      value={String(draft.workflow?.layout_shape_mode ?? 'auto')}
-                      disabled={!isAdmin || loading || saving}
-                      onChange={(event) => {
-                        const value = event.target.value || null
-                        setDraft((current) => ({
-                          ...current,
-                          workflow: { ...(current.workflow ?? {}), layout_shape_mode: value },
-                        }))
-                        setSaved(false)
-                      }}
-                    >
-                      {PADDLE_LAYOUT_SHAPES.map((value) => <option key={value} value={value}>{t(`settings.paddleLayoutShape.${value}`)}</option>)}
-                    </select>
-                  </label>
-                  <label className="block border-t border-[color:var(--color-rule)] pt-2">
-                    <span className="lbl">layout_merge_bboxes_mode</span>
-                    <select
-                      className="fld mt-1 w-full"
-                      value={String(draft.workflow?.layout_merge_bboxes_mode ?? '')}
-                      disabled={!isAdmin || loading || saving}
-                      onChange={(event) => {
-                        const value = event.target.value || null
-                        setDraft((current) => ({
-                          ...current,
-                          workflow: { ...(current.workflow ?? {}), layout_merge_bboxes_mode: value },
-                        }))
-                        setSaved(false)
-                      }}
-                    >
-                      <option value="">{t('settings.modelAuto')}</option>
-                      <option value="large">large</option>
-                      <option value="small">small</option>
-                      <option value="union">union</option>
-                    </select>
-                  </label>
+                  <WorkflowFields
+                    fields={selected.workflow_fields ?? []}
+                    values={draft.workflow}
+                    disabled={!isAdmin || loading || saving}
+                    onChange={(key, value) => {
+                      setDraft((current) => ({ ...current, workflow: { ...(current.workflow ?? {}), [key]: value } }))
+                      setSaved(false)
+                    }}
+                  />
                 </div>
               </section>
             )}

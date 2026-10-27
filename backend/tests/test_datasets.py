@@ -318,3 +318,41 @@ def test_dataset_exports_full_table_and_verified_row_bands(tmp_path: Path):
         ]
         assert all(path.exists() for path in table_files)
         assert sum("_rows_" in path.name for path in table_files) == 3
+
+
+def test_approved_only_drops_tables_with_unverified_cells(tmp_path: Path):
+    """Il target di una build «solo approvate» non può essere un prefill."""
+    from app.db import connect
+
+    pid, (_p1, p2) = _setup(tmp_path / "unverified")
+    with TestClient(app) as client:
+        _annotate(
+            client,
+            p2,
+            [
+                {"label": "Table", "kind": "rect", "points": [[10, 10], [900, 1200]], "content": "", "order_idx": 1},
+            ],
+        )
+        block = client.get(f"/api/pages/{p2}/annotations").json()["items"][0]
+        client.put(
+            f"/api/blocks/{block['id']}/table",
+            json={
+                "rows": 1,
+                "cols": 2,
+                "phantom_cols": [],
+                "cells": [
+                    {"r": 0, "c": 0, "rowspan": 1, "colspan": 1, "text": "model guess", "verified": False},
+                    {"r": 0, "c": 1, "rowspan": 1, "colspan": 1, "text": "human", "verified": True},
+                ],
+            },
+        )
+        with connect() as conn:
+            conn.execute("UPDATE pages SET status='approved' WHERE id=?", (p2,))
+        report = client.post(
+            f"/api/projects/{pid}/datasets/build",
+            json={"split_ratio": 0.5, "seed": 42, "approved_only": True},
+        )
+        assert report.status_code == 200, report.text
+        body = report.json()
+        assert body["counts"]["table"]["train"] + body["counts"]["table"]["val"] == 0
+        assert any("prefill non verificato" in warning or "unverified" in warning for warning in body["warnings"])

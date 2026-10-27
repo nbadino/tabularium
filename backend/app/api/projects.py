@@ -10,11 +10,15 @@ import threading
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 
 from .. import config
-from ..db import connect
+from ..adapters import projects as projectstore
+from ..db import connect  # noqa: F401  (scan, membership, delete: P7.1)
 from ..schemas import (
     ConventionItem,
     ConventionsIn,
     ConventionsOut,
+    KnownTableHeaderIn,
+    KnownTableHeaderOut,
+    KnownTableHeadersOut,
     ProjectCreate,
     ProjectMemberIn,
     ProjectMemberOut,
@@ -33,6 +37,7 @@ from ..services import corpus as corpusmod
 from ..services import pilot as pilotmod
 from ..services import auth as authsvc
 from ..services import audit as auditsvc
+from ..services import project_members as members
 from ..services import domain_profiles
 from ..services import table_hint as table_hint_svc
 from ..services.i18n import msg, parse_lang
@@ -49,37 +54,33 @@ _scan_jobs_lock = threading.Lock()
 
 def _run_scan_job(job_id: str, project_id: int, lang: str, confirm_missing: bool) -> None:
     try:
-        with connect() as conn:
-            project = _get_project_or_404(conn, project_id)
-            archive_dir = project["archive_dir"]
-            candidates = scanmod.scan_archive(archive_dir)
-            missing_ids = scanmod.find_missing_page_ids(conn, project_id, candidates)
-            report = scanmod.ScanReport(found_files=len(candidates), missing=len(missing_ids))
-            if confirm_missing:
-                scanmod.mark_missing_pages(conn, missing_ids)
+        project = projectstore.get(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="progetto non trovato")
+        archive_dir = project["archive_dir"]
+
+        def progress(index: int, candidate, report) -> None:
             with _scan_jobs_lock:
-                _scan_jobs[job_id].update(total=len(candidates), phase="files")
-            for index, cand in enumerate(candidates, 1):
-                scanmod.register_candidate(conn, project_id, cand, Path(archive_dir), report, lang=lang)
-                with _scan_jobs_lock:
-                    _scan_jobs[job_id].update(current=index, current_file=cand.path.name, report=report.to_dict())
-        with _scan_jobs_lock:
-            _scan_jobs[job_id].update(status="done", report=report.to_dict(), phase="completed")
-    except Exception as exc:
-        with _scan_jobs_lock:
-            _scan_jobs[job_id].update(status="error", error=str(exc), phase="failed")
+                _scan_jobs[job_id].update(
+                    current=index, current_file=candidate.path.name, report=report.to_dict()
+                )
 
-# Page type ammessi (estensione della tassonomia giornale) — usati nel frontend.
-PAGE_TYPES = [
-    "front",
-    "editorial",
-    "shipping",
-    "casualties",
-    "adverts",
-    "misc",
-]
+        with _scan_jobs_lock:
+            _scan_jobs[job_id].update(phase="files")
+        report = scanmod.run_scan(
+            project_id,
+            archive_dir,
+            confirm_missing=confirm_missing,
+            lang=lang,
+            on_progress=progress,
+        )
+        with _scan_jobs_lock:
+            _scan_jobs[job_id].update(status="done", total=report.found_files, report=report.to_dict())
+    except Exception as exc:  # noqa: BLE001
+        with _scan_jobs_lock:
+            _scan_jobs[job_id].update(status="failed", error=str(exc))
 
-# Convenzioni di trascrizione predefinite (checklist dell'annotatore).
+
 CONVENTIONS_DEFAULT = [
     ConventionItem(
         id="soft_hyphen",
@@ -109,38 +110,35 @@ CONVENTIONS_DEFAULT = [
 ]
 
 
-# --- helper ------------------------------------------------------------------
-def _get_project_or_404(conn, project_id: int):
-    row = conn.execute(
-        "SELECT * FROM projects WHERE id=?", (project_id,)
-    ).fetchone()
+def _settings_or_404(project_id: int) -> dict:
+    settings = projectstore.settings_json_or_none(project_id)
+    if settings is None:
+        raise HTTPException(status_code=404, detail="progetto non trovato")
+    return settings
+
+
+def _get_project_or_404(_conn, project_id: int):
+    row = projectstore.get(project_id)
     if row is None:
         raise HTTPException(status_code=404, detail="progetto non trovato")
     return row
 
 
-def _project_out(conn, row, user: dict) -> ProjectOut:
-    count = conn.execute(
-        "SELECT COUNT(*) AS n FROM pages WHERE project_id=? AND status != 'missing'", (row["id"],)
-    ).fetchone()["n"]
+def _project_out(row, summary: dict, user: dict) -> ProjectOut:
     try:
         settings = json.loads(row["settings_json"] or "{}")
     except (TypeError, ValueError):
         settings = {}
-    # La creazione può essere nella stessa transazione: leggere il ruolo con
-    # un'altra connessione non vedrebbe ancora il progetto appena inserito.
     if authsvc.is_local(user) or authsvc.is_admin(user) or row["owner_id"] == user.get("id"):
         level = "owner"
     else:
-        membership = conn.execute("SELECT role FROM project_members WHERE project_id=? AND user_id=?", (row["id"], user.get("id"))).fetchone()
-        level = membership["role"] if membership else None
-    source = "local" if authsvc.is_local(user) else "admin" if authsvc.is_admin(user) else "owner" if row["owner_id"] == user.get("id") else "member"
-    owner = conn.execute("SELECT username FROM users WHERE id=?", (row["owner_id"],)).fetchone()
-    members_count = conn.execute(
-        "SELECT COUNT(*) AS n FROM users WHERE active=1 AND (id=? OR id IN "
-        "(SELECT user_id FROM project_members WHERE project_id=?))",
-        (row["owner_id"], row["id"]),
-    ).fetchone()["n"]
+        level = summary.get("role")
+    source = (
+        "local" if authsvc.is_local(user)
+        else "admin" if authsvc.is_admin(user)
+        else "owner" if row["owner_id"] == user.get("id")
+        else "member"
+    )
     return ProjectOut(
         id=row["id"],
         name=row["name"],
@@ -148,12 +146,22 @@ def _project_out(conn, row, user: dict) -> ProjectOut:
         root_dir=row["root_dir"],
         archive_dir=row["archive_dir"],
         settings_json=settings if isinstance(settings, dict) else {},
-        pages_count=count,
+        pages_count=int(summary.get("pages_count") or 0),
         created_at=row["created_at"],
-        owner_name=owner["username"] if owner else None,
-        members_count=members_count,
-        access={"role": level, "source": source, "can_edit": level in ("owner", "editor"), "can_manage": level == "owner"},
+        owner_name=summary.get("owner_name"),
+        members_count=int(summary.get("members_count") or 0),
+        access={
+            "role": level,
+            "source": source,
+            "can_edit": level in ("owner", "editor"),
+            "can_manage": level == "owner",
+        },
     )
+
+
+def _project_outs(rows: list, user: dict) -> list[ProjectOut]:
+    summaries = projectstore.summaries([int(row["id"]) for row in rows], user.get("id"))
+    return [_project_out(row, summaries.get(int(row["id"]), {}), user) for row in rows]
 
 
 # La registrazione dei candidati (immagini e PDF) è logica di dominio:
@@ -173,36 +181,25 @@ def create_project(
     archive_dir = str(Path(payload.archive_dir).expanduser().resolve()) if payload.archive_dir else None
     if archive_dir and not Path(archive_dir).is_dir():
         raise HTTPException(status_code=400, detail="la cartella archivio non esiste")
-    with connect() as conn:
-        cur = conn.execute(
-            """INSERT INTO projects (name, root_dir, archive_dir, settings_json, owner_id)
-               VALUES (?, ?, ?, '{}', ?)""",
-            (payload.name, str(config.DATA_DIR), archive_dir, user.get("id")),
-        )
-        project_id = cur.lastrowid
-        # directory dati del progetto (crops/runs arriveranno nelle milestone successive)
-        (config.DATA_DIR / str(project_id)).mkdir(parents=True, exist_ok=True)
-        row = _get_project_or_404(conn, project_id)
-        return _project_out(conn, row, user)
+    project_id = projectstore.create(
+        payload.name,
+        root_dir=str(config.DATA_DIR),
+        archive_dir=archive_dir,
+        owner_id=user.get("id"),
+    )
+    # directory dati del progetto (crops/runs arriveranno nelle milestone successive)
+    (config.DATA_DIR / str(project_id)).mkdir(parents=True, exist_ok=True)
+    row = _get_project_or_404(None, project_id)
+    return _project_outs([row], user)[0]
 
 
 @router.get("/api/projects", response_model=ProjectList)
 def list_projects(user: dict = Depends(authsvc.get_current_user)) -> ProjectList:
-    with connect() as conn:
-        if authsvc.is_local(user) or authsvc.is_admin(user):
-            rows = conn.execute(
-                "SELECT * FROM projects ORDER BY created_at DESC"
-            ).fetchall()
-        else:
-            # Solo i progetti di cui l'utente è proprietario o membro.
-            rows = conn.execute(
-                """SELECT DISTINCT p.* FROM projects p
-                   LEFT JOIN project_members pm ON pm.project_id = p.id
-                   WHERE p.owner_id = ? OR pm.user_id = ?
-                   ORDER BY p.created_at DESC""",
-                (user["id"], user["id"]),
-            ).fetchall()
-        return ProjectList(items=[_project_out(conn, r, user) for r in rows])
+    rows = projectstore.list_for_user(
+        user.get("id"),
+        privileged=authsvc.is_local(user) or authsvc.is_admin(user),
+    )
+    return ProjectList(items=_project_outs(rows, user))
 
 
 @router.get("/api/projects/{project_id}", response_model=ProjectOut)
@@ -210,8 +207,7 @@ def get_project(
     project_id: int,
     _auth: dict = Depends(require_resource()),
 ) -> ProjectOut:
-    with connect() as conn:
-        return _project_out(conn, _get_project_or_404(conn, project_id), _auth)
+    return _project_outs([_get_project_or_404(None, project_id)], _auth)[0]
 
 
 def _require_project_manager(project_id: int, user: dict) -> str:
@@ -224,32 +220,14 @@ def _require_project_manager(project_id: int, user: dict) -> str:
 @router.get("/api/projects/{project_id}/members", response_model=list[ProjectMemberOut])
 def list_project_members(project_id: int, user: dict = Depends(authsvc.get_current_user)) -> list[ProjectMemberOut]:
     authsvc.require_project_access(project_id, user, write=False)
-    with connect() as conn:
-        project = _get_project_or_404(conn, project_id)
-        rows = conn.execute(
-            """SELECT u.id AS user_id, u.username, u.email, u.active, 'owner' AS role
-               FROM users u WHERE u.id=?
-               UNION ALL
-               SELECT u.id, u.username, u.email, u.active, pm.role
-               FROM project_members pm JOIN users u ON u.id=pm.user_id
-               WHERE pm.project_id=? AND u.id != COALESCE(?, -1)
-               ORDER BY role, username""",
-            (project["owner_id"], project_id, project["owner_id"]),
-        ).fetchall()
+    rows = members.members(project_id)
     return [ProjectMemberOut(**dict(row)) for row in rows]
 
 
 @router.get("/api/projects/{project_id}/member-candidates", response_model=list[ProjectMemberOut])
 def project_member_candidates(project_id: int, user: dict = Depends(authsvc.get_current_user)) -> list[ProjectMemberOut]:
     _require_project_manager(project_id, user)
-    with connect() as conn:
-        project = _get_project_or_404(conn, project_id)
-        rows = conn.execute(
-            "SELECT id AS user_id, username, email, active, 'viewer' AS role FROM users "
-            "WHERE active=1 AND id != ? AND id NOT IN "
-            "(SELECT user_id FROM project_members WHERE project_id=?) ORDER BY username",
-            (project["owner_id"], project_id),
-        ).fetchall()
+    rows = members.candidates(project_id)
     return [ProjectMemberOut(**dict(row)) for row in rows]
 
 
@@ -263,54 +241,22 @@ def set_project_member(
     _require_project_manager(project_id, user)
     if payload.user_id != user_id:
         raise HTTPException(status_code=400, detail="user_id incoerente")
-    with connect() as conn:
-        project = _get_project_or_404(conn, project_id)
-        target = conn.execute("SELECT id, username, email, active FROM users WHERE id=?", (user_id,)).fetchone()
-        if target is None or not target["active"]:
-            raise HTTPException(status_code=404, detail="utente attivo non trovato")
-        if project["owner_id"] == user_id:
-            raise HTTPException(status_code=400, detail="il proprietario non può essere membro")
-        conn.execute(
-            "INSERT INTO project_members(project_id,user_id,role) VALUES(?,?,?) "
-            "ON CONFLICT(project_id,user_id) DO UPDATE SET role=excluded.role",
-            (project_id, user_id, payload.role),
-        )
-        auditsvc.record(conn, user, "project.member_set", resource_type="project", resource_id=project_id, payload={"user_id": user_id, "role": payload.role})
-    return ProjectMemberOut(user_id=user_id, username=target["username"], email=target["email"], active=bool(target["active"]), role=payload.role)
+    member = members.set_member(project_id, user_id, payload.role, actor=user)
+    return ProjectMemberOut(**member)
 
 
 @router.delete("/api/projects/{project_id}/members/{user_id}", status_code=204)
 def remove_project_member(project_id: int, user_id: int, user: dict = Depends(authsvc.get_current_user)) -> None:
     _require_project_manager(project_id, user)
-    with connect() as conn:
-        _get_project_or_404(conn, project_id)
-        deleted = conn.execute("DELETE FROM project_members WHERE project_id=? AND user_id=?", (project_id, user_id)).rowcount
-        if not deleted:
-            raise HTTPException(status_code=404, detail="membro non trovato")
-        auditsvc.record(conn, user, "project.member_removed", resource_type="project", resource_id=project_id, payload={"user_id": user_id})
+    members.remove_member(project_id, user_id, actor=user)
+
 
 
 @router.post("/api/projects/{project_id}/owner", response_model=ProjectMemberOut)
 def transfer_project_owner(project_id: int, payload: ProjectOwnerIn, user: dict = Depends(authsvc.get_current_user)) -> ProjectMemberOut:
     _require_project_manager(project_id, user)
-    with connect() as conn:
-        project = _get_project_or_404(conn, project_id)
-        target = conn.execute("SELECT id, username, email, active FROM users WHERE id=?", (payload.user_id,)).fetchone()
-        if target is None or not target["active"]:
-            raise HTTPException(status_code=404, detail="utente attivo non trovato")
-        old_owner = project["owner_id"]
-        if old_owner == payload.user_id:
-            return ProjectMemberOut(user_id=target["id"], username=target["username"], email=target["email"], active=True, role="owner")
-        conn.execute("UPDATE projects SET owner_id=? WHERE id=?", (payload.user_id, project_id))
-        if old_owner is not None:
-            conn.execute(
-                "INSERT INTO project_members(project_id,user_id,role) VALUES(?,?, 'editor') "
-                "ON CONFLICT(project_id,user_id) DO UPDATE SET role='editor'",
-                (project_id, old_owner),
-            )
-        conn.execute("DELETE FROM project_members WHERE project_id=? AND user_id=?", (project_id, payload.user_id))
-        auditsvc.record(conn, user, "project.owner_transferred", resource_type="project", resource_id=project_id, payload={"from_user_id": old_owner, "to_user_id": payload.user_id})
-    return ProjectMemberOut(user_id=target["id"], username=target["username"], email=target["email"], active=True, role="owner")
+    member = members.transfer_owner(project_id, payload.user_id, actor=user)
+    return ProjectMemberOut(**member)
 
 
 @router.get("/api/projects/{project_id}/workflow")
@@ -319,47 +265,24 @@ def project_workflow(
     _auth: dict = Depends(require_resource()),
 ) -> dict:
     """Stato operativo e prossimo compito consigliato per il ricercatore."""
-    with connect() as conn:
-        _get_project_or_404(conn, project_id)
-        status_rows = conn.execute(
-            "SELECT status, COUNT(*) AS n FROM pages "
-            "WHERE project_id=? AND status != 'missing' GROUP BY status",
-            (project_id,),
-        ).fetchall()
-        counts = {row["status"]: row["n"] for row in status_rows}
-        next_page = conn.execute(
-            "SELECT p.id, p.rel_path, p.status, p.issue_date, p.issue_no, p.page_no, "
-            "COUNT(b.id) AS blocks FROM pages p LEFT JOIN blocks b ON b.page_id=p.id "
-            "WHERE p.project_id=? AND p.status != 'missing' GROUP BY p.id "
-            "ORDER BY CASE p.status WHEN 'new' THEN 0 WHEN 'annotated' THEN 1 "
-            "WHEN 'qa' THEN 2 WHEN 'review' THEN 3 ELSE 4 END, p.rel_path LIMIT 1",
-            (project_id,),
-        ).fetchone()
-        total = sum(counts.values())
-        approved = sum(counts.get(s, 0) for s in ("qa", "review", "exported", "approved"))
-        return {
-            "project_id": project_id,
-            "counts": counts,
-            "total_pages": total,
-            "approved_pages": approved,
-            "progress": approved / total if total else 0.0,
-            "next_page": dict(next_page) if next_page else None,
-        }
+    _get_project_or_404(None, project_id)
+    counts, next_page = projectstore.workflow_stats(project_id)
+    total = sum(counts.values())
+    approved = sum(counts.get(s, 0) for s in ("qa", "review", "exported", "approved"))
+    return {
+        "project_id": project_id,
+        "counts": counts,
+        "total_pages": total,
+        "approved_pages": approved,
+        "progress": approved / total if total else 0.0,
+        "next_page": next_page,
+    }
 
 
 @router.get("/api/projects/{project_id}/activity")
 def project_activity(project_id: int, limit: int = Query(default=30, ge=1, le=200), _auth: dict = Depends(require_resource())) -> dict:
-    with connect() as conn:
-        _get_project_or_404(conn, project_id)
-        rows = conn.execute(
-            "SELECT a.id, a.action, a.resource_type, a.resource_id, a.payload_json, a.created_at, u.username "
-            "FROM audit_events a LEFT JOIN users u ON u.id=a.actor_id "
-            "WHERE (a.resource_type='project' AND a.resource_id=?) OR "
-            "(a.resource_type='page' AND a.resource_id IN (SELECT id FROM pages WHERE project_id=?)) "
-            "ORDER BY a.id DESC LIMIT ?",
-            (project_id, project_id, limit),
-        ).fetchall()
-    return {"project_id": project_id, "items": [dict(row) for row in rows]}
+    _get_project_or_404(None, project_id)
+    return {"project_id": project_id, "items": projectstore.activity(project_id, limit)}
 
 
 @router.get("/api/projects/{project_id}/annotation-queue")
@@ -372,7 +295,7 @@ def annotation_queue(
     """Coda deterministica: prima pagine nuove/incomplete, poi QA e revisione."""
     lang = parse_lang(request.headers.get("accept-language"))
     with connect() as conn:
-        _get_project_or_404(conn, project_id)
+        _get_project_or_404(None, project_id)
         eval_actions: dict[int, list[str]] = {}
         eval_root = config.DATA_DIR / str(project_id) / "eval"
         reports = sorted(eval_root.glob("eval_*/report.json"), reverse=True) if eval_root.exists() else []
@@ -382,20 +305,12 @@ def annotation_queue(
                 eval_actions = {int(p["page_id"]): list(p.get("actions", [])) for p in latest.get("pages", []) if p.get("actions")}
             except (OSError, TypeError, ValueError, KeyError):
                 eval_actions = {}
-        rows = conn.execute(
-            "SELECT p.id, p.rel_path, p.status, p.issue_date, p.issue_no, p.page_no, "
-            "COUNT(b.id) AS blocks, SUM(CASE WHEN b.confirmed=0 THEN 1 ELSE 0 END) AS unconfirmed "
-            "FROM pages p LEFT JOIN blocks b ON b.page_id=p.id WHERE p.project_id=? "
-            "GROUP BY p.id ORDER BY CASE p.status WHEN 'new' THEN 0 WHEN 'annotated' THEN 1 "
-            "WHEN 'qa' THEN 2 WHEN 'review' THEN 3 ELSE 4 END, unconfirmed DESC, p.rel_path LIMIT ?",
-            (project_id, limit),
-        ).fetchall()
+        rows = projectstore.annotation_queue(project_id, limit)
         items = []
         for row in rows:
             status = row["status"]
             low_confidence = 0
-            for block in conn.execute("SELECT prefill_source FROM blocks WHERE page_id=?", (row["id"],)).fetchall():
-                source = str(block["prefill_source"] or "")
+            for source in projectstore.prefill_sources(row["id"]):
                 try:
                     if ":" in source and float(source.rsplit(":", 1)[1]) < 0.75:
                         low_confidence += 1
@@ -423,8 +338,7 @@ def corpus_map(
     project_id: int,
     _auth: dict = Depends(require_resource()),
 ) -> dict:
-    with connect() as conn:
-        _get_project_or_404(conn, project_id)
+    _settings_or_404(project_id)
     return corpusmod.corpus_map(project_id)
 
 
@@ -433,9 +347,7 @@ def get_study_protocol(
     project_id: int,
     _auth: dict = Depends(require_resource()),
 ) -> StudyProtocolOut:
-    with connect() as conn:
-        project = _get_project_or_404(conn, project_id)
-        settings = json.loads(project["settings_json"] or "{}")
+    settings = _settings_or_404(project_id)
     protocol = settings.get("study_protocol") or {}
     if protocol.get("domain_profile"):
         protocol = {**protocol, "domain_profile": domain_profiles.canonical_id(protocol["domain_profile"])}
@@ -449,16 +361,14 @@ def put_study_protocol(
     _auth: dict = Depends(require_resource(write=True)),
 ) -> StudyProtocolOut:
     now = datetime.now(timezone.utc).isoformat()
-    with connect() as conn:
-        project = _get_project_or_404(conn, project_id)
-        settings = json.loads(project["settings_json"] or "{}")
-        previous = settings.get("study_protocol") or {}
-        version = int(previous.get("version", 0)) + 1
-        protocol = {**payload.model_dump(), "version": version, "updated_at": now}
-        history = settings.setdefault("study_protocol_history", [])
-        history.append(protocol)
-        settings["study_protocol"] = protocol
-        conn.execute("UPDATE projects SET settings_json=? WHERE id=?", (json.dumps(settings, ensure_ascii=False), project_id))
+    settings = _settings_or_404(project_id)
+    previous = settings.get("study_protocol") or {}
+    version = int(previous.get("version", 0)) + 1
+    protocol = {**payload.model_dump(), "version": version, "updated_at": now}
+    history = settings.setdefault("study_protocol_history", [])
+    history.append(protocol)
+    settings["study_protocol"] = protocol
+    projectstore.put_settings(project_id, settings)
     return StudyProtocolOut(**protocol)
 
 
@@ -469,24 +379,20 @@ def set_gold_set(
     _auth: dict = Depends(require_resource(write=True)),
 ) -> dict:
     """Protegge un campione di pagine invisibile al tuning."""
-    with connect() as conn:
-        project = _get_project_or_404(conn, project_id)
-        placeholders = ",".join("?" for _ in page_ids) or "NULL"
-        rows = conn.execute(f"SELECT id FROM pages WHERE project_id=? AND id IN ({placeholders})", [project_id, *page_ids]).fetchall()
-        valid = sorted({int(row["id"]) for row in rows})
-        settings = json.loads(project["settings_json"] or "{}")
-        protocol = settings.setdefault("study_protocol", {})
-        protocol["gold_pages"] = valid
-        # Un campione già salvato non può diventare contemporaneamente tuning
-        # e gold: proteggere una pagina la rimuove dal pilot persistito.
-        pilot_pages = {
-            int(value) for value in protocol.get("pilot_pages", [])
-            if str(value).lstrip("-").isdigit()
-        }
-        protocol["pilot_pages"] = sorted(pilot_pages - set(valid))
-        protocol["version"] = int(protocol.get("version", 0)) + 1
-        protocol["updated_at"] = datetime.now(timezone.utc).isoformat()
-        conn.execute("UPDATE projects SET settings_json=? WHERE id=?", (json.dumps(settings, ensure_ascii=False), project_id))
+    valid = projectstore.valid_page_ids(project_id, page_ids)
+    settings = _settings_or_404(project_id)
+    protocol = settings.setdefault("study_protocol", {})
+    protocol["gold_pages"] = valid
+    # Un campione già salvato non può diventare contemporaneamente tuning
+    # e gold: proteggere una pagina la rimuove dal pilot persistito.
+    pilot_pages = {
+        int(value) for value in protocol.get("pilot_pages", [])
+        if str(value).lstrip("-").isdigit()
+    }
+    protocol["pilot_pages"] = sorted(pilot_pages - set(valid))
+    protocol["version"] = int(protocol.get("version", 0)) + 1
+    protocol["updated_at"] = datetime.now(timezone.utc).isoformat()
+    projectstore.put_settings(project_id, settings)
     return {
         "project_id": project_id,
         "gold_pages": valid,
@@ -502,9 +408,8 @@ def qa_report(
     _auth: dict = Depends(require_resource()),
 ) -> dict:
     """Riepilogo revisioni e conteggio degli errori ricorrenti."""
-    with connect() as conn:
-        _get_project_or_404(conn, project_id)
-        rows = conn.execute("SELECT status, errors_json FROM page_reviews r JOIN pages p ON p.id=r.page_id WHERE p.project_id=?", (project_id,)).fetchall()
+    _settings_or_404(project_id)
+    rows = projectstore.review_inputs(project_id)
     errors: dict[str, int] = {}
     for row in rows:
         try:
@@ -524,7 +429,7 @@ def pilot_sample(
     _auth: dict = Depends(require_resource()),
 ) -> dict:
     with connect() as conn:
-        _get_project_or_404(conn, project_id)
+        _get_project_or_404(None, project_id)
     return pilotmod.sample_pilot(project_id, target, seed)
 
 
@@ -534,22 +439,18 @@ def save_pilot_sample(
     page_ids: list[int],
     _auth: dict = Depends(require_resource(write=True)),
 ) -> dict:
-    with connect() as conn:
-        project = _get_project_or_404(conn, project_id)
-        placeholders = ",".join("?" for _ in page_ids) or "NULL"
-        rows = conn.execute(f"SELECT id FROM pages WHERE project_id=? AND id IN ({placeholders})", [project_id, *page_ids]).fetchall()
-        valid = sorted({int(row["id"]) for row in rows})
-        settings = json.loads(project["settings_json"] or "{}")
-        protocol = settings.setdefault("study_protocol", {})
-        gold_pages = {
-            int(value) for value in protocol.get("gold_pages", [])
-            if str(value).lstrip("-").isdigit()
-        }
-        gold_excluded = len(set(valid) & gold_pages)
-        valid = [page_id for page_id in valid if page_id not in gold_pages]
-        protocol["pilot_pages"] = valid
-        protocol["updated_at"] = datetime.now(timezone.utc).isoformat()
-        conn.execute("UPDATE projects SET settings_json=? WHERE id=?", (json.dumps(settings, ensure_ascii=False), project_id))
+    valid = projectstore.valid_page_ids(project_id, page_ids)
+    settings = _settings_or_404(project_id)
+    protocol = settings.setdefault("study_protocol", {})
+    gold_pages = {
+        int(value) for value in protocol.get("gold_pages", [])
+        if str(value).lstrip("-").isdigit()
+    }
+    gold_excluded = len(set(valid) & gold_pages)
+    valid = [page_id for page_id in valid if page_id not in gold_pages]
+    protocol["pilot_pages"] = valid
+    protocol["updated_at"] = datetime.now(timezone.utc).isoformat()
+    projectstore.put_settings(project_id, settings)
     return {
         "project_id": project_id,
         "pilot_pages": valid,
@@ -563,15 +464,13 @@ def get_conventions(
     project_id: int,
     _auth: dict = Depends(require_resource()),
 ) -> ConventionsOut:
-    with connect() as conn:
-        project = _get_project_or_404(conn, project_id)
-        settings = json.loads(project["settings_json"] or "{}")
-        conv = settings.get("conventions")
-        if not conv:
-            return ConventionsOut(conventions=CONVENTIONS_DEFAULT)
-        return ConventionsOut(
-            conventions=[ConventionItem(**c) for c in conv],
-        )
+    settings = _settings_or_404(project_id)
+    conv = settings.get("conventions")
+    if not conv:
+        return ConventionsOut(conventions=CONVENTIONS_DEFAULT)
+    return ConventionsOut(
+        conventions=[ConventionItem(**c) for c in conv],
+    )
 
 
 @router.put("/api/projects/{project_id}/conventions", response_model=ConventionsOut)
@@ -581,14 +480,9 @@ def put_conventions(
     _auth: dict = Depends(require_resource(write=True)),
 ) -> ConventionsOut:
     dumped = [c.model_dump() for c in payload.conventions]
-    with connect() as conn:
-        project = _get_project_or_404(conn, project_id)
-        settings = json.loads(project["settings_json"] or "{}")
-        settings["conventions"] = dumped
-        conn.execute(
-            "UPDATE projects SET settings_json=? WHERE id=?",
-            (json.dumps(settings), project_id),
-        )
+    settings = _settings_or_404(project_id)
+    settings["conventions"] = dumped
+    projectstore.put_settings(project_id, settings)
     return ConventionsOut(conventions=payload.conventions)
 
 
@@ -598,10 +492,7 @@ def get_table_hint(
     _auth: dict = Depends(require_resource()),
 ) -> TableHintOut:
     """Hint di schema tabella del progetto e se il modello attivo lo accetta."""
-    with connect() as conn:
-        project = _get_project_or_404(conn, project_id)
-        settings = json.loads(project["settings_json"] or "{}")
-    return _table_hint_out(settings)
+    return _table_hint_out(_settings_or_404(project_id))
 
 
 @router.put("/api/projects/{project_id}/table-hint", response_model=TableHintOut)
@@ -611,18 +502,13 @@ def put_table_hint(
     _auth: dict = Depends(require_resource(write=True)),
 ) -> TableHintOut:
     hint = table_hint_svc.clean_table_hint(payload.hint)
-    with connect() as conn:
-        project = _get_project_or_404(conn, project_id)
-        settings = json.loads(project["settings_json"] or "{}")
-        if hint:
-            settings["table_hint"] = hint
-        else:
-            # Vuoto = nessun hint: si cancella la chiave invece di salvare "".
-            settings.pop("table_hint", None)
-        conn.execute(
-            "UPDATE projects SET settings_json=? WHERE id=?",
-            (json.dumps(settings, ensure_ascii=False), project_id),
-        )
+    settings = _settings_or_404(project_id)
+    if hint:
+        settings["table_hint"] = hint
+    else:
+        # Vuoto = nessun hint: si cancella la chiave invece di salvare "".
+        settings.pop("table_hint", None)
+    projectstore.put_settings(project_id, settings)
     return _table_hint_out(settings)
 
 
@@ -650,6 +536,66 @@ def _table_hint_out(settings: dict) -> TableHintOut:
     )
 
 
+@router.get("/api/projects/{project_id}/table-headers", response_model=KnownTableHeadersOut)
+def get_table_headers(
+    project_id: int,
+    _auth: dict = Depends(require_resource()),
+) -> KnownTableHeadersOut:
+    settings = _settings_or_404(project_id)
+    items = settings.get("known_table_headers") or []
+    valid = [KnownTableHeaderOut(**item) for item in items if isinstance(item, dict)]
+    return KnownTableHeadersOut(items=valid)
+
+
+@router.post(
+    "/api/projects/{project_id}/table-headers",
+    response_model=KnownTableHeaderOut,
+    status_code=201,
+)
+def save_table_header(
+    project_id: int,
+    payload: KnownTableHeaderIn,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> KnownTableHeaderOut:
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="nome intestazione vuoto")
+    now = datetime.now(timezone.utc).isoformat()
+    item = KnownTableHeaderOut(
+        id=uuid.uuid4().hex,
+        name=name,
+        rows=payload.rows,
+        cols=payload.cols,
+        cells=payload.cells,
+        created_at=now,
+        updated_at=now,
+    )
+    settings = _settings_or_404(project_id)
+    items = [entry for entry in settings.get("known_table_headers", []) if isinstance(entry, dict)]
+    # Una libreria di progetto deve restare leggera e facile da consultare.
+    items = [entry for entry in items if entry.get("name", "").casefold() != name.casefold()]
+    items.append(item.model_dump())
+    settings["known_table_headers"] = items[-50:]
+    projectstore.put_settings(project_id, settings)
+    return item
+
+
+@router.delete("/api/projects/{project_id}/table-headers/{header_id}")
+def delete_table_header(
+    project_id: int,
+    header_id: str,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> dict:
+    settings = _settings_or_404(project_id)
+    items = [entry for entry in settings.get("known_table_headers", []) if isinstance(entry, dict)]
+    kept = [entry for entry in items if entry.get("id") != header_id]
+    if len(kept) == len(items):
+        raise HTTPException(status_code=404, detail="intestazione non trovata")
+    settings["known_table_headers"] = kept
+    projectstore.put_settings(project_id, settings)
+    return {"deleted": True, "id": header_id}
+
+
 @router.delete("/api/projects/{project_id}")
 def delete_project(
     project_id: int,
@@ -661,33 +607,27 @@ def delete_project(
             status_code=400,
             detail="operazione distruttiva: passa ?confirm=true per eliminare il progetto",
         )
-    with connect() as conn:
-        # Cancellare un progetto è irreversibile: solo il proprietario (o un
-        # admin, che ha livello "owner") può farlo, non un editor invitato.
-        if authsvc.require_project_access(project_id, _auth, write=True) != "owner":
-            raise HTTPException(
-                status_code=403,
-                detail="solo il proprietario del progetto può eliminarlo",
-            )
-        project = _get_project_or_404(conn, project_id)
-        # rimuove le thumbnails delle pagine del progetto
-        for row in conn.execute(
-            "SELECT id FROM pages WHERE project_id=?", (project_id,)
-        ).fetchall():
-            for p in (
-                pagesvc.thumb_path(row["id"]),
-                pagesvc.preview_path(row["id"]),
-            ):
-                if p.exists():
-                    p.unlink()
-        conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
-        # directory di progetto (se vuota o creata da noi)
-        project_dir = config.DATA_DIR / str(project_id)
-        if project_dir.exists() and project_dir.is_dir():
-            try:
-                project_dir.rmdir()  # solo se vuota
-            except OSError:
-                pass
+    # Cancellare un progetto è irreversibile: solo il proprietario (o un admin,
+    # che ha livello "owner") può farlo, non un editor invitato.
+    if authsvc.require_project_access(project_id, _auth, write=True) != "owner":
+        raise HTTPException(
+            status_code=403,
+            detail="solo il proprietario del progetto può eliminarlo",
+        )
+    project = _get_project_or_404(None, project_id)
+    # remove the page thumbnails before the rows that name them
+    for page_id in projectstore.page_ids(project_id):
+        for path in (pagesvc.thumb_path(page_id), pagesvc.preview_path(page_id)):
+            if path.exists():
+                path.unlink()
+    projectstore.delete(project_id)
+    # directory di progetto (se vuota o creata da noi)
+    project_dir = config.DATA_DIR / str(project_id)
+    if project_dir.exists() and project_dir.is_dir():
+        try:
+            project_dir.rmdir()  # solo se vuota
+        except OSError:
+            pass
     return {"deleted": True, "project": project["name"]}
 
 
@@ -695,7 +635,7 @@ def delete_project(
 def start_scan(project_id: int, request: Request, confirm_missing: bool = Query(default=False), _auth: dict = Depends(require_resource(write=True))):
     lang = parse_lang(request.headers.get("accept-language"))
     with connect() as conn:
-        project = _get_project_or_404(conn, project_id)
+        project = _get_project_or_404(None, project_id)
         if not project["archive_dir"] or not Path(project["archive_dir"]).is_dir():
             raise HTTPException(status_code=400, detail="archive_dir non valida")
     job_id = uuid.uuid4().hex
@@ -722,20 +662,14 @@ def scan_project(
     _auth: dict = Depends(require_resource(write=True)),
 ) -> ScanReportOut:
     lang = parse_lang(request.headers.get("accept-language"))
-    with connect() as conn:
-        project = _get_project_or_404(conn, project_id)
-        archive_dir = project["archive_dir"]
-        if not archive_dir or not Path(archive_dir).is_dir():
-            raise HTTPException(status_code=400, detail="archive_dir non valida")
-        candidates = scanmod.scan_archive(archive_dir)
-        missing_ids = scanmod.find_missing_page_ids(conn, project_id, candidates)
-        report = scanmod.ScanReport(found_files=len(candidates))
-        report.missing = len(missing_ids)
-        if confirm_missing:
-            scanmod.mark_missing_pages(conn, missing_ids)
-        for cand in candidates:
-            scanmod.register_candidate(conn, project_id, cand, Path(archive_dir), report, lang=lang)
-        return ScanReportOut(**report.to_dict())
+    project = _get_project_or_404(None, project_id)
+    archive_dir = project["archive_dir"]
+    if not archive_dir or not Path(archive_dir).is_dir():
+        raise HTTPException(status_code=400, detail="archive_dir non valida")
+    report = scanmod.run_scan(
+        project_id, archive_dir, confirm_missing=confirm_missing, lang=lang
+    )
+    return ScanReportOut(**report.to_dict())
 
 
 @router.post("/api/projects/{project_id}/import-upload", response_model=ScanReportOut)
@@ -748,7 +682,7 @@ async def import_uploaded_folder(
     """Importa una cartella scelta dal browser senza esporre percorsi locali."""
     lang = parse_lang(request.headers.get("accept-language"))
     with connect() as conn:
-        _get_project_or_404(conn, project_id)
+        _get_project_or_404(None, project_id)
     if not files:
         raise HTTPException(status_code=400, detail=msg("no_file_selected", lang))
     session_dir = config.DATA_DIR / str(project_id) / "uploads" / uuid.uuid4().hex
@@ -769,7 +703,5 @@ async def import_uploaded_folder(
             errors.append(f"{name}: {exc}")
     report = scanmod.ScanReport(found_files=saved)
     report.errors.extend(errors)
-    with connect() as conn:
-        for candidate in scanmod.scan_archive(session_dir):
-            scanmod.register_candidate(conn, project_id, candidate, session_dir, report, lang=lang)
+    scanmod.register_uploads(project_id, session_dir, report, lang=lang)
     return ScanReportOut(**report.to_dict())

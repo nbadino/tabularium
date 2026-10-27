@@ -17,12 +17,21 @@ produrre (il layout per i modelli senza bbox). Un target mancante o una
 famiglia vuota non vengono inventati: il manifest della vista li dichiara e il
 preflight li legge.
 
-Le immagini restano ai percorsi assoluti dei ritagli già generati: copiarle
-per ogni run duplicherebbe gigabyte senza cambiare un byte.
+Per ms-swift e PaddleFormers le immagini restano ai percorsi assoluti dei
+ritagli già generati: copiarle per ogni run duplicherebbe gigabyte senza
+cambiare un byte. L'eccezione è LLaMA-Factory: la doc GLM-OCR vuole i percorsi
+**relativi** alla `dataset_dir` (come `data/` nel repo), quindi la vista GLM
+materializza sempre i pixel in `dataset/images/` e scrive `images/<file>`.
+Anche il training remoto materializza i pixel, con il prefisso che l'host
+vedrà (`images_prefix`), così la run è autosufficiente e l'executor la
+sincronizza insieme allo script.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -129,7 +138,41 @@ def training_prompts(recipe: TrainRecipe) -> dict[str, str]:
     return prompts
 
 
-def build_view(recipe: TrainRecipe, source_dir: Path, destination_dir: Path) -> DataView:
+def _materialize_images(rows: list[dict], destination_dir: Path, prefix: str) -> None:
+    """Copia (o linka) i pixel nella run e riscrive i percorsi per l'host remoto.
+
+    Il nome include un hash del percorso sorgente: due ritagli di famiglie
+    diverse possono chiamarsi allo stesso modo. `os.link` evita di duplicare i
+    byte quando sorgente e destinazione sono sullo stesso filesystem; il
+    fallback è una copia. Un'immagine mancante è un errore esplicito: un JSONL
+    che punta al nulla addestra fino al primo batch e poi muore.
+    """
+    images_dir = destination_dir / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    for row in rows:
+        rewritten: list[str] = []
+        for value in row.get("images") or []:
+            source = Path(value)
+            if not source.is_file():
+                raise FileNotFoundError(f"immagine del dataset non trovata: {source}")
+            digest = hashlib.sha1(str(source).encode("utf-8")).hexdigest()[:12]
+            target = images_dir / f"{digest}_{source.name}"
+            if not target.exists():
+                try:
+                    os.link(source, target)
+                except OSError:
+                    shutil.copy2(source, target)
+            rewritten.append(f"{prefix.rstrip('/')}/{target.name}")
+        row["images"] = rewritten
+
+
+def build_view(
+    recipe: TrainRecipe,
+    source_dir: Path,
+    destination_dir: Path,
+    *,
+    images_prefix: str | None = None,
+) -> DataView:
     """Scrive nella forma del toolchain della ricetta i file del run.
 
     `source_dir` è lo snapshot immutabile del dataset canonico. `destination_dir`
@@ -142,9 +185,9 @@ def build_view(recipe: TrainRecipe, source_dir: Path, destination_dir: Path) -> 
     view = recipe.data_view
 
     if view in {"ms-swift-jsonl", "paddleformers-messages"}:
-        return _messages_view(recipe, source_dir, destination_dir, families, prompts)
+        return _messages_view(recipe, source_dir, destination_dir, families, prompts, images_prefix)
     if view == "llamafactory-sharegpt":
-        return _sharegpt_view(recipe, source_dir, destination_dir, families, prompts)
+        return _sharegpt_view(recipe, source_dir, destination_dir, families, prompts, images_prefix)
     raise ValueError(
         f"vista dati '{view}' sconosciuta per '{recipe.adapter_id}': "
         "una ricetta senza vista non è eseguibile"
@@ -157,6 +200,7 @@ def _messages_view(
     destination_dir: Path,
     families: list[str],
     prompts: dict[str, str],
+    images_prefix: str | None,
 ) -> DataView:
     result = DataView(view=recipe.data_view, train=destination_dir / "train.jsonl", val=destination_dir / "val.jsonl")
     counts: dict[str, dict[str, int]] = {}
@@ -172,6 +216,8 @@ def _messages_view(
             for row in family_rows:
                 images = list(row.get("images") or [])
                 rows.append(_rewrite_prompt(row, prompt, images))
+        if images_prefix:
+            _materialize_images(rows, destination_dir, images_prefix)
         target = getattr(result, split)
         with target.open("w", encoding="utf-8") as handle:
             for row in rows:
@@ -193,6 +239,7 @@ def _sharegpt_view(
     destination_dir: Path,
     families: list[str],
     prompts: dict[str, str],
+    images_prefix: str | None,
 ) -> DataView:
     result = DataView(view=recipe.data_view, train=destination_dir / "train.json", val=destination_dir / "val.json")
     counts: dict[str, dict[str, int]] = {}
@@ -208,6 +255,11 @@ def _sharegpt_view(
             for row in family_rows:
                 images = list(row.get("images") or [])
                 rows.append(_sharegpt_row(_rewrite_prompt(row, prompt, images)))
+        # GLM-OCR/LLaMA-Factory risolve i percorsi immagine relativi alla
+        # `dataset_dir` (la doc ufficiale li vuole relativi a `data/`), non
+        # accetta il percorso assoluto dei ritagli canonici. Si materializzano
+        # quindi sempre dentro la run e si scrive `images/<file>`.
+        _materialize_images(rows, destination_dir, "images")
         getattr(result, split).write_text(
             json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8"
         )

@@ -20,10 +20,14 @@ const queryClient = new QueryClient({
   },
 })
 
+// The router lives under the same base as the assets: without it, a build served at
+// `/tabularium/` would treat the prefix as a route.
+const basename = import.meta.env.BASE_URL.replace(/\/$/, '') || '/'
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      <BrowserRouter basename={basename}>
         <App />
       </BrowserRouter>
     </QueryClientProvider>

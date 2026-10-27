@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..adapters import pages as pagestore
+from ..db import connect
 from . import images as imgmod
 
 SUPPORTED_IMAGE_EXTS = imgmod.SUPPORTED_IMAGE_EXTS
@@ -46,17 +48,15 @@ def find_missing_page_ids(conn, project_id: int, candidates: list[Candidate]) ->
     disponibile se il file viene ripristinato e sottoposto a una nuova scan.
     """
     paths = {str(c.path.resolve()) for c in candidates}
-    rows = conn.execute(
-        "SELECT id, abs_path FROM pages WHERE project_id=? AND status != 'missing'",
-        (project_id,),
-    ).fetchall()
-    return [r["id"] for r in rows if r["abs_path"] not in paths]
+    return [
+        row["id"]
+        for row in pagestore.existing_paths(project_id)
+        if row["abs_path"] not in paths
+    ]
 
 
 def mark_missing_pages(conn, page_ids: list[int]) -> int:
-    if page_ids:
-        conn.executemany("UPDATE pages SET status='missing' WHERE id=?", ((pid,) for pid in page_ids))
-    return len(page_ids)
+    return pagestore.mark_missing(page_ids, conn)
 
 
 def scan_archive(root_dir: str | Path) -> list[Candidate]:
@@ -197,35 +197,24 @@ def register_candidate(
         extra = {"scan_date": imgmod.exif_datetime(cand.path) or None}
         if meta.publication:
             extra["publication"] = meta.publication
-        cur = conn.execute(
-            """INSERT OR IGNORE INTO pages
-               (project_id, rel_path, abs_path, source_kind, width, height,
-                issue_no, page_no, page_type, meta_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (
-                project_id,
-                rel_path,
-                abs_path,
-                "image",
-                width,
-                height,
-                meta.issue_no,
-                meta.page_no,
-                meta.page_type,
-                json.dumps(extra),
-            ),
+        page_id = pagestore.insert_image_page(
+            conn,
+            project_id=project_id,
+            rel_path=rel_path,
+            abs_path=abs_path,
+            width=width,
+            height=height,
+            issue_no=meta.issue_no,
+            page_no=meta.page_no,
+            page_type=meta.page_type,
+            meta_json=json.dumps(extra),
         )
-        if cur.rowcount == 0:
-            conn.execute(
-                "UPDATE pages SET status='new' WHERE project_id=? AND abs_path=? AND status='missing'",
-                (project_id, abs_path),
-            )
+        if page_id is None:
             report.duplicates += 1
             return
-        page_id = cur.lastrowid
         thumb = pagesvc.thumb_path(page_id)
         imgmod.make_thumbnail(cand.path, thumb)
-        conn.execute("UPDATE pages SET thumb_path=? WHERE id=?", (str(thumb), page_id))
+        pagestore.set_thumb(conn, page_id, str(thumb))
         report.registered += 1
         return
 
@@ -244,43 +233,71 @@ def register_candidate(
     extra = {"publication": meta.publication} if meta.publication else {}
     for page_idx, rendered in enumerate(iter_pdf_pages(cand.path)):
         pil_img, (width, height) = rendered
-        cur = conn.execute(
-            """INSERT OR IGNORE INTO pages
-               (project_id, rel_path, abs_path, source_kind, pdf_page, width, height,
-                issue_no, page_no, page_type, meta_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                project_id,
-                rel_path,
-                abs_path,
-                "pdf",
-                page_idx,
-                width,
-                height,
-                meta.issue_no,
-                # In un PDF multipagina il numero di pagina è l'indice, non il
-                # suffisso del nome file (che identifica il fascicolo intero).
-                meta.page_no if page_count == 1 else str(page_idx + 1),
-                meta.page_type,
-                json.dumps(extra),
-            ),
+        page_id = pagestore.insert_pdf_page(
+            conn,
+            project_id=project_id,
+            rel_path=rel_path,
+            abs_path=abs_path,
+            pdf_page=page_idx,
+            width=width,
+            height=height,
+            issue_no=meta.issue_no,
+            # In un PDF multipagina il numero di pagina è l'indice, non il
+            # suffisso del nome file (che identifica il fascicolo intero).
+            page_no=meta.page_no if page_count == 1 else str(page_idx + 1),
+            page_type=meta.page_type,
+            meta_json=json.dumps(extra),
         )
-        if cur.rowcount == 0:
-            conn.execute(
-                "UPDATE pages SET status='new' WHERE project_id=? AND abs_path=? AND pdf_page=? AND status='missing'",
-                (project_id, abs_path, page_idx),
-            )
+        if page_id is None:
             report.duplicates += 1
             pil_img.close()
             continue
-        page_id = cur.lastrowid
         extracted = pagesvc.pdf_image_path(page_id)
         pil_img.save(extracted, format="PNG", optimize=True)
-        conn.execute(
-            "UPDATE pages SET meta_json=? WHERE id=?",
-            (json.dumps({**extra, "extracted_path": str(extracted)}), page_id),
+        pagestore.set_meta(
+            conn, page_id, json.dumps({**extra, "extracted_path": str(extracted)})
         )
         thumb = pagesvc.save_pdf_thumb(pil_img, page_id)
-        conn.execute("UPDATE pages SET thumb_path=? WHERE id=?", (str(thumb), page_id))
+        pagestore.set_thumb(conn, page_id, str(thumb))
         pil_img.close()
         report.registered += 1
+
+
+def run_scan(
+    project_id: int,
+    archive_dir: str | Path,
+    *,
+    confirm_missing: bool = False,
+    lang: str = "it",
+    on_progress=None,
+) -> ScanReport:
+    """Scan an archive into the project, in one transaction.
+
+    The router used to open the connection and pass it down, which is why the last
+    statements of `api/projects.py` still lived there. The scan is one unit of work —
+    discovering, marking missing sources, registering every candidate — so it owns the
+    connection and reports progress through a callback for the streaming job.
+    """
+    root = Path(archive_dir)
+    with connect() as conn:
+        candidates = scan_archive(root)
+        missing_ids = find_missing_page_ids(conn, project_id, candidates)
+        report = ScanReport(found_files=len(candidates), missing=len(missing_ids))
+        if confirm_missing:
+            mark_missing_pages(conn, missing_ids)
+        for index, candidate in enumerate(candidates, 1):
+            register_candidate(conn, project_id, candidate, root, report, lang=lang)
+            if on_progress is not None:
+                on_progress(index, candidate, report)
+    return report
+
+
+def register_uploads(
+    project_id: int, session_dir: str | Path, report: ScanReport, *, lang: str = "it"
+) -> None:
+    """Register a folder of uploaded files, in one transaction."""
+    root = Path(session_dir)
+    with connect() as conn:
+        for candidate in scan_archive(root):
+            register_candidate(conn, project_id, candidate, root, report, lang=lang)
+

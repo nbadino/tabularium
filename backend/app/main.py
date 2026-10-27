@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -18,8 +19,24 @@ from .db import init_db
 from .services.i18n import localize_detail, parse_lang
 
 
+def _assert_single_process() -> None:
+    """One process is a design constraint (program.md D8), not a tuning default.
+
+    Downloads, training jobs and the live channel keep state in process memory. A
+    second worker duplicates the jobs and splits the sessions, so it has to fail here
+    instead of producing two half-working applications.
+    """
+    raw = os.environ.get("WEB_CONCURRENCY", "").strip()
+    if raw.isdigit() and int(raw) > 1:
+        raise RuntimeError(
+            f"WEB_CONCURRENCY={raw}: Tabularium must run as a single process "
+            "(downloads, jobs and live presence are in-process state)"
+        )
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    _assert_single_process()
     init_db()
     # Il canale live notifica gli endpoint sincroni (che girano in un thread di
     # lavoro) da un loop diverso: senza questo riferimento i `publish` non
@@ -47,6 +64,8 @@ async def lifespan(_app: FastAPI):
     recognition.reconcile_runs()
     benchsvc.reconcile_benchmarks()
     cloud_manager.reconcile_tunnel()
+    from .services import auto_training
+    auto_training.reconcile_jobs()
     yield
 
 

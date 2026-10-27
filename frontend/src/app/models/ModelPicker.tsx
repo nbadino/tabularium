@@ -13,6 +13,7 @@ import { useI18n } from '../../i18n'
 import { Badge, Module, Notice } from '../ui'
 import { useInference } from '../inference'
 import { isCustom, isSelectable, type ModelItem } from './registry'
+import { DEFAULT_MODEL_ID } from '../../lib/constants'
 
 const MATURITY_KEY: Record<string, string> = {
   supported: 'cloud.models.maturitySupported',
@@ -196,7 +197,7 @@ export function ModelPicker({ models, loading, selectedId, onSelect, onChanged }
                   {MATURITY_KEY[m.maturity] && (
                     <Badge tone={MATURITY_TONE[m.maturity] ?? 'neutral'}>{t(MATURITY_KEY[m.maturity])}</Badge>
                   )}
-                  {m.adapter_id === 'monkeyocrv2-parsing' && <Badge tone="ok">{t('cloud.models.defaultBadge')}</Badge>}
+                  {m.adapter_id === DEFAULT_MODEL_ID && <Badge tone="ok">{t('cloud.models.defaultBadge')}</Badge>}
                   {isCustom(m) && <Badge tone="neutral">{t('cloud.models.customBadge')}</Badge>}
                   {inUse && <Badge tone="sig">{t('cloud.models.inUseNow')}</Badge>}
                 </div>
@@ -234,7 +235,9 @@ export function ModelPicker({ models, loading, selectedId, onSelect, onChanged }
                     {t('modelsHub.runsHere', { runtime: localRuntimeLabel(m.local.runtime) })}
                   </span>
                 ) : selectable ? (
-                  <span className="text-[color:var(--color-ink-2)]">{t('modelsHub.remoteOnly')}</span>
+                  <span className="text-[color:var(--color-ink-2)]">
+                    {m.serve_backend === 'llamaindex-api' ? t('modelsHub.remoteApi') : t('modelsHub.remoteOnly')}
+                  </span>
                 ) : (
                   <span className="text-[color:var(--color-warn)]">{t('modelsHub.notUsableYet')}</span>
                 )}

@@ -1,22 +1,14 @@
-/**
- * Il form del training, nell'ordine in cui la decisione si prende davvero:
- * **dove si addestra → modello e preset → controlli e avvio**.
- *
- * Prima «dove» stava in fondo, dopo dodici iperparametri, e partiva da
- * «Locale» anche su un Mac senza CUDA: la risposta arrivava solo al clic,
- * come errore. Ora la destinazione è il primo passo e dichiara prima del
- * clic se questa macchina può ospitare il training; i controlli preliminari
- * del backend si leggono dal vivo accanto al pulsante, non dopo.
- */
+/** Model recipe first, then automatic rental or an existing training GPU. */
 import { useEffect, useState } from 'react'
-import type { Project, TrainConfigBody, TrainRecipeInfo, TrainingPreflight } from '../../lib/types'
+import type { AutoTrainingJob, Project, TrainConfigBody, TrainRecipeInfo, TrainingPreflight } from '../../lib/types'
 import { Link } from 'react-router'
 import { apiGet, apiPost } from '../../lib/api'
 import { trainTypeLabel } from '../../lib/vocab'
-import { Badge, Collapsible, Field, Module, Notice, SkeletonLines } from '../../app/ui'
+import { Badge, Collapsible, ErrorNotice, Field, Module, Notice, SkeletonLines } from '../../app/ui'
 import { IconPlayground } from '../../app/icons'
-import { BASE_CFG, matchPreset, PRESETS, recipeDefaults } from './presets'
+import { BASE_CFG, MONKEYOCR_8GB, recipeDefaults } from './presets'
 import { useI18n } from '../../i18n'
+import { DEFAULT_MODEL_ID } from '../../lib/constants'
 
 type Executor = NonNullable<TrainConfigBody['executor']>
 
@@ -135,6 +127,7 @@ function VastInstancePicker({ host, onPick }: { host: string; onPick: (inst: Vas
 }
 
 interface TrainingConfigFormProps {
+  hideProject?: boolean
   projects: Project[]
   projectId: number | ''
   cfg: TrainConfigBody
@@ -151,6 +144,11 @@ interface TrainingConfigFormProps {
   onConfigChange: (patch: Partial<TrainConfigBody>) => void
   onStart: () => void
   onStop: () => void
+  autoJob: AutoTrainingJob | null
+  autoBusy: boolean
+  autoError: unknown
+  onAutoStart: (maxDph: number) => void
+  onAutoCancel: () => void
 }
 
 /** La destinazione effettiva: «Locale» senza GPU non è una scelta, è un default vuoto. */
@@ -160,6 +158,7 @@ export function effectiveExecutor(cfg: TrainConfigBody, localGpu: boolean): Exec
 }
 
 export default function TrainingConfigForm({
+  hideProject = false,
   projects,
   projectId,
   cfg,
@@ -174,10 +173,14 @@ export default function TrainingConfigForm({
   onConfigChange,
   onStart,
   onStop,
+  autoJob,
+  autoBusy,
+  autoError,
+  onAutoStart,
+  onAutoCancel,
 }: TrainingConfigFormProps) {
   const { t } = useI18n()
   const set = onConfigChange
-  const active = matchPreset(cfg)
   const [recipes, setRecipes] = useState<TrainRecipeInfo[]>([])
   useEffect(() => {
     apiGet<{ items: TrainRecipeInfo[] }>('/system/train-recipes')
@@ -186,7 +189,7 @@ export default function TrainingConfigForm({
   }, [])
   const recipe =
     recipes.find((r) => r.adapter_id === cfg.adapter_id) ??
-    recipes.find((r) => r.adapter_id === 'monkeyocrv2-parsing')
+    recipes.find((r) => r.adapter_id === DEFAULT_MODEL_ID)
   // `planned`/`inference-only` restano nella lista: spiegarne il motivo è
   // meglio che nasconderli e lasciare credere che il modello non esista.
   const recipeItems = recipes.filter((r) => r.trainable || r.maturity === 'planned')
@@ -209,6 +212,10 @@ export default function TrainingConfigForm({
   const [rentNotice, setRentNotice] = useState<string | null>(null)
   const [rentDph, setRentDph] = useState('1')
   const [rentVram, setRentVram] = useState('16')
+  // Il budget è la decisione che l'utente può davvero prendere; il resto
+  // (GPU, immagine, ambiente) lo sceglie il backend dentro quel tetto.
+  const [autoDph, setAutoDph] = useState(() => window.localStorage.getItem('tabularium.training.maxDph') || '1')
+  const [showAutoLogs, setShowAutoLogs] = useState(false)
 
   // Noleggia e prepara da sé un host Vast per il training (M18): cerca l'offerta
   // più economica, la noleggia con `prepare_training`, attende l'endpoint SSH e
@@ -219,7 +226,13 @@ export default function TrainingConfigForm({
     try {
       const out = await apiPost<{ instance_id: number; ssh: { user: string; python: string; train_repo: string } }>(
         '/system/cloud/vast/rent-training',
-        { tabularium_ref: 'main', max_dph: Number(rentDph) || 1, min_gpu_ram_gb: Number(rentVram) || 16 },
+        {
+          tabularium_ref: 'main',
+          credential_ref: 'vault:vast_api_key',
+          max_dph: Number(rentDph) || 1,
+          min_gpu_ram_gb: Number(rentVram) || 16,
+          adapter_id: recipe?.adapter_id,
+        },
       )
       set({ ssh_user: out.ssh.user, ssh_python: out.ssh.python, ssh_train_repo: out.ssh.train_repo })
       setRentNotice(t('training.where.rentWaiting'))
@@ -228,7 +241,7 @@ export default function TrainingConfigForm({
         await new Promise((r) => window.setTimeout(r, 10000))
         const list = await apiGet<{ items: Array<{ id: number; ssh_direct_host: string | null; ssh_host: string | null; ssh_port: number | null }> }>('/system/cloud/vast/instances')
         const inst = list.items.find((x) => Number(x.id) === Number(out.instance_id))
-        const host = inst?.ssh_direct_host || inst?.ssh_host
+        const host = inst?.ssh_host
         if (host) {
           set({ ssh_host: host, ssh_port: inst?.ssh_port ?? 22 })
           setRentNotice(t('training.where.rentReady'))
@@ -248,7 +261,7 @@ export default function TrainingConfigForm({
 
   return (
     <div className="space-y-3">
-      <Module tab={t('training.project')}>
+      {!hideProject && <Module tab={t('training.project')}>
         <Field label={t('training.project')}>
           <select
             value={projectId}
@@ -263,109 +276,10 @@ export default function TrainingConfigForm({
             ))}
           </select>
         </Field>
-      </Module>
+      </Module>}
 
-      {/* 1 — Dove si addestra */}
-      <Module tab={`1 · ${t('training.where.title')}`}>
-        <p className="max-w-[80ch] text-[12px] text-[color:var(--color-ink-2)]">{t('training.where.intro')}</p>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          {EXECUTORS.map((kind) => {
-            const blocked = kind === 'local' && !localGpu
-            const on = executor === kind
-            return (
-              <button
-                key={kind}
-                type="button"
-                disabled={blocked}
-                aria-pressed={on}
-                onClick={() => set({ executor: kind })}
-                className={`flex flex-col border p-3 text-left disabled:cursor-not-allowed disabled:bg-[color:var(--color-fill)] ${
-                  on
-                    ? 'border-[color:var(--color-sig)] bg-[color:var(--color-sig-wash)] outline outline-1 outline-[color:var(--color-sig)]'
-                    : 'border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] hover:border-[color:var(--color-ink)] disabled:hover:border-[color:var(--color-rule)]'
-                }`}
-              >
-                <span className={`flex items-center gap-2 text-[14px] font-bold ${blocked ? 'text-[color:var(--color-ink-3)]' : ''}`}>
-                  {t(`training.where.${kind}`)}
-                  {!localGpu && kind === 'vast' && <Badge tone="ok">{t('modelsHub.recommended')}</Badge>}
-                </span>
-                <span className="mt-1 text-[11px] text-[color:var(--color-ink-2)]">
-                  {blocked ? t('training.where.localBlocked') : t(`training.where.${kind}Body`)}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-
-        {remote && (
-          <div className="mt-3 space-y-3 border-t border-[color:var(--color-rule)] pt-3">
-            {executor === 'vast' && (
-              <div>
-                <span className="lbl">{t('training.where.vastPick')}</span>
-                <VastInstancePicker
-                  host={cfg.ssh_host ?? ''}
-                  onPick={(inst) => set({ ssh_host: inst.ssh_host ?? '', ssh_port: inst.ssh_port ?? 22, ssh_user: 'root' })}
-                />
-              </div>
-            )}
-            {executor === 'vast' && (
-              <div className="border border-[color:var(--color-rule)] p-2">
-                <span className="lbl">{t('training.where.rentTraining')}</span>
-                <p className="mb-2 text-[11px] text-[color:var(--color-ink-3)]">{t('training.where.rentTrainingHint')}</p>
-                <div className="flex flex-wrap items-end gap-2">
-                  <Field label={t('training.where.rentMaxDph')}>
-                    <input className="fld !w-24" value={rentDph} onChange={(e) => setRentDph(e.target.value)} />
-                  </Field>
-                  <Field label={t('training.where.rentMinVram')}>
-                    <input className="fld !w-24" value={rentVram} onChange={(e) => setRentVram(e.target.value)} />
-                  </Field>
-                  <button type="button" className="btn btn-sm" disabled={rentBusy} onClick={() => void rentTraining()}>
-                    {rentBusy ? t('training.where.rentBusy') : t('training.where.rentGo')}
-                  </button>
-                </div>
-                {rentNotice && <p className="mt-1 text-[11px] text-[color:var(--color-ink-2)]">{rentNotice}</p>}
-              </div>
-            )}
-            <div className="grid gap-3 sm:grid-cols-3">
-              <Field label={t('training.sshHost')} hint={t('training.sshHostHint')}>
-                <input value={cfg.ssh_host ?? ''} onChange={(e) => set({ ssh_host: e.target.value })} className="fld fld-mono" placeholder="gpu.example" />
-              </Field>
-              <NumField label={t('training.sshPort')} value={cfg.ssh_port ?? 22} onChange={(v) => set({ ssh_port: v })} />
-              <Field label={t('training.sshUser')}>
-                <input value={cfg.ssh_user ?? 'root'} onChange={(e) => set({ ssh_user: e.target.value })} className="fld fld-mono" />
-              </Field>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label={t('training.sshTrainRepo')} hint={t('training.sshTrainRepoHint')}>
-                <input value={cfg.ssh_train_repo ?? ''} onChange={(e) => set({ ssh_train_repo: e.target.value })} className="fld fld-mono" placeholder="/root/MonkeyOCRv2/parsing/train" />
-              </Field>
-              <Field label={t('training.sshPython')} hint={t('training.sshPythonHint')}>
-                <input value={cfg.ssh_python ?? ''} onChange={(e) => set({ ssh_python: e.target.value })} className="fld fld-mono" placeholder="/opt/venv/bin/python" />
-              </Field>
-            </div>
-            <p className="text-[11px] text-[color:var(--color-ink-3)]">{t('training.where.remoteEnvNote')}</p>
-            <details>
-              <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.04em] text-[color:var(--color-ink-2)]">
-                {t('training.where.sshAdvanced')}
-              </summary>
-              <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                <Field
-                  label={t('training.sshKey')}
-                  hint={executor === 'ssh' ? t('training.sshKeyHint') : t('training.where.keyDefault')}
-                >
-                  <input value={cfg.ssh_key_path ?? ''} onChange={(e) => set({ ssh_key_path: e.target.value })} className="fld fld-mono" placeholder="~/.ssh/id_ed25519" />
-                </Field>
-                <Field label={t('training.sshRoot')} hint={t('training.sshRootHint')}>
-                  <input value={cfg.ssh_root ?? '/tmp/tabularium-runs'} onChange={(e) => set({ ssh_root: e.target.value })} className="fld fld-mono" />
-                </Field>
-              </div>
-            </details>
-          </div>
-        )}
-      </Module>
-
-      {/* 2 — Modello e preset */}
-      <Module tab={`2 · ${t('training.corpusPreset')}`}>
+      {/* Choose the base model before the execution destination. */}
+      <Module tab={`1 · ${t('training.corpusPreset')}`}>
         <div className="grid gap-3 sm:grid-cols-2">
           {/* Il modello *è* la ricetta: scegliere un adapter cambia toolchain,
               tipi di training ammessi e default. Niente più deduzione dal
@@ -401,7 +315,8 @@ export default function TrainingConfigForm({
           </Field>
         </div>
 
-        {recipe && (
+        {recipe && <details className="mt-2">
+          <summary className="cursor-pointer text-[12px] font-semibold">{t('training.recipeDetails')}</summary>
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[color:var(--color-ink-3)]">
             <Badge tone={recipe.maturity === 'verified' ? 'ok' : 'neutral'}>{recipe.maturity}</Badge>
             <span className="mono">{recipe.toolchain}</span>
@@ -411,8 +326,17 @@ export default function TrainingConfigForm({
               </a>
             )}
             {recipe.verified_on && <span>{recipe.verified_on}</span>}
+            {recipe.environment && Object.keys(recipe.environment).length > 0 && (
+              <span title={t('training.environmentHint')}>
+                {t('training.environment')}:{' '}
+                {Object.entries(recipe.environment).map(([name, pin]) => `${name} ${pin}`).join(' · ')}
+              </span>
+            )}
           </div>
-        )}
+          {recipe.official_notes?.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-4 text-[11px] text-[color:var(--color-ink-2)]">
+            {recipe.official_notes.map((note) => <li key={note}>{note}</li>)}
+          </ul>}
+        </details>}
         {recipe && !recipeReady && (
           <div className="mt-2">
             <Notice tone="warn">
@@ -420,46 +344,16 @@ export default function TrainingConfigForm({
             </Notice>
           </div>
         )}
-        {recipe?.official_notes?.length ? (
-          <details className="mt-2">
-            <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.04em] text-[color:var(--color-ink-2)]">
-              {t('training.officialNotes')}
-            </summary>
-            <ul className="mt-1 list-disc space-y-1 pl-4 text-[11px] text-[color:var(--color-ink-2)]">
-              {recipe.official_notes.map((note) => <li key={note}>{note}</li>)}
-            </ul>
-          </details>
-        ) : null}
+      </Module>
 
-        <fieldset className="mt-3 min-w-0">
-          <legend className="lbl">{t('training.preset')}</legend>
-          <div className="grid gap-px bg-[color:var(--color-rule)] sm:grid-cols-2">
-            {PRESETS.map((p) => {
-              const on = active === p.id
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => set(p.cfg)}
-                  aria-pressed={on}
-                  className={`flex flex-col gap-1 p-2 text-left ${
-                    on
-                      ? 'bg-[color:var(--color-sig-wash)] outline outline-2 -outline-offset-2 outline-[color:var(--color-sig)]'
-                      : 'bg-[color:var(--color-sheet)] hover:bg-[color:var(--color-fill)]'
-                  }`}
-                >
-                  <span className="text-[13px] font-semibold">{t(p.nomeKey)}</span>
-                  <span className="text-[11px] leading-snug text-[color:var(--color-ink-2)]">{t(p.percheKey)}</span>
-                </button>
-              )
-            })}
-          </div>
-          {active === null && (
-            <p className="mt-1.5 text-[11px] text-[color:var(--color-ink-3)]">{t('training.customConfig')}</p>
-          )}
-        </fieldset>
+      <Collapsible tab={t('training.advanced')} quiet>
+        <p className="mb-3 max-w-[80ch] text-[12px] text-[color:var(--color-ink-2)]">{t('training.advancedHint')}</p>
+        <div className="mb-3 flex flex-wrap gap-2">
+          {recipe && <button type="button" className="btn btn-sm" onClick={() => set(recipeDefaults(recipe, cfg.train_type ?? 'lora'))}>{t('training.restoreDefaults')}</button>}
+          {recipe?.adapter_id === DEFAULT_MODEL_ID && cfg.train_type !== 'full' && <button type="button" className="btn btn-sm" onClick={() => set(MONKEYOCR_8GB)}>{t('training.apply8gb')}</button>}
+        </div>
 
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="mb-3 grid gap-3 sm:grid-cols-2">
           <NumField
             label={t('training.epochs')}
             hint={t('training.epochsHint')}
@@ -475,10 +369,6 @@ export default function TrainingConfigForm({
             step={1e-6}
           />
         </div>
-      </Module>
-
-      <Collapsible tab={t('training.advanced')} quiet aux={<span>{t('training.advancedCount')}</span>}>
-        <p className="mb-3 max-w-[80ch] text-[12px] text-[color:var(--color-ink-2)]">{t('training.advancedHint')}</p>
 
         {(cfg.train_type === 'lora' || !cfg.train_type) && (
           <div className="mb-3 grid gap-3 sm:grid-cols-3">
@@ -542,10 +432,261 @@ export default function TrainingConfigForm({
             placeholder="run_..."
           />
         </Field>
+        <Field label={t('training.modelCache')} hint={t('training.modelCacheHint')}>
+          <input
+            value={cfg.model_cache ?? ''}
+            onChange={(e) => set({ model_cache: e.target.value })}
+            className="fld fld-mono"
+            placeholder="$HOME/.cache/modelscope"
+          />
+        </Field>
+        <label className="flex items-start gap-2 text-[12px]">
+          <input
+            type="checkbox"
+            checked={Boolean(cfg.use_hf)}
+            onChange={(e) => set({ use_hf: e.target.checked })}
+            className="mt-0.5"
+          />
+          <span>
+            {t('training.useHf')}
+            <span className="mt-0.5 block text-[11px] text-[color:var(--color-ink-3)]">
+              {t('training.useHfHint')}
+            </span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2 text-[12px]">
+          <input
+            type="checkbox"
+            checked={cfg.auto_prepare ?? true}
+            onChange={(e) => set({ auto_prepare: e.target.checked })}
+            className="mt-0.5"
+          />
+          <span>
+            {t('training.autoPrepare')}
+            <span className="mt-0.5 block text-[11px] text-[color:var(--color-ink-3)]">
+              {t('training.autoPrepareHint')}
+            </span>
+          </span>
+        </label>
       </Collapsible>
 
-      {/* 3 — Controlli e avvio */}
-      <Module tab={`3 · ${t('training.launch')}`}>
+      {/* Launch automatically, or configure an existing GPU on demand. */}
+      <Module tab={`2 · ${t('training.launch')}`}>
+        {/* Il percorso per chi non è sviluppatore: una GPU, l'ambiente giusto,
+            il training e il checkpoint, senza host/SSH/python da compilare. */}
+        <div className="mb-4 rounded-lg border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <span className="lbl">{t('training.auto.title')}</span>
+              <p className="mt-1 max-w-[72ch] text-[12px] text-[color:var(--color-ink-2)]">
+                {recipeReady ? t('training.auto.body', { model: recipe?.display_name ?? '' }) : t('training.recipeNotReady', { toolchain: recipe?.toolchain ?? '—' })}
+              </p>
+              <p className="mt-1 text-[11px] text-[color:var(--color-ink-3)]">
+                {t('training.auto.cost', { dph: autoDph || '1' })}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <Field label={t('training.auto.budget')}>
+                <input
+                  type="number"
+                  min="0.1"
+                  step="0.05"
+                  className="fld !w-24"
+                  value={autoDph}
+                  onChange={(e) => {
+                    setAutoDph(e.target.value)
+                    if (Number(e.target.value) >= 0.1) window.localStorage.setItem('tabularium.training.maxDph', e.target.value)
+                  }}
+                />
+              </Field>
+              <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => onAutoStart(Number(autoDph) || 1)}
+              disabled={
+                autoBusy ||
+                projectId === '' ||
+                !datasetReady ||
+                !recipeReady ||
+                isActive ||
+                ['queued', 'renting', 'waiting_ssh', 'provisioning', 'starting'].includes(autoJob?.state ?? '')
+              }
+            >
+              {autoBusy ? t('training.auto.starting') : t('training.auto.button')}
+              </button>
+            </div>
+          </div>
+          {!datasetReady && (
+            <p className="mt-2 text-[12px] text-[color:var(--color-ink-2)]">
+              {t('training.auto.needsDataset')}{' '}
+              <Link to="/dataset" className="font-semibold underline underline-offset-2">
+                {t('pipeline.steps.datasetAction')}
+              </Link>
+            </p>
+          )}
+          {autoJob && (
+            <div className="mt-3 rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-paper)] p-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone={autoJob.state === 'failed' ? 'warn' : autoJob.state === 'running' ? 'ok' : 'neutral'}>
+                  {t(
+                    autoJob.phase === 'rent' ? 'training.auto.phaseRent'
+                      : autoJob.phase === 'ssh' ? 'training.auto.phaseSsh'
+                        : autoJob.phase === 'env' ? 'training.auto.phaseEnv'
+                          : autoJob.phase === 'train' ? 'training.auto.phaseTrain'
+                            : autoJob.phase === 'training' ? 'training.auto.phaseTraining'
+                              : 'training.auto.phaseDone',
+                  )}
+                </Badge>
+                <details className="min-w-0 flex-1 text-[12px]">
+                  <summary className="cursor-pointer">{t('training.showLogs')}</summary>
+                  <pre className="mono mt-2 overflow-auto whitespace-pre-wrap text-[11px]">{[autoJob.message, autoJob.error, autoJob.log].filter(Boolean).join('\n')}</pre>
+                </details>
+                {['queued', 'renting', 'waiting_ssh', 'provisioning', 'starting', 'running'].includes(autoJob.state) && (
+                  <button type="button" className="btn btn-sm" onClick={onAutoCancel}>
+                    {t('training.auto.cancel')}
+                  </button>
+                )}
+              </div>
+              {autoJob.state === 'running' && (
+                <p className="mt-1.5 text-[11px] text-[color:var(--color-ink-2)]">{t('training.auto.done')}</p>
+              )}
+              {autoJob.run_id && (
+                <p className="mt-1 text-[10px] text-[color:var(--color-ink-3)]">
+                  {t('training.auto.runId', { run: autoJob.run_id })}
+                </p>
+              )}
+              {(autoJob.error || autoJob.log) && (
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    aria-expanded={showAutoLogs}
+                    aria-controls="training-auto-log"
+                    onClick={() => setShowAutoLogs((visible) => !visible)}
+                  >
+                    {showAutoLogs ? t('training.hideLogs') : t('training.showLogs')}
+                  </button>
+                  {showAutoLogs && <pre id="training-auto-log" className="mono mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-[color:var(--color-paper)] p-2 text-[10px] text-[color:var(--color-ink-2)]">
+                    {autoJob.error || autoJob.log}
+                  </pre>}
+                </div>
+              )}
+            </div>
+          )}
+          {autoError != null && <ErrorNotice error={autoError} />}
+        </div>
+        <details open={Boolean(cfg.resume_run_id)} className="border-t border-[color:var(--color-rule)] pt-3">
+          <summary className="cursor-pointer text-[13px] font-semibold">{t('training.manualSetup')}</summary>
+          <div className="mt-3">
+      {/* Manual execution uses an existing GPU; automatic rental needs no host fields. */}
+      <Module tab={t('training.where.title')}>
+        <p className="max-w-[80ch] text-[12px] text-[color:var(--color-ink-2)]">{t('training.where.intro')}</p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {EXECUTORS.map((kind) => {
+            const blocked = kind === 'local' && !localGpu
+            const on = executor === kind
+            return (
+              <button
+                key={kind}
+                type="button"
+                disabled={blocked}
+                aria-pressed={on}
+                onClick={() => set({ executor: kind })}
+                className={`flex flex-col border p-3 text-left disabled:cursor-not-allowed disabled:bg-[color:var(--color-fill)] ${
+                  on
+                    ? 'border-[color:var(--color-sig)] bg-[color:var(--color-sig-wash)] outline outline-1 outline-[color:var(--color-sig)]'
+                    : 'border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] hover:border-[color:var(--color-ink)] disabled:hover:border-[color:var(--color-rule)]'
+                }`}
+              >
+                <span className={`flex items-center gap-2 text-[14px] font-bold ${blocked ? 'text-[color:var(--color-ink-3)]' : ''}`}>
+                  {t(`training.where.${kind}`)}
+                  {!localGpu && kind === 'vast' && <Badge tone="ok">{t('modelsHub.recommended')}</Badge>}
+                </span>
+                <span className="mt-1 text-[11px] text-[color:var(--color-ink-2)]">
+                  {blocked ? t('training.where.localBlocked') : t(`training.where.${kind}Body`)}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
+        {remote && (
+          <div className="mt-3 space-y-3 border-t border-[color:var(--color-rule)] pt-3">
+            {executor === 'vast' && (
+              <div>
+                <span className="lbl">{t('training.where.vastPick')}</span>
+                <VastInstancePicker
+                  host={cfg.ssh_host ?? ''}
+                  onPick={(inst) => set({ ssh_host: inst.ssh_host ?? '', ssh_port: inst.ssh_port ?? 22, ssh_user: 'root' })}
+                />
+              </div>
+            )}
+            {executor === 'vast' && (
+              recipe?.adapter_id === DEFAULT_MODEL_ID ? (
+                <div className="border border-[color:var(--color-rule)] p-2">
+                  <span className="lbl">{t('training.where.rentTraining')}</span>
+                  <p className="mb-2 text-[11px] text-[color:var(--color-ink-3)]">{t('training.where.rentTrainingHint')}</p>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <Field label={t('training.where.rentMaxDph')}>
+                      <input className="fld !w-24" value={rentDph} onChange={(e) => setRentDph(e.target.value)} />
+                    </Field>
+                    <Field label={t('training.where.rentMinVram')}>
+                      <input className="fld !w-24" value={rentVram} onChange={(e) => setRentVram(e.target.value)} />
+                    </Field>
+                    <button type="button" className="btn btn-sm" disabled={rentBusy} onClick={() => void rentTraining()}>
+                      {rentBusy ? t('training.where.rentBusy') : t('training.where.rentGo')}
+                    </button>
+                  </div>
+                  {rentNotice && <p className="mt-1 text-[11px] text-[color:var(--color-ink-2)]">{rentNotice}</p>}
+                </div>
+              ) : (
+                <div className="border border-[color:var(--color-rule)] p-2">
+                  <span className="lbl">{t('training.rentUnavailable')}</span>
+                  <p className="mt-1 text-[11px] text-[color:var(--color-ink-2)]">
+                    {t('training.rentUnavailableHint', { toolchain: recipe?.toolchain ?? '—' })}
+                  </p>
+                </div>
+              )
+            )}
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Field label={t('training.sshHost')} hint={t('training.sshHostHint')}>
+                <input value={cfg.ssh_host ?? ''} onChange={(e) => set({ ssh_host: e.target.value })} className="fld fld-mono" placeholder="gpu.example" />
+              </Field>
+              <NumField label={t('training.sshPort')} value={cfg.ssh_port ?? 22} onChange={(v) => set({ ssh_port: v })} />
+              <Field label={t('training.sshUser')}>
+                <input value={cfg.ssh_user ?? 'root'} onChange={(e) => set({ ssh_user: e.target.value })} className="fld fld-mono" />
+              </Field>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label={t('training.sshTrainRepo')} hint={t('training.sshTrainRepoHint')}>
+                <input value={cfg.ssh_train_repo ?? ''} onChange={(e) => set({ ssh_train_repo: e.target.value })} className="fld fld-mono" placeholder="/path/to/toolchain" />
+              </Field>
+              <Field label={t('training.sshPython')} hint={t('training.sshPythonHint')}>
+                <input value={cfg.ssh_python ?? ''} onChange={(e) => set({ ssh_python: e.target.value })} className="fld fld-mono" placeholder="/opt/venv/bin/python" />
+              </Field>
+            </div>
+            <p className="text-[11px] text-[color:var(--color-ink-3)]">{t('training.where.remoteEnvNote')}</p>
+            <details>
+              <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.04em] text-[color:var(--color-ink-2)]">
+                {t('training.where.sshAdvanced')}
+              </summary>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                <Field
+                  label={t('training.sshKey')}
+                  hint={executor === 'ssh' ? t('training.sshKeyHint') : t('training.where.keyDefault')}
+                >
+                  <input value={cfg.ssh_key_path ?? ''} onChange={(e) => set({ ssh_key_path: e.target.value })} className="fld fld-mono" placeholder="~/.ssh/id_ed25519" />
+                </Field>
+                <Field label={t('training.sshRoot')} hint={t('training.sshRootHint')}>
+                  <input value={cfg.ssh_root ?? '/tmp/tabularium-runs'} onChange={(e) => set({ ssh_root: e.target.value })} className="fld fld-mono" />
+                </Field>
+              </div>
+            </details>
+          </div>
+        )}
+      </Module>
+
+          </div>
         {projectId !== '' && !datasetReady && (
           <Notice tone="warn">
             <span>{t('pipeline.steps.trainNeeds')}</span>{' '}
@@ -554,7 +695,7 @@ export default function TrainingConfigForm({
             </Link>
           </Notice>
         )}
-        {projectId !== '' && executor === null && <Notice tone="warn">{t('training.where.chooseFirst')}</Notice>}
+
 
         {/* I controlli del backend, letti prima del clic: ciò che bloccherà
             il run è scritto qui, con la causa, e il pulsante resta spento. */}
@@ -616,6 +757,7 @@ export default function TrainingConfigForm({
             })}
           </p>
         )}
+        </details>
       </Module>
     </div>
   )

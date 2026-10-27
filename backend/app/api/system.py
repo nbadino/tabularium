@@ -24,6 +24,7 @@ from ..services import hardware
 from ..schemas import ComputeProfileIn, ComputeProfileOut, SecretIn, SecretOut
 
 from .. import config
+from ..adapters import system as systemstore
 from ..db import connect
 from ..services import auth as authsvc
 
@@ -122,13 +123,7 @@ def delete_secret(name: str, user: dict = Depends(_admin)) -> SecretOut:
 
 @router.get("/api/system/jobs")
 def list_jobs(user: dict = Depends(_admin)) -> list[dict]:
-    with connect() as conn:
-        rows = conn.execute(
-            "SELECT id, kind, owner_id, project_id, provider, pid, remote_job_id, state, "
-            "heartbeat_at, command_json, log_path, recovery_strategy, started_at, ended_at, exit_code, error "
-            "FROM jobs ORDER BY id DESC LIMIT 100"
-        ).fetchall()
-    return [dict(row) for row in rows]
+    return systemstore.jobs()
 
 
 @router.get("/api/system/compute-profiles", response_model=list[ComputeProfileOut])
@@ -220,16 +215,13 @@ def health() -> dict:
 
 @router.get("/api/system/info")
 def system_info() -> dict:
-    with connect() as conn:
-        version = conn.execute(
-            "SELECT value FROM meta WHERE key='schema_version'"
-        ).fetchone()
+    version = systemstore.schema_version()
     return {
         "app": config.APP_NAME,
         "version": config.VERSION,
         "data_dir": str(config.DATA_DIR),
         "db_path": str(config.DB_PATH),
-        "schema_version": version["value"] if version else None,
+        "schema_version": version,
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "capabilities": {
@@ -441,12 +433,21 @@ def test_inference_endpoint(payload: dict, user: dict = Depends(authsvc.get_curr
     from ..services import inference
 
     authsvc.require_admin(user)
-    url = validate_endpoint(payload.get("url") or config.VLLM_URL)
-    model = payload.get("model") or config.VLLM_MODEL
-    api_key = payload.get("api_key") or ""
+    use_saved = bool(payload.get("use_saved_credentials"))
+    saved = inference.get_inference_config() if use_saved else {}
+    adapter = _adapter_or_none(payload.get("adapter_id") or saved.get("adapter_id"))
+    llama_backend = adapter is not None and getattr(
+        adapter.capabilities, "serve_backend", ""
+    ) == "llamaindex-api"
+    url = validate_endpoint(
+        payload.get("url")
+        or saved.get("url")
+        or (inference.LLAMAINDEX_BASE_URL if llama_backend else config.VLLM_URL)
+    )
+    model = payload.get("model") or saved.get("model") or config.VLLM_MODEL
+    api_key = payload.get("api_key") or (saved.get("api_key") if use_saved else "") or ""
     extra_headers = payload.get("extra_headers") or {}
     timeout = float(payload.get("timeout", 10.0))
-    adapter = _adapter_or_none(payload.get("adapter_id"))
     # Il test nasce da un endpoint non ancora salvato: la chiave del gateway
     # OpenCode va cercata qui, non nel vault (che è vuoto al primo giro).
     if not api_key and adapter is not None and getattr(
@@ -463,7 +464,11 @@ def test_inference_endpoint(payload: dict, user: dict = Depends(authsvc.get_curr
         extra_headers=extra_headers,
         timeout=int(timeout),
         adapter=adapter,
-        provider="opencode" if "opencode.ai" in url.lower() else None,
+        provider=(
+            "llamaindex" if llama_backend
+            else "opencode" if "opencode.ai" in url.lower()
+            else payload.get("provider") or inference._provider_for_endpoint(url)
+        ),
     )
     return client.test_connection(timeout=timeout)
 

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import { ApiError } from '../lib/api'
 import type { PageItem, PrefillEngines, RecognitionRun, SystemInfo } from '../lib/types'
-import { Badge, ErrorNotice, Field, Modal, Module, Notice, Progress, PageHeader } from '../app/ui'
+import { Badge, Collapsible, ErrorNotice, Field, Loading, Modal, Module, Notice, Progress, PageHeader } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { syncInferenceFromBackend, useInference } from '../app/inference'
 import { useCanAdminister } from '../app/auth'
@@ -11,6 +11,7 @@ import { IconArchive, IconPlayground } from '../app/icons'
 import { useI18n } from '../i18n'
 import { pageLabel, pageShortLabel } from '../lib/pageLabel'
 import { runTitle, useModelNames } from '../app/models/names'
+import { API_BASE } from '../lib/endpoints'
 
 function runLabel(run: RecognitionRun, t: (key: string) => string): string {
   const key = {
@@ -52,7 +53,7 @@ function RunSummary({ run, onCancel }: { run: RecognitionRun; onCancel: () => vo
   const active = run.state === 'queued' || run.state === 'running'
   const pct = run.total_pages ? (run.completed_pages / run.total_pages) * 100 : 0
   const provider = runProvider(run)
-  const providerKey = ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom'].includes(provider)
+  const providerKey = ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom', 'llamaindex'].includes(provider)
     ? `recognition.provider.${provider}`
     : null
   return (
@@ -95,12 +96,14 @@ function RunSummary({ run, onCancel }: { run: RecognitionRun; onCancel: () => vo
 
 export default function RecognizePage() {
   const { t } = useI18n()
+  const [params] = useSearchParams()
   const nameOf = useModelNames()
   const inference = useInference()
   const canManageInference = useCanAdminister()
   const [projectId, setProjectId] = useState<number | ''>('')
   const [pages, setPages] = useState<PageItem[]>([])
   const [pageQuery, setPageQuery] = useState('')
+  const [pagesLoading, setPagesLoading] = useState(false)
   const [pageLimit, setPageLimit] = useState(INITIAL_PAGE_LIMIT)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [runs, setRuns] = useState<RecognitionRun[]>([])
@@ -133,8 +136,8 @@ export default function RecognizePage() {
   // esplicita dell'utente vince sempre su quella suggerita.
   useEffect(() => {
     if (engineTouched || !engines?.recommended) return
-    setEngine(engines.recommended)
-  }, [engines?.recommended, engineTouched])
+    setEngine(engines.recommended === 'model' && !(inference.enabled && inference.available) && engines.ocr?.available ? 'ocr' : engines.recommended)
+  }, [engines?.recommended, engines?.ocr?.available, engineTouched, inference.enabled, inference.available])
 
   const loadRuns = async (pid: number) => {
     try {
@@ -165,19 +168,25 @@ export default function RecognizePage() {
     setRuns([])
     setCurrent(null)
     setSelected(new Set())
-    if (pid === '') return
+    if (pid === '') { setPagesLoading(false); return }
+    setPagesLoading(true)
     try {
       // Le pagine sono il contenuto primario: un problema nel solo storico
       // delle run non deve far apparire vuoto un archivio che non lo è.
       const pageOut = await apiGet<{ items: PageItem[] }>(`/projects/${pid}/pages`)
       setPages(pageOut.items)
+      if (Number(params.get('project')) === pid) {
+        const requested = new Set((params.get('pages') ?? '').split(',').map(Number))
+        setSelected(new Set(pageOut.items.filter((page) => requested.has(page.id)).map((page) => page.id)))
+      }
+      setPagesLoading(false)
       await loadRuns(pid)
     } catch (e) {
       setError(e)
-    }
+    } finally { setPagesLoading(false) }
   }
 
-  const projects = useProjects((pid) => void onProject(pid), setError)
+  const projects = useProjects((pid) => void onProject(Number(params.get('project')) || pid), setError)
 
   useEffect(() => {
     if (!current || (current.state !== 'queued' && current.state !== 'running')) return
@@ -314,7 +323,6 @@ export default function RecognizePage() {
       <div className="mb-3 flex flex-wrap gap-2">
         <Link to="/progetti?nuovo=1" className="btn btn-sm no-underline">{t('projects.new')}</Link>
         {projectId !== '' && <Link to={`/progetti/${projectId}`} className="btn btn-sm no-underline">{t('workflow.addPages')}</Link>}
-        <Link to="/playground" className="btn btn-sm no-underline">{t('nav.playground')}</Link>
       </div>
 
       {error != null && <div className="mb-3"><ErrorNotice error={error} onDismiss={() => setError(null)} /></div>}
@@ -361,7 +369,7 @@ export default function RecognizePage() {
             )}
             <button type="button" className="btn" disabled={selected.size === 0} onClick={() => setSelected(new Set())}>{t('recognition.clearSelection')}</button>
           </div>
-          {pages.length === 0 ? (
+          {pagesLoading ? <Loading label={t('common.loading')} /> : pages.length === 0 ? (
             <div className="flex flex-col items-start gap-2 p-6">
               <IconArchive size={22} />
               <p className="text-[13px] font-semibold">
@@ -392,13 +400,13 @@ export default function RecognizePage() {
             <div className="p-6 text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.noFilteredPages')}</div>
           ) : (
             <>
-              <ul className="cascade grid grid-cols-2 border-l border-t border-[color:var(--color-rule)] sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-7">
+              <ul className="cascade grid grid-cols-2 border-l border-t border-[color:var(--color-rule)] sm:grid-cols-3 lg:grid-cols-5">
                 {renderedPages.map((page) => {
                   const checked = selected.has(page.id)
                   return (
                     <li key={page.id} className="border-b border-r border-[color:var(--color-rule)]">
                       <label className={`block cursor-pointer ${checked ? 'bg-[color:var(--color-sig-wash)] outline outline-2 -outline-offset-2 outline-[color:var(--color-sig)]' : 'hover:bg-[color:var(--color-fill)]'}`}>
-                        <img data-fade src={`/api/pages/${page.id}/thumbnail`} alt="" loading="lazy" className="aspect-[3/4] w-full bg-white object-cover object-top" />
+                        <img data-fade src={`${API_BASE}/pages/${page.id}/thumbnail`} alt="" loading="lazy" className="aspect-[3/4] w-full bg-white object-cover object-top" />
                         <span className="flex items-center gap-2 border-t border-[color:var(--color-rule)] p-1.5">
                           <input
                             type="checkbox"
@@ -514,7 +522,7 @@ export default function RecognizePage() {
             </button>
           </Module>
 
-          <Module tab={t('recognition.recent')} quiet flush>
+          <Collapsible tab={t('recognition.recent')} quiet flush>
             {runs.length === 0 ? <p className="p-3 text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.noRuns')}</p> : (
               <ul className="divide-y divide-[color:var(--color-rule)]">
                 {runs.slice(0, 8).map((run) => (
@@ -528,7 +536,7 @@ export default function RecognizePage() {
                 ))}
               </ul>
             )}
-          </Module>
+          </Collapsible>
         </div>
       </div>
       {askReplace && (

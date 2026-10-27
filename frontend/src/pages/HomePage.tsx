@@ -12,13 +12,14 @@ import { Link } from 'react-router'
 import { apiGet } from '../lib/api'
 import type { PageItem, Project } from '../lib/types'
 import { statusLabel, STATUS_RANK, STATUS_TONE } from '../lib/vocab'
-import { Badge, ErrorNotice, Module } from '../app/ui'
+import { Badge, ErrorNotice, Field, Loading, Module } from '../app/ui'
 import { pickActive, writeActiveProject } from '../app/activeProject'
 import { IconArchive } from '../app/icons'
 import { useI18n } from '../i18n'
 import { pageLabel, pageShortLabel } from '../lib/pageLabel'
 import { CorpusPaths } from '../app/PipelineView'
 import { buildBranches, usePipelineState } from '../app/pipeline'
+import { API_BASE } from '../lib/endpoints'
 
 /** Filtro trasversale agli stati: le pagine con bozze generate da verificare. */
 const DRAFTS_FILTER = '__drafts'
@@ -31,7 +32,7 @@ function PageCell({ page }: { page: PageItem }) {
       <Link to={`/annotazione?project=${page.project_id}&page=${page.id}`} className="block text-[color:var(--color-ink)] no-underline hover:bg-[color:var(--color-fill)]">
         <div className="lighttable aspect-[3/4] overflow-hidden">
           <img data-fade
-            src={`/api/pages/${page.id}/thumbnail`}
+            src={`${API_BASE}/pages/${page.id}/thumbnail`}
             alt={t('home.thumbnailAlt', { path: page.rel_path })}
             loading="lazy"
             className="h-full w-full bg-white object-cover object-top"
@@ -65,6 +66,10 @@ export default function HomePage() {
   const [error, setError] = useState<unknown>(null)
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<string>('')
+  const [pagesLoading, setPagesLoading] = useState(false)
+  const [query, setQuery] = useState('')
+  const [pageLimit, setPageLimit] = useState(80)
+  useEffect(() => setPageLimit(80), [filter, query, projectId])
 
   useEffect(() => {
     let alive = true
@@ -86,9 +91,13 @@ export default function HomePage() {
     writeActiveProject(projectId)
     let alive = true
     setPages([])
+    setPagesLoading(true)
+    setFilter('')
+    setQuery('')
     apiGet<{ items: PageItem[] }>(`/projects/${projectId}/pages`)
       .then((r) => alive && setPages(r.items))
       .catch((e) => alive && setError(e))
+      .finally(() => { if (alive) setPagesLoading(false) })
     return () => {
       alive = false
     }
@@ -115,12 +124,14 @@ export default function HomePage() {
     [pages],
   )
   const withDrafts = pages.filter((p) => (p.drafts ?? 0) > 0).length
-  const shown =
+  const filtered =
     filter === DRAFTS_FILTER
       ? sorted.filter((p) => (p.drafts ?? 0) > 0)
       : filter
         ? sorted.filter((p) => p.status === filter)
         : sorted
+
+  const shown = filtered.filter((page) => !query.trim() || pageLabel(page).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
 
   const counts = pages.reduce<Record<string, number>>((out, page) => {
     out[page.status] = (out[page.status] ?? 0) + 1
@@ -216,7 +227,7 @@ export default function HomePage() {
         <Link to="/progetti?nuovo=1" className="btn no-underline">{t('projects.new')}</Link>
       </div>
 
-      {projectId != null && <div className="mb-3"><CorpusPaths branches={branches} /></div>}
+      {projectId != null && workflow && <div className="mb-3"><CorpusPaths branches={branches} /></div>}
 
       {/* --- il muro ---------------------------------------------------------- */}
       <Module
@@ -259,9 +270,10 @@ export default function HomePage() {
           )
         }
       >
-        {shown.length > 0 ? (
+        <div className="mb-3 max-w-md"><Field label={t('recognition.filterPages')}><input type="search" className="fld" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('recognition.filterPagesHint')} /></Field></div>
+        {loading || pagesLoading ? <Loading label={t('common.loading')} /> : shown.length > 0 ? (
           <ul className="cascade grid grid-cols-2 border-l border-t border-[color:var(--color-rule)] sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
-            {shown.map((p) => (
+            {shown.slice(0, pageLimit).map((p) => (
               <PageCell key={p.id} page={p} />
             ))}
           </ul>
@@ -273,19 +285,19 @@ export default function HomePage() {
                 ? t('home.emptyLoading')
                 : projects.length === 0
                   ? t('home.emptyNoArchive')
-                  : filter
+                  : query ? t('recognition.noFilteredPages') : filter
                     ? t('home.emptyNoPageInState', { state: filter === DRAFTS_FILTER ? t('home.withDrafts', { n: 0 }) : statusLabel(filter) })
                     : t('home.emptyNoPagesYet')}
             </p>
             <p className="max-w-[60ch] text-[12px] text-[color:var(--color-ink-2)]">
               {projects.length === 0
                 ? t('home.emptyNoArchiveBody')
-                : filter
+                : query || filter
                   ? t('home.emptyFilterBody')
                   : t('home.emptyNoPagesBody')}
             </p>
-            {filter ? (
-              <button type="button" onClick={() => setFilter('')} className="btn">
+            {filter || query ? (
+              <button type="button" onClick={() => { setFilter(''); setQuery('') }} className="btn">
                 {t('home.showAll')}
               </button>
             ) : (
@@ -295,6 +307,7 @@ export default function HomePage() {
             )}
           </div>
         )}
+        {shown.length > pageLimit && <button type="button" className="btn mt-3" onClick={() => setPageLimit((count) => count + 80)}>{t('recognition.showMorePages', { n: shown.length - pageLimit })}</button>}
       </Module>
     </div>
   )

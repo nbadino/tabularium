@@ -6,6 +6,7 @@
  * sul canvas esiste già nel database.
  */
 import { getLocale } from '../i18n'
+import { API_BASE } from '../lib/endpoints'
 
 export type PrefillEvent =
   | { type: 'start'; engine: string }
@@ -79,7 +80,7 @@ export async function runPrelabelStream(opts: PrefillStreamOptions): Promise<voi
   }
   let res: Response
   try {
-    res = await fetch(`/api/projects/${opts.projectId}/prelabel/stream`, {
+    res = await fetch(`${API_BASE}/projects/${opts.projectId}/prelabel/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

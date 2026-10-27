@@ -61,12 +61,13 @@ def gpu_snapshot() -> list[dict]:
 
 def parse_metrics_line(line: str) -> dict | None:
     """Estrae loss/lr/step/epoch da una riga di log ms-swift (formato tollerante)."""
-    loss = re.search(rf"""["']?loss["']?\s*[:=]\s*({_NUM})""", line, re.IGNORECASE)
+    loss = re.search(rf"""(?<![\w])["']?loss["']?\s*[:=]\s*({_NUM})""", line, re.IGNORECASE)
     lr = re.search(
         rf"""["']?(?:lr|learning_rate)["']?\s*[:=]\s*({_NUM})""", line, re.IGNORECASE
     )
     step = re.search(rf"""["']?step["']?\s*[:=]\s*(\d+)""", line, re.IGNORECASE)
-    if not (loss or lr):
+    progress = re.search(r"global_step/max_steps['\"]?\s*:\s*['\"](\d+)/(\d+)", line)
+    if not (loss or lr or progress):
         return None
     out: dict = {"t": time.time()}
     if loss:
@@ -75,6 +76,15 @@ def parse_metrics_line(line: str) -> dict | None:
         out["lr"] = float(lr.group(1))
     if step:
         out["step"] = int(step.group(1))
+    if progress:
+        out["step"], out["total_steps"] = map(int, progress.groups())
+    for key in ("epoch", "eval_loss"):
+        match = re.search(rf"[\"']?{key}[\"']?\s*:\s*({_NUM})", line)
+        if match:
+            out[key] = float(match.group(1))
+    remaining = re.search(r"remaining_time['\"]?\s*:\s*['\"]([^'\"]+)", line)
+    if remaining:
+        out["remaining_time"] = remaining.group(1)
     return out
 
 
@@ -117,6 +127,74 @@ def _metrics(run_dir: Path) -> list[dict]:
         return _extract_metrics(lines)
     import json
     try:
-        return [json.loads(l) for l in f.read_text(encoding="utf-8").splitlines()]
+        metrics = [json.loads(l) for l in f.read_text(encoding="utf-8").splitlines() if l.strip()]
+        if metrics and not any(item.get("step") is not None for item in metrics):
+            parsed = _extract_metrics(_log_tail_logfile(run_dir))
+            if any(item.get("step") is not None for item in parsed):
+                return parsed
+        return metrics or _extract_metrics(_log_tail_logfile(run_dir))
     except (TypeError, ValueError):
         return []
+
+
+def summarize_log(
+    lines: list[str],
+    *,
+    started_at: str | None = None,
+    ended_at: str | None = None,
+) -> dict:
+    """Riepilogo finale di una run, dai log dei tre toolchain.
+
+    Non è una metrica di qualità: sono i numeri che il trainer stampa alla fine
+    (train/eval loss, step, durata, picco di memoria). La UI li mostra accanto
+    al checkpoint, così una run non finisce in un log da leggere a mano.
+    """
+    import datetime as _dt
+
+    text = "\n".join(lines)
+    patterns = {
+        "train_loss": rf"\btrain_loss\b[\"']?\s*[:=]\s*[\"']?({_NUM})",
+        "eval_loss": rf"\beval_loss\b[\"']?\s*[:=]\s*[\"']?({_NUM})",
+        "eval_token_acc": rf"\beval_token_acc\b[\"']?\s*[:=]\s*[\"']?({_NUM})",
+        "train_runtime_s": rf"\btrain_runtime\b[\"']?\s*[:=]\s*[\"']?({_NUM})",
+        "peak_gib": rf"\bmemory\s*\(\s*GiB\s*\)[\"']?\s*[:=]\s*[\"']?({_NUM})",
+        "max_memory_gib": rf"\bmax_memory_allocated\b[\"']?\s*[:=]\s*[\"']?({_NUM})",
+    }
+    out: dict = {}
+    for key, pattern in patterns.items():
+        found = re.findall(pattern, text, re.IGNORECASE)
+        if found:
+            try:
+                out[key] = float(found[-1])
+            except (TypeError, ValueError):
+                continue
+    steps = re.findall(
+        rf"global_step\s*/\s*max_steps[\"']?\s*[:=]\s*[\"']?(\d+)\s*/\s*(\d+)",
+        text,
+        re.IGNORECASE,
+    )
+    if steps:
+        out["steps"] = int(steps[-1][0])
+        out["total_steps"] = int(steps[-1][1])
+    else:
+        last_step = re.findall(rf"[\"']?\bstep\b[\"']?\s*[:=]\s*(\d+)", text, re.IGNORECASE)
+        if last_step:
+            out["steps"] = int(last_step[-1])
+        else:
+            # PaddleFormers stampa "global_step: N" senza il totale.
+            paddle_steps = re.findall(r"global_step\s*[:=]\s*(\d+)", text, re.IGNORECASE)
+            if paddle_steps:
+                out["steps"] = int(paddle_steps[-1])
+    losses = re.findall(rf"[\"']?\bloss\b[\"']?\s*[:=]\s*[\"']?({_NUM})", text, re.IGNORECASE)
+    if losses:
+        out["last_loss"] = float(losses[-1])
+    if "peak_gib" not in out and "max_memory_gib" in out:
+        out["peak_gib"] = out["max_memory_gib"]
+    if "train_runtime_s" not in out and started_at and ended_at:
+        try:
+            start = _dt.datetime.fromisoformat(started_at)
+            end = _dt.datetime.fromisoformat(ended_at)
+            out["duration_s"] = max(0.0, (end - start).total_seconds())
+        except (TypeError, ValueError):
+            pass
+    return out

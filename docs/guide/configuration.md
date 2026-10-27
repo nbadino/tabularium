@@ -18,6 +18,35 @@ file of the data folder.
 | `TABULARIUM_TRAIN_REPO` | unset | your own MonkeyOCRv2 checkout (otherwise cloned automatically) |
 | `TABULARIUM_TRAIN_ENV` | `monkeyocrv2-train` | conda/venv name for training |
 | `TABULARIUM_MODELS_DIR` | `<repo>/models` | local model checkpoints |
+| `TABULARIUM_PUBLIC_URL` | unset | public URL for the OIDC callback when a proxy hides the real address |
+
+## Institutional login (OIDC)
+
+If your institution runs an OpenID Connect provider, the administrator enables it in
+**Settings → Identity and access**: issuer, client ID, client secret, scopes, allowed
+email domains and the button text. Nothing is configured by environment variables — the
+panel is the configuration, and the client secret goes to the encrypted vault and is
+never returned by the API.
+
+The redirect URI to register at the provider is:
+
+```
+https://<your-host>/api/auth/oidc/callback
+```
+
+Set `TABULARIUM_PUBLIC_URL` when the address the app sees is not the one users type
+(a proxy that rewrites the host is the usual case). Local accounts keep working: OIDC
+adds a second door, it does not replace the first.
+
+Behaviour worth knowing:
+
+- the first login **creates** the account with the instance's default role; an
+  administrator who already created that email keeps the existing account and role;
+- with **allowed domains** empty, any account the provider authenticates can enter; an
+  institution should fill it in;
+- an unverified email (`email_verified: false`) is refused, and so is a disabled account;
+- the flow uses authorization code + PKCE, and each attempt's `state` is single-use and
+  expires after ten minutes.
 
 ## Optional extras
 

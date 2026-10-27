@@ -22,7 +22,17 @@ import requests
 from PIL import Image
 
 from .. import config
-from . import otsl, table_headers
+from . import paddle_official
+from ..adapters import inference_config as configstore
+from ..domain import inference as protocol
+from ..domain.inference import (
+    OuterListScanner as _OuterListScanner,
+    llamaindex_base_url as _llamaindex_base_url,
+    llamaindex_pages as _llamaindex_pages,
+    llamaindex_versions as _llamaindex_versions,
+    tolerant_items as _tolerant_items,
+)
+from ..domain import otsl, table_headers
 from .model_adapters import ModelAdapter, MonkeyOCRv2ParsingAdapter, get_adapter
 
 # Fallback usati solo se l'adapter attivo non implementa ancora il task
@@ -43,7 +53,11 @@ END2END_PROMPT = (
 # Valori ammessi da `compute_profiles.provider` (CHECK in `db.py`): un provider
 # esterno fuori elenco — il gateway OpenCode dei modelli chiusi — si registra
 # come "custom".
-_PROFILE_PROVIDERS = frozenset({"local", "ssh", "vast", "runpod", "modal", "custom"})
+_PROFILE_PROVIDERS = frozenset({"local", "ssh", "vast", "runpod", "modal", "custom", "llamaindex"})
+
+from ..domain.inference import LLAMAINDEX_BASE_URL  # noqa: F401  (re-export)
+
+
 
 
 class OutputTruncated(RuntimeError):
@@ -154,42 +168,6 @@ def _should_retry_repeat_output(raw: str) -> bool:
     return False
 
 
-class _OuterListScanner:
-    """Rileva la chiusura della lista esterna ignorando parentesi nel testo."""
-
-    def __init__(self) -> None:
-        self.started = False
-        self.depth = 0
-        self.quote: str | None = None
-        self.escaped = False
-        self.complete = False
-
-    def feed(self, chunk: str) -> bool:
-        for char in chunk:
-            if self.quote is not None:
-                if self.escaped:
-                    self.escaped = False
-                elif char == "\\":
-                    self.escaped = True
-                elif char == self.quote:
-                    self.quote = None
-                continue
-            if char in {"'", '"'}:
-                self.quote = char
-                continue
-            if not self.started:
-                if char == "[":
-                    self.started = True
-                    self.depth = 1
-                continue
-            if char in "[{(":
-                self.depth += 1
-            elif char in "]})":
-                self.depth -= 1
-                if self.depth == 0:
-                    self.complete = char == "]"
-                    return self.complete
-        return False
 
 
 # Sentinella per `_chat(max_pixels=…)`: "non passato" → usa il tetto del
@@ -220,28 +198,6 @@ def _fit_pixels(
     return image.resize(size, Image.LANCZOS)
 
 
-def _tolerant_items(text: str) -> list[dict]:
-    """Parse tollerante dell'output layout (lista di dict con bbox/label)."""
-    if text:
-        try:
-            val = ast.literal_eval(text.strip())
-            if isinstance(val, list):
-                return [d for d in val if isinstance(d, dict)]
-        except (SyntaxError, ValueError, TypeError):
-            pass
-        items: list[dict] = []
-        for block in re.findall(r"\{[^{}]*\}", text):
-            try:
-                d = ast.literal_eval(block)
-                # "category" oltre a "label": alcuni adapter (es. dots.ocr, non
-                # ancora verificato contro un server reale) usano quella chiave
-                # per lo stesso campo.
-                if isinstance(d, dict) and "bbox" in d and ("label" in d or "category" in d):
-                    items.append(d)
-            except (SyntaxError, ValueError, TypeError):
-                continue
-        return items
-    return []
 
 
 # Sentinella per distinguere "tetto non specificato dal chiamante" (usa il
@@ -320,7 +276,158 @@ class VllmClient:
             headers.update(self.extra_headers)
         return headers
 
-    def teleocr_native_page(self, image: Image.Image) -> list[dict]:
+    def _llamaindex_headers(self) -> dict[str, str]:
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        if self.extra_headers:
+            headers.update(self.extra_headers)
+        return headers
+
+    def _llamaindex_configuration(self) -> tuple[dict, int]:
+        """Fetch this model's workflow and hand it to the protocol mapping."""
+        if self.adapter.adapter_id != "llamaindex-ocria-1":
+            raise RuntimeError("il client LlamaIndex richiede l'adapter OCRia-1")
+        try:
+            from . import model_settings
+
+            workflow = model_settings.get_settings(self.adapter.adapter_id)["effective"]["workflow"]
+        except (ImportError, KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("impostazioni OCRia-1 non disponibili") from exc
+        return protocol.llamaindex_configuration(workflow)
+
+
+
+    def llamaindex_native_page(
+        self,
+        image: Image.Image,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> list[dict]:
+        """Upload one page, run a native LlamaParse job and poll its result."""
+        if self.adapter.adapter_id != "llamaindex-ocria-1":
+            raise RuntimeError("il parser nativo LlamaIndex richiede l'adapter OCRia-1")
+        if not self.api_key:
+            raise RuntimeError("API key LlamaIndex mancante: inseriscila in Modelli → OCRia-1")
+        base = _llamaindex_base_url(self.url)
+        configuration, total_timeout = self._llamaindex_configuration()
+        headers = self._llamaindex_headers()
+        started = time.perf_counter()
+        buffer = io.BytesIO()
+        image.convert("RGB").save(buffer, format="PNG")
+
+        try:
+            upload = requests.post(
+                f"{base}/api/v1/beta/files",
+                headers=headers,
+                data={"purpose": "parse"},
+                files={"file": ("page.png", buffer.getvalue(), "image/png")},
+                timeout=(10, max(30, min(self.timeout, 300))),
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError(f"LlamaCloud non raggiungibile durante l'upload: {exc}") from exc
+        if upload.status_code in (401, 403):
+            raise RuntimeError("API key LlamaIndex rifiutata durante l'upload (HTTP 401/403)")
+        if upload.status_code >= 400:
+            raise RuntimeError(f"upload LlamaCloud fallito (HTTP {upload.status_code}): {upload.text[:300]}")
+        try:
+            uploaded = upload.json()
+        except ValueError as exc:
+            raise RuntimeError("LlamaCloud ha restituito un upload non JSON") from exc
+        file_node = uploaded.get("file") if isinstance(uploaded, dict) else None
+        file_id = (
+            uploaded.get("id") or uploaded.get("file_id")
+            if isinstance(uploaded, dict) else None
+        ) or (file_node.get("id") if isinstance(file_node, dict) else None)
+        if not file_id:
+            raise RuntimeError("LlamaCloud non ha restituito l'id del file caricato")
+
+        try:
+            start = requests.post(
+                f"{base}/api/v2/parse",
+                headers=self._headers(),
+                json={"file_id": file_id, **configuration},
+                timeout=(10, max(30, min(self.timeout, 300))),
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError(f"LlamaCloud non raggiungibile durante l'avvio del job: {exc}") from exc
+        if start.status_code in (401, 403):
+            raise RuntimeError("API key LlamaIndex rifiutata all'avvio del job (HTTP 401/403)")
+        if start.status_code >= 400:
+            raise RuntimeError(f"avvio parse LlamaCloud fallito (HTTP {start.status_code}): {start.text[:500]}")
+        try:
+            started_job = start.json()
+        except ValueError as exc:
+            raise RuntimeError("LlamaCloud ha restituito un avvio job non JSON") from exc
+        job_node = started_job.get("job") if isinstance(started_job, dict) else None
+        job_id = (
+            started_job.get("id") or started_job.get("job_id")
+            if isinstance(started_job, dict) else None
+        ) or (job_node.get("id") if isinstance(job_node, dict) else None)
+        if not job_id:
+            raise RuntimeError("LlamaCloud non ha restituito l'id del job di parsing")
+
+        deadline = time.monotonic() + total_timeout
+        delay = 1.5
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise RuntimeError("parsing LlamaIndex annullato")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(f"job LlamaIndex {job_id} oltre il limite di {total_timeout}s")
+            try:
+                response = requests.get(
+                    f"{base}/api/v2/parse/{job_id}",
+                    headers=headers,
+                    params={"expand": "items,metadata,usage,job_metadata"},
+                    timeout=(10, max(15, min(self.timeout, 120))),
+                )
+            except requests.RequestException as exc:
+                raise RuntimeError(f"polling LlamaCloud interrotto: {exc}") from exc
+            if response.status_code in (401, 403):
+                raise RuntimeError("API key LlamaIndex rifiutata durante il polling (HTTP 401/403)")
+            if response.status_code >= 400:
+                raise RuntimeError(f"polling LlamaCloud fallito (HTTP {response.status_code}): {response.text[:300]}")
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise RuntimeError("LlamaCloud ha restituito un polling non JSON") from exc
+            current = payload.get("job") if isinstance(payload, dict) and isinstance(payload.get("job"), dict) else payload
+            status = str(current.get("status") or current.get("state") or "").lower()
+            if status in {"completed", "success", "succeeded", "done"}:
+                pages = _llamaindex_pages(payload)
+                items = self.adapter.parse_native_result(
+                    pages, image_width=image.width, image_height=image.height
+                )
+                elapsed = time.perf_counter() - started
+                usage = payload.get("usage") or current.get("usage") or {}
+                self.last_trace = {
+                    "elapsed_s": round(elapsed, 3),
+                    "job_id": str(job_id),
+                    "status": status,
+                    "pages": len(pages) if isinstance(pages, list) else 0,
+                    "items": len(items),
+                    "usage": usage,
+                    "tier": configuration.get("tier"),
+                    "version": configuration.get("version"),
+                }
+                return items
+            if status in {"failed", "failure", "error", "cancelled", "canceled"}:
+                reason = (
+                    current.get("error_message")
+                    or current.get("error")
+                    or current.get("failure_reason")
+                    or status
+                )
+                raise RuntimeError(f"job LlamaIndex {job_id} terminato con stato {status}: {reason}")
+            time.sleep(min(delay, max(0.2, deadline - time.monotonic())))
+            delay = min(5.0, delay * 1.35)
+
+    def teleocr_native_page(
+        self,
+        image: Image.Image,
+        *,
+        on_delta: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> list[dict]:
         """Run the official TeleOCR page pipeline on its cloud-side gateway."""
         if self.adapter.adapter_id != "teleocr":
             raise RuntimeError("il runner nativo TeleOCR richiede l'adapter TeleOCR")
@@ -329,25 +436,68 @@ class VllmClient:
                 "runner TeleOCR ufficiale non raggiungibile: collega il tunnel Vast "
                 "dell'istanza preparata con la ricetta TeleOCR"
             )
-        buffer = io.BytesIO()
-        image.convert("RGB").save(buffer, format="PNG")
+        # TeleOCR is the only pipeline that also takes the layout mode as a header:
+        # Detection or Segmentation, a choice the user makes in Settings.
+        layout_mode = "Detection"
+        try:
+            from . import model_settings
+
+            layout_mode = str(
+                model_settings.get_settings("teleocr")["effective"]
+                .get("workflow", {})
+                .get("layout_mode")
+                or "Detection"
+            )
+        except (ImportError, KeyError, ValueError):
+            pass
+        headers = self._native_vendor_headers(
+            "teleocr",
+            "teleocr",
+            include_max_pixels=True,
+            extra_headers={"x-teleocr-layout-mode": layout_mode},
+        )
+        payload = self._native_parse_page(image, headers=headers, vendor="TeleOCR")
+        return self.adapter.parse_native_result(payload.get("blocks"))
+
+    def _native_vendor_headers(
+        self,
+        adapter_id: str,
+        prefix: str,
+        *,
+        include_max_pixels: bool = False,
+        extra_headers: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        """Headers the vendor pipelines read: auth, sampling, optional pixel cap.
+
+        The pipelines are sibling processes (GLM-OCR, MinerU) that take the vendor's
+        knobs as headers rather than in the body. One helper builds them, so a new
+        native model does not copy the same five lines and forget one.
+        """
         headers = self._headers()
         headers.pop("Content-Type", None)
         try:
             from . import model_settings
 
-            effective = model_settings.get_settings("teleocr")["effective"]
-            headers["x-teleocr-layout-mode"] = str(
-                effective.get("workflow", {}).get("layout_mode") or "Detection"
-            )
-            max_pixels = effective.get("image", {}).get("max_pixels")
-            if max_pixels is not None:
-                headers["x-teleocr-max-pixels"] = str(max_pixels)
+            effective = model_settings.get_settings(adapter_id)["effective"]
             generation = effective.get("generation", {})
             if generation:
-                headers["x-teleocr-generation"] = json.dumps(generation, separators=(",", ":"))
+                headers[f"x-{prefix}-generation"] = json.dumps(generation, separators=(",", ":"))
+            if include_max_pixels:
+                max_pixels = effective.get("image", {}).get("max_pixels")
+                if max_pixels is not None:
+                    headers[f"x-{prefix}-max-pixels"] = str(max_pixels)
         except (ImportError, KeyError, ValueError):
             pass
+        if extra_headers:
+            headers.update(extra_headers)
+        return headers
+
+    def _native_parse_page(
+        self, image: Image.Image, *, headers: dict[str, str], vendor: str
+    ) -> dict:
+        """POST one page to a vendor pipeline and return its JSON body."""
+        buffer = io.BytesIO()
+        image.convert("RGB").save(buffer, format="PNG")
         try:
             response = requests.post(
                 f"{self.native_url}/parse",
@@ -356,12 +506,18 @@ class VllmClient:
                 timeout=max(self.timeout, 600),
             )
             response.raise_for_status()
-            payload = response.json()
+            return response.json()
         except requests.RequestException as exc:
-            raise RuntimeError(f"runner ufficiale TeleOCR non disponibile: {exc}") from exc
+            raise RuntimeError(f"pipeline ufficiale {vendor} non disponibile: {exc}") from exc
         except ValueError as exc:
-            raise RuntimeError("risposta non JSON dal runner ufficiale TeleOCR") from exc
-        return self.adapter.parse_native_result(payload.get("blocks"))
+            raise RuntimeError(f"risposta non JSON dal pipeline ufficiale {vendor}") from exc
+
+
+
+
+
+
+
 
     def qwen_native_page(
         self,
@@ -390,7 +546,13 @@ class VllmClient:
             )
         return items
 
-    def glmocr_native_page(self, image: Image.Image) -> list[dict]:
+    def glmocr_native_page(
+        self,
+        image: Image.Image,
+        *,
+        on_delta: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> list[dict]:
         """Run the vendor's self-hosted GLM-OCR layout+region OCR pipeline."""
         if self.adapter.adapter_id != "glm-ocr":
             raise RuntimeError("il runner nativo GLM-OCR richiede l'adapter GLM-OCR")
@@ -430,7 +592,13 @@ class VllmClient:
             raise RuntimeError("risposta non JSON dal pipeline ufficiale GLM-OCR") from exc
         return self.adapter.parse_native_result(payload.get("json_result"))
 
-    def mineru_native_page(self, image: Image.Image) -> list[dict]:
+    def mineru_native_page(
+        self,
+        image: Image.Image,
+        *,
+        on_delta: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> list[dict]:
         """Run OpenDataLab's MinerUClient pipeline through the cloud gateway."""
         if self.adapter.adapter_id != "mineru2.5":
             raise RuntimeError("il runner nativo MinerU richiede l'adapter MinerU2.5")
@@ -465,6 +633,42 @@ class VllmClient:
         except ValueError as exc:
             raise RuntimeError("risposta non JSON dal pipeline ufficiale MinerU") from exc
         return self.adapter.parse_native_result(payload.get("blocks"))
+
+    def paddle_native_page(
+        self,
+        image: Image.Image,
+        *,
+        on_delta: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> list[dict]:
+        """PaddleOCR-VL's official pipeline: layout plus recognition in one call.
+
+        The serve backend is a property of the deployment, not of the page: MLX on a
+        local Mac, vLLM everywhere else. The vendor returns pixel boxes; they leave this
+        method in the 0-1000 convention the rest of the pipeline speaks.
+        """
+        if self.adapter.adapter_id != "paddleocr-vl":
+            raise RuntimeError("il runner nativo PaddleOCR-VL richiede l'adapter PaddleOCR-VL")
+        backend = "vllm-server"
+        if self.provider == "local":
+            from . import hardware
+
+            if hardware.pick_serve_runtime(self.adapter.capabilities) == hardware.RUNTIME_MLX:
+                backend = "mlx-vlm-server"
+        items = paddle_official.parse_page(
+            image, self.url, self.model, image.width, image.height,
+            vl_rec_backend=backend,
+        )
+        for item in items:
+            bbox = item.get("bbox") or []
+            if len(bbox) == 4:
+                item["bbox"] = [
+                    round(float(bbox[0]) / image.width * 1000),
+                    round(float(bbox[1]) / image.height * 1000),
+                    round(float(bbox[2]) / image.width * 1000),
+                    round(float(bbox[3]) / image.height * 1000),
+                ]
+        return items
 
     @property
     def is_cloud(self) -> bool:
@@ -546,48 +750,21 @@ class VllmClient:
         # lo streaming usato dalla UI.
         stream_response = bool(getattr(self.adapter, "stream_response", True))
         prompt_prefix = str(getattr(self.adapter, "image_prompt_prefix", "") or "")
-        content = [
-            {"type": "image_url", "image_url": {"url": data_uri}},
-            {"type": "text", "text": f"{prompt_prefix}{prompt}"},
-        ]
-        if getattr(self.adapter, "multimodal_content_order", "image-text") == "text-image":
-            content.reverse()
-        payload = {
-            "model": self.model,
-            "max_tokens": max_tokens,
-            "stream": stream_response,
-            "messages": [
-                *(
-                    [{"role": "system", "content": self.adapter.system_prompt}]
-                    if getattr(self.adapter, "system_prompt", None)
-                    else []
-                ),
-                {
-                    "role": "user",
-                    "content": content,
-                }
-            ],
-        }
-        if stream_response:
-            payload["stream_options"] = {"include_usage": True}
-        # Alcuni modelli richiedono penalità anti-ripetizione specifiche lato
-        # richiesta (es. MinerU2.5, abbinate al `--logits-processors` server:
-        # v. `MinerU2_5Adapter.sampling_for`). Non tocca `temperature`/
-        # `max_tokens`/`stream`: quelle chiavi non compaiono in `sampling`.
-        if sampling:
-            no_repeat_ngram_size = sampling.pop("no_repeat_ngram_size", None)
-            if no_repeat_ngram_size is not None:
-                if self.adapter.adapter_id == "mineru2.5":
-                    sampling["vllm_xargs"] = {
-                        **(sampling.get("vllm_xargs") or {}),
-                        "no_repeat_ngram_size": no_repeat_ngram_size,
-                    }
-                else:
-                    payload["extra_args"] = {
-                        **(payload.get("extra_args") or {}),
-                        "no_repeat_ngram_size": no_repeat_ngram_size,
-                    }
-            payload.update(sampling)
+        content = protocol.openai_content(
+            data_uri,
+            prompt,
+            prompt_prefix=prompt_prefix,
+            text_first=getattr(self.adapter, "multimodal_content_order", "image-text") == "text-image",
+        )
+        payload = protocol.openai_request(
+            self.model,
+            content,
+            max_tokens=max_tokens,
+            stream=stream_response,
+            system_prompt=getattr(self.adapter, "system_prompt", None),
+            sampling=sampling,
+            adapter_id=self.adapter.adapter_id,
+        )
         request_overrides = getattr(self.adapter, "request_overrides", None)
         if callable(request_overrides):
             payload.update(request_overrides(task) or {})
@@ -795,22 +972,13 @@ class VllmClient:
             raise RuntimeError(f"risposta non JSON dal gateway ({self.url})") from exc
         ended = time.perf_counter()
 
-        candidates = body.get("candidates") or []
-        text = ""
-        finish_reason: str | None = None
-        if candidates:
-            candidate = candidates[0]
-            finish_reason = candidate.get("finishReason")
-            for part in (candidate.get("content") or {}).get("parts") or []:
-                text += str(part.get("text") or "")
+        text, finish_reason = protocol.google_response(body)
         self.last_text = text
-        usage = body.get("usageMetadata") or {}
         self.last_trace = {
             "elapsed_s": round(ended - started, 3),
-            "prompt_tokens": usage.get("promptTokenCount"),
-            "completion_tokens": usage.get("candidatesTokenCount"),
+            **protocol.google_usage(body),
             "finish_reason": finish_reason,
-            "max_tokens": generation["maxOutputTokens"],
+            "max_tokens": payload["generationConfig"]["maxOutputTokens"],
             "chars": len(text),
         }
         if on_delta and text:
@@ -1315,6 +1483,8 @@ class VllmClient:
         # pre-flight del prefill direbbe «modello non disponibile» sempre.
         if getattr(self.adapter, "chat_protocol", "") == "google-generatecontent":
             return bool(self._test_google_connection(timeout=timeout or self.timeout)["ok"])
+        if getattr(self.adapter.capabilities, "serve_backend", "") == "llamaindex-api":
+            return bool(self._test_llamaindex_connection(timeout=timeout or self.timeout)["ok"])
         # Il default usa il timeout del client, non un tetto fisso: i tre
         # chiamanti reali (prelabel, blocks, evaluate) lo invocano come
         # pre-flight prima di un'operazione lunga, con il timeout che l'utente
@@ -1346,6 +1516,8 @@ class VllmClient:
         # generazione minima, che verifica insieme endpoint, chiave e modello.
         if getattr(self.adapter, "chat_protocol", "") == "google-generatecontent":
             return self._test_google_connection(timeout=timeout)
+        if getattr(self.adapter.capabilities, "serve_backend", "") == "llamaindex-api":
+            return self._test_llamaindex_connection(timeout=timeout)
         started = time.perf_counter()
         try:
             if self.api_key or self.extra_headers:
@@ -1406,6 +1578,43 @@ class VllmClient:
             }
 
 
+    def _test_llamaindex_connection(self, timeout: float = 10.0) -> dict:
+        """Validate the user's LlamaCloud key with the cheap versions endpoint."""
+        started = time.perf_counter()
+        base = _llamaindex_base_url(self.url)
+
+        def result(ok: bool, error: str | None, versions: list[str] | None = None) -> dict:
+            return {
+                "ok": ok,
+                "url": base,
+                "model": self.model,
+                "models_available": versions or (["ocria-1"] if ok else []),
+                "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+                "is_cloud": True,
+                "error": error,
+            }
+
+        if not self.api_key:
+            return result(False, "API key LlamaIndex mancante")
+        try:
+            response = requests.get(
+                f"{base}/api/v2/parse/versions",
+                headers=self._llamaindex_headers(),
+                timeout=max(5.0, timeout),
+            )
+        except requests.RequestException as exc:
+            return result(False, f"LlamaCloud non raggiungibile: {exc}")
+        if response.status_code in (401, 403):
+            return result(False, "API key LlamaIndex rifiutata (HTTP 401/403)")
+        if response.status_code >= 400:
+            return result(False, f"endpoint versioni LlamaCloud non disponibile (HTTP {response.status_code})")
+        try:
+            versions = _llamaindex_versions(response.json())
+        except ValueError:
+            versions = []
+        return result(True, None, versions)
+
+
     def _test_google_connection(self, timeout: float = 10.0) -> dict:
         """Prova del gateway Google: una generazione minima testo→testo.
 
@@ -1454,17 +1663,7 @@ class VllmClient:
 
 def get_inference_config() -> dict:
     """Carica la configurazione di inferenza runtime (da SQLite meta o env)."""
-    from ..db import connect  # noqa: PLC0415
-
-    try:
-        with connect() as conn:
-            rows = dict(
-                conn.execute(
-                    "SELECT key, value FROM meta WHERE key LIKE 'inference_%'"
-                ).fetchall()
-            )
-    except Exception:
-        rows = {}
+    rows = configstore.overrides()
 
     enabled_raw = rows.get("inference_enabled")
     enabled = (enabled_raw != "0") if enabled_raw is not None else True
@@ -1518,44 +1717,40 @@ def get_inference_config() -> dict:
     # Dal DB v10 in poi il profilo attivo è la fonte di verità atomica. La
     # lettura resta tollerante per basi appena migrate o test che non hanno
     # ancora creato il profilo legacy.
-    try:
-        with connect() as conn:
-            profile = conn.execute("SELECT * FROM compute_profiles WHERE active=1 LIMIT 1").fetchone()
-        if profile:
-            source_profile_id = int(profile["id"])
-            url = profile["endpoint"]
-            model = profile["served_model_name"]
-            adapter_id = profile["model_adapter_id"]
-            provider = profile["provider"]
-            provider_credential_ref = (
-                rows.get("inference_provider_credential_ref") or None
-                if profile["name"] == "legacy-active"
-                else profile["credential_ref"] or None
-            )
-            try:
-                hardware = json.loads(profile["hardware_profile_json"] or "{}")
-            except (TypeError, ValueError):
-                hardware = {}
-            resource_id = (
-                rows.get("inference_resource_id") or None
-                if profile["name"] == "legacy-active"
-                else str(
-                    hardware.get("resource_id")
-                    or hardware.get("instance_id")
-                    or hardware.get("pod_id")
-                    or ""
-                ) or None
-            )
-            ref = profile["credential_ref"] or ""
-            if ref.startswith("env:"):
-                api_key = os.environ.get(ref[4:], "")
-            elif ref.startswith("vault:"):
-                from . import vault
-                api_key = vault.get(ref)
-            elif ref == "meta:inference_api_key":
-                api_key = rows.get("inference_api_key", "")
-    except Exception:
-        profile = None
+    profile = configstore.active_profile()
+    if profile:
+        source_profile_id = int(profile["id"])
+        url = profile["endpoint"]
+        model = profile["served_model_name"]
+        adapter_id = profile["model_adapter_id"]
+        provider = profile["provider"]
+        provider_credential_ref = (
+            rows.get("inference_provider_credential_ref") or None
+            if profile["name"] == "legacy-active"
+            else profile["credential_ref"] or None
+        )
+        try:
+            hardware = json.loads(profile["hardware_profile_json"] or "{}")
+        except (TypeError, ValueError):
+            hardware = {}
+        resource_id = (
+            rows.get("inference_resource_id") or None
+            if profile["name"] == "legacy-active"
+            else str(
+                hardware.get("resource_id")
+                or hardware.get("instance_id")
+                or hardware.get("pod_id")
+                or ""
+            ) or None
+        )
+        ref = profile["credential_ref"] or ""
+        if ref.startswith("env:"):
+            api_key = os.environ.get(ref[4:], "")
+        elif ref.startswith("vault:"):
+            from . import vault
+            api_key = vault.get(ref)
+        elif ref == "meta:inference_api_key":
+            api_key = rows.get("inference_api_key", "")
 
     # Un modello chiuso via gateway OpenCode non ha una chiave nel vault: la
     # sottoscrizione la conserva già sulla macchina. Vale per ogni lettore
@@ -1584,6 +1779,9 @@ def get_inference_config() -> dict:
         # the same port as the server's /v1/models readiness endpoint.
         native_url = url[:-3].rstrip("/") if url.rstrip("/").endswith("/v1") else url.rstrip("/")
 
+    if adapter_id == "llamaindex-ocria-1":
+        url = _llamaindex_base_url(url)
+
     return {
         "enabled": enabled,
         "url": url,
@@ -1605,6 +1803,8 @@ def _provider_for_endpoint(url: str) -> str:
     value = str(url or "").lower()
     if "opencode.ai" in value:
         return "opencode"
+    if "api.cloud.llamaindex.ai" in value or "llamaindex" in value:
+        return "llamaindex"
     if ".modal.run" in value:
         return "modal"
     if "runpod" in value:
@@ -1631,6 +1831,8 @@ def _adapter_for_endpoint(model: str, url: str) -> str | None:
         ("glm-ocr", "glm-ocr"),
         ("deepseek-ocr", "deepseek-ocr"),
         ("qwen3-vl", "qwen3-vl-8b"),
+        ("ocria-1", "llamaindex-ocria-1"),
+        ("llamaindex", "llamaindex-ocria-1"),
         ("gemini-4-argon", "gemini-argon"),
         ("argon", "gemini-argon"),
         ("monkeyocr", "monkeyocrv2-parsing"),
@@ -1706,45 +1908,38 @@ def save_inference_config(cfg: dict) -> None:
             str(cfg.get("provider_credential_ref") or "").strip(),
         ))
 
-    with connect() as conn:
-        for key, value in items:
-            conn.execute(
-                "INSERT INTO meta (key, value) VALUES (?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (key, value),
-            )
-        # Compatibilità con la vecchia API: se è attivo il profilo legacy,
-        # aggiorniamo il record atomico nella stessa transazione. Un update
-        # parziale conserva gli altri campi del profilo, quindi non crea più
-        # la combinazione URL/adapter/modello incoerente della vecchia UI.
-        try:
-            active = conn.execute("SELECT * FROM compute_profiles WHERE active=1 LIMIT 1").fetchone()
-            if active and active["name"] == "legacy-active" and identity_changed:
-                next_url = str(cfg.get("url", active["endpoint"])).strip()
-                next_model = str(cfg.get("model", active["served_model_name"])).strip()
-                next_adapter = str(cfg.get("adapter_id") or _adapter_for_endpoint(next_model, next_url) or active["model_adapter_id"])
-                conn.execute(
-                    "UPDATE compute_profiles SET endpoint=?, served_model_name=?, model_adapter_id=?, provider=?, hardware_profile_json=?, credential_ref=CASE WHEN ? THEN 'vault:inference' WHEN ? THEN '' ELSE credential_ref END, updated_at=datetime('now') WHERE id=?",
-                    (
-                        next_url,
-                        next_model,
-                        next_adapter,
-                        provider,
-                        json.dumps({"resource_id": str(cfg.get("resource_id") or "").strip()}),
-                        bool(str(cfg.get("api_key") or "").strip()),
-                        "api_key" in cfg,
-                        active["id"],
-                    ),
+    profile_update = None
+    deactivate_profile = False
+    profile = configstore.active_profile()
+    if profile and profile["name"] == "legacy-active" and identity_changed:
+        profile_update = {
+            "id": profile["id"],
+            "endpoint": str(cfg.get("url", profile["endpoint"])).strip(),
+            "served_model_name": str(cfg.get("model", profile["served_model_name"])).strip(),
+            "model_adapter_id": str(
+                cfg.get("adapter_id")
+                or _adapter_for_endpoint(
+                    str(cfg.get("model", profile["served_model_name"])),
+                    str(cfg.get("url", profile["endpoint"])),
                 )
-            elif active and identity_changed:
-                # Una selezione diretta (server locale, Modal, RunPod, Vast o
-                # endpoint manuale) sostituisce il profilo salvato. Lasciarlo
-                # attivo farebbe sì che get_inference_config ignorasse la nuova
-                # scelta e continuasse a usare silenziosamente il vecchio URL.
-                conn.execute("UPDATE compute_profiles SET active=0, updated_at=datetime('now')")
-        except sqlite3.OperationalError:
-            # Basi non ancora migrate alla v10 restano compatibili.
-            pass
+                or profile["model_adapter_id"]
+            ),
+            "provider": cfg.get("provider", profile["provider"]),
+            "hardware_profile_json": json.dumps(
+                {"resource_id": str(cfg.get("resource_id") or "").strip()}
+            ),
+            # Empty string = "the key was removed"; None = "leave it as it is".
+            "credential_ref": (
+                "vault:inference" if str(cfg.get("api_key") or "").strip()
+                else "" if "api_key" in cfg
+                else None
+            ),
+        }
+    elif profile and identity_changed:
+        # A direct selection replaces the saved profile: leaving it active would make
+        # `get_inference_config` silently keep using the old URL.
+        deactivate_profile = True
+    configstore.save(items, profile_update=profile_update, deactivate_profile=deactivate_profile)
 
 
 def get_vllm_client(

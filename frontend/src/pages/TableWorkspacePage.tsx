@@ -3,9 +3,11 @@ import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { apiPatch, apiPut } from '../lib/api'
 import type { BlockOut, TableGrid, TableSaveOut } from '../lib/types'
 import { ErrorNotice } from '../app/ui'
+import { IconPrev, IconTable } from '../app/icons'
 import { VerifiedToggle } from '../studio/components/ContentPane'
 import { TableWorkspacePanel } from '../studio/components/TableWorkspacePanel'
 import { useI18n } from '../i18n'
+import { API_BASE } from '../lib/endpoints'
 
 export default function TableWorkspacePage({ block }: { block?: BlockOut }) {
   const { blockId = '' } = useParams()
@@ -18,7 +20,7 @@ export default function TableWorkspacePage({ block }: { block?: BlockOut }) {
   const width = Number(params.get('width')) || 0
   const height = Number(params.get('height')) || 0
   const imageSize = width > 0 && height > 0 ? { w: width, h: height } : null
-  const imageUrl = useMemo(() => pageId ? `/api/pages/${pageId}/preview` : null, [pageId])
+  const imageUrl = useMemo(() => pageId ? `${API_BASE}/pages/${pageId}/preview` : null, [pageId])
   const navigate = useNavigate()
   const flushRef = useRef<(() => Promise<void>) | null>(null)
   const [confirmed, setConfirmed] = useState(block ? Boolean(block.confirmed) : params.get('confirmed') === '1')
@@ -70,23 +72,24 @@ export default function TableWorkspacePage({ block }: { block?: BlockOut }) {
 
   return (
     <main className="flex h-[100dvh] min-h-0 flex-col overflow-hidden bg-[color:var(--color-sheet)]">
-      <header className="flex shrink-0 items-center gap-3 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-3 py-2">
-        {fromStudio ? (
-          <button
-            type="button"
-            onClick={() => void closeAndReturn()}
-            className="btn btn-sm"
-            title={t('table.closeAndReturnHint')}
-          >
-            {t('table.closeAndReturn')}
-          </button>
-        ) : (
-          <button type="button" onClick={() => void closeAndReturn()} className="btn btn-sm">{t('table.backToAnnotation')}</button>
-        )}
-        <h1 className="mod-tab title-plate m-0">{t('table.workspaceTitle')}</h1>
-        <VerifiedToggle checked={confirmed} onChange={(v) => void setVerified(v)} />
-        <span className="flex-1" />
-        <span className="mono text-[11px] text-[color:var(--color-ink-2)]">#{serverId}</span>
+      <header className="flex min-h-11 shrink-0 items-center gap-2 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-2 py-1.5">
+        <button
+          type="button"
+          onClick={() => void closeAndReturn()}
+          className="btn btn-sm !px-2"
+          title={fromStudio ? t('table.closeAndReturnHint') : t('table.backToAnnotation')}
+          aria-label={fromStudio ? t('table.closeAndReturnHint') : t('table.backToAnnotation')}
+        >
+          <IconPrev size={13} />
+        </button>
+        <span aria-hidden="true" className="h-5 w-px bg-[color:var(--color-rule)]" />
+        <IconTable size={14} />
+        <h1 className="min-w-0 truncate text-[13px] font-semibold">
+          {t('table.workspaceTitle')} <span className="mono font-normal text-[color:var(--color-ink-3)]">#{serverId}</span>
+        </h1>
+        <div className="ml-auto shrink-0">
+          <VerifiedToggle checked={confirmed} onChange={(v) => void setVerified(v)} compact />
+        </div>
       </header>
       {error != null && <ErrorNotice error={error} onDismiss={() => setError(null)} />}
       {/* Aperta in un'altra finestra, la vista entra come le sezioni dell'app. */}
@@ -94,6 +97,7 @@ export default function TableWorkspacePage({ block }: { block?: BlockOut }) {
         <TableWorkspacePanel
           key={serverId}
           serverId={serverId}
+          projectId={block?.project_id ?? null}
           pageImageUrl={imageUrl}
           pageId={pageId}
           pageImageSize={imageSize}

@@ -12,7 +12,7 @@ import { Menu, PageSkeleton } from './ui'
 import {
   IconArchive,
   IconAnnotate,
-  IconDataset,
+  IconModels,
   IconPlayground,
   IconTraining,
 } from './icons'
@@ -24,13 +24,11 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
+  { to: '/archivio', labelKey: 'nav.archive', Icon: IconArchive },
   { to: '/', labelKey: 'nav.recognize', Icon: IconPlayground },
   { to: '/annotazione', labelKey: 'nav.annotate', Icon: IconAnnotate },
-  { to: '/risultati', labelKey: 'nav.results', Icon: IconDataset },
-  { to: '/progetti', labelKey: 'nav.projects', Icon: IconArchive },
   { to: '/fine-tuning', labelKey: 'nav.training', Icon: IconTraining },
-  { to: '/modelli', labelKey: 'nav.models', Icon: IconTraining },
-  { to: '/benchmark', labelKey: 'nav.benchmark', Icon: IconDataset },
+  { to: '/modelli', labelKey: 'nav.models', Icon: IconModels },
 ]
 
 /** IT · EN · FR in una riga: la lingua corrente in grassetto, il nome intero nel titolo. */
@@ -119,18 +117,19 @@ function AccountMenu() {
 }
 
 /**
- * Ultimo indirizzo visto per ogni sezione. Lo Studio e Risultati tengono la
- * pagina aperta e i filtri nella query (`?project=&page=`): una linguetta che
- * puntasse alla sezione nuda li buttava via a ogni ritorno. Vive per la sessione
- * del documento; dopo un ricaricamento è l'URL stesso a riportarli.
+ * Ultimo indirizzo visto per le sezioni che mantengono filtri nella query. Vive
+ * per la sessione del documento; dopo un ricaricamento è l'URL stesso a ripristinarli.
  */
 const lastSearch = new Map<string, string>()
 
-const REFINE_PATHS = ['/fine-tuning', '/dataset', '/training', '/valutazione']
+const REFINE_PATHS = ['/fine-tuning', '/dataset', '/training', '/valutazione', '/benchmark']
+const RECOGNITION_PATHS = ['/', '/risultati']
+const MODEL_PATHS = ['/modelli', '/playground']
 function sectionOf(path: string): string {
   if (REFINE_PATHS.includes(path)) return '/fine-tuning'
-  if (path === '/playground') return '/modelli'
-  if (path === '/archivio' || path.startsWith('/progetti')) return '/progetti'
+  if (RECOGNITION_PATHS.includes(path)) return '/'
+  if (MODEL_PATHS.includes(path)) return '/modelli'
+  if (path === '/archivio' || path === '/progetti' || path.startsWith('/progetti/')) return '/archivio'
   return path
 }
 
@@ -186,7 +185,9 @@ export default function Layout() {
   const location = useLocation()
   // Il contenuto è scorso sotto la testata: lei lo dice con un'ombra.
   const [scrolled, setScrolled] = useState(false)
-  if (NAV.some(({ to }) => to === location.pathname)) lastSearch.set(location.pathname, location.pathname === '/progetti' ? '' : location.search)
+  if (NAV.some(({ to }) => to === location.pathname) || [...REFINE_PATHS, ...RECOGNITION_PATHS, ...MODEL_PATHS].includes(location.pathname)) {
+    lastSearch.set(location.pathname, location.pathname === '/archivio' ? '' : location.search)
+  }
   // Ogni pagina legge lo stato inferenza (chip GPU, banner, motori prefill):
   // il sync all'avvio evita di mostrare disponibilità/latenza stantie da
   // localStorage, che prima si aggiornavano solo aprendo la Home.
@@ -206,13 +207,13 @@ export default function Layout() {
 
       <header className="app-header relative z-40 shrink-0 border-b border-[color:var(--color-rule-strong)]" data-scrolled={scrolled || undefined}>
         {/* riga 1 — identità e stato globale */}
-        <div className="flex min-w-0 flex-wrap items-center gap-3 border-b border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-3 py-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-3 border-b border-[color:var(--color-rule)] bg-[color:var(--color-fill)] py-1.5 pl-4 pr-3">
           <span className="text-[13px] font-bold tracking-[-0.02em]">
             Tabularium<span className="text-[color:var(--color-sig-text)]">Lab</span>
           </span>
           <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2">
             {location.pathname !== '/modelli' && (() => {
-              const providerKey = inference.provider && ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom'].includes(inference.provider)
+              const providerKey = inference.provider && ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom', 'llamaindex'].includes(inference.provider)
                 ? `recognition.provider.${inference.provider}`
                 : null
               const providerLabel = providerKey
@@ -247,8 +248,8 @@ export default function Layout() {
         </div>
 
         {/* riga 2 — le sezioni, linguette bordo a bordo */}
-        <nav aria-label={t('app.navSections')} className="nav-rail relative flex min-w-0 max-w-full overflow-x-auto">
-          <span className="w-px shrink-0 bg-[color:var(--color-rule)]" />
+        <nav aria-label={t('app.navSections')} className="nav-rail relative flex min-w-0 max-w-full flex-wrap md:flex-nowrap md:overflow-x-auto">
+
           {NAV.map(({ to, labelKey, Icon }) => (
             <Link key={to} to={{ pathname: to, search: lastSearch.get(to) ?? '' }} aria-current={sectionOf(location.pathname) === to ? 'page' : undefined} className="shrink-0">
                 <span className="navtab" data-active={sectionOf(location.pathname) === to}>
@@ -259,21 +260,27 @@ export default function Layout() {
           ))}
           <NavMark pathname={location.pathname} />
         </nav>
-        {((REFINE_PATHS.includes(location.pathname) && location.pathname !== '/fine-tuning') || ['/modelli', '/playground'].includes(location.pathname)) && (
-          <nav aria-label={t(REFINE_PATHS.includes(location.pathname) ? 'workflow.refineNav' : 'workflow.modelNav')} className="flex flex-wrap gap-1 border-t border-[color:var(--color-rule)] px-3 py-2">
+        {(REFINE_PATHS.includes(location.pathname) || RECOGNITION_PATHS.includes(location.pathname) || MODEL_PATHS.includes(location.pathname)) && (
+          <nav aria-label={t(REFINE_PATHS.includes(location.pathname) ? 'workflow.refineNav' : MODEL_PATHS.includes(location.pathname) ? 'workflow.modelNav' : 'workflow.recognitionNav')} className="section-nav">
             {(REFINE_PATHS.includes(location.pathname)
               ? [
                   { to: '/fine-tuning', key: 'ux.overview' },
                   { to: '/dataset', key: 'workflow.dataset' },
                   { to: '/training', key: 'workflow.train' },
                   { to: '/valutazione', key: 'workflow.evaluate' },
+                  { to: '/benchmark', key: 'nav.benchmark' },
                 ]
-              : [
-                  { to: '/modelli', key: 'workflow.configure' },
-                  { to: '/playground', key: 'nav.playground' },
-                ]
+              : MODEL_PATHS.includes(location.pathname)
+                ? [
+                    { to: '/modelli', key: 'workflow.configure' },
+                    { to: '/playground', key: 'nav.playground' },
+                  ]
+                : [
+                    { to: '/', key: 'nav.recognize' },
+                    { to: '/risultati', key: 'nav.results' },
+                  ]
             ).map(({ to, key }) => (
-              <NavLink key={to} to={to} className={({ isActive }) => `btn btn-sm no-underline ${isActive ? 'btn-primary' : ''}`}>
+              <NavLink key={to} to={{ pathname: to, search: lastSearch.get(to) ?? '' }} className="section-link">
                 {t(key)}
               </NavLink>
             ))}
@@ -290,7 +297,7 @@ export default function Layout() {
             mentre il suo codice arriva resta la sua forma — la testata e le
             linguette restano dove sono. */}
         <Suspense fallback={<PageSkeleton label={t('app.loadingModule')} />}>
-          <div key={location.pathname} className="h-full">
+          <div key={location.pathname} className={`h-full ${location.pathname.startsWith('/annotazione') || location.pathname.startsWith('/tabella') ? '' : 'workspace-page'}`}>
             <Outlet />
           </div>
         </Suspense>

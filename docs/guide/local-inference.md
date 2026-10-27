@@ -518,7 +518,7 @@ Every registry entry exposes `vram_warning` (string or `null`): it compares the
 checkpoint size (real size on disk once downloaded, otherwise the declared
 estimate) with the free VRAM reported by `nvidia-smi`, with a 35% margin for KV
 cache and activations. **It's a warning, not a block**: unlike the training
-preflight (`services/vram.py`), you always decide whether to try anyway. If
+preflight (`domain/vram.py`), you always decide whether to try anyway. If
 the server runs out of memory, reduce `--max-model-len` (the per-request KV
 cache), **not** `--gpu-memory-utilization`, which would shrink the budget
 further. When the weights alone eat the budget, the warning says so and points

@@ -209,7 +209,9 @@ export function buildBranches({ project, workflow, dataset, training, runs, draf
     ? stageOf('dataset')
     : !trainingDone
       ? stageOf('train')
-      : stageOf('evaluate')
+      : training?.run?.prepare_job?.state !== 'finished' || !training.run.prepare_job.model_id
+        ? { ...stageOf('train')!, name: t('ux.nextPrepare'), detail: t('ux.nextPrepare'), action: { label: t('training.prepareCheckpoint'), to: '/training' } }
+        : stageOf('evaluate')
   const trainingRunning = training?.run?.state === 'running' || training?.run?.state === 'starting'
 
   return [

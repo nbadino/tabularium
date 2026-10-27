@@ -147,6 +147,114 @@ For a single-user machine without authentication, start the backend with
 `TABULARIUM_AUTH=off`. Registration is closed by default; the administrator can
 open it from **Settings**. All options are in [Configuration](configuration.md).
 
+## Verify the installation: `tabularium doctor`
+
+Before opening the interface, ask the installation to introduce itself:
+
+```bash
+tabularium doctor
+```
+
+One line per check — data directory, free space, database integrity, schema
+version, port, authentication, credential vault, process model, GPU, model
+runtimes, model downloads, interface. `warn` is a legitimate state (no GPU, no
+network, no database yet); `fail` means the installation is not ready and the
+hint says what to change. `tabularium doctor --json` is the same report for a
+monitoring script.
+
+Two failures worth knowing in advance:
+
+- **`process model` / `port`**: Tabularium is a single process. Downloads,
+  training jobs, the live channel and the sessions live in memory, so a second
+  worker duplicates jobs and splits sessions. `tabularium --workers 2` is
+  refused, and `WEB_CONCURRENCY>1` stops the application at startup.
+- **`credential vault`**: the vault key belongs to the data directory. A key
+  generated with another key does not decrypt saved provider credentials; the
+  app starts and says so, but re-entering them is the fix.
+
+## Container
+
+The image contains the whole application — interface, backend, OCR engine — and
+no PyTorch: model runtimes and training are prepared separately, or run on a
+rented GPU.
+
+```bash
+docker build -f docker/app/Dockerfile -t tabularium .
+docker run -d --name tabularium -p 127.0.0.1:8787:8787 \
+  -v tabularium-data:/data tabularium
+```
+
+Or with compose, which sets the same options explicitly:
+
+```bash
+docker compose -f docker/app/compose.yml up -d
+```
+
+The data directory is `/data` inside the container: the SQLite database, the
+projects, the crops, the runs, the models and the vault key. Back it up as a
+volume, not as a file inside the image. The interface listens on `0.0.0.0:8787`;
+publish it on the loopback and let a reverse proxy terminate TLS, or change the
+port mapping deliberately.
+
+### Serving under a sub-path
+
+The interface can live at `/tabularium/` behind a reverse proxy. Build it with
+the same prefix, so assets, API calls and routes are generated under it:
+
+```bash
+TABULARIUM_BASE_PATH=/tabularium/ npm run build      # from a source checkout
+docker build --build-arg TABULARIUM_BASE_PATH=/tabularium/ \
+  -f docker/app/Dockerfile -t tabularium .
+```
+
+with compose, set `TABULARIUM_BASE_PATH=/tabularium/` in the environment. Then
+configure the proxy to **strip the prefix** before forwarding: the backend keeps
+serving `/api/...` and `/`, and the interface's URLs already include the prefix.
+
+```nginx
+location /tabularium/ {
+    proxy_pass http://127.0.0.1:8787/;   # the trailing slash strips the prefix
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    client_max_body_size 200m;          # page uploads
+}
+```
+
+Without stripping, the app would receive `/tabularium/api/...` and answer 404:
+the prefix belongs to the proxy, not to the application.
+
+## Offline installation
+
+Two things normally come from the network: model checkpoints, and the OCR engine's own
+models on first use.
+
+**Checkpoints.** `tabularium models import` copies a directory that contains
+`config.json` and the weights into `<data>/models/<adapter>`, with the same state a
+finished download leaves behind — the registry, the UI and the serving scripts cannot
+tell the difference, and no download is attempted afterwards:
+
+```bash
+tabularium models import /media/usb/MonkeyOCRv2-B-Parsing --adapter monkeyocrv2-parsing
+tabularium models list            # what is installed, and where
+tabularium models import --help   # --force replaces an existing installation
+```
+
+The copy is staged next to the destination and renamed at the end, so an interrupted
+import never looks like a complete checkpoint.
+
+**Hugging Face behind a mirror.** `huggingface_hub` honours `HF_ENDPOINT`, so an internal
+mirror works without changing the application:
+
+```bash
+export HF_ENDPOINT=https://hf-mirror.internal.example
+```
+
+**OCR engine models.** The bundled RapidOCR engine downloads its own models the first
+time it runs and keeps them in its cache, outside Tabularium's data directory; there is
+no import command for them yet. On an air-gapped host, either run the engine once on a
+connected machine and copy that cache, or use a model served from the network. This is
+the remaining item of phase P5 in `docs/architecture/program.md`.
+
 ## Next steps
 
 1. **Projects** → create a project and import scans (from the browser, or from

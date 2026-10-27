@@ -5,20 +5,22 @@ import json
 import random
 from collections import defaultdict
 
-from ..db import connect
+from ..adapters import pages as pagestore
+from ..adapters import projects as projectstore
 
 
 def sample_pilot(project_id: int, target: int = 40, seed: int = 42) -> dict:
     target = max(30, min(target, 50))
-    with connect() as conn:
-        rows = conn.execute("SELECT * FROM pages WHERE project_id=? ORDER BY id", (project_id,)).fetchall()
-        project = conn.execute("SELECT settings_json FROM projects WHERE id=?", (project_id,)).fetchone()
+    rows = sorted(pagestore.all_for_project(project_id), key=lambda row: int(row["id"]))
     protected: set[int] = set()
-    if project:
-        try:
-            protected = {int(v) for v in json.loads(project["settings_json"] or "{}").get("study_protocol", {}).get("gold_pages", [])}
-        except (TypeError, ValueError):
-            pass
+    try:
+        settings = projectstore.settings_json(project_id)
+        protected = {
+            int(value)
+            for value in settings.get("study_protocol", {}).get("gold_pages", [])
+        }
+    except (TypeError, ValueError):
+        pass
     candidates = [row for row in rows if int(row["id"]) not in protected]
     buckets: dict[str, list] = defaultdict(list)
     for row in candidates:

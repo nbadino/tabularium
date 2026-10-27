@@ -14,7 +14,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from .artifacts import verify_manifest
 
@@ -131,6 +131,64 @@ class SshExecutor:
             raise ValueError("remote_root SSH non valido")
         return f"{root}/{recipe.run_id}"
 
+    def remote_dir(self, run_id: str) -> str:
+        """Directory remota di una run, con la stessa validazione di `_remote_dir`."""
+        root = self.remote_root.rstrip("/")
+        name = str(run_id or "").strip()
+        if (
+            not root
+            or root == "/"
+            or not root.startswith("/")
+            or any(ch in root for ch in " \t\r\n;|&`$\\")
+            or not name
+            or name in {".", ".."}
+            or Path(name).name != name
+        ):
+            raise ValueError("percorso remoto della run non valido")
+        return f"{root}/{name}"
+
+    def run(self, command: str, *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+        """Esegue un comando sull'host remoto con la chiave e l'host key già fissati."""
+        return subprocess.run(
+            ["ssh", *self._options(), self._target(), command],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+
+    def stream(self, command: str, log_file: Path) -> subprocess.Popen:
+        """Avvia un comando remoto lasciando stdout/stderr nel log della run."""
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        stream = log_file.open("ab")
+        try:
+            process = subprocess.Popen(
+                ["ssh", *self._options(), self._target(), command],
+                stdout=stream,
+                stderr=subprocess.STDOUT,
+            )
+        finally:
+            stream.close()
+        return process
+
+    def download(self, remote_path: str, local_dir: Path, *, log_file: Path | None = None) -> None:
+        """Copia una directory remota in locale, con lo stesso trasporto SSH."""
+        remote = f"{self._target()}:{remote_path.rstrip('/')}/"
+        local_dir.mkdir(parents=True, exist_ok=True)
+        command = [
+            "rsync", "--archive", "--checksum", "--progress",
+            "-e", "ssh " + " ".join(shlex.quote(x) for x in self._options()),
+            remote, f"{local_dir}/",
+        ]
+        if log_file is None:
+            subprocess.run(command, check=True)
+            return
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        with log_file.open("ab") as stream:
+            stream.write(f">> rsync {remote} -> {local_dir}\n".encode())
+            stream.flush()
+            subprocess.run(command, check=True, stdout=stream, stderr=subprocess.STDOUT)
+
     def mkdir_argv(self, recipe: TrainingRecipe) -> list[str]:
         """Crea la cartella remota della run prima del primo rsync.
 
@@ -144,7 +202,9 @@ class SshExecutor:
     def sync_argv(self, recipe: TrainingRecipe) -> list[str]:
         remote = f"{self._target()}:{self._remote_dir(recipe)}/"
         return [
-            "rsync", "--archive", "--checksum", "--delete",
+            "rsync", "--archive", "--checksum", "--delete", "--out-format=TABULARIUM_FILE:%l:%b:%n",
+            "--exclude=activity.json", "--exclude=activity.json.tmp",
+            "--exclude=train.log", "--exclude=prepare.log", "--exclude=metrics.jsonl",
             "-e", "ssh " + " ".join(shlex.quote(x) for x in self._options()),
             f"{recipe.run_dir}/", remote,
         ]
@@ -157,9 +217,26 @@ class SshExecutor:
             "if [ -d checkpoints ]; then (cd checkpoints && find . -type f -exec sha256sum {} +) > artifacts.sha256; "
             "else : > artifacts.sha256; fi; "
             "printf \"%s\\n\" \"$code\" > .exit_code; exit \"$code\"' "
-            "< /dev/null & printf '%s\\n' \"$!\""
+            "> /dev/null 2>&1 < /dev/null & printf '%s\\n' \"$!\""
         )
         return ["ssh", *self._options(), self._target(), command]
+
+    def _stream(
+        self, command: list[str], stream, on_line: Callable[[str], None]
+    ) -> int:
+        """Run a command, tee its output to `stream`, report every line, return the code.
+
+        Separate from `launch` for one reason: the progress of a sync is a stream (rsync
+        reports one file at a time), and a test that only cares about what happens after
+        the sync should not have to start a real one.
+        """
+        proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            stream.write(raw)
+            stream.flush()
+            on_line(raw.decode("utf-8", "replace").strip())
+        return proc.wait()
 
     def recover(self, recipe: TrainingRecipe, log_file: Path, remote_pid: int) -> "RemoteProcess":
         return RemoteProcess(self, recipe, log_file, int(remote_pid))
@@ -170,10 +247,44 @@ class SshExecutor:
             stream.write(f">> sync {self._target()}:{self._remote_dir(recipe)}\n".encode())
             stream.flush()
             subprocess.run(self.mkdir_argv(recipe), check=True, stdout=stream, stderr=subprocess.STDOUT)
-            subprocess.run(self.sync_argv(recipe), check=True, stdout=stream, stderr=subprocess.STDOUT)
-        result = subprocess.run(self.launch_argv(recipe), check=True, capture_output=True, text=True)
+            files = [item for item in recipe.run_dir.rglob("*") if item.is_file() and item.name not in {"activity.json", "activity.json.tmp", "train.log", "prepare.log", "metrics.jsonl"}]
+            activity = {"stage": "sync", "started_at": time.time(), "files_done": 0,
+                        "files_total": len(files), "bytes_done": 0,
+                        "bytes_total": sum(item.stat().st_size for item in files)}
+            def publish_activity() -> None:
+                activity["updated_at"] = time.time()
+                temporary = recipe.run_dir / "activity.json.tmp"
+                temporary.write_text(json.dumps(activity), encoding="utf-8")
+                temporary.replace(recipe.run_dir / "activity.json")
+            publish_activity()
+            command = self.sync_argv(recipe)
+
+            def on_line(line: str) -> None:
+                if line.startswith("TABULARIUM_FILE:"):
+                    parts = line.split(":", 3)
+                    if len(parts) == 4 and parts[1].isdigit() and parts[2].isdigit() and not parts[3].endswith("/"):
+                        activity["files_done"] += 1
+                        activity["bytes_done"] += int(parts[1])
+                        publish_activity()
+
+            code = self._stream(command, stream, on_line)
+            activity["stage"] = "model_loading" if code == 0 else "sync_failed"
+            publish_activity()
+            if code:
+                raise subprocess.CalledProcessError(code, command)
         try:
-            remote_pid = int(result.stdout.strip().splitlines()[-1])
+            result = subprocess.run(
+                self.launch_argv(recipe), check=True, capture_output=True, text=True, timeout=60
+            )
+            stdout = result.stdout
+        except subprocess.TimeoutExpired as exc:
+            # Su alcune immagini ssh resta attaccato al canale anche dopo che il
+            # PID è stato stampato; il training però è già partito. Recuperiamo
+            # il PID dallo stdout e lasciamo che il monitor lo segua.
+            raw = exc.stdout or ""
+            stdout = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+        try:
+            remote_pid = int(stdout.strip().splitlines()[-1])
         except (IndexError, ValueError) as exc:
             raise RuntimeError("SSH non ha restituito il PID remoto del training") from exc
         return RemoteProcess(self, recipe, log_file, remote_pid)
@@ -202,6 +313,8 @@ class RemoteProcess:
         self.log_file = log_file
         self.pid = int(pid)
         self._returncode: int | None = None
+        self._missing_exit_since: float | None = None
+        self._gpu_cache: tuple[float, list[dict]] = (0.0, [])
 
     def _remote(self, command: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -211,6 +324,35 @@ class RemoteProcess:
             text=True,
             timeout=20,
         )
+
+    def gpu_snapshot(self) -> list[dict]:
+        """Telemetria della GPU remota, con cache breve per non martellare SSH."""
+        if self._gpu_cache[0] and time.monotonic() - self._gpu_cache[0] < 5:
+            return [dict(item) for item in self._gpu_cache[1]]
+        try:
+            result = self._remote(
+                "nvidia-smi --query-gpu=index,name,memory.total,memory.used,"
+                "utilization.gpu,temperature.gpu --format=csv,noheader,nounits"
+            )
+        except (OSError, subprocess.SubprocessError):
+            return [dict(item) for item in self._gpu_cache[1]]
+        gpus: list[dict] = []
+        if result.returncode == 0:
+            for line in result.stdout.strip().splitlines():
+                parts = [part.strip() for part in line.split(",")]
+                if len(parts) >= 6:
+                    try:
+                        gpus.append({
+                            "index": parts[0], "name": parts[1],
+                            "memory_total": int(float(parts[2])),
+                            "memory_used": int(float(parts[3])),
+                            "utilization": int(float(parts[4])),
+                            "temp": int(float(parts[5])),
+                        })
+                    except ValueError:
+                        continue
+        self._gpu_cache = (time.monotonic(), gpus)
+        return [dict(item) for item in gpus]
 
     def _sync_log(self) -> None:
         try:
@@ -231,11 +373,21 @@ class RemoteProcess:
             ],
             check=True,
         )
-        manifest_result = self._remote(f"cat {shlex.quote(self.executor._remote_dir(self.recipe))}/artifacts.sha256")
+        manifest_result = self._remote(
+            "printf '__TABULARIUM_MANIFEST_BEGIN__\\n'; "
+            f"cat {shlex.quote(self.executor._remote_dir(self.recipe))}/artifacts.sha256; "
+            + 'code=$?; printf "\\n__TABULARIUM_MANIFEST_END__\\n"; exit "$code"'
+        )
         if manifest_result.returncode != 0:
             return {"ok": False, "checked": 0, "errors": ["manifest remoto assente"]}
         manifest = destination.parent / "remote-artifacts.sha256"
-        manifest.write_text(manifest_result.stdout, encoding="utf-8")
+        import re
+        framed = re.search(r"__TABULARIUM_MANIFEST_BEGIN__\n(.*?)\n__TABULARIUM_MANIFEST_END__", manifest_result.stdout, re.DOTALL)
+        if not framed or not framed.group(1).strip():
+            return {"ok": False, "checked": 0, "errors": ["manifest remoto vuoto: nessun checkpoint recuperato"]}
+        # Preserve the entire framed manifest: malformed entries must fail
+        # validation rather than silently disappear with the provider banner.
+        manifest.write_text(framed.group(1), encoding="utf-8")
         return verify_manifest(destination, manifest)
 
     def poll(self) -> int | None:
@@ -243,15 +395,21 @@ class RemoteProcess:
             return self._returncode
         self._sync_log()
         try:
-            result = self._remote(f"cat {shlex.quote(self.executor._remote_dir(self.recipe))}/.exit_code")
+            result = self._remote(
+                f"code=$(cat {shlex.quote(self.executor._remote_dir(self.recipe))}/.exit_code) "
+                + "&& printf 'TABULARIUM_EXIT=%s\\n' " + '\"$code\"'
+            )
         except (OSError, subprocess.SubprocessError):
             result = None
         if result is not None and result.returncode == 0:
-            try:
-                self._returncode = int(result.stdout.strip())
-            except ValueError:
-                self._returncode = 1
-            return self._returncode
+            # Provider login banners can be printed on stdout. Only our marked
+            # protocol response is an exit code; malformed output is unknown.
+            import re
+            match = re.search(r"^TABULARIUM_EXIT=(-?\d+)\s*$", result.stdout, re.MULTILINE)
+            if match:
+                self._returncode = int(match.group(1))
+                return self._returncode
+            return None
         try:
             result = self._remote(f"kill -0 {self.pid}")
         except (OSError, subprocess.SubprocessError):
@@ -259,6 +417,12 @@ class RemoteProcess:
         if result.returncode == 0:
             return None
         if result.returncode == 255:
+            return None
+        # Give the detached wrapper time to flush its manifest and exit file.
+        # A vanished PID alone does not prove the training command failed.
+        if self._missing_exit_since is None:
+            self._missing_exit_since = time.monotonic()
+        if time.monotonic() - self._missing_exit_since < 60:
             return None
         self._returncode = 1
         return self._returncode

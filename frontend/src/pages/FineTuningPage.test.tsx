@@ -9,9 +9,11 @@ import { apiGet } from '../lib/api'
 vi.mock('../lib/api', async (importOriginal) => ({ ...await importOriginal<typeof import('../lib/api')>(), apiGet: vi.fn() }))
 let built = false
 let fail = false
+let training: Record<string, unknown> = { active: false, run: null }
 beforeEach(() => {
   built = false
   fail = false
+  training = { active: false, run: null }
   vi.mocked(apiGet).mockImplementation(async (path) => {
     if (path === '/projects') return { items: [{ id: 1, name: 'Registro', pages_count: 3 }] }
     if (path.endsWith('/workflow')) return { total_pages: 3, approved_pages: 0, counts: { new: 3 }, next_page: { id: 4 } }
@@ -19,7 +21,7 @@ beforeEach(() => {
       if (fail) throw new Error('Rete non disponibile')
       return { built, report: built ? { pages: { with_blocks: 1 } } : null }
     }
-    return { active: false, run: null }
+    return training
   })
 })
 afterEach(() => { cleanup(); vi.clearAllMocks() })
@@ -46,4 +48,21 @@ it('un errore nel caricamento non viene descritto come dati mancanti', async () 
   await screen.findByRole('button', { name: 'Riprova a caricare lo stato' })
   expect(screen.queryByRole('heading', { name: 'Prepara un campione corretto' })).not.toBeInTheDocument()
   expect(screen.queryByText('Nessuna run registrata')).not.toBeInTheDocument()
+})
+
+
+it('a finished run with failed preparation goes back to the checkpoint instead of proposing evaluation', async () => {
+  built = true
+  training = { active: false, run: { state: 'finished', prepare_job: { state: 'failed' } } }
+  render(<MemoryRouter><FineTuningPage /></MemoryRouter>)
+  await screen.findByRole('heading', { name: 'Prepara il modello addestrato' })
+  expect(screen.getByRole('link', { name: 'Prepara e registra il modello' })).toHaveAttribute('href', '/training')
+})
+
+it('a registered checkpoint points to its own inference setup before evaluation', async () => {
+  built = true
+  training = { active: false, run: { state: 'finished', prepare_job: { state: 'finished', model_id: 'custom-trained-42' } } }
+  render(<MemoryRouter><FineTuningPage /></MemoryRouter>)
+  await screen.findByRole('heading', { name: 'Scegli dove eseguire il modello addestrato' })
+  expect(screen.getByRole('link', { name: 'Servi il modello' })).toHaveAttribute('href', '/modelli?modello=custom-trained-42&passo=dove')
 })

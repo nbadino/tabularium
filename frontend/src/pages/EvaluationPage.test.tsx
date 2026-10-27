@@ -39,8 +39,10 @@ vi.mock('../lib/api', () => ({
   ),
   apiPost: vi.fn(async () => report),
 }))
+let finishedTraining = false
+
 vi.mock('../app/pipeline', () => ({
-  usePipelineState: () => ({ workflow: { approved_pages: 1 } }),
+  usePipelineState: () => ({ workflow: { approved_pages: 1 }, training: finishedTraining ? { run: { state: 'finished' } } : null, dataset: finishedTraining ? { report: { pages: { val: 0 } } } : null }),
   buildPipeline: () => [],
 }))
 vi.mock('../app/PipelineView', () => ({ PipelineStrip: () => null }))
@@ -48,10 +50,19 @@ vi.mock('../app/inference', () => ({
   useInference: () => ({
     enabled: true, available: true, url: '', model: 'lightonocr-3', adapterId: 'lightonocr-3', provider: null,
   }),
+  setInference: vi.fn(),
+  testInferenceConnection: vi.fn(async () => ({ ok: true, url: '', model: 'lightonocr-3', models_available: [], latency_ms: 1 })),
 }))
 
 describe('EvaluationPage', () => {
-  afterEach(cleanup)
+  it('blocks evaluation after training when there are no held-out pages', async () => {
+    finishedTraining = true
+    render(<MemoryRouter><EvaluationPage /></MemoryRouter>)
+    await screen.findByText(/La valutazione dopo il training richiede pagine di validazione/)
+    expect(screen.getByRole('button', { name: 'Esegui valutazione' })).toBeDisabled()
+  })
+
+  afterEach(() => { cleanup(); finishedTraining = false })
 
   it('mostra F1 a IoU 0,75 e il dettaglio per label', async () => {
     render(<MemoryRouter><EvaluationPage /></MemoryRouter>)

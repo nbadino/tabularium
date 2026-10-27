@@ -12,14 +12,16 @@ import shlex
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
+from collections.abc import Callable
 
 from .. import config
 from .dataset_builder import _project_dir
-from . import vram
-from .trainer_metrics import _log_tail, _metrics, gpu_snapshot, parse_metrics_line
+from ..domain import vram
+from .trainer_metrics import _log_tail, _log_tail_logfile, _metrics, gpu_snapshot, parse_metrics_line, summarize_log
 from .trainer_script import (
     FAMILIES,
     _dataset_source,
@@ -32,6 +34,7 @@ from . import train_recipes
 from .training_executor import RemoteProcess, SshExecutor, TrainingRecipe, executor_from_config
 from .artifacts import write_manifest, verify_manifest
 from .i18n import msg
+from ..adapters import jobs as jobstore
 from ..db import connect
 
 REMOTE_PROVIDERS = {"ssh", "vast", "runpod"}
@@ -149,7 +152,17 @@ def _check_local_toolchain(
         # backend non è l'ambiente di training. Se è indicato un interprete,
         # il suo `swift` è quello che conta.
         candidate = Path(config.TRAIN_PYTHON).with_name("swift") if config.TRAIN_PYTHON else None
-        if not (shutil.which("swift") or (candidate is not None and candidate.exists())):
+        found = shutil.which("swift")
+        if found is not None:
+            try:
+                with Path(found).open("rb") as stream:
+                    is_script = stream.read(2) == b"#!"
+            except OSError:
+                is_script = False
+            # Su macOS `swift` è il compilatore Apple, non ms-swift.
+            if not is_script:
+                found = None
+        if not (found or (candidate is not None and candidate.exists())):
             errors.append(msg("swift_not_found", lang))
         return
     if toolchain == "llama-factory":
@@ -246,6 +259,17 @@ def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dic
         errors.append(msg("min_train", lang))
     if counts["val.jsonl"] < 1:
         errors.append(msg("empty_val", lang))
+    coverage_errors: list[str] = []
+    report_path = dataset_source / 'report.json'
+    if report_path.is_file() and 'table' in recipe_families:
+        report = json.loads(report_path.read_text(encoding='utf-8'))
+        excluded = report.get('table_exclusions') or []
+        # Legacy snapshots only recorded exclusion messages; keep them visible too.
+        legacy_excluded = [warning for warning in report.get('warnings', [])
+                           if '(Table)' in warning and any(marker in warning for marker in ('skipped', 'esclus', 'exclu'))]
+        if report.get('approved_only') and (excluded or legacy_excluded):
+            coverage_errors.append(msg('train_tables_excluded', lang, n=len(excluded) or len(legacy_excluded)))
+            errors.extend(coverage_errors)
     if family_counts["table"]["train"] == 0:
         warnings.append(msg("no_table_train_w", lang))
 
@@ -399,6 +423,7 @@ def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dic
         "ready": not errors,
         "errors": errors,
         "warnings": warnings,
+        "dataset_coverage_errors": coverage_errors,
         "dataset": {
             "dir": str(dataset_source),
             "snapshot_id": snapshot_id,
@@ -432,6 +457,27 @@ def _run_paths(project_id: int, run_id: str) -> tuple[Path, Path, Path]:
     return run_dir, run_dir / "train.log", run_dir / "metrics.jsonl"
 
 
+def write_run_meta(run_dir: Path, meta: dict) -> None:
+    """Scrittura atomica di run.json.
+
+    Lo stato viene letto dalla UI mentre il job di preparazione lo aggiorna:
+    un `write_text` diretto può lasciare il file vuoto per un istante e far
+    sembrare la run sparita. `os.replace` pubblica solo il file completo.
+    """
+    run_dir.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".run-", suffix=".json", dir=run_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(meta, stream, ensure_ascii=False, indent=2)
+        os.replace(temporary, run_dir / "run.json")
+    finally:
+        try:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+        except OSError:
+            pass
+
+
 def _read_run_meta(run_dir: Path) -> dict | None:
     meta_path = run_dir / "run.json"
     if not meta_path.exists():
@@ -447,7 +493,8 @@ _ACTIVE: dict[int, dict] = {}
 
 
 def start_run(
-    project_id: int, cfg: dict, *, owner_id: int | None = None, lang: str = "it"
+    project_id: int, cfg: dict, *, owner_id: int | None = None, lang: str = "it",
+    on_run_created: Callable[[str], None] | None = None,
 ) -> dict:
     check = preflight(project_id, cfg, lang=lang)
     if not check["ready"]:
@@ -456,11 +503,21 @@ def start_run(
     recipe, _effective, train_type = resolve_config(cfg)
     run_dir = runs_dir(project_id) / f"run_{int(time.time() * 1000)}"
     run_dir.mkdir(parents=True, exist_ok=True)
+    run_id = run_dir.name
+    executor = executor_from_config(cfg, known_hosts=config.SSH_KNOWN_HOSTS)
+    # Su host remoto i percorsi assoluti dei ritagli locali non esistono: la
+    # vista copia i pixel nella run e scrive il percorso con cui l'host li
+    # vedrà. In locale resta il percorso del crop, senza duplicare byte.
+    images_prefix = None
+    if isinstance(executor, SshExecutor):
+        remote_root = str(cfg.get("ssh_root") or "/tmp/tabularium-runs").rstrip("/")
+        images_prefix = f"{remote_root}/{run_id}/dataset/images"
     train_file, val_file = prepare_training_files(
         project_id,
         run_dir / "dataset",
         adapter_id=recipe.adapter_id,
         train_type=train_type,
+        images_prefix=images_prefix,
     )
     view_manifest: dict | None = None
     view_path = run_dir / "dataset" / "view.json"
@@ -481,15 +538,16 @@ def start_run(
         previous_checkpoints = previous_dir / "checkpoints"
         if not previous_checkpoints.is_dir() or not any(path.is_file() for path in previous_checkpoints.rglob("*")):
             raise ValueError("la run di resume non contiene checkpoint")
-        shutil.copytree(previous_checkpoints, run_dir / "checkpoints", dirs_exist_ok=True)
+        # A resumed run must merge its own final adapter. Never copy an old
+        # merged export or rsync's incomplete temporary files into the new run.
+        shutil.copytree(previous_checkpoints, run_dir / "checkpoints", dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns('*-merged', 'export', '.*'))
 
     script = generate_script(cfg, run_dir, train_file, val_file)
     script_path = run_dir / "train.sh"
     script_path.write_text(script, encoding="utf-8")
 
-    run_id = run_dir.name
     snapshot_id = check["dataset"].get("snapshot_id")
-    executor = executor_from_config(cfg, known_hosts=config.SSH_KNOWN_HOSTS)
     if isinstance(executor, SshExecutor):
         # Stessa politica del tunnel Vast: la host key si fissa alla prima
         # connessione (trust-on-first-use), e da lì ogni cambiamento fallisce.
@@ -525,35 +583,38 @@ def start_run(
     )
     recipe.write_manifest()
     meta["recipe"] = recipe.manifest()
-    (run_dir / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_run_meta(run_dir, meta)
 
     log_file = run_dir / "train.log"
+    if on_run_created is not None:
+        on_run_created(run_id)
     try:
         proc = executor.launch(recipe, log_file)
     except Exception as exc:  # noqa: BLE001
         meta["state"] = "error"
         meta["error"] = str(exc)
-        (run_dir / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_run_meta(run_dir, meta)
         raise
 
-    with connect() as conn:
-        job = conn.execute(
-            "INSERT INTO jobs(kind, owner_id, project_id, provider, pid, process_group, remote_job_id, state, "
-            "heartbeat_at, command_json, log_path, recovery_strategy) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-            ("training", owner_id, project_id, executor.provider,
-             proc.pid if executor.provider == "local" else None,
-             proc.pid if executor.provider == "local" else None,
-             str(proc.pid) if executor.provider in REMOTE_PROVIDERS else None,
-             "running", _now(),
-             json.dumps({"run_id": run_id, "script": str(run_dir / "train.sh"), "config": cfg}), str(log_file),
-             "reconcile-local-pid" if executor.provider == "local" else "reconcile-ssh-session"),
-        )
-        meta["job_id"] = job.lastrowid
-        if executor.provider == "local":
-            meta["pid"] = proc.pid
-        else:
-            meta["remote_job_id"] = str(proc.pid)
-        (run_dir / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    meta["job_id"] = jobstore.start_training_job(
+        owner_id=owner_id,
+        project_id=project_id,
+        provider=executor.provider,
+        pid=proc.pid if executor.provider == "local" else None,
+        remote_job_id=str(proc.pid) if executor.provider in REMOTE_PROVIDERS else None,
+        command={"run_id": run_id, "script": str(run_dir / "train.sh"), "config": cfg},
+        log_path=str(log_file),
+        recovery_strategy=(
+            "reconcile-local-pid" if executor.provider == "local"
+            else "reconcile-ssh-session"
+        ),
+        heartbeat_at=_now(),
+    )
+    if executor.provider == "local":
+        meta["pid"] = proc.pid
+    else:
+        meta["remote_job_id"] = str(proc.pid)
+    write_run_meta(run_dir, meta)
     _ACTIVE[project_id] = {"run_id": run_id, "proc": proc, "run_dir": run_dir, "log_file": log_file, "job_id": job.lastrowid}
     threading.Thread(target=_metrics_writer, args=(project_id,), daemon=True).start()
     threading.Thread(target=_monitor, args=(project_id,), daemon=True).start()
@@ -594,6 +655,24 @@ def _metrics_writer(project_id: int) -> None:
         time.sleep(1.0)
 
 
+def _auto_prepare(project_id: int, run_id: str) -> None:
+    """Avvia merge/registrazione appena la run finisce, se è possibile.
+
+    L'utente non deve sapere che il checkpoint LoRA non è servibile così com'è:
+    se il piano è pronto (host remoto ancora raggiungibile o toolchain locale)
+    il lavoro parte da solo. Se non lo è, il pannello mostrerà il motivo e il
+    pulsante manuale: meglio un avviso chiaro che un job destinato a fallire.
+    """
+    try:
+        from . import checkpoint_prepare
+
+        plan = checkpoint_prepare.prepare_plan(project_id, run_id)
+        if plan.get("ready"):
+            checkpoint_prepare.start_prepare(project_id, run_id)
+    except Exception:  # noqa: BLE001 - il training non deve fallire per questo
+        pass
+
+
 def _monitor(project_id: int) -> None:
     handle = _ACTIVE.get(project_id)
     if not handle:
@@ -602,7 +681,7 @@ def _monitor(project_id: int) -> None:
     code = proc.wait()
     state = "finished" if code == 0 else "failed"
     artifact_error = None
-    if code == 0 and hasattr(proc, "download_artifacts"):
+    if hasattr(proc, "download_artifacts"):
         try:
             result = proc.download_artifacts(run_dir / "checkpoints")
             if not result.get("ok"):
@@ -619,48 +698,197 @@ def _monitor(project_id: int) -> None:
     meta["ended_at"] = _now()
     meta["exit_code"] = code
     meta["artifacts"] = artifact_check
+    meta["summary"] = summarize_log(
+        _log_tail_logfile(run_dir),
+        started_at=meta.get("started_at"),
+        ended_at=meta.get("ended_at"),
+    )
+    meta["checkpoint"] = checkpoint_info(run_dir)
     if artifact_error:
         meta["error"] = artifact_error
-    (run_dir / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    with connect() as conn:
-        conn.execute(
-            "UPDATE jobs SET state=?, ended_at=?, exit_code=?, heartbeat_at=? WHERE id=?",
-            (state, meta["ended_at"], code, _now(), meta.get("job_id")),
+    write_run_meta(run_dir, meta)
+    if state == "finished" and (meta.get("config") or {}).get("auto_prepare", True):
+        _auto_prepare(project_id, run_dir.name)
+    if meta.get("job_id") is not None:
+        jobstore.settle(
+            meta["job_id"], state, ended=meta["ended_at"], exit_code=code
         )
     _ACTIVE.pop(project_id, None)
 
 
-def _status(project_id: int) -> dict:
+def _dir_bytes(path: Path) -> int:
+    total = 0
+    try:
+        for item in path.rglob("*"):
+            try:
+                if item.is_file():
+                    total += item.stat().st_size
+            except OSError:
+                continue
+    except OSError:
+        return 0
+    return total
+
+
+def _looks_like_model(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    if (path / "adapter_config.json").exists() and any(
+        path.glob(pattern) for pattern in ("adapter_model*.safetensors", "adapter_model*.bin")
+    ):
+        return True
+    return (path / "config.json").exists() and any(
+        path.glob(pattern) for pattern in ("*.safetensors", "*.bin")
+    )
+
+
+def checkpoint_info(run_dir: Path) -> dict | None:
+    """Il checkpoint locale più recente, con peso su disco e merge disponibile.
+
+    La ricerca è la stessa della registrazione (`custom_models`), ma qui non
+    unisce nulla: dice all'utente *dove sono i pesi* e se il merge è già stato
+    fatto. Un adapter LoRA senza merge non è servibile, quindi la UI deve
+    saperlo prima di offrire il pulsante.
+    """
+    meta = _read_run_meta(run_dir) or {}
+    cfg = meta.get("config") or {}
+    train_type = str(cfg.get("train_type") or "lora").strip().lower()
+    root = run_dir / "checkpoints"
+    candidates: list[Path] = []
+    if root.is_dir():
+        for path in root.rglob("checkpoint-*"):
+            if path.is_dir() and _looks_like_model(path):
+                candidates.append(path)
+    if not candidates:
+        return None
+    checkpoint = max(
+        candidates,
+        key=lambda path: int(path.name.split("-", 1)[1]) if path.name.split("-", 1)[1].isdigit() else -1,
+    )
+    merged = None
+    for candidate in (
+        checkpoint.parent.parent / f"{checkpoint.name}-merged",
+        checkpoint.parent / "export",
+    ):
+        from . import custom_models
+        if custom_models._has_weights(candidate):
+            merged = candidate
+            break
+    return {
+        "path": str(checkpoint),
+        "relative_path": checkpoint.relative_to(run_dir).as_posix(),
+        "name": checkpoint.name,
+        "bytes": _dir_bytes(checkpoint),
+        "train_type": train_type,
+        "merged_path": str(merged) if merged else None,
+        "merged_relative_path": merged.relative_to(run_dir).as_posix() if merged else None,
+        "merged_bytes": _dir_bytes(merged) if merged else 0,
+        "needs_merge": train_type == "lora" and merged is None,
+    }
+
+
+def _decorate_run(meta: dict, run_dir: Path) -> dict:
+    """Aggiunge riepilogo e checkpoint a una run terminale, senza riscriverla."""
+    activity_path = run_dir / "activity.json"
+    if activity_path.exists():
+        try:
+            meta["activity"] = json.loads(activity_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+    if meta.get('comparison_job'):
+        meta['comparison_job'] = {**meta['comparison_job'], 'log_tail': _log_tail(run_dir / 'comparison.log')}
+    if meta.get("state") in {"running", "finished", "failed", "stopped"}:
+        if meta.get("state") == "running" or not meta.get("summary"):
+            meta["summary"] = summarize_log(
+                _log_tail_logfile(run_dir),
+                started_at=meta.get("started_at"),
+                ended_at=meta.get("ended_at"),
+            )
+        meta["checkpoint"] = checkpoint_info(run_dir)
+    return meta
+
+
+def _load_run(project_id: int, run_id: str) -> tuple[Path, dict]:
+    run_id = str(run_id or "").strip()
+    root = runs_dir(project_id).resolve()
+    run_dir = (root / run_id).resolve()
+    if not run_id or run_id in {".", ".."} or run_dir.parent != root or not run_dir.is_dir():
+        raise FileNotFoundError("run di training non trovata")
+    meta = _read_run_meta(run_dir)
+    if meta is None:
+        raise FileNotFoundError("metadati della run non leggibili")
+    return run_dir, meta
+
+
+def list_runs(project_id: int, *, limit: int = 50) -> list[dict]:
+    """Le run del progetto, dalla più recente: servono allo storico e al resume."""
+    root = runs_dir(project_id)
+    if not root.is_dir():
+        return []
+    items: list[dict] = []
+    for run_dir in root.iterdir():
+        if not run_dir.is_dir() or not (run_dir / "run.json").is_file():
+            continue
+        meta = _read_run_meta(run_dir) or {"run_id": run_dir.name, "state": "unknown"}
+        cfg = meta.get("config") or {}
+        items.append(
+            {
+                "run_id": str(meta.get("run_id") or run_dir.name),
+                "state": meta.get("state") or "unknown",
+                "started_at": meta.get("started_at"),
+                "ended_at": meta.get("ended_at"),
+                "exit_code": meta.get("exit_code"),
+                "adapter_id": meta.get("adapter_id") or cfg.get("adapter_id"),
+                "toolchain": meta.get("toolchain"),
+                "train_type": cfg.get("train_type") or "lora",
+                "summary": meta.get("summary") or summarize_log(
+                    _log_tail_logfile(run_dir),
+                    started_at=meta.get("started_at"),
+                    ended_at=meta.get("ended_at"),
+                ),
+                "remote_cleaned_at": meta.get("remote_cleaned_at"),
+            }
+        )
+    items.sort(key=lambda item: (item.get("started_at") or "", item["run_id"]), reverse=True)
+    return items[: max(1, int(limit))]
+
+
+def _status(project_id: int, run_id: str | None = None) -> dict:
     handle = _ACTIVE.get(project_id)
-    if handle:
+    if handle and (not run_id or handle["run_id"] == run_id):
         run_dir = handle["run_dir"]
         meta = _read_run_meta(run_dir) or {"run_id": handle["run_id"], "state": "running"}
         tail = _log_tail(handle["log_file"])
         metrics = _metrics(run_dir)
         return {
             "active": True,
-            "run": meta,
+            "run": _decorate_run(meta, run_dir),
             "log_tail": tail,
             "metrics": metrics,
+            "gpu": (
+                handle["proc"].gpu_snapshot()
+                if hasattr(handle.get("proc"), "gpu_snapshot")
+                else gpu_snapshot()
+            ),
+        }
+
+    if run_id:
+        try:
+            run_dir, meta = _load_run(project_id, run_id)
+        except FileNotFoundError:
+            return {"active": False, "run": None, "log_tail": "", "metrics": [], "gpu": gpu_snapshot()}
+        return {
+            "active": False,
+            "run": _decorate_run(meta, run_dir),
+            "log_tail": _log_tail(run_dir / "train.log"),
+            "metrics": _metrics(run_dir),
             "gpu": gpu_snapshot(),
         }
 
     # Recovery dopo un riavvio del backend: l'handle Python è perso, ma il
     # PID/job manifest persistito resta sufficiente per osservare e fermare la
     # run locale.
-    try:
-        with connect() as conn:
-            job = conn.execute(
-                "SELECT * FROM jobs WHERE project_id=? AND kind='training' ORDER BY id DESC LIMIT 1",
-                (project_id,),
-            ).fetchone()
-    except sqlite3.OperationalError as exc:
-        # Supporta anche una directory dati appena creata prima della prima
-        # migrazione: lo status vuoto resta interrogabile e l'avvio normale
-        # continua a passare da init_db().
-        if "no such table: jobs" not in str(exc):
-            raise
-        job = None
+    job = jobstore.latest(project_id, "training")
     if job is not None and job["state"] == "running":
         try:
             command = json.loads(job["command_json"] or "{}")
@@ -693,8 +921,10 @@ def _status(project_id: int) -> dict:
             except (OSError, ValueError, TypeError, subprocess.SubprocessError):
                 pass
             ended = _now()
-            with connect() as conn:
-                conn.execute("UPDATE jobs SET state='failed', ended_at=?, error=?, heartbeat_at=? WHERE id=?", (ended, "job remoto non più raggiungibile dopo il riavvio", ended, job["id"]))
+            jobstore.mark_state(
+                job["id"], "failed", ended=ended,
+                error="job remoto non più raggiungibile dopo il riavvio",
+            )
 
         alive = False
         if job["pid"]:
@@ -704,9 +934,10 @@ def _status(project_id: int) -> dict:
             except OSError:
                 alive = False
         if not alive:
-            ended = _now()
-            with connect() as conn:
-                conn.execute("UPDATE jobs SET state='failed', ended_at=?, error=?, heartbeat_at=? WHERE id=?", (ended, "processo non più presente dopo il riavvio", ended, job["id"]))
+            jobstore.mark_state(
+                job["id"], "failed", ended=_now(),
+                error="processo non più presente dopo il riavvio",
+            )
         else:
             run_dir = runs_dir(project_id) / str(command.get("run_id", ""))
             meta = _read_run_meta(run_dir) or {"run_id": command.get("run_id"), "state": "running", "pid": job["pid"]}
@@ -720,7 +951,7 @@ def _status(project_id: int) -> dict:
             meta = _read_run_meta(run_dir) or {"state": "unknown"}
             return {
                 "active": False,
-                "run": meta,
+                "run": _decorate_run(meta, run_dir),
                 "log_tail": _log_tail(run_dir / "train.log"),
                 "metrics": _metrics(run_dir),
                 "gpu": gpu_snapshot(),
@@ -731,8 +962,8 @@ def _status(project_id: int) -> dict:
 def stop_run(project_id: int) -> dict:
     handle = _ACTIVE.get(project_id)
     if not handle:
-        with connect() as conn:
-            job = conn.execute("SELECT * FROM jobs WHERE project_id=? AND kind='training' AND state='running' ORDER BY id DESC LIMIT 1", (project_id,)).fetchone()
+        running_jobs = jobstore.of_project(project_id, "training", state="running")
+        job = running_jobs[0] if running_jobs else None
         if job is not None and job["provider"] in REMOTE_PROVIDERS and job["remote_job_id"]:
             try:
                 command = json.loads(job["command_json"] or "{}")
@@ -747,16 +978,14 @@ def stop_run(project_id: int) -> dict:
             except (OSError, ValueError, TypeError, subprocess.SubprocessError):
                 pass
             ended = _now()
-            with connect() as conn:
-                conn.execute("UPDATE jobs SET state='stopped', ended_at=?, heartbeat_at=? WHERE id=?", (ended, ended, job["id"]))
+            jobstore.mark_state(job["id"], "stopped", ended=ended)
         elif job is not None and job["pid"]:
             try:
                 os.killpg(int(job["process_group"] or job["pid"]), signal.SIGTERM)
             except OSError:
                 pass
             ended = _now()
-            with connect() as conn:
-                conn.execute("UPDATE jobs SET state='stopped', ended_at=?, heartbeat_at=? WHERE id=?", (ended, ended, job["id"]))
+            jobstore.mark_state(job["id"], "stopped", ended=ended)
         return _status(project_id)
     proc = handle["proc"]
     if proc.poll() is None:
@@ -768,9 +997,9 @@ def stop_run(project_id: int) -> dict:
     meta = _read_run_meta(handle["run_dir"]) or {"state": "stopped"}
     meta["state"] = "stopped"
     meta["ended_at"] = _now()
-    (handle["run_dir"] / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    with connect() as conn:
-        conn.execute("UPDATE jobs SET state='stopped', ended_at=?, heartbeat_at=? WHERE id=?", (meta["ended_at"], _now(), handle.get("job_id")))
+    write_run_meta(handle["run_dir"], meta)
+    if handle.get("job_id") is not None:
+        jobstore.mark_state(handle["job_id"], "stopped", ended=meta["ended_at"])
     _ACTIVE.pop(project_id, None)
     return _status(project_id)
 
@@ -784,11 +1013,11 @@ def cleanup_remote_run(project_id: int, run_id: str) -> dict:
         raise ValueError("run non valida per questo progetto")
     if _ACTIVE.get(project_id):
         raise ValueError("fermare il training prima del cleanup remoto")
-    with connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM jobs WHERE project_id=? AND kind='training' ORDER BY id DESC",
-            (project_id,),
-        ).fetchall()
+    from . import checkpoint_prepare
+
+    if checkpoint_prepare.is_running(project_id, run_id):
+        raise ValueError("preparazione del checkpoint in corso: attendere prima del cleanup remoto")
+    rows = jobstore.of_project(project_id, "training")
     job = None
     for candidate in rows:
         try:
@@ -821,27 +1050,29 @@ def cleanup_remote_run(project_id: int, run_id: str) -> dict:
         raise ValueError(f"cleanup remoto fallito: {exc}") from exc
     meta = _read_run_meta(run_dir) or {"run_id": run_id}
     meta["remote_cleaned_at"] = _now()
-    (run_dir / "run.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_run_meta(run_dir, meta)
     return {"ok": True, "run_id": run_id, "remote_cleaned_at": meta["remote_cleaned_at"]}
 
 
 def reconcile_jobs() -> None:
     """Riconcilia i training locali marcati running all'avvio del backend."""
-    with connect() as conn:
-        rows = conn.execute("SELECT id, pid, provider FROM jobs WHERE kind='training' AND state='running'").fetchall()
-        for row in rows:
-            # Un PID remoto non è verificabile con os.kill locale. Il job SSH
-            # resta running e viene controllato quando l'utente chiede status;
-            # marcarlo failed qui perderebbe il training sopravvissuto al
-            # riavvio del backend.
-            if row["provider"] in REMOTE_PROVIDERS:
-                continue
-            alive = False
-            if row["pid"]:
-                try:
-                    os.kill(int(row["pid"]), 0)
-                    alive = True
-                except OSError:
-                    pass
-            if not alive:
-                conn.execute("UPDATE jobs SET state='failed', ended_at=?, error=? WHERE id=?", (_now(), "processo terminato durante il riavvio", row["id"]))
+    rows = jobstore.of_kind_state("training", "running")
+    for row in rows:
+        # Un PID remoto non è verificabile con os.kill locale. Il job SSH
+        # resta running e viene controllato quando l'utente chiede status;
+        # marcarlo failed qui perderebbe il training sopravvissuto al
+        # riavvio del backend.
+        if row["provider"] in REMOTE_PROVIDERS:
+            continue
+        alive = False
+        if row["pid"]:
+            try:
+                os.kill(int(row["pid"]), 0)
+                alive = True
+            except OSError:
+                pass
+        if not alive:
+            jobstore.mark_state(
+                row["id"], "failed", ended=_now(),
+                error="processo terminato durante il riavvio",
+            )

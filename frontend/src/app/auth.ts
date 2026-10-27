@@ -22,6 +22,8 @@ export interface AuthState {
   allowRegistration: boolean
   instanceName: string
   user: User | null
+  oidcEnabled: boolean
+  oidcButtonLabel: string
 }
 
 const INITIAL: AuthState = {
@@ -31,6 +33,8 @@ const INITIAL: AuthState = {
   allowRegistration: false,
   instanceName: '',
   user: null,
+  oidcEnabled: false,
+  oidcButtonLabel: 'SSO',
 }
 
 let state: AuthState = INITIAL
@@ -63,6 +67,8 @@ export async function bootstrap(): Promise<void> {
       allowRegistration: s.allow_registration,
       instanceName: s.instance_name,
       user: s.user,
+      oidcEnabled: s.oidc_enabled,
+      oidcButtonLabel: s.oidc_button_label,
     })
   } catch {
     // Backend non raggiungibile: senza stato utile, la modalità locale

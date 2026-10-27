@@ -46,6 +46,7 @@ import { useInference } from '../app/inference'
 import { useModelNames } from '../app/models/names'
 import { ErrorNotice, Menu, PageHeader } from '../app/ui'
 import { pageLabel } from '../lib/pageLabel'
+import { API_BASE } from '../lib/endpoints'
 
 // --- larghezze dei pannelli dello studio (splitter, persistite) --------------
 // La scelta segue l'utente tra le sessioni; un valore corrotto o assente
@@ -340,6 +341,7 @@ export default function AnnotationPage() {
       rep.annotation_revision ?? p.annotation_revision ?? 0,
     )
     setPrefillDrafts(mapDrafts(rep.items))
+    for (const block of rep.items) if (block.label === 'Table') bumpTable(block.id)
     setRemoteEdit(null)
   }
 
@@ -354,9 +356,26 @@ export default function AnnotationPage() {
   // L'effetto si aggancia (e si stacca) al cambio pagina; il gestore sta in un
   // ref perché dipende da stato che cambia a ogni render (revisione, sporco,
   // rapporto di scala) e non deve far riaprire il socket a ogni modifica.
+  const localTableRevisions = useRef<Set<string>>(new Set())
+  const rememberLocalTableRevision = (pageId: number, revision: number) => {
+    const key = `${pageId}:${revision}`
+    localTableRevisions.current.add(key)
+    if (localTableRevisions.current.size > 500) {
+      const oldest = localTableRevisions.current.values().next().value
+      if (oldest) localTableRevisions.current.delete(oldest)
+    }
+    return key
+  }
   const liveHandlerRef = useRef<(ev: { pageId: number; revision: number; authorId: number | null; authorName: string | null }) => void>(() => {})
   liveHandlerRef.current = (ev) => {
     if (!page || ev.pageId !== page.id) return
+    // La risposta HTTP può arrivare dopo il WebSocket. La revisione scritta
+    // localmente è già nota al momento della richiesta: il suo eco non deve
+    // ricaricare la pagina (e quindi rimontare il foglio) sotto le mani.
+    if (localTableRevisions.current.has(`${ev.pageId}:${ev.revision}`)) {
+      ann.syncRevision(ev.revision)
+      return
+    }
     // Eco della nostra stessa modifica: la revisione combacia, nulla da fare.
     if (ev.revision === ann.getRevision()) return
     if (ann.getDirty()) {
@@ -832,7 +851,7 @@ export default function AnnotationPage() {
     setPrefillProgress(null)
     setLiveOutput(null)
     setPrefillDrafts([])
-    const url = `/api/pages/${pid}/preview`
+    const url = `${API_BASE}/pages/${pid}/preview`
     setPreviewUrl(url)
     try {
       const size = await loadImageSize(url)
@@ -851,7 +870,20 @@ export default function AnnotationPage() {
   // chiamate al server, referenziate sul blocco selezionato al momento
   // dell'invocazione (il pannello le passa insieme al blocco).
   const saveTable = async (serverId: number, grid: TableGrid): Promise<string> => {
-    const out = await ann.runExternal(() => apiPut<TableSaveOut>(`/blocks/${serverId}/table?expected_revision=${ann.getRevision()}`, grid))
+    await ann.flush()
+    const expectedRevision = ann.getRevision()
+    const writtenRevision = expectedRevision + 1
+    const localKey = page ? rememberLocalTableRevision(page.id, writtenRevision) : null
+    let out: TableSaveOut
+    try {
+      out = await ann.runExternal(() => apiPut<TableSaveOut>(`/blocks/${serverId}/table?expected_revision=${expectedRevision}`, grid))
+    } catch (error) {
+      if (localKey) localTableRevisions.current.delete(localKey)
+      throw error
+    }
+    if (page && out.annotation_revision != null && out.annotation_revision !== writtenRevision) {
+      rememberLocalTableRevision(page.id, out.annotation_revision)
+    }
     // Il server ha fatto avanzare la revisione della pagina: senza allinearla
     // il prossimo autosave del canvas verrebbe respinto con un 409 inventato.
     ann.syncRevision(out.annotation_revision)
@@ -1015,13 +1047,30 @@ export default function AnnotationPage() {
   // Approvazione dallo Studio: prima si salva, perché il server giudica ciò
   // che ha, poi lo stesso controllo di «pagina pronta» dell'Archivio.
   const [approving, setApproving] = useState(false)
+  const [approvalReady, setApprovalReady] = useState<boolean | null>(null)
+  useEffect(() => {
+    let current = true
+    setApprovalReady(null)
+    if (page && ['approved', 'exported'].includes(page.status)) {
+      void apiGet<{ ready: boolean }>(`/pages/${page.id}/readiness`)
+        .then((out) => { if (current) setApprovalReady(out.ready) })
+        .catch((e) => { if (current) setError(e) })
+    }
+    return () => { current = false }
+  }, [page?.id, page?.status, page?.annotation_revision])
   const approveCurrentPage = async (confirmDrafts = false) => {
     if (!page || projectId === '') return
     setError(null)
     setApproving(true)
     try {
       await flushEdits()
-      await apiPost(`/pages/${page.id}/approve`, confirmDrafts ? { confirm_drafts: true } : undefined)
+      const accepted = await apiPost<{ annotation_revision?: number }>(`/pages/${page.id}/approve`, confirmDrafts ? { confirm_drafts: true } : undefined)
+      if (accepted.annotation_revision != null) ann.syncRevision(accepted.annotation_revision)
+      if (confirmDrafts) {
+        await applyBlocks(page, ratio)
+        for (const block of ann.blocks) if (block.label === 'Table' && block.serverId) bumpTable(block.serverId)
+      }
+      setApprovalReady(true)
       setPage((cur) => (cur && cur.id === page.id ? { ...cur, status: 'approved' } : cur))
       setPages((cur) => cur.map((p) => (p.id === page.id ? { ...p, status: 'approved' } : p)))
       const queue = await apiGet<{ items: Array<{ id: number; reason: string; rel_path?: string }> }>(`/projects/${projectId}/annotation-queue?limit=1`)
@@ -1053,7 +1102,7 @@ export default function AnnotationPage() {
       setApproving(false)
     }
   }
-  const approved = page?.status === 'approved' || page?.status === 'exported'
+  const approved = (page?.status === 'approved' || page?.status === 'exported') && approvalReady !== false
 
   const contentCount = prefillDrafts.length + ann.blocks.length
 
@@ -1071,8 +1120,8 @@ export default function AnnotationPage() {
         key={page.id} page={page} revision={ann.getRevision()} disabled={navBusy || prefillBusy}
         beforeAction={async () => { await flushEdits(); return ann.getRevision() }}
         onReview={() => setMode('all')}
-        onChanged={(work) => {
-          const status = work.state === 'pending' ? 'qa' : work.state === 'approved' ? 'approved' : work.state === 'changes_requested' ? 'review' : page.status === 'approved' || page.status === 'qa' || page.status === 'exported' ? 'annotated' : page.status
+        onChanged={(work, mutated) => {
+          const status = !mutated && !work.assignee_id && !work.reviewer_id ? page.status : work.state === 'pending' ? 'qa' : work.state === 'approved' ? 'approved' : work.state === 'changes_requested' ? 'review' : page.status === 'approved' || page.status === 'qa' || page.status === 'exported' ? 'annotated' : page.status
           setPage((p) => p ? { ...p, work, status } : p)
           setPages((items) => items.map((p) => p.id === work.page_id ? { ...p, work, status } : p))
         }}
@@ -1100,7 +1149,7 @@ export default function AnnotationPage() {
 
       </>} />
       {error != null && <div className="shrink-0 px-3 py-2"><ErrorNotice error={error} onDismiss={() => setError(null)} /></div>}
-      {reviewRun && (
+      {reviewRun && studioMode !== 'all' && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-2 py-1 text-[11px]">
           <b>{t('annotate.reviewRun', { id: reviewRun.id, count: pages.length })}</b>
           <Link to={`/risultati?project=${reviewRun.project_id}&run=${reviewRun.id}`} className="btn btn-sm no-underline">

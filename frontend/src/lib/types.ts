@@ -31,18 +31,29 @@ export interface AuthStatus {
   allow_registration: boolean
   instance_name: string
   user: User | null
+  /** True only when an administrator configured and enabled a provider. */
+  oidc_enabled: boolean
+  oidc_button_label: string
 }
 
 export interface InstanceSettings {
   instance_name: string
   allow_registration: boolean
   default_new_user_role: 'editor' | 'viewer'
+  oidc_enabled: boolean
+  oidc_issuer: string
+  oidc_client_id: string
+  oidc_scopes: string
+  oidc_allowed_domains: string[]
+  oidc_button_label: string
+  /** The secret itself never arrives: only whether one is stored. */
+  oidc_client_secret_set: boolean
 }
 
 export interface ComputeProfile {
   id: number
   name: string
-  provider: 'local' | 'ssh' | 'vast' | 'runpod' | 'modal' | 'custom'
+  provider: 'local' | 'ssh' | 'vast' | 'runpod' | 'modal' | 'custom' | 'llamaindex'
   purpose: 'inference' | 'training' | 'both'
   model_adapter_id: string
   model_revision: string | null
@@ -321,6 +332,7 @@ export interface TableCell {
   source?: 'manual' | 'ocr' | 'model'
   /** Falso finché un annotatore non conferma il testo proposto dal prefill. */
   verified?: boolean
+  verification_source?: 'page_approval' | null
 }
 
 export interface TableGrid {
@@ -342,6 +354,32 @@ export interface TableGrid {
 
 export interface TableGridOut {
   grid: TableGrid | null
+}
+
+/** Intestazione logica riutilizzabile: coordinate relative alla selezione. */
+export interface KnownHeaderCell {
+  r: number
+  c: number
+  rowspan: number
+  colspan: number
+  text: string
+}
+
+export interface HeaderTemplate {
+  rows: number
+  cols: number
+  cells: KnownHeaderCell[]
+}
+
+export interface KnownTableHeader extends HeaderTemplate {
+  id: string
+  name: string
+  created_at: string
+  updated_at: string
+}
+
+export interface KnownTableHeadersOut {
+  items: KnownTableHeader[]
 }
 
 /** Una somma della tabella rifatta sui valori letti (backend `table_checks`). */
@@ -506,19 +544,154 @@ export interface GpuInfo {
 }
 
 export interface TrainingMetric {
+  eval_loss?: number
+  epoch?: number
+  total_steps?: number
+  remaining_time?: string
   t?: number
   loss?: number
   lr?: number
   step?: number
 }
 
+export interface RunSummary {
+  train_loss?: number
+  eval_loss?: number
+  eval_token_acc?: number
+  train_runtime_s?: number
+  duration_s?: number
+  peak_gib?: number
+  last_loss?: number
+  steps?: number
+  total_steps?: number
+}
+
+export interface CheckpointInfo {
+  path: string
+  relative_path: string
+  name: string
+  bytes: number
+  train_type: string
+  merged_path: string | null
+  merged_relative_path: string | null
+  merged_bytes: number
+  needs_merge: boolean
+}
+
+export interface PreparePlan {
+  run_id: string
+  adapter_id: string
+  toolchain: string
+  train_type: string
+  checkpoint: CheckpointInfo
+  needs_merge: boolean
+  mode: 'remote' | 'local' | 'register'
+  ready: boolean
+  blockers: string[]
+  remote: boolean
+  local_toolchain: { toolchain: string; available: boolean; command: string; hint: string }
+  base_model: string
+  remote_cleaned: boolean
+}
+
+export interface PrepareJob {
+  state?: 'running' | 'finished' | 'failed' | string
+  mode?: string
+  phase?: string
+  started_at?: string
+  ended_at?: string
+  error?: string | null
+  model_id?: string | null
+  model_name?: string | null
+  progress?: {
+    phase?: string
+    done?: number
+    total?: number
+    percent?: number | null
+    bytes_per_s?: number
+  } | null
+}
+
+export interface PrepareStatus {
+  run_id: string
+  plan: PreparePlan
+  job: PrepareJob
+  log_tail: string
+  model: { id: string; display_name?: string } | null
+}
+
 export interface TrainingRun {
+  data_view_manifest?: { counts?: Record<string, {train: number; val: number}> }
+  activity?: { stage: string; started_at: number; updated_at: number; files_done: number; files_total: number; bytes_done: number; bytes_total: number }
+
+  comparison_job?: {
+    family?: string
+    sample_number?: number
+    sample_state?: string
+    sample_started_at?: string
+    target_total?: number
+    updated_at?: string
+    phase_started_at?: string
+    download?: {name: string; done: number; total: number}
+    instance_id?: number | null
+    started_at?: string
+    ended_at?: string
+    state: string
+    phase: string
+    target?: string
+    completed?: number
+    total?: number
+    hourly_rate?: number
+    gpu?: string
+    cleanup_confirmed?: boolean
+    log_tail?: string
+    transfer?: { done: number; total: number }
+    error?: string
+  }
+  resumed_from?: string
+  remote_cleaned_at?: string | null
   run_id: string
   state: string
   started_at?: string
   ended_at?: string
   exit_code?: number
   config?: Record<string, unknown>
+  adapter_id?: string
+  summary?: RunSummary
+  checkpoint?: CheckpointInfo | null
+  prepare_job?: PrepareJob
+  evaluation?: {
+    comparison_report?: string
+    comparison?: {
+      verdict: string
+      counts: Record<string, number>
+      output_changes?: { total: number; changed: number }
+      training_context?: { pages: number; samples: number; optimizer_steps?: number | null }
+      deltas: Record<string, { baseline: number; fine_tuned: number; delta: number; result: string; better: string }>
+      limitations: string[]
+    }
+    error?: string | null
+    pages_evaluated?: number
+    evaluated_at?: string | null
+    aggregates?: {
+      layout?: { precision?: number | null; recall?: number | null; matched?: number; n_gt?: number; n_pred?: number }
+      text?: { mean_cer?: number | null; mean_wer?: number | null; n?: number }
+      tables?: { structure_ok_pct?: number | null; mean_cell_cer?: number | null; n?: number }
+    }
+  } | null
+}
+
+export interface TrainingRunItem {
+  run_id: string
+  state: string
+  started_at?: string | null
+  ended_at?: string | null
+  exit_code?: number | null
+  adapter_id?: string | null
+  toolchain?: string | null
+  train_type?: string
+  summary?: RunSummary
+  remote_cleaned_at?: string | null
 }
 
 export interface TrainingStatus {
@@ -568,6 +741,9 @@ export interface TrainConfigBody {
   nproc?: number
   eval_steps?: number
   output_dir?: string
+  model_cache?: string
+  use_hf?: boolean
+  auto_prepare?: boolean
 }
 
 /**
@@ -597,6 +773,7 @@ export interface TrainRecipeInfo {
   merge_supported: boolean
   official_notes: string[]
   verified_on: string
+  environment?: Record<string, string>
 }
 
 // --- Valutazione (M6) ------------------------------------------------------------
@@ -842,4 +1019,31 @@ export interface PageWork {
   can_assign: boolean
   can_submit: boolean
   can_review: boolean
+}
+
+export interface AutoTrainingJob {
+  failure_stage?: string
+  phase_started_at?: string
+  provider_status?: string
+  provider_message?: string
+
+  cost_unknown?: boolean
+  last_observed_at?: string
+  id: string
+  project_id: number
+  adapter_id: string
+  profile: string
+  state: 'queued' | 'renting' | 'waiting_ssh' | 'provisioning' | 'starting' | 'running' | 'finished' | 'failed' | 'cancelled'
+  phase: string
+  message: string
+  error: string | null
+  log: string
+  offer: { id?: number; gpu_name?: string; dph_total?: number; cuda_max_good?: number } | null
+  instance_id: number | null
+  host: string | null
+  port: number | null
+  run_id: string | null
+  instance_destroyed: boolean
+  created_at: string
+  updated_at: string
 }
