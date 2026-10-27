@@ -6,6 +6,8 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-27
+
 ### Fixed
 - Training monitoring names the current and next stage, separates phase/rental time, reports
   measured transfer counts and real ms-swift optimizer progress, and exposes the comparison
