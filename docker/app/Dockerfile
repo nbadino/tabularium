@@ -10,7 +10,7 @@
 # Bind to loopback and put a TLS proxy in front: until the first admin exists,
 # /api/auth/setup is open to whoever reaches it first.
 # Digests pinned for reproducible builds; Dependabot (docker) proposes the updates.
-FROM node:22-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da AS frontend
+FROM node:25-slim@sha256:81db02c4b671288a03915da9534dbd54f96d0e7c24d80ccc54f5b36b2e684370 AS frontend
 WORKDIR /src/frontend
 # Serve the interface under a sub-path (e.g. /tabularium/) by building with
 # --build-arg TABULARIUM_BASE_PATH=/tabularium/ and stripping the prefix at the proxy.
