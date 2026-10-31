@@ -31,3 +31,16 @@ def test_restoring_the_oldest_backup_does_not_prune_it(monkeypatch):
         r = client.post(f"/api/system/backup/{oldest}/restore", params={"confirm": True})
     assert r.status_code == 200, r.text
     assert r.json()["restored"] == oldest
+
+
+def test_a_restored_older_schema_is_migrated_immediately():
+    import sqlite3
+
+    db.init_db()
+    made = backup.create_backup(reason="old")
+    path = backup.backup_dir() / made["name"]
+    with sqlite3.connect(path) as old:
+        old.execute("UPDATE meta SET value=? WHERE key='schema_version'", (str(int(db.SCHEMA_VERSION) - 1),))
+    backup.restore(made["name"])
+    with db.connect() as conn:
+        assert conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == str(db.SCHEMA_VERSION)

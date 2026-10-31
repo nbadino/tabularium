@@ -29,6 +29,9 @@ Notable changes to Tabularium. The format follows
 - Prefill defaults to `merge`; `replace`/`replace_all` require `confirm=true`.
 - Prefill advances `annotation_revision`: an approved page loses its approval and a
   concurrent editor gets a conflict instead of overwriting the drafts.
+- Prefill no longer auto-deskews a page that keeps blocks (only `replace_all` may).
+- Each migration and its schema version commit together; restoring an older backup
+  migrates it immediately; the transformed master no longer leaks a file handle.
 
 ### Changed
 - CI and release workflows: least-privilege permissions, concurrency, release gated on

@@ -31,6 +31,9 @@ class PageWriter:
         ).fetchone()
         return dict(row) if row is not None else None
 
+    def has_blocks(self, page_id: int) -> bool:
+        return self._conn.execute("SELECT 1 FROM blocks WHERE page_id=? LIMIT 1", (page_id,)).fetchone() is not None
+
     # --- writes --------------------------------------------------------
     def replace_blocks(self, page_id: int, mode: str) -> dict[str, int]:
         """Delete the blocks the chosen mode allows, and say how many went."""

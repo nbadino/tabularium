@@ -74,4 +74,9 @@ def restore(name: str) -> dict:
     finally:
         dest.close()
         source.close()
+    # A backup from an older release has an older schema: migrate it now, not at
+    # the next restart, or the running code reads tables it does not expect.
+    from ..db import init_db
+
+    init_db()
     return {"restored": candidate.name, **integrity()}

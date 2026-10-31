@@ -198,8 +198,14 @@ def load_original_source_image(page: sqlite3.Row) -> Image.Image | None:
     return _load_source_image(page, use_deskew=False)
 
 
-def maybe_auto_deskew(page: sqlite3.Row, threshold: float = 0.10) -> tuple[Image.Image, float]:
+def maybe_auto_deskew(
+    page: sqlite3.Row, threshold: float = 0.10, *, may_transform: bool = True
+) -> tuple[Image.Image, float]:
     """Usa il master accettato; solo in sua assenza applica l'auto-deskew.
+
+    `may_transform=False` when the page keeps blocks: rotating the master under them
+    would misplace their coordinates, which the deskew endpoints refuse without an
+    explicit confirmation (R9). The original pixels are used instead.
 
     È intenzionale non ripartire mai dall'originale quando esiste un dewarp:
     prefill, crop ed export devono osservare gli stessi pixel del canvas.
@@ -210,10 +216,14 @@ def maybe_auto_deskew(page: sqlite3.Row, threshold: float = 0.10) -> tuple[Image
 
     active = _active_transform_path(page["id"])
     if active is not None and not _has_invalid_transform(page):
-        return Image.open(active), 0.0
+        img = Image.open(active)
+        img.load()  # reads the pixels and releases the file handle
+        return img, 0.0
     img = _load_source_image(page, use_deskew=False)
     if img is None:
         raise source_missing(page)
+    if not may_transform:
+        return img, 0.0
     aligned, angle = imgmod.deskew(img)
     if abs(angle) >= threshold:
         desk = deskew_path(page["id"])
