@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { apiGet, apiPut } from '../../lib/api'
 import {
@@ -56,9 +56,7 @@ const settings = {
       custom_prompt: '',
       job_timeout_in_seconds: 300,
       job_timeout_extra_time_per_page_in_seconds: 30,
-      allowed_failure_ratio: 0,
-      fail_on_job_timeout: false,
-      fail_on_page_timeout: false,
+      allowed_page_failure_ratio: 0,
       disable_cache: false,
     },
   },
@@ -97,6 +95,7 @@ const model = {
 
 describe('LlamaIndexSetup', () => {
   beforeEach(() => {
+    cleanup()
     vi.clearAllMocks()
     vi.mocked(apiGet).mockResolvedValue(settings)
     vi.mocked(apiPut).mockResolvedValue(settings)
@@ -149,5 +148,23 @@ describe('LlamaIndexSetup', () => {
       }),
     )
     expect(onClose).toHaveBeenCalled()
+  })
+
+  it('offre Agentic Plus e i soli valori filigrana accettati da LlamaCloud', async () => {
+    const user = userEvent.setup()
+    render(<LlamaIndexSetup model={model} onClose={vi.fn()} />)
+
+    await screen.findByRole('heading', { name: 'Configurazione OCRia-1' })
+    await user.click(screen.getByRole('radio', { name: /Agentic Plus/ }))
+    expect(screen.getByRole('radio', { name: /Agentic Plus/ })).toHaveAttribute('aria-checked', 'true')
+    const watermark = screen.getByDisplayValue('Sposta in fondo') as HTMLSelectElement
+    expect(Array.from(watermark.options, (option) => option.value)).toEqual(['move_to_end', 'move_to_start', 'remove'])
+
+    await user.type(screen.getByLabelText('API key personale'), 'llx-user-key')
+    await user.click(screen.getAllByRole('button', { name: 'Salva e usa OCRia-1' })[0])
+    await waitFor(() => expect(apiPut).toHaveBeenCalledWith(
+      '/system/model-settings/llamaindex-ocria-1',
+      expect.objectContaining({ workflow: expect.objectContaining({ tier: 'agentic_plus' }) }),
+    ))
   })
 })

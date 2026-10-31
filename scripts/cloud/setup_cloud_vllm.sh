@@ -128,6 +128,9 @@ EOF
   RECIPE_USER_DTYPE=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print((json.load(sys.stdin).get('serving_overrides') or {}).get('dtype') or '')")
   RECIPE_MINERU_SETTINGS=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('settings') or {},separators=(',',':'))) ")
   RECIPE_TRANSFORMERS_VERSION=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('transformers_version') or '')")
+  RECIPE_PYTHON_VERSION=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('python_version') or '')")
+  # KEY=VALUE per line: the process environment the vendor's launch command sets.
+  RECIPE_SERVE_ENV=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print('\n'.join(f'{k}={v}' for k, v in (json.load(sys.stdin).get('serve_env') or {}).items()))")
   if [ -n "$RECIPE_TRANSFORMERS_VERSION" ]; then TRANSFORMERS_VERSION="$RECIPE_TRANSFORMERS_VERSION"; fi
   # Un ambiente per combinazione compatibile di framework/pin/extra: i modelli
   # senza extra e con la stessa vLLM riusano gli stessi site-packages.
@@ -409,7 +412,25 @@ if [ "$RECIPE_RUNTIME" = "monkeyocr" ]; then
 fi
 
 # 4. Install Python dependencies
-if [ "$RECIPE_INSTALL_VLLM" = "0" ]; then
+if [ "$RECIPE_RUNTIME" = "sglang" ]; then
+  # The vendor's SGLang build (Unlimited-OCR-2) pins its own torch and Python:
+  # uv provides that interpreter, exactly as the model card's setup does.
+  if ! command -v uv >/dev/null 2>&1; then
+    echo ">> Installazione di uv (installer ufficiale)..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh > /dev/null
+    export PATH="$HOME/.local/bin:$PATH"
+  fi
+  if [ ! -x "$VENV_DIR/bin/python" ]; then
+    echo ">> Creazione ambiente SGLang (Python ${RECIPE_PYTHON_VERSION:-3}) in $VENV_DIR..."
+    mkdir -p "$(dirname "$VENV_DIR")"
+    uv venv --python "${RECIPE_PYTHON_VERSION:-3}" "$VENV_DIR"
+  fi
+  PY_BIN="$VENV_DIR/bin/python"
+  echo ">> Installazione SGLang della ricetta: $RECIPE_PIP_EXTRA"
+  # shellcheck disable=SC2086
+  uv pip install --python "$PY_BIN" --quiet "huggingface_hub" $RECIPE_PIP_EXTRA
+  RECIPE_PIP_EXTRA=""
+elif [ "$RECIPE_INSTALL_VLLM" = "0" ]; then
   # Immagine dedicata (es. Unlimited-OCR): vLLM e la sua architettura sono già
   # dentro. Un venv isolato li nasconderebbe e una wheel pip li sostituirebbe
   # con una build che quel modello non ha.
@@ -615,6 +636,13 @@ target.parent.mkdir(parents=True, exist_ok=True)
 target.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 print(f">> Manifest scritto in {target}")
 PY
+
+if [ -n "${RECIPE_SERVE_ENV:-}" ]; then
+  while IFS= read -r assignment; do
+    [ -n "$assignment" ] && export "$assignment"
+  done <<< "$RECIPE_SERVE_ENV"
+  echo ">> Ambiente della ricetta: $(printf '%s' "$RECIPE_SERVE_ENV" | cut -d= -f1 | tr '\n' ' ')"
+fi
 
 # 6. Prepare serving flags
 if [ ${#SERVE_ARGV[@]} -eq 0 ] && [ "$RECIPE_RUNTIME" != "teleocr-native" ]; then

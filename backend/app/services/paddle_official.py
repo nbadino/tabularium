@@ -44,6 +44,72 @@ print(json.dumps({"path": str(path) if path else ""}))
 '''
 
 
+# PP-DocLayoutV3 alone, as Xiaomi-OCR-0's region mode runs it
+# (`mcp_ocr_server._layout_regions`): the detector's own reading order, no sorting.
+_LAYOUT_RUNNER = r"""
+import json, os, sys, warnings
+warnings.filterwarnings("ignore")
+os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+import numpy as np
+from PIL import Image
+from paddlex import create_model
+
+image, threshold = sys.argv[1], float(sys.argv[2])
+model = create_model("PP-DocLayoutV3", threshold=threshold)
+result = list(model.predict(np.asarray(Image.open(image).convert("RGB"))))[0]
+boxes = result.get("boxes") if hasattr(result, "get") else None
+if boxes is None:
+    boxes = (result.json.get("res") or result.json).get("boxes", [])
+print(json.dumps([
+    {"label": str(b.get("label", "")), "coordinate": [float(v) for v in b.get("coordinate", [])]}
+    for b in boxes
+]))
+"""
+
+
+def detect_layout(image: Image.Image, *, threshold: float) -> list[dict]:
+    """PP-DocLayoutV3 regions as `{label, bbox}` with the bbox in 0-1000 integers.
+
+    The scaling is the vendor's (`layout_detect_paddlex.serialize_regions`): clamp to the
+    image, drop empty boxes, `int(x / width * 1000)`.
+    """
+    if not paddle_runtime.ready():
+        raise RuntimeError(
+            "runtime PaddleOCR non disponibile su questa macchina: il layout PP-DocLayoutV3 "
+            "lo prepara Tabularium alla prima messa in servizio del modello"
+        )
+    width, height = image.size
+    with tempfile.TemporaryDirectory(prefix="tabularium-layout-", dir=config.ROOT_DIR) as tmp:
+        path = Path(tmp) / "page.png"
+        image.convert("RGB").save(path, format="PNG")
+        result = subprocess.run(
+            [str(paddle_runtime.python_bin()), "-c", _LAYOUT_RUNNER, str(path), str(threshold)],
+            capture_output=True, text=True, timeout=int(config.VLLM_TIMEOUT) + 300,
+        )
+    if result.returncode:
+        reason = _last_meaningful_line(result.stderr or result.stdout)
+        raise RuntimeError(f"PP-DocLayoutV3 non ha completato la pagina: {reason or 'nessun dettaglio'}")
+    try:
+        boxes = json.loads(result.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError) as exc:
+        raise RuntimeError(f"output PP-DocLayoutV3 non valido: {exc}") from exc
+    regions = []
+    for box in boxes:
+        if len(box.get("coordinate") or []) != 4:
+            continue
+        x1, y1, x2, y2 = box["coordinate"]
+        x1, x2 = (max(0.0, min(v, float(width))) for v in (x1, x2))
+        y1, y2 = (max(0.0, min(v, float(height))) for v in (y1, y2))
+        if x2 <= x1 or y2 <= y1:
+            continue
+        regions.append({
+            "label": box["label"],
+            "bbox": [int(x1 / width * 1000), int(y1 / height * 1000),
+                     int(x2 / width * 1000), int(y2 / height * 1000)],
+        })
+    return regions
+
+
 def _axis_aligned_bbox(value) -> list | None:
     """Convert Paddle rect/quad/poly geometry to the app's xyxy box."""
     if hasattr(value, "tolist"):
