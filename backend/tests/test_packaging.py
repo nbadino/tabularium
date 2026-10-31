@@ -31,3 +31,14 @@ def test_checkout_uses_the_repository_as_resource_dir():
     assert config.INSTALLED is False
     assert config.RESOURCE_DIR == REPO
     assert config.VERSION == (REPO / "VERSION").read_text(encoding="utf-8").strip()
+
+
+def test_every_version_field_matches_the_version_file():
+    # R14: scripts/version.py bump is the only writer; a field it forgets drifts.
+    import json
+    import re
+
+    version = (REPO / "VERSION").read_text(encoding="utf-8").strip()
+    assert json.loads((REPO / "frontend/package.json").read_text())["version"] == version
+    citation = (REPO / "CITATION.cff").read_text(encoding="utf-8")
+    assert re.search(r'^version: "?([^"\n]+)"?$', citation, re.M).group(1) == version

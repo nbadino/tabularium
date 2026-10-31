@@ -1,5 +1,5 @@
-# CI minima: test backend, typecheck + test + build frontend, pulizia del
-# working tree dopo la build (nessun artefatto versionato per sbaglio).
+# CI: backend tests, frontend typecheck + tests + build, container health, E2E,
+# and a clean working tree after the build (no build artefact tracked by mistake).
 name: CI
 
 on:
@@ -7,15 +7,21 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   backend:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # Python 3.14 resta fuori finché FastAPI/Starlette/TestClient non
-        # saranno verificati insieme; la matrice coincide con il supporto
-        # dichiarato dal progetto.
+        # Python 3.14 stays out until FastAPI/Starlette/TestClient are verified
+        # together; the matrix matches the support the project declares.
         python-version: ['3.11', '3.12', '3.13']
     defaults:
       run:
@@ -27,10 +33,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: backend/requirements*.txt
-      - name: Installa dipendenze
+      - name: Install dependencies
         run: |
-          # `opencv-python` (dal motore OCR) importa libGL/libglib: su un
-          # runner headless senza queste librerie `import cv2` fallisce.
+          # `opencv-python` (from the OCR engine) loads libGL/libglib: without
+          # them `import cv2` fails on a headless runner.
           sudo apt-get update -qq
           sudo apt-get install -y -qq libgl1 libglib2.0-0
           pip install -r requirements.txt -r requirements-dev.txt
@@ -53,7 +59,7 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Installa dipendenze
+      - name: Install dependencies
         run: npm ci
       - name: Typecheck
         run: npm run typecheck
@@ -61,21 +67,20 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
-      - name: Nessun artefatto versionato
+      - name: No tracked build artefacts
         working-directory: .
         run: |
-          # La build non deve modificare file tracciati; gli artefatti
-          # (*.tsbuildinfo, dist/) devono restare ignorati.
+          # The build must not modify tracked files; artefacts
+          # (*.tsbuildinfo, dist/) must stay ignored.
           if [ -n "$(git status --porcelain)" ]; then
-            echo "::error::La build ha modificato o generato file non ignorati:"
+            echo "::error::The build modified or created non-ignored files:"
             git status --porcelain
             exit 1
           fi
 
-  # La dashboard e la preparazione dati sono dichiarate multipiattaforma. Una
-  # build solo Linux non intercetta regressioni nei launcher POSIX, nelle wheel
-  # Python o nel bundle frontend su macOS. Manteniamo una singola versione
-  # Python qui: la matrice completa delle versioni resta nel job backend.
+  # The dashboard and data preparation are declared cross-platform. A Linux-only
+  # build misses regressions in the POSIX launchers, Python wheels or the frontend
+  # bundle on macOS. One Python version here; the full matrix is the backend job.
   macos:
     runs-on: macos-latest
     steps:
@@ -90,28 +95,28 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Installa e testa il backend
+      - name: Install and test the backend
         working-directory: backend
         run: |
           python -m pip install -r requirements.txt -r requirements-dev.txt
           python -m pytest tests -q
-      - name: Installa, testa e compila il frontend
+      - name: Install, test and build the frontend
         working-directory: frontend
         run: |
           npm ci
           npm run typecheck
           npm test
           npm run build
-      - name: Verifica launcher macOS
+      - name: Check the macOS launchers
         run: |
           bash -n scripts/setup_backend.sh scripts/setup_frontend.sh \
             scripts/build_frontend.sh scripts/run.sh \
             scripts/run_backend.sh scripts/run_frontend.sh \
             scripts/test_backend.sh
-      - name: Nessun artefatto versionato
+      - name: No tracked build artefacts
         run: |
           if [ -n "$(git status --porcelain)" ]; then
-            echo "::error::La build macOS ha modificato o generato file non ignorati:"
+            echo "::error::The macOS build modified or created non-ignored files:"
             git status --porcelain
             exit 1
           fi
@@ -157,27 +162,26 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      # Chrome e chromedriver dalla stessa azione, così le versioni sono per
-      # costruzione allineate. Non basta installare solo Chrome: l'immagine
-      # `ubuntu-latest` porta già un chromedriver sul PATH, e Selenium Manager
-      # preferisce quello, che resta indietro rispetto al browser appena
-      # installato. Il percorso del driver va quindi passato esplicito
-      # (`TABULARIUM_CHROMEDRIVER`, che `e2e_workflow.py` già legge), altrimenti
-      # si ricade sul PATH e si torna a
+      # Chrome and chromedriver from the same action, so their versions match by
+      # construction. Installing Chrome alone is not enough: `ubuntu-latest` already
+      # has a chromedriver on PATH, Selenium Manager prefers it, and it lags behind
+      # the freshly installed browser. The driver path is therefore passed explicitly
+      # (`TABULARIUM_CHROMEDRIVER`, read by `e2e_workflow.py`), otherwise PATH wins
+      # and we are back to
       # `SessionNotCreatedException: This version of ChromeDriver only supports
       # Chrome version 152`.
-      - name: Chrome e chromedriver
+      - name: Chrome and chromedriver
         id: chrome
         uses: browser-actions/setup-chrome@v1
         with:
           install-chromedriver: true
-      - name: Installa dipendenze
+      - name: Install dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libgl1 libglib2.0-0
           pip install -r backend/requirements.txt -r backend/requirements-dev.txt
           cd frontend && npm ci && npm run build
-      - name: Avvia il backend (auth disattivata)
+      - name: Start the backend (auth off)
         working-directory: backend
         run: |
           TABULARIUM_AUTH=off TABULARIUM_ROOT="$RUNNER_TEMP/tabularium-e2e" \
@@ -192,12 +196,12 @@ jobs:
         run: scripts/e2e_smoke.sh
         env:
           TABULARIUM_CHROMIUM: ${{ steps.chrome.outputs.chrome-path }}
-      - name: Workflow E2E (archivio → annotazione → dataset → training)
+      - name: Workflow E2E (archive → annotation → dataset → training)
         run: python3 scripts/e2e_workflow.py
         env:
           TABULARIUM_CHROMIUM: ${{ steps.chrome.outputs.chrome-path }}
           TABULARIUM_CHROMEDRIVER: ${{ steps.chrome.outputs.chromedriver-path }}
-      - name: Log del server in caso di fallimento
+      - name: Server log on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:

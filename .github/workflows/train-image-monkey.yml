@@ -2,7 +2,9 @@ name: train-image-monkey
 
 on:
   workflow_dispatch:
+  # main only: a feature branch must never overwrite the mutable tags cloud runs pull.
   push:
+    branches: [main]
     paths:
       - "docker/train-monkey/**"
       - ".github/workflows/train-image-monkey.yml"
@@ -10,6 +12,11 @@ on:
 permissions:
   contents: read
   packages: write
+
+# Never two builds pushing the same tag at once; queue, do not cancel.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -30,9 +37,4 @@ jobs:
             ghcr.io/nbadino/tabularium-train-monkey:monkey-v4
             ghcr.io/nbadino/tabularium-train-monkey:monkey-${{ github.sha }}
           provenance: false
-      - name: Make GHCR package public
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api --method PATCH /user/packages/container/tabularium-train-monkey -f visibility=public
+      # Package visibility is set once in the GHCR settings: GITHUB_TOKEN cannot change it.

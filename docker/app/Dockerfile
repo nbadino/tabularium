@@ -5,7 +5,10 @@
 # the data volume, or on a remote GPU (program.md, D8).
 #
 #   docker build -f docker/app/Dockerfile -t tabularium .
-#   docker run -p 8787:8787 -v tabularium-data:/data tabularium
+#   docker run -p 127.0.0.1:8787:8787 -v tabularium-data:/data tabularium
+#
+# Bind to loopback and put a TLS proxy in front: until the first admin exists,
+# /api/auth/setup is open to whoever reaches it first.
 FROM node:22-slim AS frontend
 WORKDIR /src/frontend
 # Serve the interface under a sub-path (e.g. /tabularium/) by building with

@@ -6,6 +6,24 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Security
+- The SPA fallback no longer serves files outside `frontend/dist` (encoded `..` read any file).
+- Admins cannot reset their own password; OIDC links an existing account only when the
+  provider asserts `email_verified`; a server `archive_dir` is admin-only.
+- A warning is logged at startup when `TABULARIUM_AUTH=off`.
+
+### Fixed
+- Training start, first thumbnail and custom model deletion no longer fail with a
+  NameError; pyflakes now guards the backend against undefined names.
+- Restoring the oldest backup no longer prunes it first.
+- `html_to_otsl` keeps rowspans in their column on short rows.
+- Prefill defaults to `merge`; `replace`/`replace_all` require `confirm=true`.
+
+### Changed
+- CI and release workflows: least-privilege permissions, concurrency, release gated on
+  tests and on non-empty CHANGELOG notes; training images build only from `main`;
+  Dependabot; `CITATION.cff` follows `VERSION`.
+
 ## [0.4.0] - 2026-10-27
 
 ### Fixed

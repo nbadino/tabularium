@@ -1,0 +1,18 @@
+# Weekly updates, grouped so they arrive as a handful of PRs, not dozens.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups: { actions: { patterns: ["*"] } }
+  - package-ecosystem: pip
+    directory: /backend
+    schedule: { interval: weekly }
+    groups: { python: { update-types: [minor, patch] } }
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: { interval: weekly }
+    groups: { npm: { update-types: [minor, patch] } }
+  - package-ecosystem: docker
+    directory: /docker/app
+    schedule: { interval: weekly }

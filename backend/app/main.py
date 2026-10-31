@@ -37,6 +37,13 @@ def _assert_single_process() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _assert_single_process()
+    if not config.auth_enabled():
+        # R12: auth off is for tests and single-user loopback use. Say it loudly,
+        # because every request then runs as the local administrator.
+        logging.getLogger("tabularium").warning(
+            "TABULARIUM_AUTH=off: every request runs as administrator. "
+            "Never expose this instance beyond localhost."
+        )
     init_db()
     # Il canale live notifica gli endpoint sincroni (che girano in un thread di
     # lavoro) da un loop diverso: senza questo riferimento i `publish` non

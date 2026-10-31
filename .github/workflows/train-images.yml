@@ -2,7 +2,9 @@ name: train-images
 
 on:
   workflow_dispatch:
+  # main only: a feature branch must never overwrite the mutable tags cloud runs pull.
   push:
+    branches: [main]
     paths:
       - "docker/train-qwen/**"
       - "docker/train-legacy/**"
@@ -14,6 +16,11 @@ on:
 permissions:
   contents: read
   packages: write
+
+# Never two builds pushing the same tag at once; queue, do not cancel.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
