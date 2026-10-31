@@ -1784,7 +1784,11 @@ class XiaomiOcrAdapter(_StubAdapter):
         `enable_thinking: false`) and the 2048 px page edge are the vendor's; the region
         budget is the evaluation pipeline's 16384 tokens, not the MCP demo's per-task caps,
         which truncate long register tables;
-      - served with stock vLLM (`--trust-remote-code --max-model-len 16384`). No training code.
+      - served with stock vLLM (`--trust-remote-code --max-model-len 16384`). No training code;
+      - no vendor MLX build, but `mlx-vlm` ships `qwen3_5` and loads the original weights.
+        Verified 2026-10-31 on Apple Silicon with mlx_vlm 0.7.1: `mlx_vlm.server` accepts
+        the vendor request (`enable_thinking: false`) and, with PP-DocLayoutV3 on CPU, a
+        full Historic Shipping Index register page comes back as one OTSL table in 43 s.
     """
 
     adapter_id = "xiaomi-ocr-0"
@@ -1814,7 +1818,11 @@ class XiaomiOcrAdapter(_StubAdapter):
         serve_backend="vllm-openai",
         served_model_name="xiaomi-ocr-0",
         max_model_len=16_384,
-        local_runtimes=("vllm",),
+        local_runtimes=("vllm", "mlx-vlm"),
+        local_mlx_repo="xiaomi-research/Xiaomi-OCR-0",
+        local_mlx_settings=True,
+        # The original bf16 weights, loaded as they are.
+        local_mlx_weight_factor=1.0,
     )
 
     _PROMPTS = {

@@ -11,7 +11,8 @@ Notable changes to Tabularium. The format follows
   (`vllm/vllm-openai:v0.25.1`, NVIDIA locally and on Vast.ai), with a decoder for its compact
   block format and parent/ghost merged cells. Weights are under a restricted OpenRAIL-M licence.
 - Xiaomi-OCR-0 (`xiaomi-ocr-0`): the vendor's region mode, PP-DocLayoutV3 layout in the Paddle
-  runtime and one task prompt per crop, on stock vLLM locally and on Vast.ai.
+  runtime and one task prompt per crop, on stock vLLM locally and on Vast.ai, and on Apple
+  Silicon through mlx-vlm with the original weights.
 - Unlimited-OCR-2 (`unlimited-ocr-2`): served with the vendor's SGLang build (new `sglang`
   serving runtime, locally on NVIDIA and on Vast.ai), its block protocol parser, and LoRA/full
   training through ms-swift main (`unlimited-ocr`, training profile `uocr2`).

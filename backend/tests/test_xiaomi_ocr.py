@@ -27,6 +27,9 @@ def test_xiaomi_adapter_speaks_the_vendor_protocol():
     assert adapter.request_overrides("table") == {"chat_template_kwargs": {"enable_thinking": False}}
     assert native_mode(adapter) == "official"
     assert supported_prefill_modes(adapter)["supports_native"]
+    # Apple Silicon: mlx-vlm loads the original weights (verified with mlx_vlm 0.7.1).
+    assert adapter.capabilities.local_runtimes == ("vllm", "mlx-vlm")
+    assert adapter.capabilities.local_mlx_repo == "xiaomi-research/Xiaomi-OCR-0"
 
 
 def test_xiaomi_native_page_crops_each_region_with_its_task_prompt(monkeypatch):
