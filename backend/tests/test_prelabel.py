@@ -41,7 +41,7 @@ def test_prelabel_requires_engine(tmp_path: Path, monkeypatch):
         pid, page_id = _get_page(client, tmp_path)
         r = client.post(
             f"/api/projects/{pid}/prelabel",
-            json={"page_ids": [page_id], "mode": "replace"},
+            json={"page_ids": [page_id], "mode": "replace", "confirm": True},
         )
         assert r.status_code == 400
         assert "OCR" in r.json()["detail"]
@@ -57,7 +57,7 @@ def test_prelabel_inserts_filtered_blocks(tmp_path: Path, monkeypatch):
         pid, page_id = _get_page(client, tmp_path)
         r = client.post(
             f"/api/projects/{pid}/prelabel",
-            json={"page_ids": [page_id], "mode": "replace", "confidence": 0.5, "min_size": 10},
+            json={"page_ids": [page_id], "mode": "replace", "confirm": True, "confidence": 0.5, "min_size": 10},
         )
         assert r.status_code == 200, r.text
         body = r.json()
@@ -87,7 +87,7 @@ def test_prelabel_inserts_filtered_blocks(tmp_path: Path, monkeypatch):
 
         client.post(
             f"/api/projects/{pid}/prelabel",
-            json={"page_ids": [page_id], "mode": "replace", "confidence": 0.5},
+            json={"page_ids": [page_id], "mode": "replace", "confirm": True, "confidence": 0.5},
         )
         assert len(client.get(f"/api/pages/{page_id}/annotations").json()["items"]) == 2
 
@@ -189,7 +189,7 @@ def test_prelabel_replace_modes_protect_human_work(tmp_path: Path, monkeypatch):
         # replace_all: distruttivo, ma dichiarato nella risposta.
         r = client.post(
             f"/api/projects/{pid}/prelabel",
-            json={"page_ids": [page_id], "mode": "replace_all", "confidence": 0.5},
+            json={"page_ids": [page_id], "mode": "replace_all", "confirm": True, "confidence": 0.5},
         )
         assert r.status_code == 200, r.text
         res = r.json()["results"][0]
@@ -254,7 +254,7 @@ def test_ocr_prelabel_promotes_register_to_table(tmp_path: Path, monkeypatch):
 
         r = client.post(
             f"/api/projects/{pid}/prelabel",
-            json={"page_ids": [page["id"]], "mode": "replace", "confidence": 0.5},
+            json={"page_ids": [page["id"]], "mode": "replace", "confirm": True, "confidence": 0.5},
         )
         assert r.status_code == 200, r.text
         body = r.json()["results"][0]
@@ -283,7 +283,7 @@ def test_ocr_prelabel_promotes_register_to_table(tmp_path: Path, monkeypatch):
             f"/api/projects/{pid}/prelabel",
             json={
                 "page_ids": [page["id"]],
-                "mode": "replace",
+                "mode": "replace", "confirm": True,
                 "confidence": 0.5,
                 "table_promote": False,
             },
@@ -325,7 +325,7 @@ def test_model_end2end_persists_table_without_second_call(tmp_path: Path, monkey
             f"/api/projects/{pid}/prelabel",
             json={
                 "page_ids": [page_id],
-                "mode": "replace",
+                "mode": "replace", "confirm": True,
                 "engine": "model",
                 "model_mode": "end2end",
             },
@@ -373,7 +373,7 @@ def test_model_end2end_argon_keeps_header_elements_and_table(tmp_path: Path, mon
         pid, page_id = _get_page(client, tmp_path / "argon-end2end")
         response = client.post(
             f"/api/projects/{pid}/prelabel",
-            json={"page_ids": [page_id], "mode": "replace", "engine": "model"},
+            json={"page_ids": [page_id], "mode": "replace", "confirm": True, "engine": "model"},
         )
         assert response.status_code == 200, response.text
         result = response.json()["results"][0]
@@ -417,7 +417,7 @@ def test_model_end2end_truncated_page_falls_back_to_two_stage(tmp_path: Path, mo
         pid, page_id = _get_page(client, tmp_path / "truncated")
         response = client.post(
             f"/api/projects/{pid}/prelabel",
-            json={"page_ids": [page_id], "mode": "replace", "engine": "model", "model_mode": "end2end"},
+            json={"page_ids": [page_id], "mode": "replace", "confirm": True, "engine": "model", "model_mode": "end2end"},
         )
         assert response.status_code == 200, response.text
         result = response.json()["results"][0]
@@ -443,7 +443,7 @@ def test_prelabel_stream_emits_block_events(tmp_path: Path, monkeypatch):
         with client.stream(
             "POST",
             f"/api/projects/{pid}/prelabel/stream",
-            json={"page_ids": [page_id], "mode": "replace", "confidence": 0.5, "min_size": 10},
+            json={"page_ids": [page_id], "mode": "replace", "confirm": True, "confidence": 0.5, "min_size": 10},
         ) as response:
             assert response.status_code == 200
             assert response.headers["content-type"].startswith("text/event-stream")
@@ -532,7 +532,7 @@ def test_model_prefill_bridges_native_labels_and_reports_unmapped(tmp_path: Path
 
         r = client.post(
             f"/api/projects/{pid}/prelabel",
-            json={"page_ids": [page_id], "mode": "replace", "engine": "model", "model_mode": "end2end"},
+            json={"page_ids": [page_id], "mode": "replace", "confirm": True, "engine": "model", "model_mode": "end2end"},
         )
         assert r.status_code == 200, r.text
         result = r.json()["results"][0]
@@ -576,3 +576,15 @@ def test_dedupe_keeps_nested_blocks_of_a_different_class():
         {"bbox": [100, 100, 200, 200], "label": "Picture", "content": ""},
     ]
     assert len(_dedupe_model_items(items)) == 2
+
+
+def test_destructive_prefill_needs_an_explicit_confirmation(tmp_path, monkeypatch):
+    # R9: the default must not wipe human work, and replace_all needs confirm=true.
+    from app.api import prelabel as prelabelmod
+
+    assert prelabelmod.PrelabelRequest(page_ids=[1]).mode == "merge"
+    with TestClient(app) as client:
+        pid = client.post("/api/projects", json={"name": "C"}).json()["id"]
+        for mode in ("replace", "replace_all"):
+            r = client.post(f"/api/projects/{pid}/prelabel", json={"page_ids": [1], "mode": mode})
+            assert r.status_code == 409, r.text

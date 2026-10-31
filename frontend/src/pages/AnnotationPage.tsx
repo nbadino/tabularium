@@ -440,6 +440,8 @@ export default function AnnotationPage() {
         body: {
           page_ids: [page.id],
           mode,
+          // The dialog has already asked; the server refuses replace_all without it (R9).
+          confirm: mode === 'replace_all',
           confidence: prefillConfidence,
           min_size: 10,
           engine: prefillEngine === 'ocr' ? 'ocr' : 'model',
