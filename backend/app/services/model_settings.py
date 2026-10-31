@@ -17,6 +17,7 @@ from .. import models as model_specs
 from ..adapters import store
 from ..models.types import (
     LLAMAINDEX_OCR_LANGUAGES,
+    WorkflowField,
     LLAMAINDEX_WORKFLOW_BOOLEANS,
     LLAMAINDEX_WORKFLOW_ENUMS,
     LLAMAINDEX_WORKFLOW_FIELDS,

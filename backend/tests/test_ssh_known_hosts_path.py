@@ -45,3 +45,13 @@ def test_ssh_args_carry_the_quoted_known_hosts(monkeypatch):
     opts = [a for a in args if a.startswith("UserKnownHostsFile=")]
     assert len(opts) == 1
     assert shlex.split(opts[0].split("=", 1)[1]) == [str(_ROOT_WITH_SPACES)]
+
+
+def test_an_ssh_target_cannot_be_read_as_an_option():
+    import pytest
+
+    from app.services.training_executor import SshExecutor
+
+    for kwargs in ({"host": "h", "user": "-oProxyCommand=touch"}, {"host": "-oProxyCommand=x"}):
+        with pytest.raises(ValueError):
+            SshExecutor(**kwargs)._target()

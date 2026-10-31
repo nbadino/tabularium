@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .. import config
+from ..models import monkeyocrv2 as reference
 
 from .model_labels import (
     DEEPSEEK_LABELS,
@@ -165,7 +166,7 @@ class MonkeyOCRv2ParsingAdapter:
     # propagato come `MOCR2_MAX_PIXELS` a ogni chiamata, end2end inclusa. Sul
     # documento archivistico è anche ciò che impedisce al decoder di andare in
     # loop sulle coordinate quando riceve gli 11 MP originali.
-    end2end_max_pixels = 1_003_520
+    end2end_max_pixels = reference.PARSE_MAX_PIXELS
     end2end_max_tokens = 12_288
     capabilities = ModelCapabilities(
         adapter_id=adapter_id,
@@ -179,7 +180,7 @@ class MonkeyOCRv2ParsingAdapter:
         geometry=("bbox", "polygon"),
         reading_order=True,
         languages=("en", "multilingual-partial"),
-        hf_repo="zenosai/MonkeyOCRv2-B-Parsing",
+        hf_repo=reference.HF_REPO,
         approx_size_gb=1.5,
         license_note="",
         train_toolchain="ms-swift",

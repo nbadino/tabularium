@@ -649,10 +649,9 @@ def delete_model(adapter_id: str) -> dict:
         from . import custom_models
         row = custom_models.get(adapter_id)
         if row and row.get('source_path'):
-            with connect() as conn:
-                from ..adapters import models as modelstore
+            from ..adapters import models as modelstore
 
-                modelstore.clear_source_path(adapter_id)
+            modelstore.clear_source_path(adapter_id)
     # Il draft segue il checkpoint: lasciarlo indietro terrebbe in vita anche il
     # marcatore `.unusable`, che deve poter essere azzerato riscaricando.
     draft = draft_dir(adapter_id)

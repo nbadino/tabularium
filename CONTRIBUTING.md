@@ -7,8 +7,8 @@ test pages from new kinds of archives are all welcome.
 
 - For anything larger than a small fix, open an issue first so we can agree on
   the approach.
-- [AGENTS.md](AGENTS.md) is the product spec and records why things are the way
-  they are. Read the section for the area you touch.
+- [AGENTS.md](AGENTS.md) is the contract: the rules, how each is enforced, and
+  where the knowledge lives. Verified facts are in [`docs/spec/`](docs/spec/README.md).
 
 ## Setup
 
@@ -16,9 +16,11 @@ Follow the [installation guide](docs/guide/installation.md), then run the checks
 described in [docs/guide/development.md](docs/guide/development.md):
 
 ```bash
-cd backend && python -m pytest tests -q
-cd frontend && npm run typecheck && npm test && npm run build
+scripts/check.sh          # the definition of done: everything CI runs
+scripts/check.sh --fast   # invariants only, before every commit
 ```
+
+A behaviour change adds a test that fails on the previous commit.
 
 ## Conventions
 
@@ -34,8 +36,9 @@ cd frontend && npm run typecheck && npm test && npm run build
 
 ## Adding a model
 
-A model is an adapter (`backend/app/services/model_adapters.py`) plus its native
-label map (`model_labels.py`) and, when trainable, a training recipe. A model is
+A model is declared once in `backend/app/models/<id>.py` (serving, training, labels,
+cloud); every other surface derives from it. Run `python scripts/surfaces.py --check`
+to prove the model is complete everywhere. A model is
 marked as verified only after a real run on real pages: say in the PR what you
 measured and on which hardware.
 

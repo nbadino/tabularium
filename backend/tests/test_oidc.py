@@ -36,7 +36,9 @@ class _Response:
 
 
 @pytest.fixture(autouse=True)
-def _auth_on_and_clean() -> None:
+def _auth_on_and_clean(monkeypatch) -> None:
+    # The client secret goes through the vault; CI has no `.env` to provide the key.
+    monkeypatch.setenv("TABULARIUM_VAULT_KEY", "test-vault-key")
     init_db()
     with connect() as conn:
         conn.execute("DELETE FROM sessions")
@@ -160,7 +162,7 @@ def test_an_unknown_state_is_refused(monkeypatch) -> None:
 def test_a_state_cannot_be_used_twice(monkeypatch) -> None:
     monkeypatch.setattr(config, "AUTH_MODE", "on")
     _configure()
-    _fake_provider(monkeypatch, {"sub": "1", "email": "a@uni.it"})
+    _fake_provider(monkeypatch, {"sub": "1", "email": "a@uni.it", "email_verified": True})
     client = TestClient(app)
     _, state = _start(client)
     first = client.get(f"/api/auth/oidc/callback?code=abc&state={state}", follow_redirects=False)
@@ -199,3 +201,37 @@ def test_the_default_role_of_the_instance_is_applied(monkeypatch) -> None:
     _, state = _start(client)
     client.get(f"/api/auth/oidc/callback?code=abc&state={state}", follow_redirects=False)
     assert client.get("/api/auth/me").json()["role"] == "viewer"
+
+
+def test_a_missing_email_verified_claim_is_refused(monkeypatch) -> None:
+    # Linking is by email: without an asserted verification anyone could claim the
+    # admin's address at a permissive provider and inherit the account.
+    monkeypatch.setattr(config, "AUTH_MODE", "on")
+    _configure()
+    _fake_provider(monkeypatch, {"sub": "1", "email": "a@uni.it"})
+    client = TestClient(app)
+    _, state = _start(client)
+    response = client.get(f"/api/auth/oidc/callback?code=abc&state={state}", follow_redirects=False)
+    assert "auth_error=oidc_email" in response.headers["location"]
+
+
+def test_the_callback_needs_the_browser_that_started_the_flow(monkeypatch) -> None:
+    # Login CSRF: a link carrying someone else's state must not log the victim in.
+    monkeypatch.setattr(config, "AUTH_MODE", "on")
+    _configure()
+    _fake_provider(monkeypatch, {"sub": "1", "email": "a@uni.it", "email_verified": True})
+    _, state = _start(TestClient(app))
+    victim = TestClient(app)
+    response = victim.get(f"/api/auth/oidc/callback?code=abc&state={state}", follow_redirects=False)
+    assert "auth_error=oidc_state" in response.headers["location"]
+
+
+def test_two_people_can_sign_in_at_the_same_time(monkeypatch) -> None:
+    monkeypatch.setattr(config, "AUTH_MODE", "on")
+    _configure()
+    _fake_provider(monkeypatch, {"sub": "1", "email": "a@uni.it", "email_verified": True})
+    first, second = TestClient(app), TestClient(app)
+    _, state_one = _start(first)
+    _, state_two = _start(second)
+    response = first.get(f"/api/auth/oidc/callback?code=abc&state={state_one}", follow_redirects=False)
+    assert response.headers["location"] == "/"

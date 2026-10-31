@@ -252,13 +252,17 @@ def model_prelabel_events(
             page = conn.page(pid, project_id)
             if page is None:
                 raise HTTPException(status_code=404, detail=msg("page_not_in_project", lang, id=pid))
+            keeps_blocks = conn.has_blocks(pid)
             # Il SELECT apre una transazione di lettura. Chiuderla prima di
             # chiamare il modello evita che l'inferenza (minuti) trattenga il
             # lock e faccia fallire «elimina annotazioni»/autosave concorrenti.
             conn.commit()
             yield {"type": "page", "page_id": pid}
             try:
-                image, applied_angle = pagesvc.maybe_auto_deskew(page)
+                # Only replace_all clears the blocks the rotation would misplace.
+                image, applied_angle = pagesvc.maybe_auto_deskew(
+                    page, may_transform=opts.mode in {"replace", "replace_all"} or not keeps_blocks
+                )
             except HTTPException as exc:
                 yield {"type": "error", "page_id": pid, "message": str(exc.detail)}
                 continue
@@ -556,11 +560,13 @@ def model_prelabel_events(
                     },
                 }
 
+            revision = conn.bump_revision(pid) if (replaced["blocks"] or kept) else None
             yield {
                 "type": "page_done",
                 "page_id": pid,
                 "summary": {
                     "page_id": pid,
+                    "annotation_revision": revision,
                     "detected": len(items),
                     "inserted": len(kept),
                     "tables": tables,
@@ -616,10 +622,14 @@ def ocr_prelabel_events(
             page = conn.page(pid, project_id)
             if page is None:
                 raise HTTPException(status_code=404, detail=msg("page_not_in_project", lang, id=pid))
+            keeps_blocks = conn.has_blocks(pid)
             conn.commit()
             yield {"type": "page", "page_id": pid}
             try:
-                image, applied_angle = pagesvc.maybe_auto_deskew(page)
+                # Only replace_all clears the blocks the rotation would misplace.
+                image, applied_angle = pagesvc.maybe_auto_deskew(
+                    page, may_transform=opts.mode in {"replace", "replace_all"} or not keeps_blocks
+                )
             except HTTPException as exc:
                 yield {"type": "error", "page_id": pid, "message": str(exc.detail)}
                 continue
@@ -737,11 +747,13 @@ def ocr_prelabel_events(
                     },
                 }
 
+            revision = conn.bump_revision(pid) if (replaced["blocks"] or outputs) else None
             yield {
                 "type": "page_done",
                 "page_id": pid,
                 "summary": {
                     "page_id": pid,
+                    "annotation_revision": revision,
                     "detected": len(detections),
                     "inserted": len(outputs),
                     "tables": 1 if table_bbox else 0,

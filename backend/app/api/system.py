@@ -72,7 +72,7 @@ def restore_backup(name: str, confirm: bool = False, user: dict = Depends(_admin
     if not confirm:
         raise HTTPException(status_code=409, detail="restore distruttivo: conferma richiesta")
     try:
-        before = backupsvc.create_backup(reason="pre-restore")
+        before = backupsvc.create_backup(reason="pre-restore", keep=name)
         restored = backupsvc.restore(name)
     except (OSError, RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -214,13 +214,16 @@ def health() -> dict:
 
 
 @router.get("/api/system/info")
-def system_info() -> dict:
+def system_info(user: dict = Depends(authsvc.get_current_user)) -> dict:
     version = systemstore.schema_version()
+    # Server paths are for administrators: to anyone else they are a map of what
+    # to ask for. Public liveness stays on /api/health.
+    admin = authsvc.is_local(user) or authsvc.is_admin(user)
     return {
         "app": config.APP_NAME,
         "version": config.VERSION,
-        "data_dir": str(config.DATA_DIR),
-        "db_path": str(config.DB_PATH),
+        "data_dir": str(config.DATA_DIR) if admin else None,
+        "db_path": str(config.DB_PATH) if admin else None,
         "schema_version": version,
         "python": sys.version.split()[0],
         "platform": platform.platform(),

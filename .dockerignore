@@ -9,3 +9,11 @@ backend/.venv
 **/*.pyc
 docs
 node_modules
+# Runtime data and secrets must never be baked into the image.
+backend/data
+**/.env
+**/*.db
+**/*.db-wal
+**/*.db-shm
+frontend/*.tsbuildinfo
+site

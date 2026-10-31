@@ -97,6 +97,10 @@ def test_project_crud_and_scan(tmp_path: Path):
         r = client.get(f"/api/pages/{first['id']}/thumbnail")
         assert r.status_code == 200
         assert r.headers["content-type"] == "image/jpeg"
+        # A missing thumbnail is regenerated on the first request, not on the second.
+        from app.services import pages as pagesvc
+        pagesvc.thumb_path(first["id"]).unlink()
+        assert client.get(f"/api/pages/{first['id']}/thumbnail").status_code == 200
         r = client.get(f"/api/pages/{first['id']}/preview")
         assert r.status_code == 200
 

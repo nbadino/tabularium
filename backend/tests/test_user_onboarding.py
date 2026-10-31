@@ -156,3 +156,14 @@ def test_update_own_profile_email():
         assert r.status_code == 200
         assert r.json()["email"] == "anna@example.org"
         assert client.get("/api/auth/me").json()["email"] == "anna@example.org"
+
+
+def test_the_live_channel_is_closed_while_the_password_must_change(monkeypatch):
+    from starlette.requests import Request
+
+    from app.api import live
+    from app.services import auth as authsvc
+
+    monkeypatch.setattr(authsvc, "resolve_user", lambda _ws: {"id": 1, "role": "editor", "must_change_password": 1})
+    monkeypatch.setattr(authsvc, "auth_enabled", lambda: True)
+    assert live._resolve_user(Request({"type": "http", "headers": []})) is None

@@ -178,7 +178,10 @@ def main(argv: list[str] | None = None) -> int:
     print("  stop:      Ctrl+C", flush=True)
     if not args.no_browser:
         threading.Thread(target=_open_when_ready, args=(url,), daemon=True).start()
-    uvicorn.run("app.main:app", host=args.host, port=args.port, workers=1)
+    uvicorn.run(
+        "app.main:app", host=args.host, port=args.port, workers=1,
+        proxy_headers=True, forwarded_allow_ips=config.FORWARDED_ALLOW_IPS,
+    )
     return 0
 
 

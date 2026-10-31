@@ -490,18 +490,44 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             continue
         if version in {"16", "17", "18"}:
             _execute_additive_migration(conn, ddl)
+            conn.execute("UPDATE meta SET value=? WHERE key='schema_version'", (version,))
+            conn.commit()
         else:
-            conn.executescript(ddl)
+            _run_migration(conn, version, ddl)
         current = int(version)
-        conn.execute(
-            "UPDATE meta SET value=? WHERE key='schema_version'",
-            (str(current),),
-        )
     if current != int(SCHEMA_VERSION):
         raise RuntimeError(
             f"schema incompleto: il DB è alla versione {current} ma il codice "
             f"attende {SCHEMA_VERSION}; manca una migrazione in _MIGRATIONS"
         )
+
+
+_FK_PRAGMA = re.compile(r"(?mi)^\s*PRAGMA\s+foreign_keys\s*=\s*(?:ON|OFF)\s*;\s*$")
+
+
+def _run_migration(conn: sqlite3.Connection, version: str, ddl: str) -> None:
+    """Apply one migration and record its version in the same transaction.
+
+    `executescript` commits statement by statement, so a crash between the DDL and
+    the version update re-ran a non-idempotent migration at the next start. The
+    foreign-key PRAGMA is a no-op inside a transaction, so it is lifted out of it.
+    """
+    fk_off = bool(_FK_PRAGMA.search(ddl))
+    body = _FK_PRAGMA.sub("", ddl)
+    if fk_off:
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.executescript(
+            f"BEGIN;\n{body}\n;UPDATE meta SET value='{int(version)}' WHERE key='schema_version';\nCOMMIT;"
+        )
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    finally:
+        if fk_off:
+            conn.execute("PRAGMA foreign_keys = ON")
 
 
 def _execute_additive_migration(conn: sqlite3.Connection, ddl: str) -> None:

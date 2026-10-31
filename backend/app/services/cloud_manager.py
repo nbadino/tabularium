@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 
 from .. import config
+from ..models import monkeyocrv2 as reference
 from ..adapters import jobs as jobstore
 from ..db import connect
 from . import process_probe
@@ -648,7 +649,7 @@ def rent_vast_instance(
     cuda_max_good: float | None = None,
     adapter_id: str = "",
     disk_gb: int = 40,
-    model: str = "zenosai/MonkeyOCRv2-B-Parsing",
+    model: str = reference.HF_REPO,
     port: int = 8888,
     api_key_for_server: str = "",
     monkeyocr_ref: str = "",

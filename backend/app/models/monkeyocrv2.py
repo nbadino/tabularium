@@ -14,12 +14,19 @@ from ..models.types import (
     ServeRecipe,
     WorkflowField,
 )
+# Declared once; every other surface imports them. The two pixel numbers coincide
+# but are different concepts (failure mode 4): one caps inference, one is the
+# training hyperparameter the checkpoint was trained with.
+HF_REPO = "zenosai/MonkeyOCRv2-B-Parsing"
+PARSE_MAX_PIXELS = 1_003_520  # `parsing/parse.py --max-pixels` → MOCR2_MAX_PIXELS
+TRAIN_MAX_PIXELS = 1_003_520  # `MAX_PIXELS` in `parsing/train/scripts/lora.sh`
+
 SPEC = ModelSpec(
     adapter_id="monkeyocrv2-parsing",
     serve=Declared(
         ServeRecipe(
             adapter_id="monkeyocrv2-parsing",
-            hf_repo="zenosai/MonkeyOCRv2-B-Parsing",
+            hf_repo=HF_REPO,
             served_model_name="MonkeyOCRv2",
             runtime="monkeyocr",
             # The upstream README pins 0.25.1 for DFlash-enabled serving.
@@ -45,7 +52,7 @@ SPEC = ModelSpec(
             "batch_size": 4,
             "grad_accum": 1,
             "max_length": 16384,
-            "max_pixels": 1003520,
+            "max_pixels": TRAIN_MAX_PIXELS,
             "lora_rank": 8,
             "lora_alpha": 32,
             "eval_steps": 200,
@@ -80,7 +87,7 @@ SPEC = ModelSpec(
     ),
     cloud=Declared("monkeyocrv2"),
     settings=Declared(SettingsSpec(
-        image={"min_pixels": None, "max_pixels": 1_003_520},
+        image={"min_pixels": None, "max_pixels": PARSE_MAX_PIXELS},
         image_fields=("max_pixels",),
         workflow=(
             WorkflowField("dflash_enabled", "bool", default=True,

@@ -36,8 +36,10 @@
 - **Migrations**: up to **baseline 6** they are additive by column presence
   (`db.py::_ensure_columns`); from then on every schema change is a **versioned, ordered**
   migration in `db.py::_MIGRATIONS` (version → DDL), applied once to databases that are behind,
-  with the version recorded in `meta` and a visible startup error if the chain is incomplete.
-  Current `SCHEMA_VERSION`: **19**. Upgrade tests in `tests/test_db_migrations.py`. The historical
+  with the version recorded in `meta` **in the same transaction as its DDL**
+  (`db.py::_run_migration`; a foreign-key PRAGMA is applied outside it) and a visible startup
+  error if the chain is incomplete. Restoring a backup migrates it at once.
+  Current `SCHEMA_VERSION`: **20**. Upgrade tests in `tests/test_db_migrations.py`. The historical
   test suite runs with `TABULARIUM_AUTH=off`; `test_auth.py` turns it `on` with a fixture.
 
 ---

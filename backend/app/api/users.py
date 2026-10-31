@@ -91,7 +91,7 @@ def update_user(
             if userstore.owned_projects(user_id, conn):
                 raise HTTPException(
                     status_code=409,
-                    detail="trasferisci prima la proprietà dei progetti dell’utente",
+                    detail="trasferisci prima la proprietà dei progetti dell'utente",
                 )
         if payload.role and payload.role != target["role"] and admin["id"] != target["id"]:
             _guard_demote(conn, target["id"])
@@ -108,6 +108,10 @@ def reset_password(
     payload: ResetPasswordIn,
     _admin: dict = Depends(_admin),
 ) -> UserOut:
+    # R12: no self reset. Your own password goes through change-password, which
+    # asks for the current one.
+    if user_id == _admin["id"]:
+        raise HTTPException(status_code=400, detail="usa il cambio password per il tuo account")
     with connect() as conn:
         if usersvc.get_user(conn, user_id) is None:
             raise HTTPException(status_code=404, detail="utente non trovato")
