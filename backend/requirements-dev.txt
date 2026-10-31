@@ -5,7 +5,7 @@ pyflakes>=3,<5
 # Starlette 1.6 usa il fork compatibile httpx2 per TestClient.
 httpx2>=2,<3
 # Smoke E2E con browser reale (scripts/e2e_workflow.py).
-selenium>=4,<5
+selenium>=4.51.0,<5
 # A runtime OpenCV non è più opzionale: il motore OCR (dipendenza core) porta
 # `opencv-python`, e `pages.py` espone deskew/perspective solo se `cv2` si
 # importa davvero. Non si installa anche `opencv-python-headless`: i due
