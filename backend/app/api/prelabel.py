@@ -48,7 +48,10 @@ class PrelabelRequest(BaseModel):
     #   (ON DELETE CASCADE): è distruttivo e la UI deve confermarlo;
     # - `replace`: alias storico di `replace_all`, accettato per compatibilità
     #   con i client esistenti ma non più usato dalla UI.
-    mode: Literal["merge", "replace", "replace_drafts", "replace_all"] = "replace"
+    # The default is the non-destructive mode, and the destructive ones need
+    # `confirm=true` (R9): a client that omits the mode must never wipe human work.
+    mode: Literal["merge", "replace", "replace_drafts", "replace_all"] = "merge"
+    confirm: bool = False
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     min_size: int = Field(default=10, ge=2)
     # `ocr` trova righe di testo e le etichetta tutte `Text`: va bene su pagine
@@ -71,6 +74,11 @@ class PrelabelRequest(BaseModel):
     table_promote: bool = True
 
 
+def _require_confirmation(payload: PrelabelRequest) -> None:
+    if payload.mode in {"replace", "replace_all"} and not payload.confirm:
+        raise HTTPException(status_code=409, detail="prefill distruttivo: conferma richiesta")
+
+
 @router.post("/api/projects/{project_id}/prelabel")
 def prelabel(
     project_id: int,
@@ -84,6 +92,7 @@ def prelabel(
 
     with connect() as conn:
         _get_project_or_404(conn, project_id)
+    _require_confirmation(payload)
 
     opts = prefillsvc.PrelabelOptions(
         mode=payload.mode,
@@ -154,6 +163,7 @@ def prelabel_stream(
 
     with connect() as conn:
         _get_project_or_404(conn, project_id)
+    _require_confirmation(payload)
 
     opts = prefillsvc.PrelabelOptions(
         mode=payload.mode,

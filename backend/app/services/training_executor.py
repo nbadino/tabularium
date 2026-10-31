@@ -97,6 +97,9 @@ class SshExecutor:
     provider = "ssh"
 
     def _target(self) -> str:
+        # A leading `-` makes ssh read the target as an option (`-oProxyCommand=...`).
+        if self.user.startswith("-") or self.host.startswith("-"):
+            raise ValueError("destinazione SSH non valida")
         if not self.host.strip() or any(ch in self.host for ch in " \t\r\n/'\""):
             raise ValueError("host SSH non valido")
         if not self.user.strip() or any(ch in self.user for ch in " \t\r\n/'\""):

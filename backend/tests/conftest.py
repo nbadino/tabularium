@@ -48,6 +48,7 @@ if sys.version_info >= (3, 12):
             self.base_url = kwargs.pop("base_url", "http://testserver")
             self.follow_redirects = kwargs.pop("follow_redirects", True)
             self.headers = kwargs.pop("headers", None)
+            self.client = kwargs.pop("client", ("testclient", 50000))
             self.cookies = {}
             initial_cookies = kwargs.pop("cookies", None)
             if initial_cookies:
@@ -64,7 +65,7 @@ if sys.version_info >= (3, 12):
                 )
             async with self.app.router.lifespan_context(self.app):
                 async with _httpx.AsyncClient(
-                    transport=_httpx.ASGITransport(app=self.app),
+                    transport=_httpx.ASGITransport(app=self.app, client=self.client),
                     base_url=self.base_url,
                     follow_redirects=self.follow_redirects,
                     headers=headers,

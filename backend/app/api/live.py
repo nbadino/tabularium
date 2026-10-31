@@ -53,7 +53,11 @@ def _resolve_user(websocket: WebSocket) -> dict | None:
     if not authsvc.auth_enabled():
         return authsvc.local_user()
     # `resolve_user` legge solo cookie e header, entrambi presenti sul WebSocket.
-    return authsvc.resolve_user(websocket)  # type: ignore[arg-type]
+    user = authsvc.resolve_user(websocket)  # type: ignore[arg-type]
+    # Same gate as the HTTP routes: a password still to change opens nothing else.
+    if user is not None and user.get("must_change_password"):
+        return None
+    return user
 
 
 @router.websocket("/api/live/pages/{page_id}")

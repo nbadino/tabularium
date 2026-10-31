@@ -10,7 +10,6 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from . import config
@@ -37,6 +36,13 @@ def _assert_single_process() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _assert_single_process()
+    if not config.auth_enabled():
+        # R12: auth off is for tests and single-user loopback use. Say it loudly,
+        # because every request then runs as the local administrator.
+        logging.getLogger("tabularium").warning(
+            "TABULARIUM_AUTH=off: every request runs as administrator. "
+            "Never expose this instance beyond localhost."
+        )
     init_db()
     # Il canale live notifica gli endpoint sincroni (che girano in un thread di
     # lavoro) da un loop diverso: senza questo riferimento i `publish` non
@@ -83,15 +89,8 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         detail = localize_detail(detail, parse_lang(request.headers.get("accept-language")))
     return JSONResponse(status_code=exc.status_code, content={"detail": detail})
 
-# CORS permissivo: app locale a uso singolo/multiutente in LAN.
-# In produzione conviene restringere ad origini esplicite.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "Accept-Language"],
-    allow_credentials=True,
-)
+# No CORS: the SPA is same-origin in production and the Vite dev server proxies /api
+# (frontend/vite.config.ts), so no cross-origin page ever needs credentialed access.
 
 
 @app.middleware("http")
@@ -135,6 +134,7 @@ if _dist.exists():
         app.mount("/assets", _HashedAssets(directory=_dist / "assets"), name="assets")
 
     _index = _dist / "index.html"
+    _dist_root = _dist.resolve()
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa(full_path: str):
@@ -145,8 +145,10 @@ if _dist.exists():
         # a ogni build» — `no-store` lo rende impossibile: dopo questa voce
         # installata in cache, niente più hard refresh.
         no_store = {"Cache-Control": "no-store"}
-        candidate = _dist / full_path
-        if full_path and candidate.is_file() and candidate.is_relative_to(_dist):
+        # resolve() before the containment check: `is_relative_to` compares text, so
+        # an unresolved `dist/../../.env` would pass and leak any readable file.
+        candidate = (_dist / full_path).resolve()
+        if full_path and candidate.is_relative_to(_dist_root) and candidate.is_file():
             return FileResponse(candidate, headers=no_store)
         if _index.exists():
             return FileResponse(_index, media_type="text/html", headers=no_store)

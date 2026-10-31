@@ -89,6 +89,18 @@ def pop(key: str) -> Any:
         return None
 
 
+def items_with_prefix(prefix: str) -> list[tuple[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute("SELECT key, value FROM meta WHERE key LIKE ?", (f"{prefix}%",)).fetchall()
+    out = []
+    for row in rows:
+        try:
+            out.append((row["key"], json.loads(row["value"])))
+        except (TypeError, ValueError):
+            out.append((row["key"], None))
+    return out
+
+
 def delete_prefix(prefix: str) -> None:
     with connect() as conn:
         conn.execute("DELETE FROM meta WHERE key LIKE ?", (f"{prefix}%",))

@@ -296,3 +296,28 @@ def test_a_missing_source_says_which_file_is_missing(tmp_path: Path):
     with pytest.raises(HTTPException) as raised:
         pagesvc.maybe_auto_deskew(row)
     assert missing in raised.value.detail
+
+
+def test_prefill_does_not_rotate_a_page_under_existing_blocks(tmp_path: Path, monkeypatch):
+    # R9: the deskew endpoint asks before rotating under blocks; prefill must not skip that.
+    from app.services import ocr as ocrmod
+
+    class _Engine:
+        name, available = "rapidocr", True
+
+        def detect(self, image):
+            return [{"bbox": [10.0, 20.0, 300.0, 60.0], "text": "x", "score": 0.9}]
+
+    monkeypatch.setattr(ocrmod, "OcrEngine", _Engine)
+    pid = _setup(tmp_path / "pf")
+    with TestClient(app) as client:
+        page = client.get(f"/api/projects/{pid}/pages").json()["items"][0]["id"]
+        client.put(
+            f"/api/pages/{page}/annotations",
+            json={"items": [{"label": "Text", "kind": "rect", "points": [[0, 0], [100, 50]], "content": "x", "order_idx": 1}]},
+        )
+        r = client.post(f"/api/projects/{pid}/prelabel", json={"page_ids": [page], "mode": "merge"})
+        assert r.status_code == 200, r.text
+        assert abs(r.json()["results"][0]["deskew_angle"]) < 0.05
+        r = client.post(f"/api/projects/{pid}/prelabel", json={"page_ids": [page], "mode": "replace_all", "confirm": True})
+        assert abs(r.json()["results"][0]["deskew_angle"]) >= 0.05

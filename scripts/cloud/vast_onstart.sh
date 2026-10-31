@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Vast.ai onstart script for MonkeyOCRv2 vLLM Inference
-# Inserisci questo script nel campo "onstart" del template Vast.ai per avviare
-# automaticamente il server GPU ogni volta che l'istanza viene avviata o ripresa.
+# Put this script in the "onstart" field of the Vast.ai template to start the GPU
+# server automatically every time the instance starts or resumes.
 # ==============================================================================
+set -euo pipefail
 LOG_FILE="/var/log/vllm_startup.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 

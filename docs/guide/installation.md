@@ -195,6 +195,10 @@ projects, the crops, the runs, the models and the vault key. Back it up as a
 volume, not as a file inside the image. The interface listens on `0.0.0.0:8787`;
 publish it on the loopback and let a reverse proxy terminate TLS, or change the
 port mapping deliberately.
+Inside the container a host proxy arrives from the bridge gateway, not from
+`127.0.0.1`: set `TABULARIUM_FORWARDED_ALLOW_IPS` to that address (or `*` when only the
+proxy can reach the port) so login limits see the real client, and
+`TABULARIUM_SESSION_COOKIE_SECURE=1` once TLS is in place.
 
 ### Serving under a sub-path
 
@@ -216,6 +220,7 @@ location /tabularium/ {
     proxy_pass http://127.0.0.1:8787/;   # the trailing slash strips the prefix
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
     client_max_body_size 200m;          # page uploads
 }
 ```

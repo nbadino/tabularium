@@ -24,5 +24,11 @@ def allow(key: str, *, limit: int = 10, window: float = 60.0) -> bool:
     return True
 
 
+def exhausted(key: str, *, limit: int, window: float = 60.0) -> bool:
+    """True when `key` already reached `limit` in its window; counts nothing."""
+    current = store.window(key)
+    return current is not None and time.time() - current[0] < window and current[1] >= limit
+
+
 def reset(key: str) -> None:
     store.clear(key)

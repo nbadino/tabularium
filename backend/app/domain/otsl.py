@@ -263,6 +263,9 @@ def html_to_otsl(source: str) -> str:
             if index >= len(row):
                 later = [key for key, (left, _) in pending.items() if key > col and left > 0]
                 if later:
+                    # A short row still occupies the column: an empty cell, or the
+                    # pending rowspan to the right would be read one column early.
+                    tokens.append("<ecel>")
                     col += 1
                     continue
                 break

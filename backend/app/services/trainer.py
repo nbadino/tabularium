@@ -615,7 +615,7 @@ def start_run(
     else:
         meta["remote_job_id"] = str(proc.pid)
     write_run_meta(run_dir, meta)
-    _ACTIVE[project_id] = {"run_id": run_id, "proc": proc, "run_dir": run_dir, "log_file": log_file, "job_id": job.lastrowid}
+    _ACTIVE[project_id] = {"run_id": run_id, "proc": proc, "run_dir": run_dir, "log_file": log_file, "job_id": meta["job_id"]}
     threading.Thread(target=_metrics_writer, args=(project_id,), daemon=True).start()
     threading.Thread(target=_monitor, args=(project_id,), daemon=True).start()
     return _status(project_id)

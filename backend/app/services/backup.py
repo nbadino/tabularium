@@ -23,7 +23,7 @@ def integrity(path: Path | None = None) -> dict:
     return {"ok": ok, "journal_mode": journal, "messages": [row[0] for row in result]}
 
 
-def create_backup(*, reason: str = "manual") -> dict:
+def create_backup(*, reason: str = "manual", keep: str | None = None) -> dict:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     target = backup_dir() / f"tabularium-{stamp}-{reason}.db"
     # Connection.backup include correttamente WAL e non richiede di copiare
@@ -40,8 +40,11 @@ def create_backup(*, reason: str = "manual") -> dict:
     if not check["ok"]:
         target.unlink(missing_ok=True)
         raise RuntimeError("backup non integro")
+    # `keep` is the backup about to be restored: pruning it would destroy the very
+    # copy the user asked for (R9), when it is the oldest one on disk.
     for old in sorted(backup_dir().glob("tabularium-*.db"), reverse=True)[config.BACKUP_RETENTION:]:
-        old.unlink(missing_ok=True)
+        if old.name != keep:
+            old.unlink(missing_ok=True)
     return {"path": str(target), "name": target.name, "size": target.stat().st_size, "reason": reason, **check}
 
 
@@ -71,4 +74,9 @@ def restore(name: str) -> dict:
     finally:
         dest.close()
         source.close()
+    # A backup from an older release has an older schema: migrate it now, not at
+    # the next restart, or the running code reads tables it does not expect.
+    from ..db import init_db
+
+    init_db()
     return {"restored": candidate.name, **integrity()}

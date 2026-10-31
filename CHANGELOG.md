@@ -6,6 +6,46 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Security
+- The SPA fallback no longer serves files outside `frontend/dist` (encoded `..` read any file).
+- Admins cannot reset their own password; OIDC links an existing account only when the
+  provider asserts `email_verified`; a server `archive_dir` is admin-only.
+- A warning is logged at startup when `TABULARIUM_AUTH=off`.
+- SSH training targets starting with `-` are refused (they were read as ssh options).
+- OIDC: the state is bound to the browser that started the flow (login CSRF), and two
+  people signing in at once no longer cancel each other's state.
+- Login rate limit keyed on client + username, with a per-client failure budget; a
+  missing user costs the same PBKDF2 time as a wrong password. Register and invite
+  limits are per client instead of global.
+- Logout ends Bearer sessions too; the live channel refuses a password still to change;
+  `/api/system/info` needs login and shows server paths to admins only; scan jobs are
+  read only through their own project.
+
+### Fixed
+- Training start, first thumbnail and custom model deletion no longer fail with a
+  NameError; pyflakes now guards the backend against undefined names.
+- Restoring the oldest backup no longer prunes it first.
+- `html_to_otsl` keeps rowspans in their column on short rows.
+- Prefill defaults to `merge`; `replace`/`replace_all` require `confirm=true`.
+- Prefill advances `annotation_revision`: an approved page loses its approval and a
+  concurrent editor gets a conflict instead of overwriting the drafts.
+- Prefill no longer auto-deskews a page that keeps blocks (only `replace_all` may).
+- Each migration and its schema version commit together; restoring an older backup
+  migrates it immediately; the transformed master no longer leaks a file handle.
+
+### Changed
+- CI and release workflows: least-privilege permissions, concurrency, release gated on
+  tests and on non-empty CHANGELOG notes; training images build only from `main`;
+  Dependabot; `CITATION.cff` follows `VERSION`.
+- Supply chain: every GitHub Action pinned to a commit SHA, app image base images pinned
+  by digest, and `backend/constraints.txt` (universal lock) installed by the image and CI.
+- Backend error messages are all in the it/en/fr catalog, enforced by a test (R11).
+- `TABULARIUM_FORWARDED_ALLOW_IPS` sets the proxies trusted for `X-Forwarded-For`.
+- The credentialed CORS allowance for `localhost:5173` is gone: dev goes through the Vite proxy.
+- The MonkeyOCRv2 checkpoint and pixel caps are declared once in `app/models/monkeyocrv2.py`.
+- SECURITY.md documents supported versions, timeline and safe deployment defaults;
+  CHANGELOG has compare links that `scripts/version.py bump` keeps current.
+
 ## [0.4.0] - 2026-10-27
 
 ### Fixed
@@ -509,7 +549,13 @@ Notable changes to Tabularium. The format follows
   pages only confirmed blocks now count.
 - The backend setup script no longer warns that OCR is missing when it is installed.
 
-## [0.1.0]
+## [0.1.0] - 2026-09-01
 
 ### Added
 - Recognition, annotation, dataset export, training and evaluation workflow.
+
+[Unreleased]: https://github.com/nbadino/tabularium/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/nbadino/tabularium/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/nbadino/tabularium/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/nbadino/tabularium/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/nbadino/tabularium/releases/tag/v0.1.0

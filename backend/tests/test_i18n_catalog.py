@@ -66,3 +66,26 @@ def test_a_missing_translation_falls_back_to_italian():
         assert i18n.msg(key, "en") == i18n.CATALOG[i18n.DEFAULT][key]
     finally:
         i18n.CATALOG["en"] = original
+
+
+def test_every_constant_error_detail_is_in_the_catalog():
+    # R11: an Italian `detail` with no catalog entry reaches English and French UIs
+    # untranslated. Codes (snake_case) are translated by the frontend instead.
+    import ast
+    from pathlib import Path
+
+    app = Path(__file__).resolve().parents[1] / "app"
+    untranslated = []
+    for path in app.rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "id", getattr(node.func, "attr", "")) == "HTTPException"):
+                continue
+            for kw in node.keywords:
+                value = getattr(kw.value, "value", None)
+                if kw.arg != "detail" or not isinstance(value, str):
+                    continue
+                if re.fullmatch(r"[a-z0-9_.]+|not found", value):
+                    continue
+                if i18n.localize_detail(value, "en") == value:
+                    untranslated.append(f"{path.relative_to(app)}:{node.lineno} {value!r}")
+    assert not untranslated, "\n".join(untranslated)

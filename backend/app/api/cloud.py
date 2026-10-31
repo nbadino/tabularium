@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..services import auth as authsvc
+from ..models import monkeyocrv2 as reference
 
 router = APIRouter(tags=["cloud"], dependencies=[Depends(authsvc.get_current_user)])
 
@@ -171,7 +172,7 @@ def rent_vast(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             cuda_max_good=payload.get("cuda_max_good"),
             adapter_id=payload.get("adapter_id") or "",
             disk_gb=payload.get("disk_gb", 40),
-            model=payload.get("model", "zenosai/MonkeyOCRv2-B-Parsing"),
+            model=payload.get("model", reference.HF_REPO),
             port=payload.get("port", 8888),
             api_key_for_server=_credential(payload, "server_api_key", "server_credential_ref"),
             monkeyocr_ref=payload.get("monkeyocr_ref", ""),

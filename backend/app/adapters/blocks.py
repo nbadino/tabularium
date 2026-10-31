@@ -31,6 +31,9 @@ class PageWriter:
         ).fetchone()
         return dict(row) if row is not None else None
 
+    def has_blocks(self, page_id: int) -> bool:
+        return self._conn.execute("SELECT 1 FROM blocks WHERE page_id=? LIMIT 1", (page_id,)).fetchone() is not None
+
     # --- writes --------------------------------------------------------
     def replace_blocks(self, page_id: int, mode: str) -> dict[str, int]:
         """Delete the blocks the chosen mode allows, and say how many went."""
@@ -92,6 +95,19 @@ class PageWriter:
             "updated_at=datetime('now')",
             (block_id, json.dumps(grid)),
         )
+
+    def bump_revision(self, page_id: int) -> int:
+        """Advance the page revision after a prefill wrote to it, and return it.
+
+        Without this, an approved page kept its approval (the trigger watches the
+        revision) and another editor's autosave could overwrite the drafts unawares.
+        """
+        self._conn.execute(
+            "UPDATE pages SET annotation_revision=annotation_revision+1 WHERE id=?", (page_id,)
+        )
+        row = self._conn.execute("SELECT annotation_revision FROM pages WHERE id=?", (page_id,)).fetchone()
+        self._conn.commit()
+        return int(row[0]) if row is not None else 0
 
     def commit(self) -> None:
         """Make the rows so far visible to the other connections."""

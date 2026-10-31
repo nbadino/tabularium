@@ -16,11 +16,11 @@ def read_version() -> tuple[str, tuple[int, int, int]]:
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     match = SEMVER.fullmatch(version)
     if not match:
-        raise SystemExit(f"VERSION non è SemVer valido: {version!r}")
+        raise SystemExit(f"VERSION is not valid SemVer: {version!r}")
     return version, tuple(map(int, match.groups()))
 
 
-def write_version(version: str) -> None:
+def write_version(version: str, previous: str | None = None) -> None:
     (ROOT / "VERSION").write_text(f"{version}\n", encoding="utf-8")
     for name in ("package.json", "package-lock.json"):
         path = ROOT / "frontend" / name
@@ -29,6 +29,10 @@ def write_version(version: str) -> None:
         if name == "package-lock.json":
             data["packages"][""]["version"] = version
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    citation = ROOT / "CITATION.cff"
+    text = re.sub(r'^version: .*$', f'version: "{version}"', citation.read_text(encoding="utf-8"), flags=re.M)
+    text = re.sub(r'^date-released: .*$', f'date-released: "{date.today().isoformat()}"', text, flags=re.M)
+    citation.write_text(text, encoding="utf-8")
     changelog = ROOT / "CHANGELOG.md"
     content = changelog.read_text(encoding="utf-8")
     content = content.replace(
@@ -36,6 +40,15 @@ def write_version(version: str) -> None:
         f"## [Unreleased]\n\n## [{version}] - {date.today().isoformat()}",
         1,
     )
+    if previous:
+        # Keep the Keep-a-Changelog compare links in step with the headings.
+        base = "https://github.com/nbadino/tabularium"
+        content = content.replace(
+            f"[Unreleased]: {base}/compare/v{previous}...HEAD",
+            f"[Unreleased]: {base}/compare/v{version}...HEAD\n"
+            f"[{version}]: {base}/compare/v{previous}...v{version}",
+            1,
+        )
     changelog.write_text(content, encoding="utf-8")
 
 
@@ -47,11 +60,11 @@ def main() -> None:
     current, numbers = read_version()
     if args.command == "show":
         if args.part:
-            parser.error("'part' si usa solo con bump")
+            parser.error("'part' is only used with bump")
         print(current)
         return
     if not args.part:
-        parser.error("specificare patch, minor o major")
+        parser.error("specify patch, minor or major")
     major, minor, patch = numbers
     if args.part == "major":
         numbers = (major + 1, 0, 0)
@@ -60,9 +73,9 @@ def main() -> None:
     else:
         numbers = (major, minor, patch + 1)
     updated = ".".join(map(str, numbers))
-    write_version(updated)
+    write_version(updated, current)
     print(f"{current} → {updated}")
-    print("Aggiungi le note della release in CHANGELOG.md, rivedi le modifiche e crea il tag Git.")
+    print("Move the [Unreleased] notes in CHANGELOG.md, review the changes, then tag.")
 
 
 if __name__ == "__main__":

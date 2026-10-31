@@ -178,6 +178,10 @@ def create_project(
     # Chi crea il progetto ne diventa il proprietario. In modalità off
     # `owner_id` resta NULL (non esistono utenti).
     authsvc.require_role(user, "editor")
+    # A server path exposes whatever the process can read, so it is an admin
+    # decision, like browsing the server's folders (`/api/system/fs/browse`).
+    if payload.archive_dir:
+        authsvc.require_role(user, "admin")
     archive_dir = str(Path(payload.archive_dir).expanduser().resolve()) if payload.archive_dir else None
     if archive_dir and not Path(archive_dir).is_dir():
         raise HTTPException(status_code=400, detail="la cartella archivio non esiste")
@@ -640,7 +644,7 @@ def start_scan(project_id: int, request: Request, confirm_missing: bool = Query(
             raise HTTPException(status_code=400, detail="archive_dir non valida")
     job_id = uuid.uuid4().hex
     with _scan_jobs_lock:
-        _scan_jobs[job_id] = {"id": job_id, "status": "running", "current": 0, "total": 0, "phase": "discovering", "report": None}
+        _scan_jobs[job_id] = {"id": job_id, "project_id": project_id, "status": "running", "current": 0, "total": 0, "phase": "discovering", "report": None}
     threading.Thread(target=_run_scan_job, args=(job_id, project_id, lang, confirm_missing), daemon=True).start()
     return {"job_id": job_id}
 
@@ -649,7 +653,8 @@ def start_scan(project_id: int, request: Request, confirm_missing: bool = Query(
 def scan_job(project_id: int, job_id: str, _auth: dict = Depends(require_resource(write=False))):
     with _scan_jobs_lock:
         job = _scan_jobs.get(job_id)
-    if not job:
+    # The job must belong to the project the caller was authorised on.
+    if not job or job.get("project_id") != project_id:
         raise HTTPException(status_code=404, detail="scan job non trovato")
     return job
 

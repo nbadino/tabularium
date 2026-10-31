@@ -11,6 +11,7 @@ from contextlib import contextmanager
 
 from . import training_comparison
 from .. import config
+from ..models import monkeyocrv2 as reference
 from .training_executor import SshExecutor
 
 
@@ -199,7 +200,7 @@ def evaluate_on_remote(*, executor: SshExecutor, cfg: dict, project_id: int,
         on_progress(target='base', completed=0, total=0, phase='environment')
     cfg = ensure_evaluation_runtime(executor, cfg, log_file, on_progress=on_progress)
     python = str(cfg.get('ssh_python') or 'python3')
-    base_model = str(cfg.get('model_path') or cfg.get('model') or 'zenosai/MonkeyOCRv2-B-Parsing')
+    base_model = str(cfg.get('model_path') or cfg.get('model') or reference.HF_REPO)
     if on_progress:
         on_progress(target='base', completed=0, total=0, phase='model_download')
     training_log = run_dir / 'train.log'
