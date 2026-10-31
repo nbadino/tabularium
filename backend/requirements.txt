@@ -24,7 +24,7 @@ onnxruntime>=1.17,<2
 httpx>=0.28,<1
 python-dotenv>=1.0,<2
 python-multipart>=0.0.20,<1
-cryptography>=44,<46
+cryptography>=50.0.2,<51
 # Download pesi dal registro modelli (model_registry.py)
 huggingface-hub>=0.27,<1
 # Ingestion PDF (split + anteprime): installare solo se serve
