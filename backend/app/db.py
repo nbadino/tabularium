@@ -7,8 +7,12 @@ migrazione esplicita e ordinata (v. ``_apply_migrations``).
 """
 from __future__ import annotations
 
+import json
+import logging
+import os
 import re
 import sqlite3
+from contextlib import closing
 
 from . import config
 
@@ -557,9 +561,96 @@ def _execute_additive_migration(conn: sqlite3.Connection, ddl: str) -> None:
             conn.execute(sql)
 
 
+def _stored_version_before_changes() -> int | None:
+    """The schema version on disk, read before init_db writes anything."""
+    with closing(sqlite3.connect(config.DB_PATH)) as conn:
+        try:
+            row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+        except sqlite3.OperationalError:  # no meta table: older than the versioning
+            return None
+    try:
+        return int(row[0]) if row else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _guard_upgrade() -> None:
+    """Refuse a database from a newer release; back up one that is about to migrate.
+
+    Migrations only go forward, so the copy taken here is the way back (R9).
+    """
+    stored = _stored_version_before_changes()
+    if stored is not None and stored > int(SCHEMA_VERSION):
+        raise RuntimeError(
+            f"the database is at schema version {stored}, newer than this release "
+            f"({SCHEMA_VERSION}): a later Tabularium upgraded it. Start that release, or "
+            "restore the backup taken before the upgrade (docs/guide/upgrading.md)."
+        )
+    if stored is None or stored < int(SCHEMA_VERSION):
+        from .services import backup
+
+        backup.create_backup(reason=f"pre-migration-v{stored if stored is not None else 'legacy'}")
+
+
+# Columns that store absolute paths, some of them under the data root.
+_ROOT_PATH_COLUMNS = (
+    ("projects", "root_dir"),
+    ("projects", "archive_dir"),
+    ("pages", "abs_path"),
+    ("pages", "thumb_path"),
+    ("jobs", "log_path"),
+)
+
+
+def _follow_data_root(conn: sqlite3.Connection) -> None:
+    """Rewrite stored paths under the previous data root when the root has moved.
+
+    Paths are stored absolute; without this, a data root copied or moved to a new
+    place keeps pointing at the old one and pages lose their images.
+    shortcut: paths inside jobs.command_json stay as they were; they only describe
+    past runs.
+    """
+    root = str(config.ROOT_DIR)
+    row = conn.execute("SELECT value FROM meta WHERE key='data_root'").fetchone()
+    old = row["value"] if row else None
+    if old and old != root:
+        conn.commit()
+        from .services import backup
+
+        backup.create_backup(reason="pre-relocation")
+        sep_old = old.rstrip("/\\") + os.sep
+        cut = len(sep_old) - 1
+        for table, column in _ROOT_PATH_COLUMNS:
+            conn.execute(
+                f"UPDATE {table} SET {column} = ? || substr({column}, ?) "
+                f"WHERE {column} = ? OR substr({column}, 1, ?) = ?",
+                (root, cut + 1, old, len(sep_old), sep_old),
+            )
+        for page in conn.execute(
+            "SELECT id, meta_json FROM pages WHERE meta_json LIKE '%extracted_path%'"
+        ).fetchall():
+            try:
+                meta = json.loads(page["meta_json"] or "{}")
+            except ValueError:
+                continue
+            path = meta.get("extracted_path")
+            if isinstance(path, str) and path.startswith(sep_old):
+                meta["extracted_path"] = root + path[cut:]
+                conn.execute("UPDATE pages SET meta_json=? WHERE id=?", (json.dumps(meta), page["id"]))
+        logging.getLogger("tabularium").warning("data root moved from %s to %s: stored paths updated", old, root)
+    if old != root:
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES('data_root', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (root,),
+        )
+
+
 def init_db() -> None:
     config.ensure_dirs()
     new_database = not config.DB_PATH.exists()
+    if not new_database:
+        _guard_upgrade()
     with connect() as conn:
         # Bootstrap soltanto: su un DB già esistente la PRAGMA è una scrittura
         # che può restare in attesa durante un'altra lettura. Il database
@@ -581,3 +672,4 @@ def init_db() -> None:
             "ON pages(project_id, abs_path, COALESCE(pdf_page, -1))"
         )
         _apply_migrations(conn)
+        _follow_data_root(conn)

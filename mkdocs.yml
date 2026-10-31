@@ -50,6 +50,7 @@ nav:
   - Getting started:
       - Installation: guide/installation.md
       - Configuration: guide/configuration.md
+      - Upgrading and rollback: guide/upgrading.md
       - Troubleshooting: guide/troubleshooting.md
   - Models:
       - Supported models: models.md

@@ -18,6 +18,12 @@ Notable changes to Tabularium. The format follows
   training through ms-swift main (`unlimited-ocr`, training profile `uocr2`).
 - OCRia-1: the `agentic_plus` parse tier, and the vendor's watermark modes
   (`move_to_end`, `move_to_start`, `remove`).
+- Safe upgrades: `tabularium backup` archives the data folder and the vault key (the database
+  copied consistently, runtimes and caches left out); `tabularium restore-db` rolls the database
+  back with the app stopped, setting the current one aside. The startup backs the database up
+  before migrating it, refuses a database from a newer release with a message that names the way
+  back, and rewrites stored paths when the data folder has moved. Releases also publish the
+  container image `ghcr.io/nbadino/tabularium`. Guide: `docs/guide/upgrading.md`.
 
 ### Changed
 - CI and release workflows: least-privilege permissions, concurrency, release gated on

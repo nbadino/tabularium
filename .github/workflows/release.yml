@@ -137,6 +137,10 @@ jobs:
             echo "./scripts/run.sh             # Windows: scripts\\run.ps1"
             echo '```'
             echo
+            echo "Container: \`docker pull ghcr.io/nbadino/tabularium:${VERSION}\`."
+            echo
+            echo "Upgrading? Back up first: \`tabularium backup\`. See [Upgrading and rollback](https://nbadino.github.io/tabularium/guide/upgrading/)."
+            echo
             echo "Only Python 3.11–3.13 is required. See the [installation guide](https://nbadino.github.io/tabularium/guide/installation/)."
           } >> notes.md
           cat notes.md
@@ -174,3 +178,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release download "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" -p "*.whl" -D dist
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
+
+  # The container image, so a container upgrade is a pull, not a rebuild from a checkout.
+  # A new GHCR package is private: make it public once in the package settings.
+  image:
+    needs: release
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build and push ghcr.io/${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          docker build -f docker/app/Dockerfile -t "${IMAGE}:${VERSION}" -t "${IMAGE}:latest" .
+          docker push --all-tags "${IMAGE}"
