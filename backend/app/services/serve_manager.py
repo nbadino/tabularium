@@ -39,7 +39,7 @@ from typing import Any
 from .. import config
 from ..adapters import jobs as jobstore
 from ..db import connect
-from . import hardware, local_runtime, mlx_runtime, process_probe, vendor_repos
+from . import hardware, local_runtime, mlx_runtime, process_probe, sglang_runtime, vendor_repos
 from .model_adapters import get_adapter
 from .model_registry import (
     ensure_draft,
@@ -690,6 +690,16 @@ def start(
                 argv = serve_recipes.apply_workflow_overrides(
                     adapter_id, argv, saved_overrides.get("workflow", {})
                 )
+
+        if argv[0] == str(sglang_runtime.python_bin(adapter_id)):
+            # Vendor-built SGLang (Unlimited-OCR-2): its own interpreter and pins, and
+            # the knobs the vendor sets in the environment rather than as flags.
+            if not sglang_runtime.is_ready(adapter_id):
+                _set_phase(adapter_id, "preparing_runtime")
+                sglang_runtime.ensure_ready(adapter_id)
+            from . import serve_recipes
+
+            env.update(dict(serve_recipes.recipe_for(adapter_id).serve_env))
 
         if argv[0] == "vllm" and not config.SERVE_PYTHON and not shutil.which("vllm"):
             # Serve command generico (qualunque adapter con `vllm serve`,

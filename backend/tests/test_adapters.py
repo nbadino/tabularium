@@ -6,6 +6,7 @@ from app.services.model_adapters import (
     list_adapters,
     supported_prefill_modes,
 )
+from app.domain.otsl import html_to_otsl
 from app.services.prefill import native_mode
 
 
@@ -33,6 +34,9 @@ def test_monkeyocr_adapter_contract():
         ("qwen3-vl-8b", "official"),
         ("lightonocr-3", "end2end"),
         ("gemini-argon", "end2end"),
+        ("surya-ocr-2.5", "end2end"),
+        ("xiaomi-ocr-0", "official"),
+        ("unlimited-ocr-2", "end2end"),
     ],
 )
 def test_native_prefill_selects_model_workflow(adapter_id, expected):
@@ -139,4 +143,58 @@ def test_lightonocr_grounding_parses_markers_tables_and_continuations():
         },
         {"bbox": [510, 960, 980, 990], "label": "Text", "content": "Continued."},
         {"bbox": [10, 10, 60, 60], "label": "Picture", "content": ""},
+    ]
+
+
+def test_surya_full_page_decodes_compact_headers_and_merged_cells():
+    """Surya 2.5 output, in the compact format its model card and `compact.py` define:
+    a block is `<|Label|>` plus four 0-1000 coordinate tokens, `</td></th></tr>` and the
+    block `</div>` are left out, and merged cells are `data-kind` parent/ghost runs."""
+    adapter = get_adapter("surya-ocr-2.5")
+    assert adapter.prompt_for("end2end") == (
+        "OCR this image to HTML. Each block is a div with data-label and data-bbox "
+        "(x0 y0 x1 y1, normalized 0-1000)."
+    )
+    assert adapter.request_overrides("end2end") == {"skip_special_tokens": False}
+    items = adapter.parse_layout(
+        "<|Page-Header|><|71|><|33|><|143|><|45|><p>THE SHIPPING INDEX</p>"
+        "<|Section-Header|><|100|><|60|><|900|><|90|><h2>Arrivals</h2>"
+        "<|Table|><|100|><|100|><|900|><|400|><table>"
+        '<tr><th data-cs="2" data-kind="parent">Vessel<th data-kind="ghost"><th>Port'
+        '<tr><td data-rs="2" data-kind="parent">Ada<td>A1<td>Genoa'
+        '<tr><td data-kind="ghost"><td>B2<td>Leith</table>'
+        "<|Text|><|100|><|420|><|900|><|480|><p>Arrived 3rd,<br/><b>Ada</b> &amp; crew.</p>"
+        '<|Image|><|100|><|500|><|500|><|700|><|box|><|110|><|510|><|490|><|690|><img alt="ship"/>'
+        "<|Blank-Page|><|0|><|0|><|1000|><|1000|>"
+        "<|Text|><|900|><|900|><|100|><|950|><p>bad box</p>"
+        "<|Page-Footer|><|400|><|950|><|600|><|970|><p>12</p>"
+    )
+    assert [(item["label"], item["bbox"]) for item in items] == [
+        ("Page-header", [71, 33, 143, 45]),
+        ("Section-header", [100, 60, 900, 90]),
+        ("Table", [100, 100, 900, 400]),
+        ("Text", [100, 420, 900, 480]),
+        ("Picture", [100, 500, 500, 700]),
+        ("Page-footer", [400, 950, 600, 970]),
+    ]
+    assert items[0]["content"] == "THE SHIPPING INDEX"
+    assert items[3]["content"] == "Arrived 3rd,\nAda & crew."
+    assert items[4]["content"] == ""
+    assert html_to_otsl(items[2]["content"]) == (
+        "<fcel>Vessel<lcel><fcel>Port<nl>"
+        "<fcel>Ada<fcel>A1<fcel>Genoa<nl>"
+        "<ucel><fcel>B2<fcel>Leith"
+    )
+
+
+def test_surya_also_reads_the_div_form_the_prompt_describes():
+    adapter = get_adapter("surya-ocr-2.5")
+    items = adapter.parse_layout(
+        '<div data-bbox="10 20 990 80" data-label="Caption"><p>Fig. 1</p></div>\n'
+        '<div data-bbox="10 100 990 300" data-label="Equation-Block">'
+        '<math display="block">x^2</math></div>'
+    )
+    assert items == [
+        {"bbox": [10, 20, 990, 80], "label": "Caption", "content": "Fig. 1"},
+        {"bbox": [10, 100, 990, 300], "label": "Formula", "content": "x^2"},
     ]

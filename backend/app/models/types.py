@@ -20,7 +20,8 @@ class ServeRecipe:
     served_model_name: str
     # "vllm": `vllm serve <weights> <args>` — "teleocr-native": the official
     # TeleOCRClient on vllm-async-engine — "monkeyocr": the official wrapper
-    # `parsing/serve.py` — "docker": a dedicated image, not pip-installable.
+    # `parsing/serve.py` — "docker": a dedicated image, not pip-installable —
+    # "sglang": `python -m sglang.launch_server` from the packages in `pip_extra`.
     runtime: str
     vllm_version: str = ""
     # Vast offer filters use Vast's documented `compute_cap` scale (e.g.
@@ -36,6 +37,10 @@ class ServeRecipe:
     # Optional model-owned HTTP bridge port (e.g. TeleOCR's official runner).
     native_remote_port: int | None = None
     pip_extra: tuple[str, ...] = ()
+    # Process environment the vendor's launch command sets (SGLang knobs live there).
+    serve_env: tuple[tuple[str, str], ...] = ()
+    # Interpreter the runtime needs when it is not the host's (Unlimited-OCR-2: 3.10).
+    python_version: str = ""
     # Flags after the model. `--host`, `--port` and `--served-model-name` are added
     # by `serve_argv`: they are infrastructure, not part of the recipe.
     serve_args: tuple[str, ...] = field(default_factory=tuple)
@@ -57,8 +62,8 @@ class ServeRecipe:
 
     @property
     def installs_vllm(self) -> bool:
-        """False when vLLM is already inside the image: reinstalling it breaks it."""
-        return self.runtime != "docker"
+        """False when vLLM is already inside the image, or the runtime is not vLLM."""
+        return self.runtime not in ("docker", "sglang")
 
 
 # ---------------------------------------------------------------------------
@@ -208,20 +213,18 @@ LLAMAINDEX_WORKFLOW_BOOLEANS = {
     "markdown_annotate_revisions",
     "markdown_annotate_line_numbers",
     "markdown_compact_tables",
-    "fail_on_job_timeout",
-    "fail_on_page_timeout",
     "disable_cache",
 }
 LLAMAINDEX_WORKFLOW_LIMITS = {
     "job_timeout_in_seconds": (30, 86_400),
     "job_timeout_extra_time_per_page_in_seconds": (0, 3_600),
-    "allowed_failure_ratio": (0.0, 1.0),
+    "allowed_page_failure_ratio": (0.0, 1.0),
 }
 LLAMAINDEX_WORKFLOW_ENUMS = {
-    "tier": {"cost_effective", "agentic"},
+    "tier": {"cost_effective", "agentic", "agentic_plus"},
     "confidence_score_effort": {"standard", "high"},
     "specialized_chart_parsing": {"off", "efficient", "agentic", "agentic_plus"},
-    "watermark_handling": {"nothing", "move_to_end", "return_image"},
+    "watermark_handling": {"move_to_end", "move_to_start", "remove"},
 }
 LLAMAINDEX_WORKFLOW_FIELDS = (
     set(LLAMAINDEX_WORKFLOW_BOOLEANS)
@@ -233,8 +236,8 @@ LLAMAINDEX_WORKFLOW_FIELDS = (
 
 def llamaindex_workflow_defaults() -> dict[str, Any]:
     return {
-        # Only tiers routed through OCRia-1 are exposed. `fast` is a general
-        # LlamaParse tier and `agentic_plus` uses a different high-effort path.
+        # Every tier that runs a model. `fast` is rule-based and returns no
+        # recognition; `agentic_plus` is a separate pipeline (45 credits/page).
         "tier": "agentic",
         "version": "latest",
         "confidence_score_effort": "standard",
@@ -258,9 +261,7 @@ def llamaindex_workflow_defaults() -> dict[str, Any]:
         "custom_prompt": "",
         "job_timeout_in_seconds": 300,
         "job_timeout_extra_time_per_page_in_seconds": 30,
-        "allowed_failure_ratio": 0.0,
-        "fail_on_job_timeout": False,
-        "fail_on_page_timeout": False,
+        "allowed_page_failure_ratio": 0.0,
         "disable_cache": False,
     }
 
@@ -287,9 +288,9 @@ class WorkflowField:
     hints: tuple[tuple[str, str], ...] = ()  # (value, i18n key) for enum options
     max_len: int | None = None
     max_items: int | None = None
-    # Cross-field rule: this value is only valid when `requires` holds, e.g.
-    # cost_optimizer requires tier == agentic.
-    requires: tuple[str, str] | None = None
+    # Cross-field rule: this value may only be enabled when `requires` holds, e.g.
+    # cost_optimizer requires tier in (agentic, agentic_plus).
+    requires: tuple[str, tuple[str, ...]] | None = None
 
 
 def paddle_workflow_fields() -> tuple[WorkflowField, ...]:
@@ -329,7 +330,7 @@ def llamaindex_workflow_fields() -> tuple[WorkflowField, ...]:
         elif key in LLAMAINDEX_WORKFLOW_LIMITS:
             low, high = LLAMAINDEX_WORKFLOW_LIMITS[key]
             fields.append(WorkflowField(
-                key, "float" if key == "allowed_failure_ratio" else "int",
+                key, "float" if key == "allowed_page_failure_ratio" else "int",
                 default=default, minimum=low, maximum=high,
             ))
         elif key == "version":
@@ -343,10 +344,10 @@ def llamaindex_workflow_fields() -> tuple[WorkflowField, ...]:
             fields.append(WorkflowField(key, "str", default=default, max_len=4000))
         elif key == "crop_box":
             fields.append(WorkflowField(key, "crop_box", default=dict(default)))
-    # The vendor rejects cost_optimizer on the cheaper tier; declare it, do not
+    # The vendor rejects cost_optimizer outside the agentic tiers; declare it, do not
     # special-case the model in the validator.
     fields = [
-        replace(field, requires=("tier", "agentic")) if field.key == "cost_optimizer" else field
+        replace(field, requires=("tier", ("agentic", "agentic_plus"))) if field.key == "cost_optimizer" else field
         for field in fields
     ]
     return tuple(fields)

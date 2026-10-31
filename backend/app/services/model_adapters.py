@@ -29,6 +29,8 @@ from .model_labels import (
     GLM_LABELS,
     LLAMAINDEX_LABELS,
     LIGHTON_LABELS,
+    SURYA_LABELS,
+    UNLIMITED2_LABELS,
     MINERU_LAYOUT_LABELS,
     MINERU_NATIVE_LABELS,
     QWEN3_LABELS,
@@ -656,6 +658,176 @@ class UnlimitedOcrAdapter(_StubAdapter):
         return items
 
 
+def _sglang_class_reference(module: str, name: str) -> str:
+    """`CustomLogitProcessor.to_str()` for an importable class, without SGLang.
+
+    SGLang serialises a processor as `json.dumps({"callable": dill.dumps(cls).hex()})`;
+    dill pickles an importable class by reference, i.e. a pickle GLOBAL opcode. The
+    server resolves it with `dill.loads`, so the stdlib form of the same reference is
+    the same request.
+    """
+    payload = b"\x80\x02c" + f"{module}\n{name}\n".encode("ascii") + b"."
+    return json.dumps({"callable": payload.hex()})
+
+
+class UnlimitedOcr2Adapter(_StubAdapter):
+    """baidu/Unlimited-OCR-2 — 3.3B (DeepseekV2 MoE, 6 of 64 experts active) on a
+    SAM-ViT-B + CLIP-L encoder with DASH block-sparse attention, MIT.
+
+    Facts from the model card (revision c14071b) and `utils/process_unlimitedOCR2.py`:
+      - served with the vendor's SGLang build, not vLLM; one prompt for any page count,
+        `"<PAGE><image>" * pages + "Multi page parsing."`, images before the text;
+      - per request: temperature 0, `skip_special_tokens: false`, `images_config.crop_mode`
+        (True = gundam tiles, the single-page default), and the
+        `DeepseekOCRNoRepeatNGramLogitProcessor` with ngram 35, window 128 (single page),
+        `page_token_id` 128827, `eos_token_id` 1, `max_page_tokens` 20000; output budget
+        8000 tokens per page;
+      - output is not Markdown: `<PAGE><BLOCK>label[x1,y1,x2,y2]<FORK>content`, with
+        `title<LEVELn>`, `cross_`/`append_` prefixes for blocks that continue across pages,
+        and `<MERGE>`. Coordinates are clamped to 0-1000 as the vendor's post-processor
+        does (`_scale`); tables are HTML.
+    No MLX path: only an unreleased fork of mlx-vlm runs it.
+    """
+
+    adapter_id = "unlimited-ocr-2"
+    native_prefill_mode = "end2end"
+    end2end_output_format = "grounded-markdown"
+    end2end_max_tokens = 8000
+    recommended_generation = {"temperature": 0.0}
+    capabilities = ModelCapabilities(
+        adapter_id=adapter_id,
+        display_name="Unlimited-OCR-2",
+        tasks=("layout", "text", "table", "formula"),
+        coordinate_system="normalized-0-1000",
+        table_format="html",
+        training_types=("lora", "full"),
+        inference_modes=("sglang",),
+        hardware=("cuda",),
+        languages=("multilingual",),
+        hf_repo="baidu/Unlimited-OCR-2",
+        approx_size_gb=6.7,
+        license_note="MIT.",
+        train_toolchain="ms-swift",
+        serve_backend="sglang-openai",
+        served_model_name="Unlimited-OCR-2",
+        maturity="experimental",
+        max_model_len=131_072,
+        # "vllm" is the CUDA path of the local plan; this model's CUDA server is SGLang.
+        local_runtimes=("vllm",),
+    )
+
+    _LABEL_MAP = UNLIMITED2_LABELS
+    _NGRAM_PROCESSOR = _sglang_class_reference(
+        "sglang.srt.sampling.custom_logit_processor", "DeepseekOCRNoRepeatNGramLogitProcessor"
+    )
+    # `process_unlimitedOCR2.BLOCK_RE`: LEVEL-first or bbox-first, FORK optional.
+    _BLOCK = re.compile(
+        r"<\s*BLOCK\s*>\s*([a-zA-Z_]+)"
+        r"(?:"
+        r"\s*<\s*/?\s*LEVEL\s*(\d*)\s*[>}]?(?:\s*\[\s*(-?\d+)\s*[,，]\s*(-?\d+)\s*[,，]\s*(-?\d+)\s*[,，]\s*(-?\d+)"
+        r"(?:\s*[,，]\s*-?\d+)*\s*\])?"
+        r"|"
+        r"\s*\[\s*(-?\d+)\s*[,，]\s*(-?\d+)\s*[,，]\s*(-?\d+)\s*[,，]\s*(-?\d+)"
+        r"(?:\s*[,，]\s*-?\d+)*\s*\](?:\s*<\s*/?\s*LEVEL\s*(\d*)\s*[>}]?)?"
+        r")?"
+        r"\s*(?:<\s*FORK\s*>)?",
+        re.I,
+    )
+    # `_fix_bare_blocks`: a known label with a bbox but no `<BLOCK>` in front.
+    _BARE = re.compile(
+        r"(?:(?<=<FORK>)|(?<=<PAGE>)|(?<=\n)|^)(?:<[|｜]\s*det\s*[|｜]>)?"
+        r"((?:[a-zA-Z_][a-zA-Z_0-9]*)(?:\s*<\s*/?\s*LEVEL\s*\d*\s*[>}]?)?\s*"
+        r"\[\s*-?\d+(?:\s*[,，]\s*-?\d+){3,}[^\]]*\])",
+        re.I,
+    )
+    _STRAY = re.compile(
+        r"<[|｜]/?[a-zA-Z_]+[|｜]>|<image>"
+        r"|<\s*/?\s*PAGE\s*\d*\s*>|<\s*/?\s*BLOCK\s*>|<\s*/?\s*FORK\s*>"
+        r"|<\s*/?\s*LEVEL\s*\d*\s*[>}]?|<\s*/?\s*MERGE\s*>",
+        re.I,
+    )
+    _SPAN = re.compile(r'\b(colspan|rowspan)\s*=\s*"([^"]*)"', re.I)
+
+    def prompt_for(self, task: str, label: str | None = None) -> str | None:
+        if task == "end2end":
+            return "<PAGE><image>Multi page parsing."
+        raise NotImplementedError(
+            f"adapter '{self.adapter_id}': solo il percorso end2end è supportato"
+        )
+
+    def request_overrides(self, task: str) -> dict:
+        if task != "end2end":
+            return {}
+        from . import model_settings
+
+        workflow = model_settings.get_settings(self.adapter_id)["effective"]["workflow"]
+        return {
+            "skip_special_tokens": False,
+            "images_config": {"crop_mode": workflow["image_mode"] == "gundam"},
+            "custom_logit_processor": self._NGRAM_PROCESSOR,
+            "custom_params": {
+                "ngram_size": workflow["ngram_size"],
+                "window_size": workflow["window_size"],
+                "page_token_id": 128827,
+                "eos_token_id": 1,
+                "max_page_tokens": workflow["max_page_tokens"],
+            },
+        }
+
+    def serve_command(self, model_path: str, port: int) -> list[str] | None:
+        from . import serve_recipes, sglang_runtime
+
+        recipe = serve_recipes.recipe_for(self.adapter_id)
+        return [
+            str(sglang_runtime.python_bin(self.adapter_id)),
+            *serve_recipes.serve_argv(recipe, model_path=model_path, port=port, host="127.0.0.1"),
+        ]
+
+    def _bare_blocks(self, text: str) -> str:
+        known = set(self._LABEL_MAP) | {f"{p}{l}" for p in ("cross_", "append_") for l in self._LABEL_MAP}
+
+        def repl(match: re.Match) -> str:
+            label = re.match(r"[a-zA-Z_][a-zA-Z_0-9]*", match.group(1)).group(0)
+            return f"<BLOCK>{match.group(1)}" if label.lower() in known else match.group(0)
+
+        text = self._BARE.sub(repl, text)
+        return re.sub(r"\n\s*<FORK>\s*(?=<BLOCK>)", "\n", text, flags=re.I)
+
+    def _span_attrs(self, html: str) -> str:
+        def repl(match: re.Match) -> str:
+            if match.group(2).isdigit():
+                return match.group(0)
+            number = re.search(r"\d+", match.group(2))
+            return f'{match.group(1)}="{number.group() if number else 1}"'
+
+        return self._SPAN.sub(repl, html)
+
+    def parse_layout(self, raw: str) -> list[dict]:
+        text = self._bare_blocks(raw or "")
+        matches = list(self._BLOCK.finditer(text))
+        items = []
+        for index, match in enumerate(matches):
+            kind = match.group(1).lower()
+            for prefix in ("append_", "cross_"):
+                if kind.startswith(prefix):
+                    kind = kind[len(prefix):]
+            label = self._LABEL_MAP.get(kind)
+            coords = match.group(3, 4, 5, 6) if match.group(3) is not None else match.group(7, 8, 9, 10)
+            if label is None or coords[0] is None:
+                continue
+            bbox = [max(0, min(1000, int(value))) for value in coords]
+            if bbox[0] >= bbox[2] or bbox[1] >= bbox[3]:
+                continue
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            content = self._STRAY.sub("", text[match.end():end]).strip()
+            if label == "Picture":
+                content = ""
+            elif label == "Table":
+                content = self._span_attrs(content)
+            items.append({"bbox": bbox, "label": label, "content": content})
+        return items
+
+
 class DotsOcrAdapter(_StubAdapter):
     """dots-studio/dots.mocr — VLM singolo per layout+contenuto in una sola
     generazione, tabelle in HTML (convertibili con `otsl.html_to_otsl()`).
@@ -1038,6 +1210,8 @@ class PaddleOcrVlAdapter(_StubAdapter):
     # Which client method runs this model's official pipeline (
     # `VllmClient.<runner>_native_page`). Declared once, here.
     native_runner = "paddle"
+    # The official pipeline runs inside the Paddle runtime (`paddle_runtime`).
+    official_runtime = "paddle"
     native_prefill_mode = "official"
     # Il pipeline ufficiale contiene già il layout detector PaddleX; il
     # fallback OCR locale appartiene solo alla modalità ocr separata.
@@ -1596,6 +1770,269 @@ class LightOnOcr3Adapter(_StubAdapter):
         ]
 
 
+class XiaomiOcrAdapter(_StubAdapter):
+    """xiaomi-research/Xiaomi-OCR-0 — 0.8B on Qwen3.5-0.8B-Base, Apache-2.0.
+
+    Facts from the repository and the model card (2026-10-31):
+      - the model emits no boxes. Its region mode (`mcp_ocr_server.ocr_image(mode="region")`,
+        and the two-stage pipeline every published benchmark uses) detects layout with
+        PaddleX PP-DocLayoutV3 (threshold 0.25 in the README), crops each region from its
+        0-1000 box and sends one task prompt per crop; chart/image regions are not read;
+      - the README recommends whole-page parsing, not regions, for "historical books, and
+        irregular layouts". Whole-page output is Markdown without boxes, so it cannot
+        become blocks: Tabularium uses the region mode and says so here;
+      - prompts, sampling (temperature 0, top_p 0.8, presence/repetition penalty neutral,
+        `enable_thinking: false`) and the 2048 px page edge are the vendor's; the region
+        budget is the evaluation pipeline's 16384 tokens, not the MCP demo's per-task caps,
+        which truncate long register tables;
+      - served with stock vLLM (`--trust-remote-code --max-model-len 16384`). No training code;
+      - no vendor MLX build, but `mlx-vlm` ships `qwen3_5` and loads the original weights.
+        Verified 2026-10-31 on Apple Silicon with mlx_vlm 0.7.1: `mlx_vlm.server` accepts
+        the vendor request (`enable_thinking: false`) and, with PP-DocLayoutV3 on CPU, a
+        full Historic Shipping Index register page comes back as one OTSL table in 43 s.
+    """
+
+    adapter_id = "xiaomi-ocr-0"
+    native_runner = "xiaomi"
+    native_prefill_mode = "official"
+    page_layout_fallback = "official-pipeline"
+    official_runtime = "paddle"
+    region_max_tokens = 16_384
+    page_max_edge = 2048
+    recommended_generation = {
+        "temperature": 0.0, "top_p": 0.8, "presence_penalty": 0.0, "repetition_penalty": 1.0,
+    }
+    capabilities = ModelCapabilities(
+        adapter_id=adapter_id,
+        display_name="Xiaomi-OCR-0",
+        tasks=("layout", "text", "table", "formula"),
+        coordinate_system="normalized-0-1000",
+        table_format="otsl",
+        training_types=(),
+        inference_modes=("vllm",),
+        hardware=("cuda",),
+        languages=("multilingual",),
+        hf_repo="xiaomi-research/Xiaomi-OCR-0",
+        approx_size_gb=1.8,
+        license_note="Apache-2.0.",
+        train_toolchain="none",
+        serve_backend="vllm-openai",
+        served_model_name="xiaomi-ocr-0",
+        max_model_len=16_384,
+        local_runtimes=("vllm", "mlx-vlm"),
+        local_mlx_repo="xiaomi-research/Xiaomi-OCR-0",
+        local_mlx_settings=True,
+        # The original bf16 weights, loaded as they are.
+        local_mlx_weight_factor=1.0,
+    )
+
+    _PROMPTS = {
+        "text": "Extract the text in the image.",
+        "table": "Parse the table in the image into OTSL.",
+        "formula": "Identify the formula in the image and represent it using LATEX format.",
+    }
+
+    def prompt_for(self, task: str, label: str | None = None) -> str | None:
+        if task in self._PROMPTS:
+            return self._PROMPTS[task]
+        raise NotImplementedError(
+            f"adapter '{self.adapter_id}': il layout viene da PP-DocLayoutV3, il modello riconosce solo ritagli"
+        )
+
+    def request_overrides(self, task: str) -> dict:
+        return {"chat_template_kwargs": {"enable_thinking": False}}
+
+    def serve_command(self, model_path: str, port: int) -> list[str] | None:
+        return [
+            "vllm", "serve", model_path,
+            "--port", str(port),
+            "--trust-remote-code",
+            "--max-model-len", str(self.capabilities.max_model_len),
+            "--served-model-name", self.capabilities.served_model_name,
+        ]
+
+
+class _SuryaCells(HTMLParser):
+    """The cells of a Surya table, in the order the model wrote them."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.rows: list[list[dict]] = []
+        self._cell: dict | None = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "tr":
+            self.rows.append([])
+            self._cell = None
+        elif tag in ("td", "th") and self.rows:
+            values = dict(attrs)
+            self._cell = {"tag": tag, "kind": values.get("data-kind"), "text": []}
+            self.rows[-1].append(self._cell)
+        elif tag == "br" and self._cell is not None:
+            self._cell["text"].append(" ")
+
+    def handle_endtag(self, tag):
+        if tag in ("td", "th", "tr"):
+            self._cell = None
+
+    def handle_data(self, data):
+        if self._cell is not None:
+            self._cell["text"].append(data)
+
+
+class _SuryaText(HTMLParser):
+    """Block HTML to the plain text an annotator edits: tags dropped, line breaks kept."""
+
+    _BREAKS = {"br", "p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self._BREAKS:
+            self.parts.append("\n")
+
+    handle_startendtag = handle_starttag
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+    def text(self) -> str:
+        lines = "".join(self.parts).split("\n")
+        return "\n".join(line.strip() for line in lines if line.strip())
+
+
+class SuryaOcrAdapter(_StubAdapter):
+    """datalab-to/surya-ocr-2.5 — a 0.7B Qwen3.5 VLM (layout, OCR and tables in one
+    model). Weights under a modified OpenRAIL-M licence, code Apache-2.0.
+
+    Facts from the model card and the `surya` package (2026-10-31):
+      - the full-page path (`RecognitionPredictor(full_page=True)`, the CLI default and
+        "the more accurate path") is one request with `HIGH_ACCURACY_BBOX_PROMPT`,
+        temperature 0.0, top_p 0.1, up to 12288 tokens (`SURYA_MAX_TOKENS_FULL_PAGE`);
+      - the server must return special tokens: each block is `<|Label|>` plus four
+        coordinate tokens (0-1000), `</td></th></tr>` and the block `</div>` are left
+        out, and merged cells are a `data-kind="parent"` cell followed by `ghost` cells
+        (`surya/inference/compact.py`, `merged_cells.py`). The parser below decodes that
+        format into the blocks and `<table>` HTML the rest of the pipeline reads;
+      - images are capped by the server (`--mm-processor-kwargs` max_pixels 6291456,
+        the same 3072x2048 budget as the client's `scale_to_fit`).
+    No MLX path: the vendor publishes no MLX checkpoint, only a conversion script
+    (`build_mlx.py`) that repairs the tokenizer after `mlx_vlm convert`.
+    """
+
+    adapter_id = "surya-ocr-2.5"
+    native_prefill_mode = "end2end"
+    end2end_output_format = "grounded-markdown"
+    end2end_max_tokens = 12_288
+    recommended_generation = {"temperature": 0.0, "top_p": 0.1}
+    capabilities = ModelCapabilities(
+        adapter_id=adapter_id,
+        display_name="Surya OCR 2.5",
+        tasks=("layout", "text", "table", "formula"),
+        coordinate_system="normalized-0-1000",
+        table_format="html",
+        training_types=(),
+        inference_modes=("vllm",),
+        hardware=("cuda",),
+        languages=("multilingual",),
+        hf_repo="datalab-to/surya-ocr-2.5",
+        approx_size_gb=1.4,
+        license_note=(
+            "Code Apache-2.0; weights under a modified OpenRAIL-M licence: free for research, "
+            "personal use and organisations under $5M revenue and funding, not for products "
+            "competing with Datalab."
+        ),
+        train_toolchain="none",
+        serve_backend="docker-vllm-openai",
+        serve_image="vllm/vllm-openai:v0.25.1",
+        served_model_name="surya-ocr-2.5",
+        max_model_len=24_576,
+        local_runtimes=("vllm",),
+    )
+
+    _LABEL_MAP = SURYA_LABELS
+    _BLOCK = re.compile(
+        r"<\|([A-Za-z-]+)\|><\|(\d{1,4})\|><\|(\d{1,4})\|><\|(\d{1,4})\|><\|(\d{1,4})\|>"
+        r'|<div data-bbox="(\d{1,4}) (\d{1,4}) (\d{1,4}) (\d{1,4})" data-label="([A-Za-z-]+)">'
+    )
+    # A data-bbox on a nested tag (`<|box|>` + four coordinates) and the end-of-turn
+    # token are protocol, not content.
+    _NOISE = re.compile(r"<\|box\|>(?:<\|\d{1,4}\|>){4}|<\|im_end\|>|<\|endoftext\|>")
+
+    def prompt_for(self, task: str, label: str | None = None) -> str | None:
+        if task == "end2end":
+            return (
+                "OCR this image to HTML. Each block is a div with data-label and data-bbox "
+                "(x0 y0 x1 y1, normalized 0-1000)."
+            )
+        raise NotImplementedError(
+            f"adapter '{self.adapter_id}': solo il percorso full-page ufficiale (end2end) è supportato"
+        )
+
+    def request_overrides(self, task: str) -> dict:
+        return {"skip_special_tokens": False} if task == "end2end" else {}
+
+    @staticmethod
+    def _table_html(html: str) -> str:
+        """Parent/ghost cells to colspan/rowspan, as `merged_cells.convert_merged_cells`."""
+        parser = _SuryaCells()
+        parser.feed(html)
+        parser.close()
+        grid = parser.rows
+        width = max((len(row) for row in grid), default=0)
+        kind = lambda r, c: grid[r][c]["kind"] if c < len(grid[r]) else None  # noqa: E731
+        rows_html = []
+        for r, row in enumerate(grid):
+            cells = []
+            for c, cell in enumerate(row):
+                if cell["kind"] == "ghost":
+                    continue
+                colspan = rowspan = 1
+                if cell["kind"] == "parent":
+                    while c + colspan < width and kind(r, c + colspan) == "ghost":
+                        colspan += 1
+                    while r + rowspan < len(grid) and all(
+                        kind(r + rowspan, c + dc) == "ghost" for dc in range(colspan)
+                    ):
+                        rowspan += 1
+                spans = (f' colspan="{colspan}"' if colspan > 1 else "") + (
+                    f' rowspan="{rowspan}"' if rowspan > 1 else ""
+                )
+                text = escape(" ".join("".join(cell["text"]).split()))
+                cells.append(f"<{cell['tag']}{spans}>{text}</{cell['tag']}>")
+            rows_html.append("<tr>" + "".join(cells) + "</tr>")
+        return "<table>" + "".join(rows_html) + "</table>"
+
+    def parse_layout(self, raw: str) -> list[dict]:
+        text = self._NOISE.sub("", raw or "")
+        matches = list(self._BLOCK.finditer(text))
+        items = []
+        for index, match in enumerate(matches):
+            if match.group(1):
+                kind, coords = match.group(1), match.group(2, 3, 4, 5)
+            else:
+                kind, coords = match.group(10), match.group(6, 7, 8, 9)
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            body = re.sub(r"</div>\s*$", "", text[match.end():end].strip())
+            label = self._LABEL_MAP.get(kind)
+            bbox = [int(value) for value in coords]
+            if label is None or not (0 <= bbox[0] < bbox[2] <= 1000 and 0 <= bbox[1] < bbox[3] <= 1000):
+                continue
+            if label == "Table" and "<table" in body.lower():
+                content = self._table_html(body)
+            elif label == "Picture":
+                content = ""
+            else:
+                parser = _SuryaText()
+                parser.feed(body)
+                parser.close()
+                content = parser.text()
+            items.append({"bbox": bbox, "label": label, "content": content})
+        return items
+
+
 class GeminiArgonAdapter(_StubAdapter):
     """Gemini 4 Argon (Google) raggiunto via gateway, non in locale.
 
@@ -2003,6 +2440,7 @@ _ADAPTERS: dict[str, ModelAdapter] = {
         MonkeyOCRv2ParsingAdapter(),
         MinerU2_5Adapter(),
         UnlimitedOcrAdapter(),
+        UnlimitedOcr2Adapter(),
         DotsOcrAdapter(),
         GlmOcrAdapter(),
         DeepSeekOcrAdapter(),
@@ -2011,6 +2449,8 @@ _ADAPTERS: dict[str, ModelAdapter] = {
         TeleOcrAdapter(),
         LlamaIndexOcriaAdapter(),
         LightOnOcr3Adapter(),
+        SuryaOcrAdapter(),
+        XiaomiOcrAdapter(),
         GeminiArgonAdapter(),
     )
 }

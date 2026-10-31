@@ -6,6 +6,49 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Added
+- Surya OCR 2.5 (`surya-ocr-2.5`): the vendor's full-page path on its vLLM image
+  (`vllm/vllm-openai:v0.25.1`, NVIDIA locally and on Vast.ai), with a decoder for its compact
+  block format and parent/ghost merged cells. Weights are under a restricted OpenRAIL-M licence.
+- Xiaomi-OCR-0 (`xiaomi-ocr-0`): the vendor's region mode, PP-DocLayoutV3 layout in the Paddle
+  runtime and one task prompt per crop, on stock vLLM locally and on Vast.ai, and on Apple
+  Silicon through mlx-vlm with the original weights.
+- Unlimited-OCR-2 (`unlimited-ocr-2`): served with the vendor's SGLang build (new `sglang`
+  serving runtime, locally on NVIDIA and on Vast.ai), its block protocol parser, and LoRA/full
+  training through ms-swift main (`unlimited-ocr`, training profile `uocr2`).
+- OCRia-1: the `agentic_plus` parse tier, and the vendor's watermark modes
+  (`move_to_end`, `move_to_start`, `remove`).
+
+### Changed
+- CI and release workflows: least-privilege permissions, concurrency, release gated on
+  tests and on non-empty CHANGELOG notes; training images build only from `main`;
+  Dependabot; `CITATION.cff` follows `VERSION`.
+- Supply chain: every GitHub Action pinned to a commit SHA, app image base images pinned
+  by digest, and `backend/constraints.txt` (universal lock) installed by the image and CI.
+- Backend error messages are all in the it/en/fr catalog, enforced by a test (R11).
+- `TABULARIUM_FORWARDED_ALLOW_IPS` sets the proxies trusted for `X-Forwarded-For`.
+- The credentialed CORS allowance for `localhost:5173` is gone: dev goes through the Vite proxy.
+- The MonkeyOCRv2 checkpoint and pixel caps are declared once in `app/models/monkeyocrv2.py`.
+- SECURITY.md documents supported versions, timeline and safe deployment defaults;
+  CHANGELOG has compare links that `scripts/version.py bump` keeps current.
+
+### Fixed
+- OCRia-1 parse requests used option names that LlamaCloud's current schema rejects
+  (`ignore.diagonal_text`, `job_failure_conditions.fail_on_job_timeout`, …). The payload
+  is now checked in tests against the vendor's OpenAPI schema; the two timeout toggles without an
+  API counterpart are gone, and stored settings with retired keys still load and save.
+- Saving the cost-effective tier no longer fails when the cost optimizer is switched off.
+- Training start, first thumbnail and custom model deletion no longer fail with a
+  NameError; pyflakes now guards the backend against undefined names.
+- Restoring the oldest backup no longer prunes it first.
+- `html_to_otsl` keeps rowspans in their column on short rows.
+- Prefill defaults to `merge`; `replace`/`replace_all` require `confirm=true`.
+- Prefill advances `annotation_revision`: an approved page loses its approval and a
+  concurrent editor gets a conflict instead of overwriting the drafts.
+- Prefill no longer auto-deskews a page that keeps blocks (only `replace_all` may).
+- Each migration and its schema version commit together; restoring an older backup
+  migrates it immediately; the transformed master no longer leaks a file handle.
+
 ### Security
 - The SPA fallback no longer serves files outside `frontend/dist` (encoded `..` read any file).
 - Admins cannot reset their own password; OIDC links an existing account only when the
@@ -20,31 +63,6 @@ Notable changes to Tabularium. The format follows
 - Logout ends Bearer sessions too; the live channel refuses a password still to change;
   `/api/system/info` needs login and shows server paths to admins only; scan jobs are
   read only through their own project.
-
-### Fixed
-- Training start, first thumbnail and custom model deletion no longer fail with a
-  NameError; pyflakes now guards the backend against undefined names.
-- Restoring the oldest backup no longer prunes it first.
-- `html_to_otsl` keeps rowspans in their column on short rows.
-- Prefill defaults to `merge`; `replace`/`replace_all` require `confirm=true`.
-- Prefill advances `annotation_revision`: an approved page loses its approval and a
-  concurrent editor gets a conflict instead of overwriting the drafts.
-- Prefill no longer auto-deskews a page that keeps blocks (only `replace_all` may).
-- Each migration and its schema version commit together; restoring an older backup
-  migrates it immediately; the transformed master no longer leaks a file handle.
-
-### Changed
-- CI and release workflows: least-privilege permissions, concurrency, release gated on
-  tests and on non-empty CHANGELOG notes; training images build only from `main`;
-  Dependabot; `CITATION.cff` follows `VERSION`.
-- Supply chain: every GitHub Action pinned to a commit SHA, app image base images pinned
-  by digest, and `backend/constraints.txt` (universal lock) installed by the image and CI.
-- Backend error messages are all in the it/en/fr catalog, enforced by a test (R11).
-- `TABULARIUM_FORWARDED_ALLOW_IPS` sets the proxies trusted for `X-Forwarded-For`.
-- The credentialed CORS allowance for `localhost:5173` is gone: dev goes through the Vite proxy.
-- The MonkeyOCRv2 checkpoint and pixel caps are declared once in `app/models/monkeyocrv2.py`.
-- SECURITY.md documents supported versions, timeline and safe deployment defaults;
-  CHANGELOG has compare links that `scripts/version.py bump` keeps current.
 
 ## [0.4.0] - 2026-10-27
 

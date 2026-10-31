@@ -90,6 +90,10 @@ def serve_argv(
         return []
     if recipe.runtime == "monkeyocr":
         argv = ["serve.py", "--model-path", model_path]
+    elif recipe.runtime == "sglang":
+        if lora_path.strip() or draft_model_path.strip():
+            raise ValueError(f"'{recipe.adapter_id}' è servito da SGLang: LoRA e draft non sono previsti dalla ricetta")
+        argv = ["-m", "sglang.launch_server", "--model-path", model_path]
     else:
         # Anche il runtime "docker" usa la CLI di vLLM: la differenza è che il
         # server è già nell'immagine invece di essere installato con pip.

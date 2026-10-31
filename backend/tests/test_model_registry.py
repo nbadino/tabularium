@@ -112,6 +112,9 @@ def test_new_adapters_are_registered_alongside_monkeyocrv2():
         "teleocr",
         "lightonocr-3",
         "gemini-argon",
+        "surya-ocr-2.5",
+        "xiaomi-ocr-0",
+        "unlimited-ocr-2",
     ):
         assert expected in ids
 

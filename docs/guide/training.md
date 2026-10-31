@@ -53,6 +53,9 @@ flags, official notes and `script_ready`.
 | `mineru2.5` | `opendatalab/MinerU2.5-Pro-2605-1.2B` | official `run_mineru.py` wrapper | — | `ms-swift-jsonl` | planned (bundle required) |
 | `teleocr` | `StarDoc-AI/TeleOCR` | — | — | — | inference-only |
 | `lightonocr-3` | `lightonai/LightOnOCR-3-1B` | — | — | — | inference-only |
+| `unlimited-ocr-2` | `baidu/Unlimited-OCR-2` | ms-swift (main, `d52d0c4`) | LoRA, full | `ms-swift-jsonl` | experimental |
+| `surya-ocr-2.5` | `datalab-to/surya-ocr-2.5` | — | — | — | inference-only |
+| `xiaomi-ocr-0` | `xiaomi-research/Xiaomi-OCR-0` | — | — | — | inference-only |
 
 `text_rec`, `table` and `formula` are the recognition families. `layout` is added
 only for models whose protocol produces bounding boxes: GLM-OCR and PaddleOCR-VL
@@ -154,7 +157,24 @@ Tabularium offers the ms-swift path for these three because it is executable and
 the framework registers them, but labels it `experimental`: the numbers are
 toolchain defaults, not a vendor recipe.
 
-### TeleOCR and LightOnOCR-3 — inference only
+### Unlimited-OCR-2 — ms-swift main, experimental
+
+Source: ms-swift [`examples/models/unlimited_ocr2/train.sh`](https://github.com/modelscope/ms-swift/blob/d52d0c45000b875683e23dcf85d9a6e2ef346e52/examples/models/unlimited_ocr2/train.sh).
+
+- `--model_type unlimited-ocr` (with a hyphen: v1 is `unlimited_ocr`) `--template unlimited_ocr`.
+  The model type exists only on ms-swift main since `d52d0c4`; 4.6.0, the latest release,
+  does not have it. The training profile `uocr2` installs that commit with
+  `transformers==4.52.1`, `easydict` and `addict`, as the example does.
+- LoRA r8/α32 on all-linear, ViT and aligner frozen, lr 1e-4, 1 epoch, batch 1 × 16,
+  `max_length` 4096, warmup 0.05; the example states 26 GiB.
+- As with v1, inference uses the native block protocol while this training produces OTSL on
+  crops: `experimental` until the dataset exports the end2end family.
+
+### TeleOCR, LightOnOCR-3, Surya OCR 2.5, Xiaomi-OCR-0 — inference only
+
+Surya OCR 2.5 and Xiaomi-OCR-0 publish no training code either: Datalab offers fine-tuning as
+a service, and Xiaomi describes its recipe (CPT, Mix-RL) only in prose.
+
 
 Neither repository ships training code or a runnable config. Their papers/blog
 describe the method (LightOnOCR-3's layout reward is `min(IoU/0.75, 1)`, which
