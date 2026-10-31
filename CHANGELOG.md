@@ -11,6 +11,7 @@ Notable changes to Tabularium. The format follows
 - Admins cannot reset their own password; OIDC links an existing account only when the
   provider asserts `email_verified`; a server `archive_dir` is admin-only.
 - A warning is logged at startup when `TABULARIUM_AUTH=off`.
+- SSH training targets starting with `-` are refused (they were read as ssh options).
 
 ### Fixed
 - Training start, first thumbnail and custom model deletion no longer fail with a
