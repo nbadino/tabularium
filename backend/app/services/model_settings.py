@@ -160,8 +160,13 @@ def get_settings(adapter_id: str) -> dict[str, Any]:
     recommended = _defaults(adapter_id)
     overrides = _load_overrides(adapter_id)
     effective = json.loads(json.dumps(recommended))
+    declared = {field.key for field in _settings_spec(adapter_id).workflow}
     for section, values in overrides.items():
         if section in effective and isinstance(values, dict):
+            # A workflow key the spec no longer declares (the vendor renamed it) stays
+            # in the stored overrides but must not reach the request or the panel.
+            if section == "workflow":
+                values = {key: value for key, value in values.items() if key in declared}
             effective[section].update(values)
     return {
         "adapter_id": adapter_id,
@@ -384,12 +389,13 @@ def _validate_workflow(adapter_id: str, values: dict[str, Any], spec: "SettingsS
         **result,
     }
     for field in spec.workflow:
-        if field.requires and effective.get(field.key) is not None:
+        # A disabled toggle (False) is not a use of the option: only a set value is.
+        if field.requires and effective.get(field.key) not in (None, False):
             target, expected = field.requires
-            if effective.get(target) != expected:
+            if effective.get(target) not in expected:
                 raise HTTPException(
                     status_code=422,
-                    detail=f"workflow.{field.key} richiede workflow.{target} = {expected}",
+                    detail=f"workflow.{field.key} richiede workflow.{target} in {', '.join(expected)}",
                 )
     return result
 

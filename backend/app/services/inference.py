@@ -634,6 +634,61 @@ class VllmClient:
             raise RuntimeError("risposta non JSON dal pipeline ufficiale MinerU") from exc
         return self.adapter.parse_native_result(payload.get("blocks"))
 
+    def xiaomi_native_page(
+        self,
+        image: Image.Image,
+        *,
+        on_delta: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> list[dict]:
+        """Xiaomi-OCR-0's region mode: PP-DocLayoutV3, then one task prompt per crop.
+
+        `mcp_ocr_server.ocr_image(mode="region")`: the page is fitted to 2048 px, regions
+        keep the detector's order, crops are cut from the 0-1000 box without padding, and
+        up to eight run at once. Skipped regions (images, charts) stay as empty blocks.
+        """
+        if self.adapter.adapter_id != "xiaomi-ocr-0":
+            raise RuntimeError("il runner nativo Xiaomi-OCR-0 richiede l'adapter Xiaomi-OCR-0")
+        from concurrent.futures import ThreadPoolExecutor
+
+        from ..models.xiaomi_ocr import XIAOMI_LABELS, XIAOMI_LAYOUT_TASKS
+        from . import model_settings
+
+        workflow = model_settings.get_settings("xiaomi-ocr-0")["effective"]["workflow"]
+        page = image.convert("RGB")
+        edge = self.adapter.page_max_edge
+        if page.width > edge or page.height > edge:
+            page.thumbnail((edge, edge), Image.Resampling.LANCZOS)
+        regions = [
+            region
+            for region in paddle_official.detect_layout(page, threshold=float(workflow["layout_threshold"]))
+            if region["label"] in XIAOMI_LAYOUT_TASKS
+        ]
+
+        def read(region: dict) -> dict:
+            task = XIAOMI_LAYOUT_TASKS[region["label"]]
+            item = {"bbox": region["bbox"], "label": XIAOMI_LABELS[region["label"]], "content": ""}
+            if task == "skip":
+                return item
+            x1, y1, x2, y2 = region["bbox"]
+            crop = page.crop((
+                int(x1 / 1000 * page.width), int(y1 / 1000 * page.height),
+                int(x2 / 1000 * page.width), int(y2 / 1000 * page.height),
+            ))
+            item["content"] = (self._chat(
+                crop,
+                self.adapter.prompt_for(task),
+                max_tokens=self._output_budget(self.adapter.region_max_tokens),
+                max_pixels=None,
+                sampling=self._sampling_for(task),
+                task=task,
+                cancel_event=cancel_event,
+            ) or "").strip()
+            return item
+
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(regions)))) as pool:
+            return list(pool.map(read, regions))
+
     def paddle_native_page(
         self,
         image: Image.Image,

@@ -22,8 +22,11 @@ from . import (
     monkeyocrv2,
     paddleocr_vl,
     qwen3_vl_8b,
+    surya_ocr,
     teleocr,
     unlimited_ocr,
+    unlimited_ocr2,
+    xiaomi_ocr,
 )
 from .base import (
     SPEC_SURFACES,
@@ -48,8 +51,11 @@ _MODULES = (
     monkeyocrv2,
     paddleocr_vl,
     qwen3_vl_8b,
+    surya_ocr,
     teleocr,
     unlimited_ocr,
+    unlimited_ocr2,
+    xiaomi_ocr,
 )
 
 SPECS: dict[str, ModelSpec] = {module.SPEC.adapter_id: module.SPEC for module in _MODULES}

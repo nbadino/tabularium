@@ -6,6 +6,25 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Added
+- Surya OCR 2.5 (`surya-ocr-2.5`): the vendor's full-page path on its vLLM image
+  (`vllm/vllm-openai:v0.25.1`, NVIDIA locally and on Vast.ai), with a decoder for its compact
+  block format and parent/ghost merged cells. Weights are under a restricted OpenRAIL-M licence.
+- Xiaomi-OCR-0 (`xiaomi-ocr-0`): the vendor's region mode, PP-DocLayoutV3 layout in the Paddle
+  runtime and one task prompt per crop, on stock vLLM locally and on Vast.ai.
+- Unlimited-OCR-2 (`unlimited-ocr-2`): served with the vendor's SGLang build (new `sglang`
+  serving runtime, locally on NVIDIA and on Vast.ai), its block protocol parser, and LoRA/full
+  training through ms-swift main (`unlimited-ocr`, training profile `uocr2`).
+- OCRia-1: the `agentic_plus` parse tier, and the vendor's watermark modes
+  (`move_to_end`, `move_to_start`, `remove`).
+
+### Fixed
+- OCRia-1 parse requests used option names that LlamaCloud's current schema rejects
+  (`ignore.diagonal_text`, `job_failure_conditions.fail_on_job_timeout`, …). The payload
+  is now checked in tests against the vendor's OpenAPI schema; the two timeout toggles without an
+  API counterpart are gone, and stored settings with retired keys still load and save.
+- Saving the cost-effective tier no longer fails when the cost optimizer is switched off.
+
 ## [0.4.0] - 2026-10-27
 
 ### Fixed
