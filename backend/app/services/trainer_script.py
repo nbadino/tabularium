@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import config
+from ..models import monkeyocrv2 as reference
 from .dataset_builder import _project_dir
 from . import train_recipes as recipes
 from .training_views import build_view
@@ -30,7 +31,7 @@ from .training_views import build_view
 # Default storici del riferimento MonkeyOCRv2: restano il fallback quando una
 # chiamata non specifica nulla, ma ogni modello prende i propri dalla ricetta.
 DEFAULTS: dict = {
-    "model": "zenosai/MonkeyOCRv2-B-Parsing",
+    "model": reference.HF_REPO,
     "model_path": "",
     "train_type": "lora",
     "lora_rank": 8,
@@ -40,7 +41,7 @@ DEFAULTS: dict = {
     "batch_size": 4,
     "grad_accum": 1,
     "max_length": 16384,
-    "max_pixels": 1003520,
+    "max_pixels": reference.TRAIN_MAX_PIXELS,
     "gpus": "0",
     "nproc": 1,
     "eval_steps": 200,

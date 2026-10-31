@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+from .models import monkeyocrv2 as reference
 
 
 # --- Autenticazione & utenti (self-hosted) ---------------------------------------
@@ -596,7 +597,7 @@ class TrainConfig(BaseModel):
     batch_size: int = Field(default=4, ge=1, le=128)
     grad_accum: int = Field(default=1, ge=1, le=128)
     max_length: int = Field(default=16384, ge=128, le=65536)
-    max_pixels: int = Field(default=1003520, ge=1000, le=4000000)
+    max_pixels: int = Field(default=reference.TRAIN_MAX_PIXELS, ge=1000, le=4000000)
     gpus: str = "0"
     nproc: int = Field(default=1, ge=1, le=64)
     eval_steps: int = Field(default=200, ge=1, le=100000)

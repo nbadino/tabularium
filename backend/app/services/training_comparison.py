@@ -12,6 +12,7 @@ from PIL import Image
 
 from . import evaluate, inference
 from ..domain import otsl
+from ..models import monkeyocrv2 as reference
 from .model_adapters import MonkeyOCRv2ParsingAdapter
 
 
@@ -21,8 +22,8 @@ class ValidationClient(inference.VllmClient):
     def __init__(self, url: str, model: str):
         super().__init__(url=url, model=model, api_key='', extra_headers={},
                          adapter=MonkeyOCRv2ParsingAdapter(), provider='vast',
-                         max_pixels=1003520, timeout=180, max_retries=1)
-        self.max_pixels = 1003520  # Freeze the comparison protocol despite saved UI overrides.
+                         max_pixels=reference.PARSE_MAX_PIXELS, timeout=180, max_retries=1)
+        self.max_pixels = reference.PARSE_MAX_PIXELS  # Freeze the comparison protocol despite saved UI overrides.
 
     def _sampling_for(self, task: str) -> dict:
         return {'temperature': 0.0, 'top_p': 1.0, 'seed': 42}
@@ -169,6 +170,6 @@ def comparison_report(run_dir: Path, baseline: dict, fine_tuned: dict) -> dict:
         'counts': counts, 'training_context': training_context,
         'output_changes': {'total': len(baseline['samples']),
                            'changed': sum(a['prediction'] != b['prediction'] for a, b in zip(baseline['samples'], fine_tuned['samples']))},
-        'generation': {'temperature': 0.0, 'top_p': 1.0, 'seed': 42, 'max_pixels': 1003520},
+        'generation': {'temperature': 0.0, 'top_p': 1.0, 'seed': 42, 'max_pixels': reference.PARSE_MAX_PIXELS},
         'baseline': baseline, 'fine_tuned': fine_tuned, 'deltas': deltas, 'verdict': verdict,
         'limitations': limitations}

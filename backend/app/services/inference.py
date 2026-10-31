@@ -22,6 +22,7 @@ import requests
 from PIL import Image
 
 from .. import config
+from ..models import monkeyocrv2 as reference
 from . import paddle_official
 from ..adapters import inference_config as configstore
 from ..domain import inference as protocol
@@ -109,7 +110,7 @@ def _with_table_hint(adapter: ModelAdapter, prompt: str, hint: str | None) -> st
 # punto di lavoro del checkpoint ufficiale.
 # Attenzione a non confondere questo con `max_pixels 1003520` degli iperparametri
 # di *training* (AGENTS.md §2.6): sono due cose diverse anche se il valore coincide.
-LAYOUT_MIN_PIXELS = 1_003_520
+LAYOUT_MIN_PIXELS = reference.PARSE_MAX_PIXELS
 
 # Rete di sicurezza per il solo layout, usata quando il tetto globale è
 # disattivato esplicitamente (`TABULARIUM_VLLM_MAX_PIXELS=0`): una scansione
