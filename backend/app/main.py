@@ -10,7 +10,6 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from . import config
@@ -90,15 +89,8 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         detail = localize_detail(detail, parse_lang(request.headers.get("accept-language")))
     return JSONResponse(status_code=exc.status_code, content={"detail": detail})
 
-# CORS permissivo: app locale a uso singolo/multiutente in LAN.
-# In produzione conviene restringere ad origini esplicite.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "Accept-Language"],
-    allow_credentials=True,
-)
+# No CORS: the SPA is same-origin in production and the Vite dev server proxies /api
+# (frontend/vite.config.ts), so no cross-origin page ever needs credentialed access.
 
 
 @app.middleware("http")

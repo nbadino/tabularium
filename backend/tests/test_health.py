@@ -19,3 +19,9 @@ def test_system_info():
         body = r.json()
         assert body["app"] == "Tabularium"
         assert body["schema_version"] == str(db.SCHEMA_VERSION)
+
+
+def test_no_cross_origin_page_gets_credentialed_access():
+    with TestClient(app) as client:
+        r = client.get("/api/health", headers={"Origin": "http://localhost:5173"})
+        assert "access-control-allow-origin" not in r.headers

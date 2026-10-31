@@ -41,6 +41,7 @@ Notable changes to Tabularium. The format follows
   by digest, and `backend/constraints.txt` (universal lock) installed by the image and CI.
 - Backend error messages are all in the it/en/fr catalog, enforced by a test (R11).
 - `TABULARIUM_FORWARDED_ALLOW_IPS` sets the proxies trusted for `X-Forwarded-For`.
+- The credentialed CORS allowance for `localhost:5173` is gone: dev goes through the Vite proxy.
 - The MonkeyOCRv2 checkpoint and pixel caps are declared once in `app/models/monkeyocrv2.py`.
 - SECURITY.md documents supported versions, timeline and safe deployment defaults;
   CHANGELOG has compare links that `scripts/version.py bump` keeps current.
