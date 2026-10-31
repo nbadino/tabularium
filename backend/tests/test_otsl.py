@@ -96,3 +96,12 @@ def test_out_of_bounds_not_allowed():
     grid = _g(2, 2, [{"r": 1, "c": 1, "rowspan": 2, "colspan": 1, "text": "x"}])
     with pytest.raises(ValueError):
         grid_to_otsl(grid)
+
+
+def test_a_short_row_keeps_the_rowspan_in_its_column():
+    from app.domain.otsl import html_to_otsl, otsl_to_grid
+
+    grid = otsl_to_grid(html_to_otsl("<table><tr><td>a</td><td rowspan=2>b</td></tr><tr></tr></table>"))
+    cells = {c["text"]: c for c in grid["cells"]}
+    assert grid["rows"] == 2 and grid["cols"] == 2
+    assert cells["b"]["rowspan"] == 2 and cells["a"]["rowspan"] == 1

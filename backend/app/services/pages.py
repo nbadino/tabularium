@@ -275,7 +275,8 @@ def ensure_thumbnail(page: dict) -> Path:
     img = img.convert("RGB")
     img.thumbnail((THUMB_SIDE, THUMB_SIDE), Image.LANCZOS)
     img.save(expected, "JPEG", quality=82)
-    pagestore.set_thumb(conn, page["id"], str(expected))
+    with connect() as conn:
+        pagestore.set_thumb(conn, page["id"], str(expected))
     return expected
 
 

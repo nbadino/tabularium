@@ -72,7 +72,7 @@ def restore_backup(name: str, confirm: bool = False, user: dict = Depends(_admin
     if not confirm:
         raise HTTPException(status_code=409, detail="restore distruttivo: conferma richiesta")
     try:
-        before = backupsvc.create_backup(reason="pre-restore")
+        before = backupsvc.create_backup(reason="pre-restore", keep=name)
         restored = backupsvc.restore(name)
     except (OSError, RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
