@@ -145,7 +145,8 @@ export default function ProjectsPage() {
             <Field label={t('workflow.importSource')}>
               <select className="fld mb-3" value={source} onChange={(e) => setSource(e.target.value as 'upload' | 'server')}>
                 <option value="upload">{t('workflow.fromComputer')}</option>
-                <option value="server">{t('workflow.fromServer')}</option>
+                {/* A server path reads any folder the process can open: admin only, as on the backend. */}
+                {canBrowse && <option value="server">{t('workflow.fromServer')}</option>}
               </select>
             </Field>
               {source === 'server' && <Field

@@ -29,3 +29,13 @@ def test_api_registered_over_spa():
     with TestClient(app) as client:
         assert client.get("/api/health").status_code == 200
         assert client.get("/api/nonexistent").status_code == 404
+
+def test_spa_fallback_does_not_serve_files_outside_dist():
+    # `..` encoded so the client does not normalise it; the route receives `../`.
+    secret = config.FRONTEND_DIST.parent / "package.json"
+    assert secret.is_file()
+    with TestClient(app) as client:
+        r = client.get("/%2e%2e/package.json")
+        assert r.status_code == 200
+        assert "text/html" in r.headers["content-type"]
+        assert r.text != secret.read_text()

@@ -135,6 +135,7 @@ if _dist.exists():
         app.mount("/assets", _HashedAssets(directory=_dist / "assets"), name="assets")
 
     _index = _dist / "index.html"
+    _dist_root = _dist.resolve()
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa(full_path: str):
@@ -145,8 +146,10 @@ if _dist.exists():
         # a ogni build» — `no-store` lo rende impossibile: dopo questa voce
         # installata in cache, niente più hard refresh.
         no_store = {"Cache-Control": "no-store"}
-        candidate = _dist / full_path
-        if full_path and candidate.is_file() and candidate.is_relative_to(_dist):
+        # resolve() before the containment check: `is_relative_to` compares text, so
+        # an unresolved `dist/../../.env` would pass and leak any readable file.
+        candidate = (_dist / full_path).resolve()
+        if full_path and candidate.is_relative_to(_dist_root) and candidate.is_file():
             return FileResponse(candidate, headers=no_store)
         if _index.exists():
             return FileResponse(_index, media_type="text/html", headers=no_store)

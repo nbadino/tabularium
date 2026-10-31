@@ -160,7 +160,7 @@ def test_an_unknown_state_is_refused(monkeypatch) -> None:
 def test_a_state_cannot_be_used_twice(monkeypatch) -> None:
     monkeypatch.setattr(config, "AUTH_MODE", "on")
     _configure()
-    _fake_provider(monkeypatch, {"sub": "1", "email": "a@uni.it"})
+    _fake_provider(monkeypatch, {"sub": "1", "email": "a@uni.it", "email_verified": True})
     client = TestClient(app)
     _, state = _start(client)
     first = client.get(f"/api/auth/oidc/callback?code=abc&state={state}", follow_redirects=False)
@@ -199,3 +199,15 @@ def test_the_default_role_of_the_instance_is_applied(monkeypatch) -> None:
     _, state = _start(client)
     client.get(f"/api/auth/oidc/callback?code=abc&state={state}", follow_redirects=False)
     assert client.get("/api/auth/me").json()["role"] == "viewer"
+
+
+def test_a_missing_email_verified_claim_is_refused(monkeypatch) -> None:
+    # Linking is by email: without an asserted verification anyone could claim the
+    # admin's address at a permissive provider and inherit the account.
+    monkeypatch.setattr(config, "AUTH_MODE", "on")
+    _configure()
+    _fake_provider(monkeypatch, {"sub": "1", "email": "a@uni.it"})
+    client = TestClient(app)
+    _, state = _start(client)
+    response = client.get(f"/api/auth/oidc/callback?code=abc&state={state}", follow_redirects=False)
+    assert "auth_error=oidc_email" in response.headers["location"]

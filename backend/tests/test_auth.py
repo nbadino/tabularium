@@ -238,9 +238,7 @@ def test_editor_creates_project_and_becomes_owner():
     _mkuser("editor", role="editor")
     with _client() as client:
         _login(client, "editor")
-        r = client.post(
-            "/api/projects", json={"name": "p", "archive_dir": "/tmp"}
-        )
+        r = client.post("/api/projects", json={"name": "p"})
         assert r.status_code == 201, r.text
         pid = r.json()["id"]
     with connect() as conn:
@@ -607,3 +605,27 @@ def test_block_context_is_authorized_and_cannot_be_spoofed_by_query():
     with _client() as client:
         _login(client, "block_stranger")
         assert client.get(f"/api/blocks/{block_id}").status_code == 404
+
+
+def test_admin_cannot_reset_own_password():
+    # R12: an admin changes their own password through change-password, which asks
+    # for the current one; reset would let a stolen session take over the account.
+    boss = _mkuser("boss", role="admin")
+    with _client() as client:
+        _login(client, "boss")
+        r = client.post(f"/api/users/{boss['id']}/reset-password", json={"password": "nuovapass-123"})
+        assert r.status_code == 400
+
+
+def test_only_an_admin_can_point_a_project_at_a_server_folder(tmp_path):
+    _mkuser("boss", role="admin")
+    _mkuser("anna", role="editor")
+    with _client() as client:
+        _login(client, "anna")
+        r = client.post("/api/projects", json={"name": "p", "archive_dir": str(tmp_path)})
+        assert r.status_code == 403
+        assert client.post("/api/projects", json={"name": "p"}).status_code == 201
+    with _client() as client:
+        _login(client, "boss")
+        r = client.post("/api/projects", json={"name": "q", "archive_dir": str(tmp_path)})
+        assert r.status_code == 201

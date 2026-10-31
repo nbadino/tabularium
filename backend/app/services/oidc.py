@@ -208,7 +208,9 @@ def identity_from_claims(claims: dict) -> dict:
     email = str(claims.get("email") or "").strip().lower()
     if not email or "@" not in email:
         raise OidcError("oidc_email", "il provider non ha restituito un indirizzo email")
-    if claims.get("email_verified") is False:
+    # Accounts are linked by email, so only an asserted verification is enough:
+    # a missing claim would let anyone claim an existing (admin) address.
+    if claims.get("email_verified") is not True:
         raise OidcError("oidc_email", "l'indirizzo email non è verificato dal provider")
     subject = str(claims.get("sub") or "").strip()
     label = str(claims.get("preferred_username") or claims.get("name") or "").strip()

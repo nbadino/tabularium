@@ -44,7 +44,7 @@ Behaviour worth knowing:
   administrator who already created that email keeps the existing account and role;
 - with **allowed domains** empty, any account the provider authenticates can enter; an
   institution should fill it in;
-- an unverified email (`email_verified: false`) is refused, and so is a disabled account;
+- an email the provider does not assert as verified (`email_verified` missing or false) is refused, and so is a disabled account;
 - the flow uses authorization code + PKCE, and each attempt's `state` is single-use and
   expires after ten minutes.
 

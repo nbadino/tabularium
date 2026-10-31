@@ -178,6 +178,10 @@ def create_project(
     # Chi crea il progetto ne diventa il proprietario. In modalità off
     # `owner_id` resta NULL (non esistono utenti).
     authsvc.require_role(user, "editor")
+    # A server path exposes whatever the process can read, so it is an admin
+    # decision, like browsing the server's folders (`/api/system/fs/browse`).
+    if payload.archive_dir:
+        authsvc.require_role(user, "admin")
     archive_dir = str(Path(payload.archive_dir).expanduser().resolve()) if payload.archive_dir else None
     if archive_dir and not Path(archive_dir).is_dir():
         raise HTTPException(status_code=400, detail="la cartella archivio non esiste")
