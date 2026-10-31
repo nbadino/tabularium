@@ -19,6 +19,8 @@ file of the data folder.
 | `TABULARIUM_TRAIN_ENV` | `monkeyocrv2-train` | conda/venv name for training |
 | `TABULARIUM_MODELS_DIR` | `<repo>/models` | local model checkpoints |
 | `TABULARIUM_PUBLIC_URL` | unset | public URL for the OIDC callback when a proxy hides the real address |
+| `TABULARIUM_SESSION_COOKIE_SECURE` | `0` | `1` behind HTTPS: the session cookie is never sent in clear |
+| `TABULARIUM_FORWARDED_ALLOW_IPS` | `127.0.0.1` | proxies trusted for `X-Forwarded-For` (comma list or `*`); the client address keys the login rate limit |
 
 ## Institutional login (OIDC)
 

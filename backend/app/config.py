@@ -143,6 +143,10 @@ SESSION_TTL_DAYS = int(os.environ.get("TABULARIUM_SESSION_TTL_DAYS", "30"))
 SESSION_COOKIE = os.environ.get("TABULARIUM_SESSION_COOKIE", "tab_session")
 # In HTTPS deployments set this to 1. Local HTTP development keeps it off so
 # the browser can use the cookie on 127.0.0.1.
+# Proxies whose X-Forwarded-For uvicorn trusts. The client address keys the login
+# rate limit, so behind a proxy that is not on 127.0.0.1 (a Docker bridge gateway,
+# another host) list it here, or every client looks like the proxy.
+FORWARDED_ALLOW_IPS = os.environ.get("TABULARIUM_FORWARDED_ALLOW_IPS", "127.0.0.1").strip()
 SESSION_COOKIE_SECURE = os.environ.get("TABULARIUM_SESSION_COOKIE_SECURE", "0").strip() != "0"
 SSH_KNOWN_HOSTS = Path(os.environ.get("TABULARIUM_SSH_KNOWN_HOSTS", "").strip() or (ROOT_DIR / "known_hosts"))
 BACKUP_RETENTION = max(1, int(os.environ.get("TABULARIUM_BACKUP_RETENTION", "10")))

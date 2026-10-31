@@ -91,7 +91,7 @@ def update_user(
             if userstore.owned_projects(user_id, conn):
                 raise HTTPException(
                     status_code=409,
-                    detail="trasferisci prima la proprietà dei progetti dell’utente",
+                    detail="trasferisci prima la proprietà dei progetti dell'utente",
                 )
         if payload.role and payload.role != target["role"] and admin["id"] != target["id"]:
             _guard_demote(conn, target["id"])

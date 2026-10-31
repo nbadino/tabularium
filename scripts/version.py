@@ -20,7 +20,7 @@ def read_version() -> tuple[str, tuple[int, int, int]]:
     return version, tuple(map(int, match.groups()))
 
 
-def write_version(version: str) -> None:
+def write_version(version: str, previous: str | None = None) -> None:
     (ROOT / "VERSION").write_text(f"{version}\n", encoding="utf-8")
     for name in ("package.json", "package-lock.json"):
         path = ROOT / "frontend" / name
@@ -40,6 +40,15 @@ def write_version(version: str) -> None:
         f"## [Unreleased]\n\n## [{version}] - {date.today().isoformat()}",
         1,
     )
+    if previous:
+        # Keep the Keep-a-Changelog compare links in step with the headings.
+        base = "https://github.com/nbadino/tabularium"
+        content = content.replace(
+            f"[Unreleased]: {base}/compare/v{previous}...HEAD",
+            f"[Unreleased]: {base}/compare/v{version}...HEAD\n"
+            f"[{version}]: {base}/compare/v{previous}...v{version}",
+            1,
+        )
     changelog.write_text(content, encoding="utf-8")
 
 
@@ -64,7 +73,7 @@ def main() -> None:
     else:
         numbers = (major, minor, patch + 1)
     updated = ".".join(map(str, numbers))
-    write_version(updated)
+    write_version(updated, current)
     print(f"{current} → {updated}")
     print("Move the [Unreleased] notes in CHANGELOG.md, review the changes, then tag.")
 

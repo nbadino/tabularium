@@ -39,6 +39,11 @@ Notable changes to Tabularium. The format follows
   Dependabot; `CITATION.cff` follows `VERSION`.
 - Supply chain: every GitHub Action pinned to a commit SHA, app image base images pinned
   by digest, and `backend/constraints.txt` (universal lock) installed by the image and CI.
+- Backend error messages are all in the it/en/fr catalog, enforced by a test (R11).
+- `TABULARIUM_FORWARDED_ALLOW_IPS` sets the proxies trusted for `X-Forwarded-For`.
+- The MonkeyOCRv2 checkpoint and pixel caps are declared once in `app/models/monkeyocrv2.py`.
+- SECURITY.md documents supported versions, timeline and safe deployment defaults;
+  CHANGELOG has compare links that `scripts/version.py bump` keeps current.
 
 ## [0.4.0] - 2026-10-27
 
@@ -543,7 +548,13 @@ Notable changes to Tabularium. The format follows
   pages only confirmed blocks now count.
 - The backend setup script no longer warns that OCR is missing when it is installed.
 
-## [0.1.0]
+## [0.1.0] - 2026-09-01
 
 ### Added
 - Recognition, annotation, dataset export, training and evaluation workflow.
+
+[Unreleased]: https://github.com/nbadino/tabularium/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/nbadino/tabularium/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/nbadino/tabularium/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/nbadino/tabularium/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/nbadino/tabularium/releases/tag/v0.1.0
