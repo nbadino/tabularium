@@ -71,6 +71,7 @@ press `Ctrl+C` to stop it.
 | `tabularium --host 0.0.0.0` | accept connections from other computers (for a shared lab server) |
 | `uv tool upgrade tabularium` | upgrade to the latest release ([back up first](upgrading.md)) |
 | `uv tool uninstall tabularium` | remove the app (your data folder is kept) |
+| `tabularium backup` | archive the data folder and the vault key ([Upgrading](upgrading.md)) |
 
 **Your data** (projects, database, models, settings) lives in `~/Tabularium`,
 outside the installed package, so upgrades never touch it. The folder also
@@ -177,6 +178,15 @@ The image contains the whole application — interface, backend, OCR engine — 
 no PyTorch: model runtimes and training are prepared separately, or run on a
 rented GPU.
 
+Releases after 0.4.0 publish the image to the GitHub registry:
+
+```bash
+docker run -d --name tabularium -p 127.0.0.1:8787:8787 \
+  -v tabularium-data:/data ghcr.io/nbadino/tabularium:<version>
+```
+
+or build it from a clone:
+
 ```bash
 docker build -f docker/app/Dockerfile -t tabularium .
 docker run -d --name tabularium -p 127.0.0.1:8787:8787 \
@@ -191,7 +201,8 @@ docker compose -f docker/app/compose.yml up -d
 
 The data directory is `/data` inside the container: the SQLite database, the
 projects, the crops, the runs, the models and the vault key. Back it up as a
-volume, not as a file inside the image. The interface listens on `0.0.0.0:8787`;
+volume, not as a file inside the image; upgrades and rollbacks are in
+[Upgrading and rollback](upgrading.md). The interface listens on `0.0.0.0:8787`;
 publish it on the loopback and let a reverse proxy terminate TLS, or change the
 port mapping deliberately.
 Inside the container a host proxy arrives from the bridge gateway, not from

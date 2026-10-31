@@ -86,3 +86,17 @@ def test_the_app_refuses_to_start_with_two_workers(monkeypatch) -> None:
         assert "single process" in str(exc)
     else:  # pragma: no cover - the guard must fire
         raise AssertionError("a multi-worker start was accepted")
+
+
+def test_a_database_from_a_newer_release_names_the_way_back() -> None:
+    from app import db
+    from app.adapters import store
+
+    db.init_db()
+    store.put_raw("schema_version", str(int(db.SCHEMA_VERSION) + 1))
+    try:
+        check = doctor.check_schema()
+    finally:
+        store.put_raw("schema_version", db.SCHEMA_VERSION)
+    assert check.status == doctor.FAIL
+    assert "restore-db" in check.hint

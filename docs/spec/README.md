@@ -5,7 +5,7 @@ Read one file when the task points to it. Never load the whole folder.
 Section numbers are the original ones (`§2.6` is "Official hyperparameters" in
 `10-official-conventions.md`); headings were kept unchanged when the file was split, so a
 reference from code comments still resolves. The *rules* are not here: they are the `R1..R15`
-contract in [`../../AGENTS.md`](../../AGENTS.md).
+contract in [`AGENTS.md`](https://github.com/nbadino/tabularium/blob/main/AGENTS.md).
 
 | File | What it contains | Read it when |
 |---|---|---|
