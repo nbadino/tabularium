@@ -36,7 +36,9 @@ class _Response:
 
 
 @pytest.fixture(autouse=True)
-def _auth_on_and_clean() -> None:
+def _auth_on_and_clean(monkeypatch) -> None:
+    # The client secret goes through the vault; CI has no `.env` to provide the key.
+    monkeypatch.setenv("TABULARIUM_VAULT_KEY", "test-vault-key")
     init_db()
     with connect() as conn:
         conn.execute("DELETE FROM sessions")
