@@ -82,8 +82,8 @@ export interface HealthResponse {
 export interface SystemInfo {
   app: string
   version: string
-  data_dir: string
-  db_path: string
+  data_dir: string | null
+  db_path: string | null
   schema_version: string | null
   python: string
   platform: string

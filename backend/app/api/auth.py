@@ -5,7 +5,9 @@ login/logout, registrazione se aperta. `/me` richiede login.
 """
 from __future__ import annotations
 
+import hmac
 import os
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
@@ -28,6 +30,7 @@ from ..services import oidc
 from ..services import settings as settingssvc
 from ..services import users as usersvc
 from ..services import rate_limit
+from ..services import security
 
 router = APIRouter(tags=["auth"])
 
@@ -71,6 +74,16 @@ def auth_status(request: Request) -> AuthStatusOut:
     )
 
 
+def _client_ip(request: Request) -> str:
+    # The peer address; behind a proxy uvicorn's --proxy-headers makes it the client's.
+    return request.client.host if request.client else "unknown"
+
+
+# Hashed once: a login for a missing user still pays one PBKDF2, so the response
+# time does not tell which usernames exist.
+_DUMMY_SALT, _DUMMY_HASH = security.hash_password("tabularium-timing-equaliser")
+
+
 @router.post("/api/auth/setup", response_model=UserOut, status_code=201)
 def setup_first_admin(payload: SetupIn, response: Response) -> UserOut:
     """Crea l'amministratore al primo avvio (solo se non esistono utenti)."""
@@ -101,19 +114,27 @@ def setup_first_admin(payload: SetupIn, response: Response) -> UserOut:
 
 
 @router.post("/api/auth/login", response_model=UserOut)
-def login(payload: LoginIn, response: Response) -> UserOut:
+def login(payload: LoginIn, request: Request, response: Response) -> UserOut:
     if not authsvc.auth_enabled():
         raise HTTPException(status_code=400, detail="autenticazione disattivata")
-    client_key = f"login:{payload.username.strip().lower()}"
-    if not rate_limit.allow(client_key):
+    # Per client and username, so nobody can lock another person out from elsewhere;
+    # plus a wider per-client budget of *failures* against spraying many usernames
+    # (successes do not count: a class behind one NAT must still be able to log in).
+    ip = _client_ip(request)
+    client_key = f"login:{ip}:{payload.username.strip().lower()}"
+    spray_key = f"login-failures:{ip}"
+    if rate_limit.exhausted(spray_key, limit=50) or not rate_limit.allow(client_key):
         raise HTTPException(status_code=429, detail="troppi tentativi, riprova più tardi")
     with connect() as conn:
         row = conn.execute(
             "SELECT * FROM users WHERE username=?", (payload.username.strip(),)
         ).fetchone()
     if row is None or not row["active"]:
+        security.verify_password(payload.password, _DUMMY_SALT, _DUMMY_HASH)
+        rate_limit.allow(spray_key, limit=50)
         raise HTTPException(status_code=401, detail="credenziali non valide")
     if not authsvc.check_password(row, payload.password):
+        rate_limit.allow(spray_key, limit=50)
         raise HTTPException(status_code=401, detail="credenziali non valide")
     rate_limit.reset(client_key)
     with connect() as conn:
@@ -132,7 +153,7 @@ def login(payload: LoginIn, response: Response) -> UserOut:
 
 
 @router.post("/api/auth/register", response_model=UserOut, status_code=201)
-def register(payload: RegisterIn, response: Response) -> UserOut:
+def register(payload: RegisterIn, request: Request, response: Response) -> UserOut:
     """Registrazione pubblica, solo se aperta dall'amministratore."""
     if not authsvc.auth_enabled():
         raise HTTPException(status_code=400, detail="autenticazione disattivata")
@@ -143,7 +164,7 @@ def register(payload: RegisterIn, response: Response) -> UserOut:
     # Il tentativo si persiste prima di create_user: anche username duplicato o
     # password rifiutata non deve azzerare il limite, e la sua connessione resta
     # separata da quella della creazione.
-    if not rate_limit.allow("register"):
+    if not rate_limit.allow(f"register:{_client_ip(request)}"):
         raise HTTPException(status_code=429, detail="troppi tentativi, riprova più tardi")
     with connect() as conn:
         user = usersvc.create_user(
@@ -157,10 +178,12 @@ def register(payload: RegisterIn, response: Response) -> UserOut:
 
 @router.post("/api/auth/logout")
 def logout(request: Request, response: Response) -> dict:
+    # Cookie or Bearer: logging out must end whichever session made the request.
     token = request.cookies.get(config.SESSION_COOKIE)
+    header = request.headers.get("authorization", "")
+    if not token and header.lower().startswith("bearer "):
+        token = header[7:].strip()
     if token:
-        from ..services import security
-
         with connect() as conn:
             conn.execute(
                 "DELETE FROM sessions WHERE token_hash=?", (security.hash_token(token),)
@@ -207,11 +230,11 @@ def invite_status(token: str) -> InviteStatusOut:
 
 
 @router.post("/api/auth/invite/accept", response_model=UserOut)
-def accept_invite(payload: InviteAcceptIn, response: Response) -> UserOut:
+def accept_invite(payload: InviteAcceptIn, request: Request, response: Response) -> UserOut:
     """Consuma l'invito: l'utente sceglie la password e resta connesso."""
     if not authsvc.auth_enabled():
         raise HTTPException(status_code=400, detail="autenticazione disattivata")
-    if not rate_limit.allow("invite"):
+    if not rate_limit.allow(f"invite:{_client_ip(request)}"):
         raise HTTPException(status_code=429, detail="troppi tentativi, riprova più tardi")
     with connect() as conn:
         user = usersvc.accept_invite(conn, payload.token, payload.password)
@@ -270,6 +293,12 @@ def _callback_url(request: Request) -> str:
     return f"{base.rstrip('/')}/api/auth/oidc/callback"
 
 
+# The state travels in the URL and in this cookie: the callback accepts it only from
+# the browser that started the flow (login CSRF). Lax, because the IdP redirect is a
+# cross-site top-level navigation that a Strict cookie would not survive.
+_OIDC_STATE_COOKIE = "tab_oidc_state"
+
+
 def _login_error(code: str) -> RedirectResponse:
     # A code, not a sentence: the login page translates it.
     return RedirectResponse(f"/?auth_error={code}", status_code=303)
@@ -284,7 +313,13 @@ def oidc_start(request: Request) -> RedirectResponse:
         target = oidc.authorization_url(setup, _callback_url(request))
     except oidc.OidcError as exc:
         return _login_error(exc.code)
-    return RedirectResponse(target, status_code=303)
+    response = RedirectResponse(target, status_code=303)
+    state = parse_qs(urlparse(target).query).get("state", [""])[0]
+    response.set_cookie(
+        _OIDC_STATE_COOKIE, state, max_age=600, httponly=True, samesite="lax",
+        secure=config.SESSION_COOKIE_SECURE, path="/api/auth/oidc",
+    )
+    return response
 
 
 @router.get("/api/auth/oidc/callback")
@@ -292,6 +327,8 @@ def oidc_callback(request: Request, code: str = "", state: str = "") -> Redirect
     if not authsvc.auth_enabled():
         raise HTTPException(status_code=404, detail="autenticazione disattivata")
     setup = oidc.setup_from_settings(settingssvc.get_app_settings())
+    if not hmac.compare_digest(request.cookies.get(_OIDC_STATE_COOKIE, ""), state) or not state:
+        return _login_error("oidc_state")
     try:
         claims = oidc.exchange_code(setup, code, state)
         identity = oidc.identity_from_claims(claims)
@@ -312,4 +349,5 @@ def oidc_callback(request: Request, code: str = "", state: str = "") -> Redirect
     token, expires_at = authsvc.create_session(user["id"], request)
     response = RedirectResponse("/", status_code=303)
     authsvc.set_session_cookie(response, token, expires_at)
+    response.delete_cookie(_OIDC_STATE_COOKIE, path="/api/auth/oidc")
     return response

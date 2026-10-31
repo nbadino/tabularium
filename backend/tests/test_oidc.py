@@ -211,3 +211,25 @@ def test_a_missing_email_verified_claim_is_refused(monkeypatch) -> None:
     _, state = _start(client)
     response = client.get(f"/api/auth/oidc/callback?code=abc&state={state}", follow_redirects=False)
     assert "auth_error=oidc_email" in response.headers["location"]
+
+
+def test_the_callback_needs_the_browser_that_started_the_flow(monkeypatch) -> None:
+    # Login CSRF: a link carrying someone else's state must not log the victim in.
+    monkeypatch.setattr(config, "AUTH_MODE", "on")
+    _configure()
+    _fake_provider(monkeypatch, {"sub": "1", "email": "a@uni.it", "email_verified": True})
+    _, state = _start(TestClient(app))
+    victim = TestClient(app)
+    response = victim.get(f"/api/auth/oidc/callback?code=abc&state={state}", follow_redirects=False)
+    assert "auth_error=oidc_state" in response.headers["location"]
+
+
+def test_two_people_can_sign_in_at_the_same_time(monkeypatch) -> None:
+    monkeypatch.setattr(config, "AUTH_MODE", "on")
+    _configure()
+    _fake_provider(monkeypatch, {"sub": "1", "email": "a@uni.it", "email_verified": True})
+    first, second = TestClient(app), TestClient(app)
+    _, state_one = _start(first)
+    _, state_two = _start(second)
+    response = first.get(f"/api/auth/oidc/callback?code=abc&state={state_one}", follow_redirects=False)
+    assert response.headers["location"] == "/"

@@ -629,3 +629,50 @@ def test_only_an_admin_can_point_a_project_at_a_server_folder(tmp_path):
         _login(client, "boss")
         r = client.post("/api/projects", json={"name": "q", "archive_dir": str(tmp_path)})
         assert r.status_code == 201
+
+
+def test_a_login_lockout_does_not_reach_other_clients():
+    # Keyed on client + username: an attacker exhausting attempts locks only themselves.
+    _mkuser("anna", role="editor")
+    attacker = TestClient(app, client=("10.0.0.66", 1000))
+    for _ in range(11):
+        attacker.post("/api/auth/login", json={"username": "anna", "password": "wrong-pass-1"})
+    assert attacker.post("/api/auth/login", json={"username": "anna", "password": PASSWORD}).status_code == 429
+    with TestClient(app, client=("10.0.0.7", 1000)) as anna:
+        assert anna.post("/api/auth/login", json={"username": "anna", "password": PASSWORD}).status_code == 200
+
+
+def test_logout_ends_a_bearer_session_too():
+    _mkuser("anna", role="editor")
+    with _client() as client:
+        _login(client, "anna")
+        token = client.cookies.get(config.SESSION_COOKIE)
+    with _client() as api:
+        bearer = {"Authorization": f"Bearer {token}"}
+        assert api.get("/api/auth/me", headers=bearer).status_code == 200
+        api.post("/api/auth/logout", headers=bearer)
+        assert api.get("/api/auth/me", headers=bearer).status_code == 401
+
+
+def test_server_paths_are_for_admins_only():
+    _mkuser("boss", role="admin")
+    _mkuser("anna", role="editor")
+    with _client() as client:
+        assert client.get("/api/system/info").status_code == 401
+        _login(client, "anna")
+        assert client.get("/api/system/info").json()["data_dir"] is None
+    with _client() as client:
+        _login(client, "boss")
+        assert client.get("/api/system/info").json()["data_dir"]
+
+
+def test_a_scan_job_is_read_only_through_its_own_project():
+    from app.api import projects as projectsapi
+
+    boss = _mkuser("boss", role="admin")
+    mine, other = _mkproject(owner_id=boss["id"]), _mkproject(owner_id=boss["id"], name="altro")
+    projectsapi._scan_jobs["j1"] = {"id": "j1", "project_id": mine, "status": "done"}
+    with _client() as client:
+        _login(client, "boss")
+        assert client.get(f"/api/projects/{mine}/scan/jobs/j1").status_code == 200
+        assert client.get(f"/api/projects/{other}/scan/jobs/j1").status_code == 404

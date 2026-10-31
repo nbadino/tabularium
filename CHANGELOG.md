@@ -12,6 +12,14 @@ Notable changes to Tabularium. The format follows
   provider asserts `email_verified`; a server `archive_dir` is admin-only.
 - A warning is logged at startup when `TABULARIUM_AUTH=off`.
 - SSH training targets starting with `-` are refused (they were read as ssh options).
+- OIDC: the state is bound to the browser that started the flow (login CSRF), and two
+  people signing in at once no longer cancel each other's state.
+- Login rate limit keyed on client + username, with a per-client failure budget; a
+  missing user costs the same PBKDF2 time as a wrong password. Register and invite
+  limits are per client instead of global.
+- Logout ends Bearer sessions too; the live channel refuses a password still to change;
+  `/api/system/info` needs login and shows server paths to admins only; scan jobs are
+  read only through their own project.
 
 ### Fixed
 - Training start, first thumbnail and custom model deletion no longer fail with a

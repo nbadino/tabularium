@@ -132,7 +132,10 @@
      works on projects), `viewer` (reads). The backend is the source of truth: the UI only disables
      commands that would end in an error;
    - **project access**: `projects.owner_id` + `project_members` to share a project with other users
-     (editor/viewer). Sensitive rules enforced server-side: no self-demotion, no deleting the last
+     (editor/viewer). Inside a project the **project role decides**, not the global one: a global
+     `viewer` added as project editor writes there, and demoting a user does not change the projects
+     they own (pinned by `test_project_capabilities_follow_project_role_not_global_role`). The global
+     role governs instance actions only (creating projects, users, settings). Sensitive rules enforced server-side: no self-demotion, no deleting the last
      admin, 404 for other people's projects (existence hidden);
    - **invitations and onboarding** (M13), **per-page annotator/reviewer workflow** (M19), **live
      presence** (M11);
