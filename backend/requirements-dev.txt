@@ -3,7 +3,7 @@ pytest>=9,<10
 # Undefined-name guard (tests/test_static.py): refactors left NameErrors behind.
 pyflakes>=3,<5
 # Starlette 1.6 usa il fork compatibile httpx2 per TestClient.
-httpx2>=2,<3
+httpx2>=2.16.0,<3
 # Smoke E2E con browser reale (scripts/e2e_workflow.py).
 selenium>=4,<5
 # A runtime OpenCV non è più opzionale: il motore OCR (dipendenza core) porta
