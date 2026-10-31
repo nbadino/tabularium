@@ -42,3 +42,20 @@ def test_every_version_field_matches_the_version_file():
     assert json.loads((REPO / "frontend/package.json").read_text())["version"] == version
     citation = (REPO / "CITATION.cff").read_text(encoding="utf-8")
     assert re.search(r'^version: "?([^"\n]+)"?$', citation, re.M).group(1) == version
+
+
+def test_the_lock_pins_every_requirement_within_its_range():
+    # constraints.txt is what images and CI install: it must satisfy requirements.txt.
+    from packaging.requirements import Requirement
+
+    pins = {}
+    for line in (REPO / "backend/constraints.txt").read_text().splitlines():
+        if "==" in line and not line.startswith((" ", "#")):
+            name, version = line.split(";")[0].strip().split("==")
+            pins.setdefault(name.lower().replace("_", "-"), []).append(version)
+    for line in (REPO / "backend/requirements.txt").read_text().splitlines():
+        if line.strip() and not line.startswith("#"):
+            req = Requirement(line)
+            versions = pins.get(req.name.lower().replace("_", "-"))
+            assert versions, f"{req.name} is not pinned in constraints.txt"
+            assert all(req.specifier.contains(v) for v in versions), (req, versions)

@@ -37,6 +37,8 @@ Notable changes to Tabularium. The format follows
 - CI and release workflows: least-privilege permissions, concurrency, release gated on
   tests and on non-empty CHANGELOG notes; training images build only from `main`;
   Dependabot; `CITATION.cff` follows `VERSION`.
+- Supply chain: every GitHub Action pinned to a commit SHA, app image base images pinned
+  by digest, and `backend/constraints.txt` (universal lock) installed by the image and CI.
 
 ## [0.4.0] - 2026-10-27
 
