@@ -18,6 +18,8 @@ Notable changes to Tabularium. The format follows
 - Restoring the oldest backup no longer prunes it first.
 - `html_to_otsl` keeps rowspans in their column on short rows.
 - Prefill defaults to `merge`; `replace`/`replace_all` require `confirm=true`.
+- Prefill advances `annotation_revision`: an approved page loses its approval and a
+  concurrent editor gets a conflict instead of overwriting the drafts.
 
 ### Changed
 - CI and release workflows: least-privilege permissions, concurrency, release gated on

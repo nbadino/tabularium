@@ -529,6 +529,7 @@ export default function AnnotationPage() {
     if (!isCurrent()) return
     if (streamError) setError(streamError)
     const s = summary as {
+      annotation_revision?: number | null
       inserted?: number
       replaced_blocks?: number
       deskew_angle?: number
@@ -536,6 +537,9 @@ export default function AnnotationPage() {
       grids?: number
       unmapped_labels?: Record<string, number>
     } | null
+    // The prefill wrote to the page: adopt its revision, or the next autosave
+    // would be refused as a conflict with our own prefill.
+    if (s?.annotation_revision != null) ann.syncRevision(s.annotation_revision)
     if (s) {
       // L'avviso dice solo ciò che il pannello non mostra già da sé: quante
       // bozze siano arrivate e che siano da verificare si legge nelle righe,

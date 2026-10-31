@@ -83,7 +83,10 @@ def test_prelabel_inserts_filtered_blocks(tmp_path: Path, monkeypatch):
             json={"page_ids": [page_id], "mode": "merge", "confidence": 0.5},
         )
         assert r.status_code == 200
-        assert len(client.get(f"/api/pages/{page_id}/annotations").json()["items"]) == 4
+        after = client.get(f"/api/pages/{page_id}/annotations").json()
+        assert len(after["items"]) == 4
+        # A prefill is a write: it advances the revision (approval, concurrent edits).
+        assert r.json()["results"][0]["annotation_revision"] == after["annotation_revision"] >= 2
 
         client.post(
             f"/api/projects/{pid}/prelabel",
@@ -494,6 +497,8 @@ def test_prelabel_stream_summary_matches_batch(tmp_path: Path, monkeypatch):
                 if line.startswith("data: ")
             ]
         streamed = next(ev["summary"] for ev in events if ev["type"] == "page_done")
+        # The second run is a later write: only its revision differs.
+        assert streamed.pop("annotation_revision") == batch.pop("annotation_revision") + 1
         assert streamed == batch
 
 

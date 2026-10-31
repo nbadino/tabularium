@@ -93,6 +93,19 @@ class PageWriter:
             (block_id, json.dumps(grid)),
         )
 
+    def bump_revision(self, page_id: int) -> int:
+        """Advance the page revision after a prefill wrote to it, and return it.
+
+        Without this, an approved page kept its approval (the trigger watches the
+        revision) and another editor's autosave could overwrite the drafts unawares.
+        """
+        self._conn.execute(
+            "UPDATE pages SET annotation_revision=annotation_revision+1 WHERE id=?", (page_id,)
+        )
+        row = self._conn.execute("SELECT annotation_revision FROM pages WHERE id=?", (page_id,)).fetchone()
+        self._conn.commit()
+        return int(row[0]) if row is not None else 0
+
     def commit(self) -> None:
         """Make the rows so far visible to the other connections."""
         self._conn.commit()
