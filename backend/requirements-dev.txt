@@ -1,5 +1,5 @@
 -r requirements.txt
-pytest>=9,<10
+pytest>=9.2.0,<10
 # Undefined-name guard (tests/test_static.py): refactors left NameErrors behind.
 pyflakes>=3,<5
 # Starlette 1.6 usa il fork compatibile httpx2 per TestClient.
