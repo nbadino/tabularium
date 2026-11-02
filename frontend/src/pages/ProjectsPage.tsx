@@ -8,7 +8,6 @@ import { Badge, ErrorNotice, Field, Modal, Module, PageHeader } from '../app/ui'
 import { IconPlus, IconProjects } from '../app/icons'
 import { useI18n, tn } from '../i18n'
 import { useAuth, useCanAdminister } from '../app/auth'
-import ShareDialog from '../app/ShareDialog'
 import { accessLabel, projectAccess } from '../app/projectAccess'
 import { FolderPicker } from '../app/FolderPicker'
 
@@ -18,7 +17,6 @@ export default function ProjectsPage() {
   const auth = useAuth()
   const canCreate = !auth.enabled || auth.user?.role === 'admin' || auth.user?.role === 'editor'
   const [filter, setFilter] = useState<'all' | 'mine' | 'shared'>('all')
-  const [sharing, setSharing] = useState<Project | null>(null)
   const [params, setParams] = useSearchParams()
   const creating = params.get('nuovo') === '1'
   const [query, setQuery] = useState('')
@@ -61,7 +59,7 @@ export default function ProjectsPage() {
 
   const load = () =>
     apiGet<{ items: Project[] }>('/projects')
-      .then((r) => { setItems(r.items); setSharing((prev) => prev ? r.items.find((p) => p.id === prev.id) ?? null : null) })
+      .then((r) => setItems(r.items))
       .catch(setError)
       .finally(() => setLoading(false))
 
@@ -110,6 +108,7 @@ export default function ProjectsPage() {
     }
   }
 
+  const shared = (p: Project) => auth.enabled && (p.access?.source === 'member' || (p.members_count ?? 1) > 1)
   const filtered = items.filter((p) => p.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()) && (
     filter === 'all' || (filter === 'mine' ? p.owner_id === auth.user?.id : p.access?.source === 'member')
   ))
@@ -202,7 +201,8 @@ export default function ProjectsPage() {
         </div>
       </Modal>}
 
-      {auth.enabled && <div className="mb-3 flex flex-wrap gap-1" role="group" aria-label={t('team.projectFilters')}>
+      {/* Filters matter only once someone shared a project with you. */}
+      {auth.enabled && items.some((p) => p.access?.source === 'member') && <div className="mb-3 flex flex-wrap gap-1" role="group" aria-label={t('team.projectFilters')}>
         {(['all', 'mine', 'shared'] as const).map((key) => <button key={key} type="button" className="btn btn-sm" aria-pressed={filter === key} onClick={() => setFilter(key)}>{t(`team.filter.${key}`)}</button>)}
       </div>}
       <div className="mb-3 max-w-lg">
@@ -222,12 +222,12 @@ export default function ProjectsPage() {
               <li key={p.id} className="flex flex-wrap items-center gap-3 px-3 py-3 hover:bg-[color:var(--color-fill)]">
                 <Link to={`/progetti/${p.id}`} className="min-w-0 flex-1 basis-56 no-underline text-[color:var(--color-ink)]">
                   <span className="block text-[15px] font-semibold">{p.name}</span>
-                  <span className="mt-1 block text-[12px] text-[color:var(--color-ink-2)]">{t('team.ownerLine', { name: p.owner_name ?? t(auth.enabled ? 'team.noOwner' : 'team.localProject') })}</span>
+                  {/* Team details only where there is a team (docs/UX_SIMPLIFICATION.md, principle 7). */}
+                  {shared(p) && <span className="mt-1 block text-[12px] text-[color:var(--color-ink-2)]">{t('team.ownerLine', { name: p.owner_name ?? t('team.noOwner') })}</span>}
                 </Link>
-                <Badge tone="neutral">{accessLabel(projectAccess(p, auth))}</Badge>
+                {shared(p) && <Badge tone="neutral">{accessLabel(projectAccess(p, auth))}</Badge>}
                 <span className="text-[12px] text-[color:var(--color-ink-2)]">{pages(p.pages_count)}</span>
-                {p.members_count != null && <span className="text-[12px] text-[color:var(--color-ink-2)]">{tn('team.peopleCount', p.members_count)}</span>}
-                <button type="button" className="btn btn-sm" onClick={() => setSharing(p)} aria-label={t('team.accessFor', { name: p.name })}>{t('team.peopleAccess')}</button>
+                {shared(p) && p.members_count != null && <span className="text-[12px] text-[color:var(--color-ink-2)]">{tn('team.peopleCount', p.members_count)}</span>}
               </li>
             ))}
           </ul>
@@ -246,7 +246,6 @@ export default function ProjectsPage() {
           </div>
         )}
       </Module>
-      {sharing && <ShareDialog key={sharing.id} projectId={sharing.id} projectName={sharing.name} canManage={projectAccess(sharing, auth)?.can_manage === true} onClose={() => setSharing(null)} onAccessChanged={() => void load()} />}
     </div>
   )
 }

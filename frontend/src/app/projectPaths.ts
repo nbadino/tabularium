@@ -4,7 +4,7 @@
  * needs a project selector of its own.
  */
 
-export type ProjectSection = 'riconoscimenti' | 'studio' | 'fine-tuning' | `riconoscimenti/${number}` | `fine-tuning/${string}`
+export type ProjectSection = 'riconoscimenti' | 'studio' | 'fine-tuning' | 'avanzate' | `riconoscimenti/${number}` | `fine-tuning/${string}`
 
 export function projectPath(
   id: number,
