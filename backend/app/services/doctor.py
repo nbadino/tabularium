@@ -20,6 +20,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
@@ -56,6 +57,14 @@ def _writable(path: Path) -> bool:
         return True
     except OSError:
         return False
+
+
+def check_python() -> Check:
+    version = ".".join(str(part) for part in sys.version_info[:3])
+    problem = config.python_problem()
+    if problem:
+        return _check("python", FAIL, problem, f"reinstall with a supported interpreter: {config.PYTHON_REINSTALL}")
+    return _check("python", OK, f"{version} ({sys.executable})")
 
 
 def check_data_dir() -> Check:
@@ -257,6 +266,7 @@ def check_huggingface() -> Check:
 
 def run(host: str = "127.0.0.1", port: int = 8787) -> list[Check]:
     return [
+        check_python(),
         check_data_dir(),
         check_disk(),
         check_database(),

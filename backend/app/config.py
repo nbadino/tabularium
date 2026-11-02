@@ -9,6 +9,7 @@ Tutti i percorsi sono derivati da env var, mai hard-coded.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -30,6 +31,23 @@ REPO_DIR: Path = RESOURCE_DIR
 
 APP_NAME = "Tabularium"
 VERSION = (RESOURCE_DIR / "VERSION").read_text(encoding="utf-8").strip()
+
+# The interpreters the release is tested on; pyproject's requires-python says the same.
+# uv does not enforce it for `uv tool install` when the system Python is newer.
+SUPPORTED_PYTHON = ((3, 11), (3, 13))
+PYTHON_REINSTALL = "uv tool install --reinstall --python 3.13 tabularium"
+
+
+def python_problem() -> str | None:
+    """Why the running interpreter is unsupported, or None when it is supported."""
+    current = tuple(sys.version_info[:2])
+    low, high = SUPPORTED_PYTHON
+    if low <= current <= high:
+        return None
+    return (
+        f"Python {current[0]}.{current[1]} is not supported "
+        f"(Tabularium runs on {low[0]}.{low[1]}–{high[0]}.{high[1]})"
+    )
 
 # --- Radice dati -------------------------------------------------------------
 # Da un checkout i dati stanno accanto al codice; installato, il pacchetto vive

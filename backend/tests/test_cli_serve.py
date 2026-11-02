@@ -14,3 +14,12 @@ def test_the_server_honours_the_trusted_proxies(monkeypatch) -> None:
     assert cli.main(["--no-browser"]) == 0
     assert seen["proxy_headers"] is True
     assert seen["forwarded_allow_ips"] == "172.17.0.1"
+
+
+def test_startup_warns_on_an_unsupported_python(monkeypatch, capsys) -> None:
+    monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(run=lambda *a, **kw: None))
+    monkeypatch.setattr(sys, "version_info", (3, 14, 4, "final", 0))
+    assert cli.main(["--no-browser"]) == 0
+    err = capsys.readouterr().err
+    assert "Python 3.14" in err
+    assert "uv tool install --reinstall --python 3.13 tabularium" in err
