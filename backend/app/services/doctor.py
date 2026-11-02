@@ -183,6 +183,22 @@ def check_auth() -> Check:
     return _check("authentication", OK, f"{users} users, {admins} administrators")
 
 
+def check_forwarded() -> Check:
+    trusted = [item.strip() for item in config.FORWARDED_ALLOW_IPS.split(",") if item.strip()]
+    detail = ", ".join(trusted) or "none"
+    loopback_only = trusted and all(item in {"127.0.0.1", "::1", "localhost"} for item in trusted)
+    # A secure cookie means HTTPS in front: often a CDN too, whose edges would then be
+    # the "client" that keys the login rate limit.
+    if config.SESSION_COOKIE_SECURE and loopback_only:
+        return _check(
+            "trusted proxies", WARN, detail,
+            "behind a CDN such as Cloudflare, add its ranges to TABULARIUM_FORWARDED_ALLOW_IPS "
+            "(CIDR ranges are accepted), or the login rate limit keys on the CDN's address; "
+            "ignore this if the local proxy is the only hop",
+        )
+    return _check("trusted proxies", OK, detail)
+
+
 def check_vault() -> Check:
     if not config.DB_PATH.exists():
         # No database means no credentials to decrypt yet: the key is generated on the
@@ -274,6 +290,7 @@ def run(host: str = "127.0.0.1", port: int = 8787) -> list[Check]:
         check_schema(),
         check_port(host, port),
         check_auth(),
+        check_forwarded(),
         check_vault(),
         check_web_concurrency(),
         check_gpu(),

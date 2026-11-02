@@ -75,6 +75,10 @@ Notable changes to Tabularium. The format follows
   say where the archive goes without `--out`.
 - The offline installation guide no longer says RapidOCR downloads its models: they ship in
   the package (#36).
+- Behind Cloudflare or another CDN, the login rate limit keyed on the CDN's address. The
+  configuration guide explains how to trust the CDN's ranges (`TABULARIUM_FORWARDED_ALLOW_IPS`
+  accepts CIDR ranges), and `tabularium doctor` warns when an HTTPS deploy trusts only
+  loopback (#35).
 
 ## [0.5.0] - 2026-11-02
 

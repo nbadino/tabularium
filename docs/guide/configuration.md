@@ -20,7 +20,31 @@ file of the data folder.
 | `TABULARIUM_MODELS_DIR` | `<repo>/models` | local model checkpoints |
 | `TABULARIUM_PUBLIC_URL` | unset | public URL for the OIDC callback when a proxy hides the real address |
 | `TABULARIUM_SESSION_COOKIE_SECURE` | `0` | `1` behind HTTPS: the session cookie is never sent in clear |
-| `TABULARIUM_FORWARDED_ALLOW_IPS` | `127.0.0.1` | proxies trusted for `X-Forwarded-For` (comma list or `*`); the client address keys the login rate limit |
+| `TABULARIUM_FORWARDED_ALLOW_IPS` | `127.0.0.1` | proxies trusted for `X-Forwarded-For`: a comma list of addresses and CIDR ranges (`10.0.0.0/8`), or `*`; the client address keys the login rate limit. Behind a CDN, see [below](#behind-cloudflare-or-another-cdn) |
+
+## Behind Cloudflare or another CDN
+
+The app takes the client address from `X-Forwarded-For`, trusting only the proxies in
+`TABULARIUM_FORWARDED_ALLOW_IPS`: it walks the header from the right and stops at the
+first address it does not trust. With a local reverse proxy (Caddy, nginx) and the
+default `127.0.0.1`, that is the visitor. With a CDN in front of the proxy, it is the
+**CDN edge**: the access log shows only the CDN's addresses, and the login rate limit,
+keyed on the client address, then puts everyone who reaches the same edge in one
+bucket. One person can lock others out of the login, and an attacker spread over many
+edges is not limited.
+
+Trust the CDN's ranges as well. For Cloudflare, which publishes them:
+
+```bash
+CF=$( (curl -s https://www.cloudflare.com/ips-v4; echo; curl -s https://www.cloudflare.com/ips-v6) | paste -sd, -)
+echo "TABULARIUM_FORWARDED_ALLOW_IPS=127.0.0.1,::1,$CF"
+```
+
+Put the printed line in the `.env` (or the service's environment) and restart. The
+access log should then show visitors' addresses. The ranges change rarely, but they do
+change: check them when you upgrade. Trust only ranges the CDN publishes; `*` would let
+any client choose its own address. `tabularium doctor` warns when
+`TABULARIUM_SESSION_COOKIE_SECURE=1` (an HTTPS deploy) and only loopback is trusted.
 
 ## Institutional login (OIDC)
 
