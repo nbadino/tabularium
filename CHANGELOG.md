@@ -54,6 +54,9 @@ Notable changes to Tabularium. The format follows
   administrator was created elsewhere returns to the login.
 
 ### Added
+- A server deployment guide: install with uv for a service user, a systemd unit, Caddy or
+  nginx with TLS and WebSockets, a CDN in front, the first administrator, and `doctor`
+  against the service (#34).
 - `tabularium reset-password [user]`: a new password for a user locked out of the app
   (before, only `scripts/reset_password.py` in a checkout).
 

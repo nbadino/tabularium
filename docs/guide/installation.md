@@ -73,7 +73,7 @@ press `Ctrl+C` to stop it.
 | `tabularium --no-browser` | start without opening the browser |
 | `tabularium --port 9000` | use another port |
 | `tabularium --data /path/to/folder` | keep data somewhere else than `~/Tabularium` |
-| `tabularium --host 0.0.0.0` | accept connections from other computers (for a shared lab server) |
+| `tabularium --host 0.0.0.0` | accept connections from other computers (for a shared lab server; for a public one, see [Server deployment](server-deployment.md)) |
 | `uv tool upgrade --python 3.13 tabularium` | upgrade to the latest release ([back up first](upgrading.md)) |
 | `uv tool uninstall tabularium` | remove the app (your data folder is kept) |
 | `tabularium backup` | archive the data folder and the vault key into the current directory, or `--out FILE` ([Upgrading](upgrading.md)) |
