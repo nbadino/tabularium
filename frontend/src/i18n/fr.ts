@@ -1031,8 +1031,8 @@ export const fr: Dict = {
       other: '{count} blocs sur la page,',
     },
     prefillCountTables: {
-      one: 'dont 1 bloc Table.',
-      other: 'dont {count} blocs Table.',
+      one: 'dont 1 tableau.',
+      other: 'dont {count} tableaux.',
     },
     prefillCountDrafts: {
       one: '1 d’entre eux est un brouillon non confirmé.',
@@ -1053,8 +1053,8 @@ export const fr: Dict = {
       other: 'Ce mode supprimera {count} blocs.',
     },
     prefillPlanTables: {
-      one: 'La grille du bloc Table sera supprimée.',
-      other: 'Les grilles de {count} blocs Table seront supprimées.',
+      one: 'La grille du tableau sera supprimée.',
+      other: 'Les grilles de {count} tableaux seront supprimées.',
     },
     prefillHumanWarning:
       'Attention : « Tout remplacer » supprime aussi les blocs que vous avez dessinés ou confirmés ainsi que leurs grilles de tableau. L’opération est irréversible.',

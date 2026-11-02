@@ -38,7 +38,7 @@ describe('PrefillDialog', () => {
     fireEvent.click(screen.getByRole('radio', { name: /Sostituisci tutto/ }))
     // 5 blocchi rimossi, 2 griglie tabellari con essi.
     expect(screen.getByText(/rimuoverà 5 blocchi/)).toBeTruthy()
-    expect(screen.getByText(/griglie di 2 blocchi Table/)).toBeTruthy()
+    expect(screen.getByText(/griglie di 2 tabelle/)).toBeTruthy()
     // E avverte che tocca il lavoro umano.
     expect(screen.getByText(/Attenzione/)).toBeTruthy()
   })

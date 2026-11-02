@@ -1031,8 +1031,8 @@ export const en: Dict = {
       other: '{count} blocks on the page,',
     },
     prefillCountTables: {
-      one: 'of which 1 Table block.',
-      other: 'of which {count} Table blocks.',
+      one: 'of which 1 table.',
+      other: 'of which {count} tables.',
     },
     prefillCountDrafts: {
       one: '1 of them is an unconfirmed draft.',
@@ -1053,8 +1053,8 @@ export const en: Dict = {
       other: 'This mode will remove {count} blocks.',
     },
     prefillPlanTables: {
-      one: 'The Table block grid will be deleted.',
-      other: 'The grids of {count} Table blocks will be deleted.',
+      one: 'The table grid will be deleted.',
+      other: 'The grids of {count} tables will be deleted.',
     },
     prefillHumanWarning:
       'Warning: “Replace everything” also deletes blocks you drew or confirmed and their table grids. This cannot be undone.',

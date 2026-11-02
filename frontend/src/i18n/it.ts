@@ -1030,8 +1030,8 @@ export const it = {
       other: '{count} blocchi sulla pagina,',
     },
     prefillCountTables: {
-      one: 'di cui 1 blocco Table.',
-      other: 'di cui {count} blocchi Table.',
+      one: 'di cui 1 tabella.',
+      other: 'di cui {count} tabelle.',
     },
     prefillCountDrafts: {
       one: '1 di questi è una bozza non confermata.',
@@ -1052,8 +1052,8 @@ export const it = {
       other: 'Questa modalità rimuoverà {count} blocchi.',
     },
     prefillPlanTables: {
-      one: 'La griglia del blocco Table verrà cancellata.',
-      other: 'Le griglie di {count} blocchi Table verranno cancellate.',
+      one: 'La griglia della tabella verrà cancellata.',
+      other: 'Le griglie di {count} tabelle verranno cancellate.',
     },
     prefillHumanWarning:
       'Attenzione: con «Sostituisci tutto» vengono cancellati anche blocchi disegnati o confermati da te e le griglie tabellari collegate. L’operazione non è annullabile.',
