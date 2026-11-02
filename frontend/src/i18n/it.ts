@@ -2567,6 +2567,9 @@ export const it = {
     setupTitle: 'Prima configurazione',
     setupSubtitle:
       'Crea l’account amministratore di questa istanza.',
+    setupToken: 'Token di configurazione',
+    setupTokenHint:
+      'Lo trovi nel log del server all’avvio e nel file setup-token della cartella dati. Il link aperto da tabularium lo contiene già.',
     setupSubmit: 'Crea amministratore',
     setupKeepPassword: 'Conserva questa password: Tabularium non invia email per recuperarla.',
     switchToRegister: 'Non hai un account? Registrati',

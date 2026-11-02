@@ -86,11 +86,13 @@ export async function setup(
   username: string,
   password: string,
   email?: string,
+  setupToken?: string,
 ): Promise<void> {
   const user = await apiPost<User>('/auth/setup', {
     username,
     password,
     email: email?.trim() || undefined,
+    setup_token: setupToken?.trim() || undefined,
   })
   set({ user, needsSetup: false })
 }
@@ -149,7 +151,7 @@ if (typeof window !== 'undefined') {
 
 export interface Auth extends AuthState {
   login: (username: string, password: string) => Promise<void>
-  setup: (username: string, password: string, email?: string) => Promise<void>
+  setup: (username: string, password: string, email?: string, setupToken?: string) => Promise<void>
   register: (username: string, password: string, email?: string) => Promise<void>
   logout: () => Promise<void>
   acceptInvite: (token: string, password: string) => Promise<void>

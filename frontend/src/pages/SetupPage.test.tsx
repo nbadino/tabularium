@@ -31,8 +31,27 @@ describe('SetupPage', () => {
   it('re-reads the auth state when setup was already completed', async () => {
     auth.setup.mockRejectedValueOnce(new ApiError('POST', '/auth/setup', 409, '{"detail":"già completato"}'))
     render(<SetupPage />)
+    fireEvent.change(screen.getByLabelText(/^Token di configurazione/), { target: { value: 'tok' } })
     fill()
     await waitFor(() => expect(auth.bootstrap).toHaveBeenCalledTimes(1))
+  })
+
+  it('takes the setup token from the link the server printed, and sends it', async () => {
+    window.history.replaceState(null, '', '/?setup_token=tok-123')
+    render(<SetupPage />)
+    expect(screen.getByLabelText(/^Token di configurazione/)).toHaveValue('tok-123')
+    fill()
+    await waitFor(() => expect(auth.setup).toHaveBeenCalledWith('admin', 'una-password', '', 'tok-123'))
+    window.history.replaceState(null, '', '/')
+  })
+
+  it('asks for the token when the link did not carry it', async () => {
+    render(<SetupPage />)
+    expect(screen.getByLabelText(/^Token di configurazione/)).toHaveValue('')
+    expect(screen.getByText(/setup-token/)).toBeInTheDocument()
+    fill()
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    expect(auth.setup).not.toHaveBeenCalled()
   })
 
   it('does not promise recovery emails', () => {

@@ -110,7 +110,8 @@ scripts\run.ps1
 ```
 
 Then visit **<http://localhost:8787>**. The first visit asks you to create an
-administrator account; later sessions start at the login page. Keep the
+administrator account, with the setup token the backend prints in the terminal
+([First administrator](#first-administrator)); later sessions start at the login page. Keep the
 terminal open while using the app and press `Ctrl+C` to stop it. To start
 again later, run `./scripts/run.sh` (Windows: `scripts\run.ps1`).
 
@@ -148,6 +149,26 @@ fails:
 ```bash
 sudo apt-get install -y libgl1 libglib2.0-0   # Debian/Ubuntu; equivalent elsewhere
 ```
+
+### First administrator
+
+Until the first account exists, whoever creates it becomes the administrator. To
+keep that from being whoever reaches a public server first, setup needs a one-time
+**setup token**. At startup the server writes it to the log:
+
+```
+No administrator yet. Create it with the setup token <token> (also in <data>/setup-token): open ...
+```
+
+and to `<data>/setup-token`, readable only by the user that runs Tabularium.
+`tabularium` opens the browser with the token already in the link; elsewhere, paste
+it into the setup form, or open `https://<your-host>/?setup_token=<token>`. Under
+systemd, `journalctl -u tabularium | grep "setup token"` finds it. The file is
+deleted once the administrator exists, and the token stays the same across restarts
+until then.
+
+A forgotten administrator password is reset from the server with
+`tabularium reset-password <user>` ([Troubleshooting](troubleshooting.md)).
 
 ### Single-user mode
 

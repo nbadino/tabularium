@@ -167,7 +167,7 @@ def check_auth() -> Check:
         )
     path = config.DB_PATH
     if not path.exists():
-        return _check("authentication", OK, "on; no users yet (set up on the first visit)")
+        return _check("authentication", OK, f"on; no users yet: the first visit needs the setup token in {config.ROOT_DIR / 'setup-token'}")
     try:
         from ..adapters import users as userstore
 
