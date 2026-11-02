@@ -7,6 +7,13 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Changed
+- Studio: one way to finish a page, **Verify and go to the next** (Ctrl/⌘+Enter), with the
+  existing confirmation when drafts are still unchecked. The header says which page this is
+  ("Page 2 of 5") and leads back to the pages; J/K move between pages. The page list can be
+  closed and starts closed below 1440 px. Assignment and review controls appear only when the
+  project has more than one member or the page is assigned. The view switch moved into the
+  More menu, and the class selector shows only while drawing. The table editor's back button
+  has a label.
 - The Pages tab leads with the one thing the project needs next: drop images or PDFs into an
   empty project; **Recognize N pages** reads the unread pages in one click (local OCR, or the
   model when it answers) and opens the result; then **Review N pages with drafts**, then

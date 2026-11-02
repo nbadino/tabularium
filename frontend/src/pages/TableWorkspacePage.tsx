@@ -76,11 +76,11 @@ export default function TableWorkspacePage({ block }: { block?: BlockOut }) {
         <button
           type="button"
           onClick={() => void closeAndReturn()}
-          className="btn btn-sm !px-2"
+          className="btn btn-sm"
           title={fromStudio ? t('table.closeAndReturnHint') : t('table.backToAnnotation')}
-          aria-label={fromStudio ? t('table.closeAndReturnHint') : t('table.backToAnnotation')}
         >
           <IconPrev size={13} />
+          {t('table.backToStudio')}
         </button>
         <span aria-hidden="true" className="h-5 w-px bg-[color:var(--color-rule)]" />
         <IconTable size={14} />

@@ -59,6 +59,17 @@ export const en: Dict = {
     }
 },
 
+  studio: {
+    backToPages: 'Pages',
+    pagesList: 'Page list',
+    position: 'Page {n} of {total}',
+    verifyNext: 'Verify and go to the next',
+    verify: 'Verify the page',
+    next: 'Go to the next',
+    finishShortcut: 'Ctrl+Enter (⌘+Enter on Mac) · J/K to move between pages',
+    viewMode: 'View',
+  },
+
   team: {
     pageHelp: 'Help',
     projectsIntro: "Find the projects you can access here. Open a project to view or work on its pages, according to your assigned permission.",
@@ -1292,6 +1303,7 @@ export const en: Dict = {
   },
 
   table: {
+    backToStudio: 'Back to the Studio',
     blockVerified: "Block checked",
     blockVerifiedHint: "Block and cell verification are independent. Check the cells in the sheet: unverified cell text is excluded from approved training data.",
     splitFromRight: "Split from the right",
