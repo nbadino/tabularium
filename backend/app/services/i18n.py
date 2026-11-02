@@ -18,6 +18,9 @@ from typing import Any
 
 SUPPORTED = ("it", "en", "fr")
 DEFAULT = "it"
+# A client that names no supported language (curl, a script) gets English: the interface
+# always sends Accept-Language, so only API users see this fallback.
+CLIENT_DEFAULT = "en"
 
 _IT: dict[str, str] = {
     "work_conflict": "L’assegnazione è cambiata. Ricarica prima di procedere.",
@@ -196,6 +199,7 @@ _IT: dict[str, str] = {
     "invalid_credentials": "credenziali non valide",
     "registration_closed": "la registrazione è chiusa dall'amministratore",
     "setup_done": "il primo avvio è già stato completato",
+    "setup_token_invalid": "token di configurazione mancante o errato: è nel log del server e in <data>/setup-token",
     "username_invalid": "nome utente non valido (3-40 caratteri, lettere, cifre, . _ -)",
     "password_short": "password troppo corta (minimo 8 caratteri)",
     "role_invalid": "ruolo non valido: {role}",
@@ -464,6 +468,7 @@ _EN: dict[str, str] = {
     "invalid_credentials": "invalid credentials",
     "registration_closed": "registration is closed by the administrator",
     "setup_done": "first-run setup has already been completed",
+    "setup_token_invalid": "setup token missing or wrong: it is in the server log and in <data>/setup-token",
     "username_invalid": "invalid username (3-40 characters, letters, digits, . _ -)",
     "password_short": "password too short (minimum 8 characters)",
     "role_invalid": "invalid role: {role}",
@@ -731,6 +736,7 @@ _FR: dict[str, str] = {
     "invalid_credentials": "identifiants invalides",
     "registration_closed": "l'inscription est fermée par l'administrateur",
     "setup_done": "la configuration initiale a déjà été effectuée",
+    "setup_token_invalid": "jeton de configuration manquant ou incorrect : il figure dans le journal du serveur et dans <data>/setup-token",
     "username_invalid": "nom d'utilisateur invalide (3-40 caractères, lettres, chiffres, . _ -)",
     "password_short": "mot de passe trop court (8 caractères minimum)",
     "role_invalid": "rôle invalide : {role}",
@@ -839,13 +845,13 @@ CATALOG: dict[str, dict[str, str]] = {"it": _IT, "en": _EN, "fr": _FR}
 def parse_lang(header: str | None) -> str:
     """Estrae `it|en|fr` da un header Accept-Language (fallback: italiano)."""
     if not header:
-        return DEFAULT
+        return CLIENT_DEFAULT
     for part in header.split(","):
         code = part.strip().split(";")[0].strip().lower()
         base = code.split("-")[0]
         if base in SUPPORTED:
             return base
-    return DEFAULT
+    return CLIENT_DEFAULT
 
 
 def msg(key: str, lang: str | None = None, **kwargs: Any) -> str:

@@ -73,10 +73,13 @@ press `Ctrl+C` to stop it.
 | `tabularium --no-browser` | start without opening the browser |
 | `tabularium --port 9000` | use another port |
 | `tabularium --data /path/to/folder` | keep data somewhere else than `~/Tabularium` |
-| `tabularium --host 0.0.0.0` | accept connections from other computers (for a shared lab server) |
+| `tabularium --host 0.0.0.0` | accept connections from other computers (for a shared lab server; for a public one, see [Server deployment](server-deployment.md)) |
 | `uv tool upgrade --python 3.13 tabularium` | upgrade to the latest release ([back up first](upgrading.md)) |
 | `uv tool uninstall tabularium` | remove the app (your data folder is kept) |
-| `tabularium backup` | archive the data folder and the vault key ([Upgrading](upgrading.md)) |
+| `tabularium backup` | archive the data folder and the vault key into the current directory, or `--out FILE` ([Upgrading](upgrading.md)) |
+| `tabularium doctor` | check the installation without starting it; `--data DIR` for another data folder |
+| `tabularium reset-password <user>` | set a new password for a user locked out of the app |
+| `tabularium --help` | list every command |
 
 **Your data** (projects, database, models, settings) lives in `~/Tabularium`,
 outside the installed package, so upgrades never touch it. The folder also
@@ -107,7 +110,8 @@ scripts\run.ps1
 ```
 
 Then visit **<http://localhost:8787>**. The first visit asks you to create an
-administrator account; later sessions start at the login page. Keep the
+administrator account, with the setup token the backend prints in the terminal
+([First administrator](#first-administrator)); later sessions start at the login page. Keep the
 terminal open while using the app and press `Ctrl+C` to stop it. To start
 again later, run `./scripts/run.sh` (Windows: `scripts\run.ps1`).
 
@@ -145,6 +149,26 @@ fails:
 ```bash
 sudo apt-get install -y libgl1 libglib2.0-0   # Debian/Ubuntu; equivalent elsewhere
 ```
+
+### First administrator
+
+Until the first account exists, whoever creates it becomes the administrator. To
+keep that from being whoever reaches a public server first, setup needs a one-time
+**setup token**. At startup the server writes it to the log:
+
+```
+No administrator yet. Create it with the setup token <token> (also in <data>/setup-token): open ...
+```
+
+and to `<data>/setup-token`, readable only by the user that runs Tabularium.
+`tabularium` opens the browser with the token already in the link; elsewhere, paste
+it into the setup form, or open `https://<your-host>/?setup_token=<token>`. Under
+systemd, `journalctl -u tabularium | grep "setup token"` finds it. The file is
+deleted once the administrator exists, and the token stays the same across restarts
+until then.
+
+A forgotten administrator password is reset from the server with
+`tabularium reset-password <user>` ([Troubleshooting](troubleshooting.md)).
 
 ### Single-user mode
 
@@ -245,8 +269,8 @@ the prefix belongs to the proxy, not to the application.
 
 ## Offline installation
 
-Two things normally come from the network: model checkpoints, and the OCR engine's own
-models on first use.
+Only model checkpoints come from the network. The local OCR engine works offline
+from the first start.
 
 **Checkpoints.** `tabularium models import` copies a directory that contains
 `config.json` and the weights into `<data>/models/<adapter>`, with the same state a
@@ -269,19 +293,18 @@ mirror works without changing the application:
 export HF_ENDPOINT=https://hf-mirror.internal.example
 ```
 
-**OCR engine models.** The bundled RapidOCR engine downloads its own models the first
-time it runs and keeps them in its cache, outside Tabularium's data directory; there is
-no import command for them yet. On an air-gapped host, either run the engine once on a
-connected machine and copy that cache, or use a model served from the network. This is
-the remaining item of phase P5 in `docs/architecture/program.md`.
+**OCR engine models.** The wheel installs RapidOCR together with its `.onnx` models
+(in the package's `rapidocr/models/` folder), so local OCR needs no download, on first
+use or later. Its log line `File exists and is valid` on first use means it found them.
 
 ## Next steps
 
-1. **Projects** → create a project and import scans (from the browser, or from
-   a folder on the server).
-2. **Models** → pick a model and where it runs (skip this to use local OCR only).
-3. **Recognize** → select pages and start.
-4. **Results** → check, open pages in **Annotate** to correct, export.
+1. **Projects** → create a project and drop scans into its **Pages** tab (from the
+   browser, or from a folder on the server).
+2. **Recognize N pages** reads them with local OCR, or with a model once one answers
+   (**Models**: pick a model and where it runs).
+3. **Review N pages with drafts** opens the Studio; **Verify and go to the next**
+   finishes each page. Then **Export**.
 
 Model serving details are in [Local inference](local-inference.md);
 rented GPUs (Vast.ai, RunPod, Modal, SSH tunnels) in

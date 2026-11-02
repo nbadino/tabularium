@@ -35,7 +35,7 @@ def test_pick_unavailable_reports_501(monkeypatch):
     with TestClient(app) as client:
         resp = client.post("/api/system/fs/pick")
     assert resp.status_code == 501
-    assert "finestra di sistema non disponibile" in resp.json()["detail"]
+    assert "system dialog not available" in resp.json()["detail"]
 
 
 def test_initial_dir_prefers_folder_then_parent(tmp_path):

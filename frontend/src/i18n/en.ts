@@ -2566,6 +2566,9 @@ export const en: Dict = {
     setupTitle: 'First-run setup',
     setupSubtitle:
       'Create the administrator account for this instance.',
+    setupToken: 'Setup token',
+    setupTokenHint:
+      'It is in the server log at startup and in the setup-token file of the data folder. The link that tabularium opens already contains it.',
     setupSubmit: 'Create administrator',
     setupKeepPassword: 'Keep this password safe: Tabularium does not send recovery emails.',
     switchToRegister: 'No account yet? Sign up',

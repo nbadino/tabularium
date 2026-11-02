@@ -849,7 +849,7 @@ def test_provision_ssh_refusal_answers_409_not_502(monkeypatch, tmp_path):
             json={"host": "ssh7.vast.ai", "port": 34880, "monkeyocr_ref": "abc123"},
         )
     assert res.status_code == 409
-    assert "chiave SSH" in res.json()["detail"]
+    assert "SSH key" in res.json()["detail"]
 
 
 def test_ssh_check_route_reports_the_cause(monkeypatch, tmp_path):

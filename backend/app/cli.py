@@ -15,12 +15,12 @@ import urllib.request
 import webbrowser
 
 
-def _open_when_ready(url: str, timeout: float = 60.0) -> None:
+def _open_when_ready(url: str, target: str | None = None, timeout: float = 60.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(f"{url}/api/health", timeout=2):  # noqa: S310
-                webbrowser.open(url)
+                webbrowser.open(target or url)
                 return
         except OSError:
             time.sleep(0.5)
@@ -135,7 +135,7 @@ def _backup(argv: list[str]) -> int:
         ),
     )
     parser.add_argument("--data", metavar="DIR", help="data folder (default: ~/Tabularium)")
-    parser.add_argument("--out", metavar="FILE", help="archive to write (default: ./tabularium-backup-<time>.tar.gz)")
+    parser.add_argument("--out", metavar="FILE", help="archive to write (default: tabularium-backup-<time>.tar.gz in the current directory)")
     args = parser.parse_args(argv)
     if args.data:
         os.environ["TABULARIUM_ROOT"] = os.path.abspath(os.path.expanduser(args.data))
@@ -161,6 +161,8 @@ def _backup(argv: list[str]) -> int:
         return name in _BACKUP_SKIP_NAMES or name.endswith(_BACKUP_SKIP_SUFFIXES)
 
     root = config.ROOT_DIR
+    # Installed, the .env lives in the data root: archive it once, as `.env`.
+    env_file = config.ENV_FILE.resolve() if config.ENV_FILE.is_file() else None
     with tempfile.TemporaryDirectory() as tmp, tarfile.open(out, "w:gz") as tar:
         if config.DB_PATH.exists():
             db_copy = Path(tmp) / "tabularium.db"
@@ -177,12 +179,14 @@ def _backup(argv: list[str]) -> int:
             entries = filenames + [d for d in dirnames if (here / d).is_symlink()]
             for name in entries:
                 path = here / name
+                if env_file is not None and path.resolve() == env_file:
+                    continue
                 try:
                     tar.add(path, arcname=f"data/{path.relative_to(root).as_posix()}", recursive=False)
                 except FileNotFoundError:
                     continue  # removed while archiving: a running app's temporary file
-        if config.ENV_FILE.is_file():
-            tar.add(config.ENV_FILE, arcname=".env")
+        if env_file is not None:
+            tar.add(env_file, arcname=".env")
     out.chmod(0o600)
     print(f"{out} ({out.stat().st_size / (1024 ** 2):.1f} MiB)")
     print("It contains the vault key (.env): keep it as private as the credentials it protects.")
@@ -250,25 +254,92 @@ def _restore_db(argv: list[str]) -> int:
     return 0
 
 
+def _reset_password(argv: list[str]) -> int:
+    """`tabularium reset-password`: a new password for a user locked out of the app."""
+    parser = argparse.ArgumentParser(
+        prog="tabularium reset-password",
+        description=(
+            "Set a new password for a user and close their open sessions, as an "
+            "administrator would from the Users page. Without a username, list the users."
+        ),
+    )
+    parser.add_argument("username", nargs="?", help="the user to reset")
+    parser.add_argument("--password", help="the new password (default: ask, without echo)")
+    parser.add_argument("--data", metavar="DIR", help="data folder (default: ~/Tabularium)")
+    args = parser.parse_args(argv)
+    if args.data:
+        os.environ["TABULARIUM_ROOT"] = os.path.abspath(os.path.expanduser(args.data))
+
+    import getpass
+
+    from . import config
+    from .db import connect
+    from .services import users as usersvc
+
+    if not config.DB_PATH.exists():
+        print(f"tabularium reset-password: no database in {config.ROOT_DIR}; pass --data", file=sys.stderr)
+        return 2
+    with connect() as conn:
+        rows = conn.execute("SELECT id, username, role, active FROM users ORDER BY id").fetchall()
+        if not args.username:
+            if not rows:
+                print("No users yet: create the administrator on the first visit.")
+            for row in rows:
+                state = "active" if row["active"] else "inactive"
+                print(f"{row['id']:>4}  {row['username']:<20} {row['role']:<8} {state}")
+            return 0
+        user = next((row for row in rows if row["username"] == args.username), None)
+        if user is None:
+            print(f"tabularium reset-password: no user named {args.username!r}", file=sys.stderr)
+            return 1
+        password = args.password
+        if password is None:
+            password = getpass.getpass(f"New password for {args.username}: ")
+            if getpass.getpass("Repeat it: ") != password:
+                print("tabularium reset-password: the two passwords differ", file=sys.stderr)
+                return 1
+        try:
+            usersvc.set_password(conn, user["id"], password)
+        except ValueError as exc:
+            print(f"tabularium reset-password: {exc}", file=sys.stderr)
+            return 1
+        conn.execute("DELETE FROM sessions WHERE user_id=?", (user["id"],))
+    print(f"Password of {args.username} changed; their open sessions are closed.")
+    return 0
+
+
+_COMMANDS = {
+    "doctor": (_doctor, "check this installation without starting the app"),
+    "models": (_models, "install a checkpoint offline, list the installed ones"),
+    "backup": (_backup, "archive the data folder and the vault key"),
+    "restore-db": (_restore_db, "put a database backup back, with the app stopped"),
+    "reset-password": (_reset_password, "set a new password for a user"),
+}
+
+
+def _serving_on_a_terminal() -> bool:
+    try:
+        return sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] == "doctor":
-        return _doctor(argv[1:])
-    if argv and argv[0] == "models":
-        return _models(argv[1:])
-    if argv and argv[0] == "backup":
-        return _backup(argv[1:])
-    if argv and argv[0] == "restore-db":
-        return _restore_db(argv[1:])
+    if argv and argv[0] in _COMMANDS:
+        return _COMMANDS[argv[0]][0](argv[1:])
+    width = max(len(name) for name in _COMMANDS)
     parser = argparse.ArgumentParser(
         prog="tabularium",
-        description="Start Tabularium and open it in the browser.",
-        epilog=(
-            "Run `tabularium doctor` to check an installation without starting it, and "
-            "`tabularium models import <dir> --adapter <id>` to install a checkpoint offline, "
-            "`tabularium backup` to archive the data and the vault key, and "
-            "`tabularium restore-db <backup>` to roll the database back with the app stopped."
+        usage=(
+            "tabularium [--host HOST] [--port PORT] [--data DIR] [--no-browser] [--version]\n"
+            f"       tabularium {{{','.join(_COMMANDS)}}} [--help] ..."
         ),
+        description="Start Tabularium and open it in the browser, or run one of the commands.",
+        epilog="commands:\n" + "\n".join(
+            f"  {name.ljust(width)}  {help_text}" for name, (_, help_text) in _COMMANDS.items()
+        ) + "\n\nRun `tabularium <command> --help` for the options of each command.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--host", default=os.environ.get("TABULARIUM_HOST", "127.0.0.1"),
                         help="address to bind (default: 127.0.0.1, this computer only)")
@@ -313,12 +384,25 @@ def main(argv: list[str] | None = None) -> int:
 
     shown_host = "localhost" if args.host in {"127.0.0.1", "0.0.0.0", "::"} else args.host
     url = f"http://{shown_host}:{args.port}"
+    public_url = os.environ.get("TABULARIUM_PUBLIC_URL", "").strip().rstrip("/")
     print(f"Tabularium {config.VERSION}")
     print(f"  data:      {config.ROOT_DIR}")
-    print(f"  interface: {url}")
-    print("  stop:      Ctrl+C", flush=True)
+    if public_url:
+        print(f"  interface: {public_url}")
+        print(f"  listening: {args.host}:{args.port}")
+    else:
+        print(f"  interface: {url}")
+    # Under systemd or in a container there is no terminal to press Ctrl+C in.
+    if _serving_on_a_terminal():
+        print("  stop:      Ctrl+C")
+    sys.stdout.flush()
     if not args.no_browser:
-        threading.Thread(target=_open_when_ready, args=(url,), daemon=True).start()
+        from .services import setup_token
+
+        # The first visit creates the administrator: the browser we open carries the token.
+        token = setup_token.pending()
+        target = f"{url}/?setup_token={token}" if token else url
+        threading.Thread(target=_open_when_ready, args=(url, target), daemon=True).start()
     uvicorn.run(
         "app.main:app", host=args.host, port=args.port, workers=1,
         proxy_headers=True, forwarded_allow_ips=config.FORWARDED_ALLOW_IPS,

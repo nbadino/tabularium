@@ -5,12 +5,14 @@ Reset it from the terminal; it uses the same hashing and session invalidation
 as the app:
 
 ```bash
-backend/.venv/bin/python scripts/reset_password.py          # list users
-backend/.venv/bin/python scripts/reset_password.py admin    # interactive (hidden input)
+tabularium reset-password          # list users
+tabularium reset-password admin    # interactive (hidden input)
 ```
 
-Pass a second argument to set the password non-interactively. The data root
-follows `TABULARIUM_ROOT` (default `<repo>/data`).
+`--password` sets it non-interactively, `--data DIR` points at another data folder
+(for a service: `sudo -u tabularium env HOME=/var/lib/tabularium
+TABULARIUM_ROOT=/var/lib/tabularium/data tabularium reset-password admin`). From a
+checkout, `backend/.venv/bin/python scripts/reset_password.py` does the same.
 
 **The app doesn't start / the page is blank.**
 The backend serves `frontend/dist`, so the frontend must have been built once

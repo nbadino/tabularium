@@ -53,6 +53,13 @@ Notable changes to Tabularium. The format follows
 - First-run setup no longer promises recovery emails, and a setup tab left open after the
   administrator was created elsewhere returns to the login.
 
+### Added
+- A server deployment guide: install with uv for a service user, a systemd unit, Caddy or
+  nginx with TLS and WebSockets, a CDN in front, the first administrator, and `doctor`
+  against the service (#34).
+- `tabularium reset-password [user]`: a new password for a user locked out of the app
+  (before, only `scripts/reset_password.py` in a checkout).
+
 ### Removed
 - Unused `ClassPalette` component and unused interface strings.
 - The separate Archive page: its thumbnail wall is now the project's Pages tab.
@@ -61,6 +68,26 @@ Notable changes to Tabularium. The format follows
 - An unsupported Python is no longer silent: `tabularium doctor` fails outside 3.11–3.13 and
   startup prints a warning, both with the reinstall command. The install and upgrade commands
   pin `--python 3.13`, because `uv tool install` otherwise uses a system Python 3.14 (#32).
+- `tabularium doctor` is in English, like the rest of the command line, and names the data
+  folder and the `.env` it checked. API errors go to clients that send no supported
+  `Accept-Language` (curl, scripts) in English instead of Italian; the interface is unchanged.
+- `tabularium --help` lists the commands. Under systemd or in a container the startup banner
+  shows `TABULARIUM_PUBLIC_URL` when set, and no longer says "Ctrl+C".
+- A brand-new database no longer gets a `pre-migration-vlegacy` backup.
+- `tabularium backup` stores the vault key once (`.env`), not also as `data/.env`; the docs
+  say where the archive goes without `--out`.
+- The offline installation guide no longer says RapidOCR downloads its models: they ship in
+  the package (#36).
+- Behind Cloudflare or another CDN, the login rate limit keyed on the CDN's address. The
+  configuration guide explains how to trust the CDN's ranges (`TABULARIUM_FORWARDED_ALLOW_IPS`
+  accepts CIDR ranges), and `tabularium doctor` warns when an HTTPS deploy trusts only
+  loopback (#35).
+
+### Security
+- The first administrator can no longer be claimed by whoever reaches a new instance first.
+  Setup needs a one-time token, printed in the server log at startup and stored in
+  `<data>/setup-token` (owner-only); `tabularium` opens the browser with it, and the setup
+  form asks for it otherwise. The file is removed once the administrator exists (#33).
 
 ## [0.5.0] - 2026-11-02
 

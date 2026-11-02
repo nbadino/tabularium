@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from app import config
 from app.db import connect, init_db
 from app.main import app
-from app.services import security, users as usersvc
+from app.services import security, setup_token, users as usersvc
 
 PASSWORD = "password123"
 
@@ -81,7 +81,8 @@ def test_setup_creates_admin_and_session():
     with _client() as client:
         r = client.post(
             "/api/auth/setup",
-            json={"username": "admin", "password": PASSWORD, "email": "a@b.it"},
+            json={"username": "admin", "password": PASSWORD, "email": "a@b.it",
+                  "setup_token": setup_token.ensure()},
         )
         assert r.status_code == 201, r.text
         body = r.json()
@@ -97,16 +98,41 @@ def test_setup_only_once():
     _mkuser("admin", role="admin")
     with _client() as client:
         r = client.post(
-            "/api/auth/setup", json={"username": "altro", "password": PASSWORD}
+            "/api/auth/setup",
+            json={"username": "altro", "password": PASSWORD, "setup_token": setup_token.ensure()},
         )
         assert r.status_code == 409
+
+
+def test_setup_without_the_token_is_refused_and_creates_nobody():
+    # Whoever reaches a public instance first must not become its administrator.
+    token = setup_token.ensure()
+    with _client() as client:
+        for payload in ({}, {"setup_token": "wrong-" + token}):
+            r = client.post("/api/auth/setup", json={"username": "intruso", "password": PASSWORD, **payload})
+            assert r.status_code == 403, r.text
+    with connect() as conn:
+        assert usersvc.count_users(conn) == 0
+    assert setup_token.path().is_file()
+
+
+def test_the_setup_token_is_single_use_and_private():
+    token = setup_token.ensure()
+    assert setup_token.ensure() == token  # stable across restarts until used
+    assert setup_token.path().stat().st_mode & 0o077 == 0
+    with _client() as client:
+        r = client.post("/api/auth/setup", json={"username": "admin", "password": PASSWORD, "setup_token": token})
+        assert r.status_code == 201, r.text
+    assert not setup_token.path().exists()
+    assert setup_token.pending() is None  # an admin exists: nothing to announce
 
 
 def test_setup_claims_orphan_projects():
     pid = _mkproject(owner_id=None)
     with _client() as client:
         r = client.post(
-            "/api/auth/setup", json={"username": "admin", "password": PASSWORD}
+            "/api/auth/setup",
+            json={"username": "admin", "password": PASSWORD, "setup_token": setup_token.ensure()},
         )
         assert r.status_code == 201
     with connect() as conn:
@@ -451,7 +477,7 @@ def test_cannot_deactivate_project_owner():
         _login(client, "boss")
         r = client.patch(f"/api/users/{owner['id']}", json={"active": False})
         assert r.status_code == 409
-        assert "trasferisci" in r.json()["detail"]
+        assert "transfer the user" in r.json()["detail"]
 
 
 def test_reset_password_invalidates_sessions():
@@ -676,3 +702,15 @@ def test_a_scan_job_is_read_only_through_its_own_project():
         _login(client, "boss")
         assert client.get(f"/api/projects/{mine}/scan/jobs/j1").status_code == 200
         assert client.get(f"/api/projects/{other}/scan/jobs/j1").status_code == 404
+
+
+def test_a_wrong_setup_token_is_explained_in_the_reader_language():
+    setup_token.ensure()
+    with _client() as client:
+        r = client.post(
+            "/api/auth/setup",
+            json={"username": "x", "password": PASSWORD},
+            headers={"Accept-Language": "en"},
+        )
+    assert r.status_code == 403
+    assert "setup-token" in r.json()["detail"] and "server log" in r.json()["detail"]
