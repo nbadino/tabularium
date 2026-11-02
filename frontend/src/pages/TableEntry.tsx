@@ -1,4 +1,5 @@
 /** Il permesso viene dal blocco richiesto, mai da `page` passato nella query. */
+import { projectPath } from '../app/projectPaths'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { apiGet } from '../lib/api'
@@ -27,6 +28,6 @@ export default function TableEntry() {
   if (error) return <div className="p-3"><ErrorNotice error={error} /></div>
   if (!context || String(context.block.id) !== blockId) return <Loading label={t('team.loadingAccess')} />
   const access = projectAccess(context.project, auth)
-  if (!access?.can_edit) return <div className="p-3"><Notice>{t('team.readerNotice')}</Notice><Link className="btn mt-3" to={`/annotazione?project=${context.project.id}&page=${context.block.page_id}`}>{t('team.openReader')}</Link></div>
+  if (!access?.can_edit) return <div className="p-3"><Notice>{t('team.readerNotice')}</Notice><Link className="btn mt-3" to={projectPath(context.project.id, 'studio', { page: context.block.page_id })}>{t('team.openReader')}</Link></div>
   return <Suspense fallback={<Loading label={t('common.loading')} />}><Editor key={blockId} block={context.block} /></Suspense>
 }

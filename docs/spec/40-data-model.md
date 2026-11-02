@@ -39,6 +39,17 @@
   with the version recorded in `meta` **in the same transaction as its DDL**
   (`db.py::_run_migration`; a foreign-key PRAGMA is applied outside it) and a visible startup
   error if the chain is incomplete. Restoring a backup migrates it at once.
+- **Upgrade guard** (`db.py::_guard_upgrade`, before `init_db` writes anything): a database whose
+  `schema_version` is newer than `SCHEMA_VERSION` is refused with an error; one that is behind (or
+  has no version) is first copied to `backups/tabularium-<time>-pre-migration-v<version>.db`.
+  `tabularium restore-db` puts a backup back offline without migrating it (the rollback path);
+  `tabularium backup` archives the data root plus `config.ENV_FILE`.
+- **Data root relocation** (`db.py::_follow_data_root`): paths are stored absolute
+  (`projects.root_dir`, `projects.archive_dir`, `pages.abs_path`, `pages.thumb_path`,
+  `jobs.log_path`, `pages.meta_json.extracted_path`). `meta.data_root` records the root the
+  database last ran from; when it differs from `config.ROOT_DIR`, paths under the old root are
+  rewritten after a `pre-relocation` backup. Paths outside the root (server folders) are left
+  alone, and so are paths inside `jobs.command_json`.
   Current `SCHEMA_VERSION`: **20**. Upgrade tests in `tests/test_db_migrations.py`. The historical
   test suite runs with `TABULARIUM_AUTH=off`; `test_auth.py` turns it `on` with a fixture.
 

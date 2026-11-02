@@ -120,6 +120,12 @@ def check_schema() -> Check:
         return _check("schema", FAIL, f"versione non leggibile: {exc}")
     from ..db import SCHEMA_VERSION
 
+    if str(current).isdigit() and int(current) > int(SCHEMA_VERSION):
+        return _check(
+            "schema", FAIL, f"{current}, newer than this release ({SCHEMA_VERSION})",
+            "a later release upgraded this database: start it again, or restore the "
+            "pre-upgrade backup with `tabularium restore-db`",
+        )
     if str(current) != str(SCHEMA_VERSION):
         return _check(
             "schema", FAIL, f"{current} invece di {SCHEMA_VERSION}",

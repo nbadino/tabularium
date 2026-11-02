@@ -7,6 +7,7 @@
  * metà lavoro deve restare possibile — ma non è più un pedaggio d'ingresso.
  */
 import { useEffect, useRef, useState } from 'react'
+import { useParams } from 'react-router'
 import { apiGet } from '../lib/api'
 import type { Project } from '../lib/types'
 
@@ -43,6 +44,16 @@ export function pickActive(items: Project[]): number | null {
 }
 
 /**
+ * The project of a `/progetti/:id/...` route, or null outside a project. Inside
+ * a project the URL decides, so pages hide their own project selector.
+ */
+export function useRouteProjectId(): number | null {
+  const { id } = useParams()
+  const n = Number(id)
+  return Number.isInteger(n) && n > 0 ? n : null
+}
+
+/**
  * Carica l'elenco dei progetti e apre subito quello attivo.
  *
  * `onPick` riceve la scelta iniziale esattamente come se l'avesse fatta
@@ -54,6 +65,7 @@ export function useProjects(
   onError?: (e: unknown) => void,
 ): Project[] {
   const [projects, setProjects] = useState<Project[]>([])
+  const routeId = useRouteProjectId()
   const pick = useRef(onPick)
   const fail = useRef(onError)
   pick.current = onPick
@@ -65,7 +77,7 @@ export function useProjects(
       .then((r) => {
         if (!alive) return
         setProjects(r.items)
-        const id = pickActive(r.items)
+        const id = routeId ?? pickActive(r.items)
         if (id != null) pick.current(id)
       })
       .catch((e) => {
@@ -74,6 +86,8 @@ export function useProjects(
     return () => {
       alive = false
     }
+    // The route project never changes for a mounted page: Layout remounts the
+    // page when the path (and so the project) changes.
   }, [])
 
   return projects

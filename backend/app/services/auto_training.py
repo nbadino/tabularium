@@ -29,6 +29,7 @@ PROFILES = {
     "monkeyocrv2-parsing": "monkey",
     "qwen3-vl-8b": "qwen",
     "unlimited-ocr": "legacy",
+    "unlimited-ocr-2": "uocr2",
     "deepseek-ocr": "legacy",
     "dots-ocr": "dots",
     "glm-ocr": "glm",
@@ -42,6 +43,7 @@ PREBUILT_IMAGES = {
     "monkey": "ghcr.io/nbadino/tabularium-train-monkey:monkey-v4",
     "qwen": "ghcr.io/nbadino/tabularium-train-qwen:qwen-v1",
     "legacy": "ghcr.io/nbadino/tabularium-train-legacy:legacy-v1",
+    "uocr2": "ghcr.io/nbadino/tabularium-train-uocr2:uocr2-v1",
     "glm": "ghcr.io/nbadino/tabularium-train-glm:glm-v1",
     "paddle": "ghcr.io/nbadino/tabularium-train-paddle:paddle-v1",
 }

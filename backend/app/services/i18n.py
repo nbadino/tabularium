@@ -84,12 +84,12 @@ _IT: dict[str, str] = {
         "MinerU2.5, Qwen3-VL). Per una pagina intera usa Riconosci."
     ),
     "pages_in_active_run": (
-        "la sessione #{run} sta già riconoscendo queste pagine: attendi che "
-        "finisca, o annullala, prima di avviarne un'altra."
+        "il riconoscimento #{run} sta già elaborando queste pagine: attendi che "
+        "finisca, o annullalo, prima di avviarne un altro."
     ),
     "model_endpoint_unreachable": (
         "l'endpoint di inferenza {url} non risponde: controlla modello e "
-        "provider nella pagina Modelli prima di avviare una sessione."
+        "provider nella pagina Modelli prima di avviare un riconoscimento."
     ),
     "ocr_engine_failed": (
         "Il motore OCR «{engine}» è installato ma non riesce a partire: {exc}. "
@@ -129,7 +129,7 @@ _IT: dict[str, str] = {
     "table_band_failed": "blocco {id} (Table): generazione banda fallita ({exc})",
     "table_band_no_boundaries": "blocco {id} (Table): bande non generate perché mancano confini di riga verificati",
     "table_unverified_cells": "blocco {id} (Table): {n}/{total} celle di testo con prefill non ancora verificate",
-    "train_tables_excluded": "Il dataset ha escluso {n} tabelle da pagine approvate. Conferma il contenuto delle celle e ricostruisci il dataset prima di avviare il training.",
+    "train_tables_excluded": "Il dataset ha escluso {n} tabelle da pagine approvate. Conferma il contenuto delle celle e ricostruisci il dataset prima di avviare l’addestramento.",
     "table_unverified_skip": "blocco {id} (Table): {n}/{total} celle con prefill non verificato — tabella esclusa dalla build «solo approvate»",
     "formula_empty": "blocco {id} (Formula): contenuto vuoto",
     "dataset_empty": "nessuna pagina con annotazioni esportabili: il dataset è vuoto",
@@ -152,38 +152,38 @@ _IT: dict[str, str] = {
     # --- training preflight -------------------------------------------------------
     "missing_train": "manca {name}: eseguire prima la build del dataset",
     "unreadable_train": "impossibile leggere {name}: {exc}",
-    "min_train": "servono almeno 2 campioni di training",
-    "empty_val": "validation vuota: serve almeno un campione indipendente prima del training",
+    "min_train": "servono almeno 2 campioni di addestramento",
+    "empty_val": "validation vuota: serve almeno un campione indipendente prima dell'addestramento",
     "empty_val_w": "validation vuota: le metriche di generalizzazione non saranno affidabili",
-    "no_table_train_w": "nessun campione tabella nel training: il run non migliorerà l'estrazione OTSL",
+    "no_table_train_w": "nessun campione tabella nel dataset di addestramento: questo addestramento non migliorerà l'estrazione OTSL",
     "repo_not_configured": "TABULARIUM_TRAIN_REPO non configurato",
     "repo_invalid": "repo MonkeyOCRv2 non valido: {path}",
-    "python_not_found": "python di training non trovato: {path}",
+    "python_not_found": "python di addestramento non trovato: {path}",
     "conda_not_found": "conda non trovato e TABULARIUM_TRAIN_PYTHON non configurato",
     "ssh_host_missing": "manca l'host SSH della GPU remota",
     "ssh_repo_missing": "manca il percorso del repo di training sulla GPU remota (parsing/train)",
     "ssh_python_missing_w": "nessun Python indicato per la GPU remota: lo script attiverà l'ambiente conda monkeyocrv2-train",
-    "train_env_not_ready": "l'ambiente di training sulla GPU non è ancora pronto (installazione in corso: manca il marcatore .train_ready)",
-    "train_gpu_not_visible": "la GPU non è visibile sull'host di training (torch.cuda non disponibile): il container non ha il device NVIDIA",
+    "train_env_not_ready": "l'ambiente di addestramento sulla GPU non è ancora pronto (installazione in corso: manca il marcatore .train_ready)",
+    "train_gpu_not_visible": "la GPU non è visibile sull'host di addestramento (torch.cuda non disponibile): il container non ha il device NVIDIA",
     "train_recipe_unavailable": "il modello {id} non è addestrabile: {reason}",
     "train_recipe_not_ready": "la ricetta {toolchain} di {id} non è ancora eseguibile da Tabularium: {doc}",
-    "train_type_unsupported": "questo modello non supporta il training «{type}» (ammessi: {allowed}): {doc}",
+    "train_type_unsupported": "questo modello non supporta l'addestramento «{type}» (ammessi: {allowed}): {doc}",
     "toolchain_dir_missing": "{toolchain}: imposta {env} sul checkout ufficiale",
-    "toolchain_cli_missing": "{toolchain}: comando {command} non trovato nell'ambiente di training",
-    "swift_not_found": "ms-swift non trovato: installa l'ambiente di training o imposta TABULARIUM_TRAIN_PYTHON",
+    "toolchain_cli_missing": "{toolchain}: comando {command} non trovato nell'ambiente di addestramento",
+    "swift_not_found": "ms-swift non trovato: installa l'ambiente di addestramento o imposta TABULARIUM_TRAIN_PYTHON",
     "monkey_swift_submodule_missing": "il fork ms-swift ufficiale manca in {path}/ms-swift: inizializza il submodule (git submodule update --init --recursive)",
     "vram_unknown_w": "stima VRAM non disponibile per {model}: il controllo si limita alla memoria libera",
     "vram_prealloc_too_small": "PaddleFormers riserva {need} GB (pre_alloc_memory) ma la GPU {index} ne ha {free} liberi: usa la variante low-VRAM ufficiale o una scheda più grande",
     "playground_ocr_unavailable": "nessun motore OCR locale installato (RapidOCR o PaddleOCR)",
     "no_gold_pages": "nessuna pagina approvata da usare come verità: approva nello Studio le pagine corrette",
-    "no_gpu_w": "nessuna GPU NVIDIA rilevata: il training richiede CUDA",
+    "no_gpu_w": "nessuna GPU NVIDIA rilevata: l'addestramento richiede CUDA",
     "gpu_missing": "GPU richieste non disponibili: {list}",
     "gpu_busy": "GPU {index} occupata: liberi {free} GB su {total} GB; arresta vLLM o gli altri processi CUDA",
     "gpu_low_vram_w": "GPU {index}: solo {free} GB liberi; riduci batch/pixel o libera la GPU",
     "vram_too_small": "la configurazione chiede ~{need} GB di VRAM ma la GPU {index} ne ha {free} GB liberi: il termine dominante sono i logit ({logits} GB, vocabolario da {vocab} token). Metti batch_size 1 e max_length {suggest}, e alza grad_accum per non cambiare il batch effettivo",
     "vram_no_length_fits_w": "nemmeno max_length minima entra negli {free} GB liberi della GPU {index}: libera la GPU (vLLM acceso?) o addestra su ritagli invece che su pagine intere",
     "vram_tight_w": "la configurazione chiede ~{need} GB dei {free} GB liberi sulla GPU {index}: ci sta ma senza margine, e la stima non conta la frammentazione",
-    "disk_blocking": "spazio disco insufficiente per un run riproducibile: {gb} GB liberi",
+    "disk_blocking": "spazio disco insufficiente per un addestramento riproducibile: {gb} GB liberi",
     "low_disk": "spazio disco residuo basso: {gb} GB",
     "disk_unknown_w": "impossibile verificare lo spazio disco",
     # --- OCR / prelabel ------------------------------------------------------------
@@ -319,7 +319,7 @@ _EN: dict[str, str] = {
     "image_unavailable": "source image not available",
     "no_fields": "no fields to update",
     "invalid_status": "invalid status: {status}",
-    "archive_dir_missing": "the archive folder does not exist",
+    "archive_dir_missing": "the source folder does not exist",
     "archive_dir_invalid": "invalid archive_dir",
     "destructive": "destructive operation: pass ?confirm=true to delete the project",
     "no_file_selected": "no file selected",
@@ -360,12 +360,12 @@ _EN: dict[str, str] = {
         "For a whole page use Recognize."
     ),
     "pages_in_active_run": (
-        "session #{run} is already recognizing these pages: wait for it to "
+        "recognition #{run} is already processing these pages: wait for it to "
         "finish, or cancel it, before starting another."
     ),
     "model_endpoint_unreachable": (
         "the inference endpoint {url} is not responding: check model and "
-        "provider on the Models page before starting a session."
+        "provider on the Models page before starting a recognition."
     ),
     "ocr_engine_failed": (
         "The OCR engine “{engine}” is installed but fails to start: {exc}. "
@@ -400,9 +400,9 @@ _EN: dict[str, str] = {
     "table_error": "block {id} (Table): {exc}",
     "table_band_failed": "block {id} (Table): band generation failed ({exc})",
     "table_band_no_boundaries": "block {id} (Table): bands not generated because verified row boundaries are missing",
-    "table_unverified_cells": "block {id} (Table): {n}/{total} text cells with unverified prefill",
-    "train_tables_excluded": "The dataset excluded {n} tables from approved pages. Confirm their cell contents and rebuild the dataset before starting training.",
-    "table_unverified_skip": "block {id} (Table): {n}/{total} cells with unverified prefill — table skipped in the approved-only build",
+    "table_unverified_cells": "block {id} (Table): {n}/{total} unverified draft text cells",
+    "train_tables_excluded": "The dataset excluded {n} tables from approved pages. Confirm their cell contents and rebuild the dataset before starting a training run.",
+    "table_unverified_skip": "block {id} (Table): {n}/{total} unverified draft cells — table skipped in the approved-only build",
     "formula_empty": "block {id} (Formula): empty content",
     "dataset_empty": "no page with exportable annotations: the dataset is empty",
     "dataset_no_samples": "no sample written: every exported family is empty",
@@ -425,7 +425,7 @@ _EN: dict[str, str] = {
     "min_train": "at least 2 training samples are required",
     "empty_val": "validation is empty: at least one independent sample is required before training",
     "empty_val_w": "empty validation: generalization metrics will be unreliable",
-    "no_table_train_w": "no table samples in training: this run will not improve OTSL extraction",
+    "no_table_train_w": "no table samples in training: this training run will not improve OTSL extraction",
     "repo_not_configured": "TABULARIUM_TRAIN_REPO is not configured",
     "repo_invalid": "invalid MonkeyOCRv2 repo: {path}",
     "python_not_found": "training python not found: {path}",
@@ -453,7 +453,7 @@ _EN: dict[str, str] = {
     "vram_too_small": "this configuration needs ~{need} GB of VRAM but GPU {index} has {free} GB free: the dominant term is the logits ({logits} GB, {vocab}-token vocabulary). Set batch_size 1 and max_length {suggest}, and raise grad_accum to keep the effective batch",
     "vram_no_length_fits_w": "not even the smallest max_length fits in the {free} GB free on GPU {index}: free the GPU (is vLLM running?) or train on crops instead of full pages",
     "vram_tight_w": "this configuration needs ~{need} GB of the {free} GB free on GPU {index}: it fits but with no margin, and the estimate ignores allocator fragmentation",
-    "disk_blocking": "insufficient disk space for a reproducible run: {gb} GB free",
+    "disk_blocking": "insufficient disk space for a reproducible training run: {gb} GB free",
     "low_disk": "low remaining disk space: {gb} GB",
     "disk_unknown_w": "cannot check the disk space",
     "image_not_available": "image not available",
@@ -471,7 +471,7 @@ _EN: dict[str, str] = {
     "user_not_found": "user not found",
     "last_admin": "you cannot delete or demote the last administrator",
     "self_password_reset": "use change password for your own account",
-    "prefill_confirm": "destructive prefill: confirmation required",
+    "prefill_confirm": "destructive page recognition: confirmation required",
     "align_has_blocks": "the page has {n} blocks: alignment changes the coordinates. Pass ?confirm=true.",
     "transform_has_blocks": "the page has {n} blocks: accepting the transform changes the coordinates. Pass ?confirm=true.",
     "block_not_on_page": "block {id} does not belong to page {page}",
@@ -484,11 +484,11 @@ _EN: dict[str, str] = {
     "key_and_instance_required": "API key and instance ID are required.",
     "ssh_host_port_required": "SSH host and port are required.",
     "ssh_host_port_model_required": "SSH host, port and fine-tuned model are required.",
-    "inference_off_prefill": "Model inference (GPU/Cloud) is turned off. Turn it on in Settings or use OCR prefill or none.",
+    "inference_off_prefill": "Model inference (GPU/Cloud) is turned off. Turn it on in Settings or use OCR recognition or none.",
     "inference_off_ocr": "Model inference (GPU/Cloud) is turned off. Turn it on in Settings or use local OCR.",
     "finetuned_model_required": "A fine-tuned model is required.",
     "account_disabled": "account disabled",
-    "wait_session_end": "wait for the session to finish before retrying",
+    "wait_session_end": "wait for the recognition to finish before retrying",
     "activate_model_first": "activate a model before starting recognition",
     "auth_disabled": "authentication is turned off",
     "backup_not_found": "backup not found",
@@ -530,7 +530,7 @@ _EN: dict[str, str] = {
     "current_password_invalid": "current password is not valid",
     "stop_policy_invalid": "invalid stop policy",
     "compute_profile_not_found": "compute profile not found",
-    "session_no_retry_pages": "this session has no pages to retry",
+    "session_no_retry_pages": "this recognition has no pages to retry",
     "model_own_image_prep": "this model prepares images itself: adjust the options of the official workflow",
     "restore_confirm": "destructive restore: confirmation required",
     "row_columns_cardinality": "row_columns: invalid number of inner boundaries",
@@ -541,7 +541,7 @@ _EN: dict[str, str] = {
     "select_a_page": "select at least one page",
     "dtype_invalid": "invalid serving.dtype",
     "dtype_not_exposed": "serving.dtype is not exposed by the official MonkeyOCRv2 wrapper",
-    "recognition_session_not_found": "recognition session not found",
+    "recognition_session_not_found": "recognition not found",
     "only_owner_deletes": "only the project owner can delete it",
     "only_owner_shares": "only the owner can manage access",
     "only_admin_inference_off": "only an administrator can turn off inference globally",
@@ -549,7 +549,7 @@ _EN: dict[str, str] = {
     "transfer_ownership_first": "transfer the user's projects first",
     "too_many_attempts": "too many attempts, try again later",
     "pages_not_in_project": "one or more pages do not belong to the project",
-    "session_page_cap": "a session can contain at most 10000 pages",
+    "session_page_cap": "a recognition can contain at most 10000 pages",
     "use_approved_profile": "use the inference profile approved by the administrator",
     "user_id_mismatch": "inconsistent user_id",
     "active_user_not_found": "active user not found",
@@ -586,7 +586,7 @@ _FR: dict[str, str] = {
     "image_unavailable": "image source indisponible",
     "no_fields": "aucun champ à mettre à jour",
     "invalid_status": "statut invalide : {status}",
-    "archive_dir_missing": "le dossier d'archives n'existe pas",
+    "archive_dir_missing": "le dossier source n'existe pas",
     "archive_dir_invalid": "archive_dir invalide",
     "destructive": "opération destructive : passez ?confirm=true pour supprimer le projet",
     "no_file_selected": "aucun fichier sélectionné",
@@ -627,12 +627,12 @@ _FR: dict[str, str] = {
         "Pour une page entière, utilisez Reconnaître."
     ),
     "pages_in_active_run": (
-        "la session n°{run} reconnaît déjà ces pages : attendez qu'elle se "
+        "la reconnaissance n°{run} traite déjà ces pages : attendez qu'elle se "
         "termine, ou annulez-la, avant d'en lancer une autre."
     ),
     "model_endpoint_unreachable": (
         "le point d'accès d'inférence {url} ne répond pas : vérifiez le modèle "
-        "et le fournisseur dans la page Modèles avant de lancer une session."
+        "et le fournisseur dans la page Modèles avant de lancer une reconnaissance."
     ),
     "ocr_engine_failed": (
         "Le moteur OCR « {engine} » est installé mais ne démarre pas : {exc}. "
@@ -667,9 +667,9 @@ _FR: dict[str, str] = {
     "table_error": "bloc {id} (Table) : {exc}",
     "table_band_failed": "bloc {id} (Table) : échec de génération de la bande ({exc})",
     "table_band_no_boundaries": "bloc {id} (Table) : bandes non générées car les limites de lignes vérifiées sont absentes",
-    "table_unverified_cells": "bloc {id} (Table) : {n}/{total} cellules de texte avec pré-remplissage non vérifié",
+    "table_unverified_cells": "bloc {id} (Table) : {n}/{total} cellules de texte en brouillon non vérifiées",
     "train_tables_excluded": "Le jeu de données a exclu {n} tableaux de pages approuvées. Confirmez le contenu des cellules et reconstruisez le jeu de données avant l’entraînement.",
-    "table_unverified_skip": "bloc {id} (Table) : {n}/{total} cellules avec pré-remplissage non vérifié — table exclue de la build « approuvées uniquement »",
+    "table_unverified_skip": "bloc {id} (Table) : {n}/{total} cellules en brouillon non vérifiées — table exclue de la build « approuvées uniquement »",
     "formula_empty": "bloc {id} (Formule) : contenu vide",
     "dataset_empty": "aucune page avec des annotations exportables : le dataset est vide",
     "dataset_no_samples": "aucun échantillon écrit : toutes les familles exportées sont vides",
@@ -692,7 +692,7 @@ _FR: dict[str, str] = {
     "min_train": "il faut au moins 2 échantillons d'entraînement",
     "empty_val": "validation vide : au moins un échantillon indépendant est requis avant l'entraînement",
     "empty_val_w": "validation vide : les métriques de généralisation ne seront pas fiables",
-    "no_table_train_w": "aucun échantillon de tableau dans l'entraînement : ce run n'améliorera pas l'extraction OTSL",
+    "no_table_train_w": "aucun échantillon de tableau dans l'entraînement : cet entraînement n'améliorera pas l'extraction OTSL",
     "repo_not_configured": "TABULARIUM_TRAIN_REPO n'est pas configuré",
     "repo_invalid": "dépôt MonkeyOCRv2 invalide : {path}",
     "python_not_found": "python d'entraînement introuvable : {path}",
@@ -720,7 +720,7 @@ _FR: dict[str, str] = {
     "vram_too_small": "cette configuration demande ~{need} Go de VRAM alors que la GPU {index} en a {free} Go libres : le terme dominant est celui des logits ({logits} Go, vocabulaire de {vocab} jetons). Mettez batch_size 1 et max_length {suggest}, et augmentez grad_accum pour garder le lot effectif",
     "vram_no_length_fits_w": "même la plus petite max_length ne tient pas dans les {free} Go libres de la GPU {index} : libérez la GPU (vLLM actif ?) ou entraînez sur des rognages plutôt que des pages entières",
     "vram_tight_w": "cette configuration demande ~{need} Go des {free} Go libres sur la GPU {index} : cela tient mais sans marge, et l'estimation ignore la fragmentation",
-    "disk_blocking": "espace disque insuffisant pour un run reproductible : {gb} Go libres",
+    "disk_blocking": "espace disque insuffisant pour un entraînement reproductible : {gb} Go libres",
     "low_disk": "espace disque résiduel faible : {gb} Go",
     "disk_unknown_w": "impossible de vérifier l'espace disque",
     "image_not_available": "image indisponible",
@@ -738,7 +738,7 @@ _FR: dict[str, str] = {
     "user_not_found": "utilisateur introuvable",
     "last_admin": "vous ne pouvez pas supprimer ou rétrograder le dernier administrateur",
     "self_password_reset": "utilisez le changement de mot de passe pour votre propre compte",
-    "prefill_confirm": "pré-remplissage destructif : confirmation requise",
+    "prefill_confirm": "reconnaissance de la page destructive : confirmation requise",
     "align_has_blocks": "la page contient {n} blocs : l'alignement change les coordonnées. Passez ?confirm=true.",
     "transform_has_blocks": "la page contient {n} blocs : accepter la transformation change les coordonnées. Passez ?confirm=true.",
     "block_not_on_page": "le bloc {id} n'appartient pas à la page {page}",
@@ -751,11 +751,11 @@ _FR: dict[str, str] = {
     "key_and_instance_required": "La clé API et l'ID de l'instance sont obligatoires.",
     "ssh_host_port_required": "L'hôte et le port SSH sont obligatoires.",
     "ssh_host_port_model_required": "L'hôte, le port SSH et le modèle affiné sont obligatoires.",
-    "inference_off_prefill": "L'inférence du modèle (GPU/Cloud) est désactivée. Activez-la dans les paramètres ou utilisez le pré-remplissage OCR ou aucun.",
+    "inference_off_prefill": "L'inférence du modèle (GPU/Cloud) est désactivée. Activez-la dans les paramètres ou utilisez la reconnaissance OCR ou aucune.",
     "inference_off_ocr": "L'inférence du modèle (GPU/Cloud) est désactivée. Activez-la dans les paramètres ou utilisez l'OCR local.",
     "finetuned_model_required": "Un modèle affiné est obligatoire.",
     "account_disabled": "compte désactivé",
-    "wait_session_end": "attendez la fin de la session avant de réessayer",
+    "wait_session_end": "attendez la fin de la reconnaissance avant de réessayer",
     "activate_model_first": "activez un modèle avant de lancer la reconnaissance",
     "auth_disabled": "l'authentification est désactivée",
     "backup_not_found": "sauvegarde introuvable",
@@ -797,7 +797,7 @@ _FR: dict[str, str] = {
     "current_password_invalid": "mot de passe actuel invalide",
     "stop_policy_invalid": "politique d'arrêt invalide",
     "compute_profile_not_found": "profil de calcul introuvable",
-    "session_no_retry_pages": "cette session ne contient aucune page à réessayer",
+    "session_no_retry_pages": "cette reconnaissance ne contient aucune page à réessayer",
     "model_own_image_prep": "ce modèle prépare lui-même les images : réglez les options du workflow officiel",
     "restore_confirm": "restauration destructive : confirmation requise",
     "row_columns_cardinality": "row_columns : nombre de limites internes invalide",
@@ -808,7 +808,7 @@ _FR: dict[str, str] = {
     "select_a_page": "sélectionnez au moins une page",
     "dtype_invalid": "serving.dtype invalide",
     "dtype_not_exposed": "serving.dtype n'est pas exposé par le wrapper officiel MonkeyOCRv2",
-    "recognition_session_not_found": "session de reconnaissance introuvable",
+    "recognition_session_not_found": "reconnaissance introuvable",
     "only_owner_deletes": "seul le propriétaire du projet peut le supprimer",
     "only_owner_shares": "seul le propriétaire peut gérer l'accès",
     "only_admin_inference_off": "seul un administrateur peut désactiver l'inférence globale",
@@ -816,7 +816,7 @@ _FR: dict[str, str] = {
     "transfer_ownership_first": "transférez d'abord la propriété des projets de l'utilisateur",
     "too_many_attempts": "trop de tentatives, réessayez plus tard",
     "pages_not_in_project": "une ou plusieurs pages n'appartiennent pas au projet",
-    "session_page_cap": "une session peut contenir au maximum 10000 pages",
+    "session_page_cap": "une reconnaissance peut contenir au maximum 10000 pages",
     "use_approved_profile": "utilisez le profil d'inférence approuvé par l'administrateur",
     "user_id_mismatch": "user_id incohérent",
     "active_user_not_found": "utilisateur actif introuvable",

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { projectPath } from '../app/projectPaths'
 import { apiGet, apiPost } from '../lib/api'
 import type { DatasetReport, DatasetStatus, PageItem } from '../lib/types'
 import { formatDateTime } from '../lib/dates'
@@ -7,7 +8,7 @@ import { familyLabel, lines as linesPlural, splitStrategyLabel } from '../lib/vo
 import { Badge, Collapsible, ErrorNotice, Field, Module, Notice, WarnNotice, PageHeader } from '../app/ui'
 import { PipelineStrip } from '../app/PipelineView'
 import { buildPipeline, usePipelineState } from '../app/pipeline'
-import { useProjects, writeActiveProject } from '../app/activeProject'
+import { useProjects, useRouteProjectId, writeActiveProject } from '../app/activeProject'
 import { IconDataset, IconPlus } from '../app/icons'
 import { useI18n, tn } from '../i18n'
 import { useInference } from '../app/inference'
@@ -87,6 +88,8 @@ export default function DatasetPage() {
   }
 
   useEffect(() => () => resetBuildArm(), [])
+
+  const routeProjectId = useRouteProjectId()
 
   const projects = useProjects((pid) => void onProject(pid), setError)
 
@@ -194,6 +197,7 @@ export default function DatasetPage() {
       <div className="mb-3">
         <Module tab={t('dataset.build')}>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {routeProjectId == null && (
             <Field label={t('dataset.project')}>
               <select
                 value={projectId}
@@ -208,6 +212,17 @@ export default function DatasetPage() {
                 ))}
               </select>
             </Field>
+            )}
+          </div>
+
+          {/* The defaults fit most projects: they are stated in one line, and every
+              choice (share, split, scope, seed, adapter, pilot) sits under Parameters. */}
+          <p className="text-[12px] text-[color:var(--color-ink-2)]">
+            {t('dataset.summary', { pct: (ratio * 100).toFixed(0), unit: splitStrategyLabel(splitStrategy).toLocaleLowerCase(), scope: t(approvedOnly ? 'dataset.scopeApproved' : 'dataset.scopeAll') })}
+          </p>
+          <div className="mt-3">
+            <Collapsible tab={t('dataset.params')} quiet>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Field
               label={t('dataset.trainShare', { pct: (ratio * 100).toFixed(0) })}
               hint={t('dataset.trainShareHint', { pct: (100 - ratio * 100).toFixed(0) })}
@@ -243,12 +258,6 @@ export default function DatasetPage() {
               <input type="checkbox" checked={approvedOnly} onChange={(e) => setApprovedOnly(e.target.checked)} />
               {t('dataset.approvedOnly')}
             </label>
-          </div>
-
-          {/* Seed e adapter si decidono una volta per corpus: stanno sotto. */}
-          <div className="mt-3">
-            <Collapsible tab={t('dataset.advanced')} quiet aux={<span>{t('dataset.advancedCount')}</span>}>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <Field label={t('dataset.seed')} hint={t('dataset.seedHint')}>
                   <input
                     type="number"
@@ -384,7 +393,7 @@ export default function DatasetPage() {
           {report.warnings.length > 0 && (
             <WarnNotice title={tn('common.warningsCount', report.warnings.length)}>
               <p>{t('dataset.warningSummary')}</p>
-              <Link to={`/annotazione?project=${projectId}`} className="btn btn-sm mt-2 no-underline">{t('dataset.material.openStudio')}</Link>
+              <Link to={projectPath(Number(projectId), 'studio')} className="btn btn-sm mt-2 no-underline">{t('dataset.material.openStudio')}</Link>
               <details className="mt-3">
                 <summary className="cursor-pointer font-semibold">{t('dataset.warningDetails')}</summary>
                 <ul className="mt-2 list-inside list-disc space-y-0.5">
@@ -397,7 +406,7 @@ export default function DatasetPage() {
           {report.pages.with_blocks > 0 && report.pages.val === 0 && <Notice tone="warn">{t('dataset.needsHeldOut')}</Notice>}
           {report.pages.with_blocks > 0 && <div className="flex flex-wrap items-center justify-between gap-3 py-4">
             <p className="max-w-[75ch] text-[13px]">{t('dataset.trainingNext')}</p>
-            <Link to="/training?view=new" className="btn btn-primary no-underline">{t('ux.configureTraining')}</Link>
+            <Link to={projectPath(Number(projectId), 'fine-tuning/addestra', { view: 'new' })} className="btn btn-primary no-underline">{t('ux.configureTraining')}</Link>
           </div>}
 
           <Collapsible

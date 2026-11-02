@@ -152,12 +152,15 @@ app in your browser at <http://localhost:8787>, where you create the
 administrator account. Your data lives in `~/Tabularium`. No GPU, Node.js or git
 needed.
 
-To upgrade later: `uv tool upgrade tabularium`. Other ways to install (release
-archive, from source) are in the [installation guide](docs/guide/installation.md).
+To upgrade later: `uv tool upgrade tabularium`, after a backup; the full procedure
+and the way back are in [Upgrading and rollback](docs/guide/upgrading.md). Other ways
+to install (release archive, from source) are in the
+[installation guide](docs/guide/installation.md).
 
 ## Documentation
 
 - [Installation](docs/guide/installation.md) ·
+  [Upgrading](docs/guide/upgrading.md) ·
   [Configuration](docs/guide/configuration.md) ·
   [Teams and review](docs/guide/collaboration.md) ·
   [Troubleshooting](docs/guide/troubleshooting.md)

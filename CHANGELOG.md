@@ -6,6 +6,99 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Fine-tuning is one path in three steps: **Prepare the data · Train · Evaluate**. Comparing
+  models (formerly *Benchmark*) is part of evaluating. Preparing the data states its defaults in
+  one line, with every choice under *Parameters*; the training type joins epochs and learning
+  rate under *Parameters*. Evaluation leads with three plain numbers (characters wrong in the
+  text, regions found, tables with the right structure); the full metrics open under *Details*.
+- Studio: one way to finish a page, **Verify and go to the next** (Ctrl/⌘+Enter), with the
+  existing confirmation when drafts are still unchecked. The header says which page this is
+  ("Page 2 of 5") and leads back to the pages; J/K move between pages. The page list can be
+  closed and starts closed below 1440 px. Assignment and review controls appear only when the
+  project has more than one member or the page is assigned. The view switch moved into the
+  More menu, and the class selector shows only while drawing. The table editor's back button
+  has a label.
+- The Pages tab leads with the one thing the project needs next: drop images or PDFs into an
+  empty project; **Recognize N pages** reads the unread pages in one click (local OCR, or the
+  model when it answers) and opens the result; then **Review N pages with drafts**, then
+  **Export**. Pages show as thumbnails, with the editable register one click away (Table view).
+- Study protocol, pilot sample, region classes, transcription rules, table schema and the
+  activity log moved to the project's **Advanced** page (project menu).
+- The projects list shows owner, access and people only for shared projects, and its filters
+  only once a project has been shared with you.
+- The project is the container of the work. The main navigation is **Projects** and **Models**;
+  inside a project, **Pages**, **Recognitions** and **Fine-tuning** are its tabs, and the project
+  switcher in that bar is the only project selector (the eleven per-page selectors are gone).
+  Every section lives under `/progetti/:id/…`; `/` resumes the last project. The old addresses
+  (`/annotazione`, `/risultati`, `/dataset`, `/training`, …) redirect to their place in the
+  project. The model status no longer sits in the global header.
+- A fresh install without a GPU no longer opens on errors: the header model status appears only
+  once a model has been chosen, and Recognize starts on the local OCR until a model answers.
+  `/api/system/inference` reports `configured`.
+- One name per concept across Italian, English and French: *project* replaces archive/corpus,
+  *recognition* replaces processing/session/run/prefill, and a single fine-tuning job is a
+  *training run*. Default region classes are shown translated; stored and exported names are
+  unchanged.
+- The app is called Tabularium everywhere (no "TabulariumLab"); the browser title is "Tabularium".
+- First-run setup no longer promises recovery emails, and a setup tab left open after the
+  administrator was created elsewhere returns to the login.
+
+### Removed
+- Unused `ClassPalette` component and unused interface strings.
+- The separate Archive page: its thumbnail wall is now the project's Pages tab.
+
+## [0.5.0] - 2026-11-02
+
+### Added
+- Surya OCR 2.5 (`surya-ocr-2.5`): the vendor's full-page path on its vLLM image
+  (`vllm/vllm-openai:v0.25.1`, NVIDIA locally and on Vast.ai), with a decoder for its compact
+  block format and parent/ghost merged cells. Weights are under a restricted OpenRAIL-M licence.
+- Xiaomi-OCR-0 (`xiaomi-ocr-0`): the vendor's region mode, PP-DocLayoutV3 layout in the Paddle
+  runtime and one task prompt per crop, on stock vLLM locally and on Vast.ai, and on Apple
+  Silicon through mlx-vlm with the original weights.
+- Unlimited-OCR-2 (`unlimited-ocr-2`): served with the vendor's SGLang build (new `sglang`
+  serving runtime, locally on NVIDIA and on Vast.ai), its block protocol parser, and LoRA/full
+  training through ms-swift main (`unlimited-ocr`, training profile `uocr2`).
+- OCRia-1: the `agentic_plus` parse tier, and the vendor's watermark modes
+  (`move_to_end`, `move_to_start`, `remove`).
+- Safe upgrades: `tabularium backup` archives the data folder and the vault key (the database
+  copied consistently, runtimes and caches left out); `tabularium restore-db` rolls the database
+  back with the app stopped, setting the current one aside. The startup backs the database up
+  before migrating it, refuses a database from a newer release with a message that names the way
+  back, and rewrites stored paths when the data folder has moved. Releases also publish the
+  container image `ghcr.io/nbadino/tabularium`. Guide: `docs/guide/upgrading.md`.
+
+### Changed
+- CI and release workflows: least-privilege permissions, concurrency, release gated on
+  tests and on non-empty CHANGELOG notes; training images build only from `main`;
+  Dependabot; `CITATION.cff` follows `VERSION`.
+- Supply chain: every GitHub Action pinned to a commit SHA, app image base images pinned
+  by digest, and `backend/constraints.txt` (universal lock) installed by the image and CI.
+- Backend error messages are all in the it/en/fr catalog, enforced by a test (R11).
+- `TABULARIUM_FORWARDED_ALLOW_IPS` sets the proxies trusted for `X-Forwarded-For`.
+- The credentialed CORS allowance for `localhost:5173` is gone: dev goes through the Vite proxy.
+- The MonkeyOCRv2 checkpoint and pixel caps are declared once in `app/models/monkeyocrv2.py`.
+- SECURITY.md documents supported versions, timeline and safe deployment defaults;
+  CHANGELOG has compare links that `scripts/version.py bump` keeps current.
+
+### Fixed
+- OCRia-1 parse requests used option names that LlamaCloud's current schema rejects
+  (`ignore.diagonal_text`, `job_failure_conditions.fail_on_job_timeout`, …). The payload
+  is now checked in tests against the vendor's OpenAPI schema; the two timeout toggles without an
+  API counterpart are gone, and stored settings with retired keys still load and save.
+- Saving the cost-effective tier no longer fails when the cost optimizer is switched off.
+- Training start, first thumbnail and custom model deletion no longer fail with a
+  NameError; pyflakes now guards the backend against undefined names.
+- Restoring the oldest backup no longer prunes it first.
+- `html_to_otsl` keeps rowspans in their column on short rows.
+- Prefill defaults to `merge`; `replace`/`replace_all` require `confirm=true`.
+- Prefill advances `annotation_revision`: an approved page loses its approval and a
+  concurrent editor gets a conflict instead of overwriting the drafts.
+- Prefill no longer auto-deskews a page that keeps blocks (only `replace_all` may).
+- Each migration and its schema version commit together; restoring an older backup
+  migrates it immediately; the transformed master no longer leaks a file handle.
+
 ### Security
 - The SPA fallback no longer serves files outside `frontend/dist` (encoded `..` read any file).
 - Admins cannot reset their own password; OIDC links an existing account only when the
@@ -20,31 +113,6 @@ Notable changes to Tabularium. The format follows
 - Logout ends Bearer sessions too; the live channel refuses a password still to change;
   `/api/system/info` needs login and shows server paths to admins only; scan jobs are
   read only through their own project.
-
-### Fixed
-- Training start, first thumbnail and custom model deletion no longer fail with a
-  NameError; pyflakes now guards the backend against undefined names.
-- Restoring the oldest backup no longer prunes it first.
-- `html_to_otsl` keeps rowspans in their column on short rows.
-- Prefill defaults to `merge`; `replace`/`replace_all` require `confirm=true`.
-- Prefill advances `annotation_revision`: an approved page loses its approval and a
-  concurrent editor gets a conflict instead of overwriting the drafts.
-- Prefill no longer auto-deskews a page that keeps blocks (only `replace_all` may).
-- Each migration and its schema version commit together; restoring an older backup
-  migrates it immediately; the transformed master no longer leaks a file handle.
-
-### Changed
-- CI and release workflows: least-privilege permissions, concurrency, release gated on
-  tests and on non-empty CHANGELOG notes; training images build only from `main`;
-  Dependabot; `CITATION.cff` follows `VERSION`.
-- Supply chain: every GitHub Action pinned to a commit SHA, app image base images pinned
-  by digest, and `backend/constraints.txt` (universal lock) installed by the image and CI.
-- Backend error messages are all in the it/en/fr catalog, enforced by a test (R11).
-- `TABULARIUM_FORWARDED_ALLOW_IPS` sets the proxies trusted for `X-Forwarded-For`.
-- The credentialed CORS allowance for `localhost:5173` is gone: dev goes through the Vite proxy.
-- The MonkeyOCRv2 checkpoint and pixel caps are declared once in `app/models/monkeyocrv2.py`.
-- SECURITY.md documents supported versions, timeline and safe deployment defaults;
-  CHANGELOG has compare links that `scripts/version.py bump` keeps current.
 
 ## [0.4.0] - 2026-10-27
 
@@ -554,7 +622,8 @@ Notable changes to Tabularium. The format follows
 ### Added
 - Recognition, annotation, dataset export, training and evaluation workflow.
 
-[Unreleased]: https://github.com/nbadino/tabularium/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/nbadino/tabularium/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/nbadino/tabularium/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/nbadino/tabularium/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/nbadino/tabularium/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nbadino/tabularium/compare/v0.1.0...v0.2.0

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -25,6 +26,26 @@ def _stop_any_active_server():
     init_db()
     yield
     serve_manager.stop()
+
+
+def _start_threads() -> list:
+    return [t for t in threading.enumerate() if t.name.startswith("serve-start-")]
+
+
+@pytest.fixture(autouse=True)
+def _join_start_threads(monkeypatch):
+    """Let `start_async` workers finish inside the test that spawned them.
+
+    A worker that outlives its test runs `start()` against the next test's
+    patches (or, once they are undone, the real vLLM provisioning). Requesting
+    `monkeypatch` makes this teardown run while the test's patches still apply.
+    """
+    assert not _start_threads(), "a serve-start thread leaked from an earlier test"
+    yield
+    for thread in _start_threads():
+        thread.join(timeout=30)
+    assert not _start_threads(), "a serve-start thread did not finish"
+    serve_manager._STARTING_INFO = {}
 
 
 @pytest.fixture(autouse=True)

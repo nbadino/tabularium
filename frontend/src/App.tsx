@@ -5,12 +5,14 @@ import AuthGate from './app/AuthGate'
 import Layout from './app/Layout'
 import { ConfirmProvider } from './app/confirm'
 import { useAuth } from './app/auth'
-const HomePage = lazy(() => import('./pages/HomePage'))
+import { HomeRedirect, LegacyRedirect } from './app/HomeRedirect'
+import { LEGACY_PATHS } from './app/legacyRoutes'
 const RecognizePage = lazy(() => import('./pages/RecognizePage'))
 const ResultsPage = lazy(() => import('./pages/ResultsPage'))
 const ModelsHubPage = lazy(() => import('./pages/ModelsHubPage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
+const ProjectAdvancedPage = lazy(() => import('./pages/ProjectAdvancedPage'))
 const AnnotationPage = lazy(() => import('./pages/AnnotationEntry'))
 const TableWorkspacePage = lazy(() => import('./pages/TableEntry'))
 const FineTuningPage = lazy(() => import('./pages/FineTuningPage'))
@@ -128,18 +130,24 @@ export default function App() {
             <Routes>
               <Route path="tabella/:blockId" element={<TableWorkspacePage />} />
               <Route element={<Layout />}>
-                <Route index element={<RecognizePage />} />
-                <Route path="risultati" element={<ResultsPage />} />
-                <Route path="archivio" element={<HomePage />} />
-                <Route path="modelli" element={<ModelsHubPage />} />
+                <Route index element={<HomeRedirect />} />
                 <Route path="progetti" element={<ProjectsPage />} />
-                <Route path="progetti/:id" element={<ProjectDetailPage />} />
-                <Route path="annotazione" element={<AnnotationPage />} />
-                <Route path="fine-tuning" element={<FineTuningPage />} />
-                <Route path="dataset" element={<DatasetPage />} />
-                <Route path="training" element={<TrainingPage />} />
-                <Route path="valutazione" element={<EvaluationPage />} />
-                <Route path="benchmark" element={<BenchmarkPage />} />
+                <Route path="progetti/:id">
+                  <Route index element={<ProjectDetailPage />} />
+                  <Route path="riconoscimenti" element={<RecognizePage />} />
+                  <Route path="riconoscimenti/:runId" element={<ResultsPage />} />
+                  <Route path="studio" element={<AnnotationPage />} />
+                  <Route path="avanzate" element={<ProjectAdvancedPage />} />
+                  <Route path="fine-tuning" element={<FineTuningPage />} />
+                  <Route path="fine-tuning/dati" element={<DatasetPage />} />
+                  <Route path="fine-tuning/addestra" element={<TrainingPage />} />
+                  <Route path="fine-tuning/valuta" element={<EvaluationPage />} />
+                  <Route path="fine-tuning/confronta" element={<BenchmarkPage />} />
+                </Route>
+                {LEGACY_PATHS.map((path) => (
+                  <Route key={path} path={path.slice(1)} element={<LegacyRedirect />} />
+                ))}
+                <Route path="modelli" element={<ModelsHubPage />} />
                 <Route path="playground" element={<PlaygroundPage />} />
                 <Route path="impostazioni" element={<SettingsPage />} />
                 <Route

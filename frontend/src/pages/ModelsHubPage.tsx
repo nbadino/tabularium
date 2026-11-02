@@ -220,7 +220,7 @@ export default function ModelsHubPage() {
                 </button>
               )}
               {inUseReady && (
-                <Link to="/" className="btn btn-primary no-underline">
+                <Link to="/riconosci" className="btn btn-primary no-underline">
                   {t('modelsHub.goRecognize')}
                 </Link>
               )}
@@ -295,7 +295,7 @@ export default function ModelsHubPage() {
             {remoteDone && (
               <Notice tone="ok">
                 {t('modelsHub.remoteDone', { model: model.display_name, provider: t(`recognition.provider.${dest}`) })}{' '}
-                <Link to="/">{t('modelsHub.goRecognize')}</Link>
+                <Link to="/riconosci">{t('modelsHub.goRecognize')}</Link>
               </Notice>
             )}
             {dest === 'llamaindex' ? (

@@ -117,6 +117,15 @@ case "$PROFILE" in
     python -m pip install "ms-swift==4.6.0" "transformers==4.46.3"
     install_common
     ;;
+  uocr2)
+    # Unlimited-OCR-2: ms-swift supports `unlimited-ocr` only on main (d52d0c4);
+    # the pins are those of its `examples/models/unlimited_ocr2/train.sh`.
+    REPO="$ROOT"
+    python -m pip install \
+      "ms-swift @ git+https://github.com/modelscope/ms-swift@d52d0c45000b875683e23dcf85d9a6e2ef346e52" \
+      "transformers==4.52.1" easydict addict
+    install_common
+    ;;
   dots)
     REPO="$ROOT"
     python -m pip install "ms-swift==4.6.0" "transformers==4.57.1"
@@ -154,7 +163,7 @@ esac
 
 log "verifico i comandi del toolchain"
 case "$PROFILE" in
-  monkey|qwen|legacy|dots)
+  monkey|qwen|legacy|uocr2|dots)
     python -c 'import swift' || fail "ms-swift non importabile"
     python -c 'import torch; assert torch.cuda.is_available()' || fail "torch non vede la GPU"
     ;;

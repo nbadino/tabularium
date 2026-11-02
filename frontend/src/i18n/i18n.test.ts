@@ -68,10 +68,9 @@ describe('i18n', () => {
 
   it('risolve i nodi misti (plurale + sottochiavi) e le sottochiavi', () => {
     withLocale('it', () => {
-      expect(tn('home.nextAnnotate', 1)).toBe('Annota 1 pagina')
-      expect(tn('home.nextAnnotate', 4)).toBe('Annota 4 pagine')
-      expect(t('home.nextAnnotateWhy').length).toBeGreaterThan(10)
-      expect(t('home.nextAnnotateAction')).toBe('Apri lo studio')
+      expect(tn('common.pagesCount', 1)).toBe('1 pagina')
+      expect(tn('common.pagesCount', 4)).toBe('4 pagine')
+      expect(t('common.chooseProject')).toBe('— scegli progetto —')
     })
   })
 

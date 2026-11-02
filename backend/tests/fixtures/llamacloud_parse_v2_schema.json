@@ -1,0 +1,2246 @@
+{
+ "source": "https://api.cloud.llamaindex.ai/api/openapi.json",
+ "fetched": "2026-10-31",
+ "root": "ParseRequestConfiguration",
+ "schemas": {
+  "AutoModeConfigurationEntry": {
+   "properties": {
+    "parsing_conf": {
+     "$ref": "#/components/schemas/AutoModeParsingConf",
+     "description": "Parsing configuration to apply when trigger conditions are met"
+    },
+    "trigger_mode": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Trigger Mode",
+     "description": "How to combine multiple trigger conditions: 'and' (all conditions must match, this is the default) or 'or' (any single condition can trigger)"
+    },
+    "page_md_error": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Md Error",
+     "description": "Trigger on pages with markdown extraction errors"
+    },
+    "text_in_page": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Text In Page",
+     "description": "Trigger if page text/markdown contains this string"
+    },
+    "table_in_page": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Table In Page",
+     "description": "Trigger if page contains a table"
+    },
+    "image_in_page": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Image In Page",
+     "description": "Trigger if page contains non-screenshot images"
+    },
+    "full_page_image_in_page": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Full Page Image In Page",
+     "description": "Trigger if page contains a full-page image (scanned page detection)"
+    },
+    "full_page_image_in_page_threshold": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Full Page Image In Page Threshold",
+     "description": "Threshold for full page image detection (0.0-1.0, default 0.8)"
+    },
+    "filename_regexp": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Filename Regexp",
+     "description": "Regex pattern to match against filename"
+    },
+    "filename_regexp_mode": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Filename Regexp Mode",
+     "description": "Regex mode flags (e.g., 'i' for case-insensitive)"
+    },
+    "filename_match_glob": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Filename Match Glob",
+     "description": "Single glob pattern to match against filename"
+    },
+    "filename_match_glob_list": {
+     "anyOf": [
+      {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Filename Match Glob List",
+     "description": "List of glob patterns to match against filename"
+    },
+    "page_longer_than_n_chars": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Longer Than N Chars",
+     "description": "Trigger if page has more than N characters"
+    },
+    "page_shorter_than_n_chars": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Shorter Than N Chars",
+     "description": "Trigger if page has fewer than N characters"
+    },
+    "page_contains_at_least_n_words": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Least N Words",
+     "description": "Trigger if page has more than N words"
+    },
+    "page_contains_at_most_n_words": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Most N Words",
+     "description": "Trigger if page has fewer than N words"
+    },
+    "page_contains_at_least_n_lines": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Least N Lines",
+     "description": "Trigger if page has more than N lines"
+    },
+    "page_contains_at_most_n_lines": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Most N Lines",
+     "description": "Trigger if page has fewer than N lines"
+    },
+    "page_contains_at_least_n_images": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Least N Images",
+     "description": "Trigger if page has more than N images"
+    },
+    "page_contains_at_most_n_images": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Most N Images",
+     "description": "Trigger if page has fewer than N images"
+    },
+    "page_contains_at_least_n_tables": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Least N Tables",
+     "description": "Trigger if page has more than N tables"
+    },
+    "page_contains_at_most_n_tables": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Most N Tables",
+     "description": "Trigger if page has fewer than N tables"
+    },
+    "page_contains_at_least_n_links": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Least N Links",
+     "description": "Trigger if page has more than N links"
+    },
+    "page_contains_at_most_n_links": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Most N Links",
+     "description": "Trigger if page has fewer than N links"
+    },
+    "page_contains_at_least_n_charts": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Least N Charts",
+     "description": "Trigger if page has more than N charts"
+    },
+    "page_contains_at_most_n_charts": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Most N Charts",
+     "description": "Trigger if page has fewer than N charts"
+    },
+    "page_contains_at_least_n_layout_elements": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Least N Layout Elements",
+     "description": "Trigger if page has more than N layout elements"
+    },
+    "page_contains_at_most_n_layout_elements": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Most N Layout Elements",
+     "description": "Trigger if page has fewer than N layout elements"
+    },
+    "page_contains_at_least_n_percent_numbers": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Least N Percent Numbers",
+     "description": "Trigger if page has more than N% numeric words"
+    },
+    "page_contains_at_most_n_percent_numbers": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Most N Percent Numbers",
+     "description": "Trigger if page has fewer than N% numeric words"
+    },
+    "page_contains_at_least_n_numbers": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Least N Numbers",
+     "description": "Trigger if page has more than N numeric words"
+    },
+    "page_contains_at_most_n_numbers": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Page Contains At Most N Numbers",
+     "description": "Trigger if page has fewer than N numeric words"
+    },
+    "regexp_in_page": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Regexp In Page",
+     "description": "Regex pattern to match in page content"
+    },
+    "regexp_in_page_mode": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Regexp In Page Mode",
+     "description": "Regex mode flags for regexp_in_page"
+    },
+    "layout_element_in_page": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Layout Element In Page",
+     "description": "Trigger if page contains this layout element type"
+    },
+    "layout_element_in_page_confidence_threshold": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Layout Element In Page Confidence Threshold",
+     "description": "Confidence threshold for layout element detection"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "required": [
+    "parsing_conf"
+   ],
+   "title": "AutoModeConfigurationEntry",
+   "description": "A single auto mode rule with trigger conditions and parsing configuration.\n\nAuto mode allows conditional parsing where different configurations are applied\nbased on page content, structure, or filename. When triggers match, the\nparsing_conf overrides default settings for that page.",
+   "examples": [
+    {
+     "parsing_conf": {
+      "tier": "agentic",
+      "version": "latest"
+     },
+     "table_in_page": true
+    },
+    {
+     "image_in_page": true,
+     "parsing_conf": {
+      "tier": "agentic",
+      "version": "latest"
+     }
+    },
+    {
+     "filename_match_glob": "*.txt",
+     "parsing_conf": {
+      "tier": "fast",
+      "version": "latest"
+     }
+    }
+   ]
+  },
+  "AutoModeCropBox": {
+   "properties": {
+    "bottom": {
+     "anyOf": [
+      {
+       "type": "number",
+       "maximum": 1.0,
+       "minimum": 0.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Bottom",
+     "description": "Bottom boundary of crop box as ratio (0-1)"
+    },
+    "left": {
+     "anyOf": [
+      {
+       "type": "number",
+       "maximum": 1.0,
+       "minimum": 0.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Left",
+     "description": "Left boundary of crop box as ratio (0-1)"
+    },
+    "right": {
+     "anyOf": [
+      {
+       "type": "number",
+       "maximum": 1.0,
+       "minimum": 0.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Right",
+     "description": "Right boundary of crop box as ratio (0-1)"
+    },
+    "top": {
+     "anyOf": [
+      {
+       "type": "number",
+       "maximum": 1.0,
+       "minimum": 0.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Top",
+     "description": "Top boundary of crop box as ratio (0-1)"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "AutoModeCropBox",
+   "description": "Crop box options for auto mode parsing configuration."
+  },
+  "AutoModeIgnoreOptions": {
+   "properties": {
+    "ignore_diagonal_text": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Ignore Diagonal Text",
+     "description": "Whether to ignore diagonal text in the document"
+    },
+    "ignore_hidden_text": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Ignore Hidden Text",
+     "description": "Whether to ignore hidden text in the document"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "AutoModeIgnoreOptions",
+   "description": "Ignore options for auto mode parsing configuration."
+  },
+  "AutoModeParsingConf": {
+   "properties": {
+    "tier": {
+     "anyOf": [
+      {
+       "type": "string",
+       "enum": [
+        "fast",
+        "cost_effective",
+        "agentic",
+        "agentic_plus"
+       ]
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Tier",
+     "description": "Override the parsing tier for matched pages. Must be paired with version"
+    },
+    "version": {
+     "anyOf": [
+      {
+       "type": "string",
+       "enum": [
+        "latest",
+        "2026-10-28",
+        "2026-10-16",
+        "2026-09-28",
+        "2026-06-15"
+       ],
+       "x-enum-order-preserved": true
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Version",
+     "description": "Version for the override tier. Required when `tier` is set. Use `latest`, or pin one of that tier's dated versions.\n\nCurrent `latest` by tier:\n- `fast`: `2026-06-15`\n- `cost_effective`: `2026-09-28`\n- `agentic`: `2026-10-16`\n- `agentic_plus`: `2026-10-28`\n\nFull list: `GET /api/v2/parse/versions`."
+    },
+    "custom_prompt": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Custom Prompt",
+     "description": "Custom AI instructions for matched pages. Overrides the base custom_prompt"
+    },
+    "ignore": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/AutoModeIgnoreOptions"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "description": "Options for ignoring specific text types"
+    },
+    "aggressive_table_extraction": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Aggressive Table Extraction",
+     "description": "Whether to use aggressive table extraction"
+    },
+    "outlined_table_extraction": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Outlined Table Extraction",
+     "description": "Whether to use outlined table extraction"
+    },
+    "adaptive_long_table": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Adaptive Long Table",
+     "description": "Whether to use adaptive long table handling"
+    },
+    "extract_layout": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Extract Layout",
+     "description": "Whether to extract layout information"
+    },
+    "specialized_chart_parsing": {
+     "anyOf": [
+      {
+       "type": "string",
+       "enum": [
+        "agentic_plus",
+        "agentic",
+        "efficient"
+       ]
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Specialized Chart Parsing",
+     "description": "Enable specialized chart parsing with the specified mode"
+    },
+    "high_res_ocr": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "High Res Ocr",
+     "description": "Whether to use high resolution OCR"
+    },
+    "language": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Language",
+     "description": "Primary language of the document"
+    },
+    "crop_box": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/AutoModeCropBox"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "description": "Document crop box boundaries"
+    },
+    "spatial_text": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/AutoModeSpatialTextOptions"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "description": "Spatial text output options"
+    },
+    "presentation": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/AutoModePresentationOptions"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "description": "Presentation-specific parsing options"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "AutoModeParsingConf",
+   "description": "Parsing configuration applied when auto mode triggers match.\n\nThese settings override the base configuration for pages where trigger conditions\nare satisfied. Only specify fields you want to override - unset fields inherit\nfrom the base configuration."
+  },
+  "AutoModePresentationOptions": {
+   "properties": {
+    "out_of_bounds_content": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Out Of Bounds Content",
+     "description": "Extract out of bounds content in presentation slides"
+    },
+    "skip_embedded_data": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Skip Embedded Data",
+     "description": "Skip extraction of embedded data for charts in presentation slides"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "AutoModePresentationOptions",
+   "description": "Presentation-specific options for auto mode parsing configuration."
+  },
+  "AutoModeSpatialTextOptions": {
+   "properties": {
+    "preserve_layout_alignment_across_pages": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Preserve Layout Alignment Across Pages",
+     "description": "Preserve text alignment across page boundaries"
+    },
+    "preserve_very_small_text": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Preserve Very Small Text",
+     "description": "Include very small text in spatial output"
+    },
+    "do_not_unroll_columns": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Do Not Unroll Columns",
+     "description": "Keep column structure intact without unrolling"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "AutoModeSpatialTextOptions",
+   "description": "Spatial text options for auto mode parsing configuration."
+  },
+  "LlamaParseAgenticOptions": {
+   "properties": {
+    "custom_prompt": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Custom Prompt",
+     "description": "Custom instructions for the AI parser. Use to guide extraction behavior, specify output formatting, or provide domain-specific context. Example: 'Extract financial tables with currency symbols. Format dates as YYYY-MM-DD.'"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseAgenticOptions",
+   "description": "Options for AI-powered parsing tiers (cost_effective, agentic, agentic_plus).\n\nThese options customize how the AI processes and interprets document content.\nOnly applicable when using non-fast tiers."
+  },
+  "LlamaParseCostOptimizerParameters": {
+   "properties": {
+    "enable": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Enable",
+     "description": "Enable cost-optimized parsing. Routes simpler pages to faster processing while complex pages use full AI analysis. May reduce speed on some documents. IMPORTANT: Only available with 'agentic' or 'agentic_plus' tiers"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseCostOptimizerParameters",
+   "description": "Cost optimizer configuration for reducing parsing costs on simpler pages.\n\nWhen enabled, the parser analyzes each page and routes simpler pages to faster,\ncheaper processing while preserving quality for complex pages. Only works with\n'agentic' or 'agentic_plus' tiers."
+  },
+  "LlamaParseCropBox": {
+   "properties": {
+    "bottom": {
+     "anyOf": [
+      {
+       "type": "number",
+       "maximum": 1.0,
+       "minimum": 0.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Bottom",
+     "description": "Bottom boundary as ratio (0-1). 0=top edge, 1=bottom edge. Content below this line is excluded"
+    },
+    "left": {
+     "anyOf": [
+      {
+       "type": "number",
+       "maximum": 1.0,
+       "minimum": 0.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Left",
+     "description": "Left boundary as ratio (0-1). 0=left edge, 1=right edge. Content left of this line is excluded"
+    },
+    "right": {
+     "anyOf": [
+      {
+       "type": "number",
+       "maximum": 1.0,
+       "minimum": 0.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Right",
+     "description": "Right boundary as ratio (0-1). 0=left edge, 1=right edge. Content right of this line is excluded"
+    },
+    "top": {
+     "anyOf": [
+      {
+       "type": "number",
+       "maximum": 1.0,
+       "minimum": 0.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Top",
+     "description": "Top boundary as ratio (0-1). 0=top edge, 1=bottom edge. Content above this line is excluded"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseCropBox",
+   "description": "Crop box boundaries for processing only a portion of each page.\n\nAll values are ratios from 0 to 1, where (0,0) is the top-left corner and (1,1) is\nthe bottom-right corner. For example, to process only the top half of each page,\nset bottom=0.5 (keeping top=0, left=0, right=1)."
+  },
+  "LlamaParseFastOptions": {
+   "properties": {},
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseFastOptions",
+   "description": "Options for fast tier parsing (rule-based, no AI).\n\nFast tier uses deterministic algorithms for text extraction without AI enhancement.\nIt's the fastest and most cost-effective option, best suited for simple documents\nwith standard layouts. Currently has no configurable options but reserved for\nfuture expansion."
+  },
+  "LlamaParseHtmlOptions": {
+   "properties": {
+    "make_all_elements_visible": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Make All Elements Visible",
+     "description": "Force all HTML elements to be visible by overriding CSS display/visibility properties. Useful for parsing pages with hidden content or collapsed sections"
+    },
+    "remove_fixed_elements": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Remove Fixed Elements",
+     "description": "Remove fixed-position elements (headers, footers, floating buttons) that appear on every page render"
+    },
+    "remove_navigation_elements": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Remove Navigation Elements",
+     "description": "Remove navigation elements (nav bars, sidebars, menus) to focus on main content"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseHtmlOptions",
+   "description": "HTML/web page parsing options."
+  },
+  "LlamaParseIgnoreOptions": {
+   "properties": {
+    "ignore_diagonal_text": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Ignore Diagonal Text",
+     "description": "Skip text rotated at an angle (not horizontal/vertical). Useful for ignoring watermarks or decorative angled text"
+    },
+    "ignore_text_in_image": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Ignore Text In Image",
+     "description": "Skip OCR text extraction from embedded images. Use when images contain irrelevant text (watermarks, logos) that shouldn't be in the output"
+    },
+    "ignore_hidden_text": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Ignore Hidden Text",
+     "description": "Skip text marked as hidden in the document structure. Some PDFs contain invisible text layers used for accessibility or search indexing"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseIgnoreOptions",
+   "description": "Options for ignoring specific types of text during extraction."
+  },
+  "LlamaParseImageOptions": {
+   "properties": {
+    "camera_photo_correction": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Camera Photo Correction",
+     "description": "Detect documents photographed with a camera (e.g. phone scans of receipts or forms), then crop, perspective-correct, and flatten uneven lighting and shadows before parsing. Supports JPEG, PNG, WebP, and HEIC/HEIF inputs. Improves results when the document is tilted or surrounded by background. Images that already look like clean scans are left untouched"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseImageOptions",
+   "description": "Image parsing options."
+  },
+  "LlamaParseInputOptions": {
+   "properties": {
+    "html": {
+     "$ref": "#/components/schemas/LlamaParseHtmlOptions",
+     "description": "HTML/web page parsing options (applies to .html, .htm files)"
+    },
+    "pdf": {
+     "$ref": "#/components/schemas/LlamaParsePdfOptions",
+     "description": "PDF-specific parsing options (applies to .pdf files)"
+    },
+    "spreadsheet": {
+     "$ref": "#/components/schemas/LlamaParseSpreadsheetOptions",
+     "description": "Spreadsheet parsing options (applies to .xlsx, .xls, .csv, .ods files)"
+    },
+    "presentation": {
+     "$ref": "#/components/schemas/LlamaParsePresentationOptions",
+     "description": "Presentation parsing options (applies to .pptx, .ppt, .odp, .key files)"
+    },
+    "image": {
+     "$ref": "#/components/schemas/LlamaParseImageOptions",
+     "description": "Image parsing options (applies to .jpg, .jpeg, .png, .webp files)"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseInputOptions",
+   "description": "Input format-specific parsing options.\n\nThese options only apply when parsing documents of the corresponding format.\nLlamaParse automatically detects the input format based on file extension and content."
+  },
+  "LlamaParseJobFailureConditions": {
+   "properties": {
+    "allowed_page_failure_ratio": {
+     "anyOf": [
+      {
+       "type": "number",
+       "maximum": 1.0,
+       "exclusiveMinimum": 0.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Allowed Page Failure Ratio",
+     "description": "Maximum ratio of pages allowed to fail before the job fails (0-1). Example: 0.1 means job fails if more than 10% of pages fail. Default is 0.05 (5%)"
+    },
+    "fail_on_image_extraction_error": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Fail On Image Extraction Error",
+     "description": "Fail the entire job if any embedded image cannot be extracted. By default, image extraction errors are logged but don't fail the job"
+    },
+    "fail_on_image_ocr_error": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Fail On Image Ocr Error",
+     "description": "Fail the entire job if OCR fails on any image. By default, OCR errors result in empty text for that image"
+    },
+    "fail_on_markdown_reconstruction_error": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Fail On Markdown Reconstruction Error",
+     "description": "Fail the entire job if markdown cannot be reconstructed for any page. By default, failed pages use fallback text extraction"
+    },
+    "fail_on_buggy_font": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Fail On Buggy Font",
+     "description": "Fail the job if a problematic font is detected that may cause incorrect text extraction. Buggy fonts can produce garbled or missing characters"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseJobFailureConditions",
+   "description": "Conditions that determine when a parsing job should fail vs complete with partial results.\n\nBy default, jobs complete successfully even if some pages fail to parse.\nUse these settings to enforce stricter quality requirements."
+  },
+  "LlamaParseMarkdownOptions": {
+   "properties": {
+    "annotate_links": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Annotate Links",
+     "description": "Add link annotations to markdown output in the format [text](url). When false, only the link text is included"
+    },
+    "annotate_revisions": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Annotate Revisions",
+     "description": "Extract Word-style revisions and comments into structured page output"
+    },
+    "annotate_line_numbers": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Annotate Line Numbers",
+     "description": "Detect printed gutter line numbers and return their Markdown offsets"
+    },
+    "tables": {
+     "$ref": "#/components/schemas/LlamaParseTables",
+     "description": "Table formatting options including markdown vs HTML format and merging behavior"
+    },
+    "inline_images": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Inline Images",
+     "description": "Embed images directly in markdown as base64 data URIs instead of extracting them as separate files. Useful for self-contained markdown output"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseMarkdownOptions",
+   "description": "Markdown output formatting options."
+  },
+  "LlamaParseOcrParameters": {
+   "properties": {
+    "languages": {
+     "anyOf": [
+      {
+       "items": {
+        "$ref": "#/components/schemas/ParserLanguages"
+       },
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Languages",
+     "description": "Languages to use for OCR text recognition. Specify multiple languages if document contains mixed-language content. Order matters - put primary language first. Example: ['en', 'es'] for English with Spanish"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseOcrParameters",
+   "description": "OCR (Optical Character Recognition) configuration parameters."
+  },
+  "LlamaParseOutputOptions": {
+   "properties": {
+    "markdown": {
+     "$ref": "#/components/schemas/LlamaParseMarkdownOptions",
+     "description": "Markdown formatting options including table styles and link annotations"
+    },
+    "spatial_text": {
+     "$ref": "#/components/schemas/LlamaParseSpatialTextOptions",
+     "description": "Spatial text output options for preserving document layout structure"
+    },
+    "tables_as_spreadsheet": {
+     "$ref": "#/components/schemas/LlamaParseTablesAsSpreadsheetOptions",
+     "description": "Options for exporting tables as XLSX spreadsheets"
+    },
+    "extract_printed_page_number": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Extract Printed Page Number",
+     "description": "Extract the printed page number as it appears in the document (e.g., 'Page 5 of 10', 'v', 'A-3'). Useful for referencing original page numbers"
+    },
+    "watermark_handling": {
+     "anyOf": [
+      {
+       "type": "string",
+       "enum": [
+        "move_to_end",
+        "move_to_start",
+        "remove"
+       ]
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Watermark Handling",
+     "description": "What to do with watermark text stamped across the page (e.g., 'CONFIDENTIAL', 'DRAFT'): 'move_to_end' (default) keeps it as the last block of the page's markdown, 'move_to_start' as the first block, and 'remove' drops it. The text output follows the same choice where the watermark is a line of its own in the PDF text layer. In every mode the detected text is reported in the page's `watermark` metadata. Requires version 2026-09-28 or later on the cost_effective, agentic, and agentic_plus tiers; ignored otherwise",
+     "examples": [
+      "remove"
+     ]
+    },
+    "images_to_save": {
+     "anyOf": [
+      {
+       "items": {
+        "type": "string",
+        "enum": [
+         "screenshot",
+         "embedded",
+         "layout"
+        ]
+       },
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Images To Save",
+     "description": "Image categories to save: 'screenshot' (full page renders), 'embedded' (images found within the document), 'layout' (cropped figures and diagrams). Defaults to saving 'layout' when the output links to cropped images; pass [] to save none"
+    },
+    "additional_outputs": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array",
+     "title": "Additional Outputs",
+     "description": "Optional additional output artifacts to save alongside the primary parse output. Each value opts in to generating and persisting one extra file; the empty list (default) saves none. The three accepted values are: 'stripped_md' \u2014 per-page markdown stripped of formatting (links, bold/italic, images, HTML), saved as JSON for full-text-search indexing; fetch via `expand=stripped_markdown_content_metadata`. 'concatenated_stripped_txt' \u2014 all stripped pages concatenated into a single plain-text file with `\\n\\n---\\n\\n` between pages, useful for feeding the document into search or embedding pipelines as one blob; fetch via `expand=concatenated_stripped_markdown_content_metadata`. 'word_bbox' \u2014 raw word-level bounding boxes (one JSON object per word, with page number and x/y/w/h coordinates) saved as JSONL, useful for highlighting or grounding extracted answers back to the source document; fetch via `expand=raw_words_content_metadata`.",
+     "examples": [
+      [
+       "stripped_md",
+       "concatenated_stripped_txt",
+       "word_bbox"
+      ]
+     ]
+    },
+    "granular_bboxes": {
+     "items": {
+      "type": "string",
+      "enum": [
+       "cell",
+       "line",
+       "word"
+      ]
+     },
+     "type": "array",
+     "title": "Granular Bboxes",
+     "description": "Bounding-box granularity levels to compute for the parse. 'word' computes one bounding box per detected word; 'line' computes one per text line; 'cell' computes one per table cell. Multiple levels can be requested. Empty list (default) disables granular bboxes \u2014 only item-level layout boxes are returned on the result. When set, the computed boxes are not inlined on the result items; they are written to a separate `grounded_items` sidecar (JSONL, one row per page) and exposed as `result_content_metadata.grounded_items` (a presigned download URL) on the parse result. Each row matches the `GroundedJsonItem` shape.",
+     "examples": [
+      [
+       "word",
+       "line",
+       "cell"
+      ]
+     ]
+    },
+    "save_output_pdf": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Save Output Pdf",
+     "description": "Save a PDF copy of the parsed document, retrievable via `expand=output_pdf_content_metadata`. Not produced for spreadsheet, plain-text, or audio inputs"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseOutputOptions",
+   "description": "Output formatting and content extraction options.\n\nControls how parsed content is formatted and what additional data is extracted."
+  },
+  "LlamaParsePageRanges": {
+   "properties": {
+    "max_pages": {
+     "anyOf": [
+      {
+       "type": "integer",
+       "minimum": 1.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Max Pages",
+     "description": "Maximum number of pages to process. Pages are processed in order starting from page 1. If both max_pages and target_pages are set, target_pages takes precedence"
+    },
+    "target_pages": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Target Pages",
+     "description": "Comma-separated list of specific pages to process using 1-based indexing. Supports individual pages and ranges. Examples: '1,3,5' (pages 1, 3, 5), '1-5' (pages 1 through 5 inclusive), '1,3,5-8,10' (pages 1, 3, 5-8, and 10). Pages are sorted and deduplicated automatically. Duplicate pages cause an error"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParsePageRanges",
+   "description": "Page selection options for processing specific pages or limiting page count."
+  },
+  "LlamaParsePdfOptions": {
+   "properties": {},
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParsePdfOptions"
+  },
+  "LlamaParsePresentationOptions": {
+   "properties": {
+    "include_hidden_slides": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Include Hidden Slides",
+     "description": "Include hidden PPTX slides in the output. Omitted or false skips hidden slides.",
+     "examples": [
+      true
+     ]
+    },
+    "out_of_bounds_content": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Out Of Bounds Content",
+     "description": "Extract content positioned outside the visible slide area. Some presentations have hidden notes or content that extends beyond slide boundaries"
+    },
+    "skip_embedded_data": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Skip Embedded Data",
+     "description": "Skip extraction of embedded chart data tables. When true, only the visual representation of charts is captured, not the underlying data"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParsePresentationOptions",
+   "description": "Presentation (PowerPoint, Keynote, ODP) parsing options."
+  },
+  "LlamaParseProcessingControl": {
+   "properties": {
+    "timeouts": {
+     "$ref": "#/components/schemas/LlamaParseTimeouts",
+     "description": "Timeout settings for job execution. Increase for large or complex documents"
+    },
+    "job_failure_conditions": {
+     "$ref": "#/components/schemas/LlamaParseJobFailureConditions",
+     "description": "Quality thresholds that determine when a job should fail vs complete with partial results"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseProcessingControl",
+   "description": "Job processing controls for timeouts and failure handling."
+  },
+  "LlamaParseProcessingOptions": {
+   "properties": {
+    "ignore": {
+     "$ref": "#/components/schemas/LlamaParseIgnoreOptions",
+     "description": "Options for ignoring specific text types (diagonal, hidden, text in images)"
+    },
+    "ocr_parameters": {
+     "$ref": "#/components/schemas/LlamaParseOcrParameters",
+     "description": "OCR configuration including language detection settings"
+    },
+    "aggressive_table_extraction": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Aggressive Table Extraction",
+     "description": "Use aggressive heuristics to detect table boundaries, even without visible borders. Useful for documents with borderless or complex tables"
+    },
+    "confidence_score_effort": {
+     "anyOf": [
+      {
+       "type": "string",
+       "const": "high"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Confidence Score Effort",
+     "description": "Confidence scoring effort. Omit for standard scoring. 'high': more accurate assessment of the parsing quality of every page, plus a document-level score in the result metadata; costs an additional 5 credits per page",
+     "examples": [
+      "high"
+     ]
+    },
+    "disable_heuristics": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Disable Heuristics",
+     "description": "Disable automatic heuristics including outlined table extraction and adaptive long table handling. Use when heuristics produce incorrect results"
+    },
+    "specialized_chart_parsing": {
+     "anyOf": [
+      {
+       "type": "string",
+       "enum": [
+        "agentic_plus",
+        "agentic",
+        "efficient"
+       ]
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Specialized Chart Parsing",
+     "description": "Enable AI-powered chart analysis. Modes: 'efficient' (fast, lower cost), 'agentic' (balanced), 'agentic_plus' (highest accuracy). Automatically enables extract_layout and precise_bounding_box when set"
+    },
+    "cost_optimizer": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/LlamaParseCostOptimizerParameters"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "description": "Cost optimization settings. Only available with 'agentic' or 'agentic_plus' tiers"
+    },
+    "auto_mode_configuration": {
+     "anyOf": [
+      {
+       "items": {
+        "$ref": "#/components/schemas/AutoModeConfigurationEntry"
+       },
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Auto Mode Configuration",
+     "description": "Conditional processing rules that apply different parsing options based on page content, document structure, or filename patterns. Each entry defines trigger conditions and the parsing configuration to apply when triggered"
+    },
+    "forms": {
+     "anyOf": [
+      {
+       "type": "string",
+       "enum": [
+        "default",
+        "enrich"
+       ]
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Forms",
+     "description": "Beta: set to 'enrich' to run an additional AI form-analysis pass on pages detected as forms, producing a structured tree of the form's sections, fields, and fillable grids. Retrieve the result with expand=forms. 'default' (the default) applies standard parsing with no extra pass. Not available on the fast tier",
+     "examples": [
+      "enrich"
+     ]
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseProcessingOptions",
+   "description": "Processing options shared across all parsing tiers.\n\nThese options control how documents are analyzed and processed regardless of the selected tier.\nSome options automatically enable additional behaviors (e.g., specialized_chart_parsing\nenables extract_layout and precise_bounding_box)."
+  },
+  "LlamaParseSpatialTextOptions": {
+   "properties": {
+    "preserve_layout_alignment_across_pages": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Preserve Layout Alignment Across Pages",
+     "description": "Maintain consistent text column alignment across page boundaries. Automatically enabled for document-level parsing modes"
+    },
+    "preserve_very_small_text": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Preserve Very Small Text",
+     "description": "Include text below the normal size threshold. Useful for footnotes, watermarks, or fine print that might otherwise be filtered out"
+    },
+    "do_not_unroll_columns": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Do Not Unroll Columns",
+     "description": "Keep multi-column layouts intact instead of linearizing columns into sequential text. Automatically enabled for non-fast tiers"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseSpatialTextOptions",
+   "description": "Spatial text output options for preserving document layout.\n\nSpatial text maintains the visual positioning of text elements, useful for\ndocuments where layout conveys meaning (forms, tables, multi-column layouts)."
+  },
+  "LlamaParseSpreadsheetOptions": {
+   "properties": {
+    "detect_sub_tables_in_sheets": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Detect Sub Tables In Sheets",
+     "description": "Detect and extract multiple tables within a single sheet. Useful when spreadsheets contain several data regions separated by blank rows/columns"
+    },
+    "force_formula_computation_in_sheets": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Force Formula Computation In Sheets",
+     "description": "Compute formula results instead of extracting formula text. Use when you need calculated values rather than formula definitions"
+    },
+    "include_hidden_sheets": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Include Hidden Sheets",
+     "description": "Parse hidden sheets in addition to visible ones. By default, hidden sheets are skipped"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseSpreadsheetOptions",
+   "description": "Spreadsheet (Excel, CSV, ODS) parsing options."
+  },
+  "LlamaParseTables": {
+   "properties": {
+    "compact_markdown_tables": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Compact Markdown Tables",
+     "description": "Remove extra whitespace padding in markdown table cells for more compact output"
+    },
+    "output_tables_as_markdown": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Output Tables As Markdown",
+     "description": "Output tables as markdown pipe tables instead of HTML &lt;table&gt; tags. Markdown tables are simpler but cannot represent complex structures like merged cells"
+    },
+    "markdown_table_multiline_separator": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Markdown Table Multiline Separator",
+     "description": "Separator string for multiline cell content in markdown tables. Example: '&lt;br&gt;' to preserve line breaks, ' ' to join with spaces"
+    },
+    "merge_continued_tables": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Merge Continued Tables",
+     "description": "Automatically merge tables that span multiple pages into a single table. The merged table appears on the first page with merged_from_pages metadata"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseTables",
+   "description": "Table formatting options for markdown output."
+  },
+  "LlamaParseTablesAsSpreadsheetOptions": {
+   "properties": {
+    "enable": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Enable",
+     "description": "Whether this option is enabled"
+    },
+    "guess_sheet_name": {
+     "type": "boolean",
+     "title": "Guess Sheet Name",
+     "description": "Automatically generate descriptive sheet names from table context (headers, surrounding text) instead of using generic names like 'Table_1'",
+     "default": true
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseTablesAsSpreadsheetOptions",
+   "description": "Options for exporting extracted tables as XLSX spreadsheet files."
+  },
+  "LlamaParseTimeouts": {
+   "properties": {
+    "base_in_seconds": {
+     "anyOf": [
+      {
+       "type": "integer",
+       "maximum": 7200.0,
+       "exclusiveMinimum": 0.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Base In Seconds",
+     "description": "Base timeout for the job in seconds (max 7200 = 2 hours). This is the minimum time allowed regardless of document size"
+    },
+    "extra_time_per_page_in_seconds": {
+     "anyOf": [
+      {
+       "type": "integer",
+       "maximum": 300.0,
+       "exclusiveMinimum": 0.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Extra Time Per Page In Seconds",
+     "description": "Additional timeout per page in seconds (max 300 = 5 minutes). Total timeout = base + (this value \u00d7 page count)"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseTimeouts",
+   "description": "Job timeout configuration.\n\nTotal timeout = base_in_seconds + (extra_time_per_page_in_seconds \u00d7 page_count).\nUse these settings for large documents or complex parsing that needs more time."
+  },
+  "LlamaParseWebhookConfiguration": {
+   "properties": {
+    "webhook_url": {
+     "anyOf": [
+      {
+       "type": "string",
+       "pattern": "^https?:"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Webhook Url",
+     "description": "HTTPS URL to receive webhook POST requests. Must be publicly accessible"
+    },
+    "webhook_headers": {
+     "anyOf": [
+      {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Webhook Headers",
+     "description": "Custom HTTP headers to include in webhook requests. Use for authentication tokens or custom routing. Example: {'Authorization': 'Bearer xyz'}"
+    },
+    "webhook_signing_secret": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Webhook Signing Secret",
+     "description": "Shared signing secret used to sign webhook deliveries. When set, each request includes an HMAC-SHA256 signature of the request body in the 'LC-Signature' header (value 'sha256=<hex>'). Recompute the HMAC over the raw request body with this secret to verify the delivery is authentic."
+    },
+    "webhook_events": {
+     "anyOf": [
+      {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Webhook Events",
+     "description": "Events that trigger this webhook. Options: 'parse.success' (job completed), 'parse.error' (job failed), 'parse.partial_success' (some pages failed), 'parse.pending', 'parse.running', 'parse.cancelled'. If not specified, webhook fires for all events",
+     "examples": [
+      [
+       "parse.success",
+       "parse.error"
+      ]
+     ]
+    },
+    "webhook_output_format": {
+     "anyOf": [
+      {
+       "type": "string",
+       "enum": [
+        "string",
+        "json"
+       ]
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Webhook Output Format",
+     "description": "Format of the webhook payload body. 'string' (default) sends the payload as a JSON-encoded string; 'json' sends it as a JSON object.",
+     "examples": [
+      "json"
+     ]
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "title": "LlamaParseWebhookConfiguration",
+   "description": "Webhook configuration for receiving parsing job notifications.\n\nWebhooks are called when specified events occur during job processing.\nConfigure multiple webhook configurations to send to different endpoints."
+  },
+  "ParseRequestConfiguration": {
+   "properties": {
+    "user_metadata": {
+     "anyOf": [
+      {
+       "additionalProperties": {
+        "type": "string"
+       },
+       "type": "object"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "User Metadata",
+     "description": "Arbitrary key/value tags to attach to this job. Returned when retrieving the job. Not searchable. Limits apply to the number of entries and the length of keys and values; oversized metadata is rejected.",
+     "examples": [
+      {
+       "owner": "jerry",
+       "team": "research"
+      }
+     ]
+    },
+    "webhook_configuration_ids": {
+     "anyOf": [
+      {
+       "items": {
+        "type": "string"
+       },
+       "type": "array",
+       "maxItems": 4
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Webhook Configuration Ids",
+     "description": "IDs of saved webhook configurations to notify for this job.",
+     "examples": [
+      [
+       "whc-...",
+       "whc-..."
+      ]
+     ]
+    },
+    "tier": {
+     "anyOf": [
+      {
+       "type": "string",
+       "enum": [
+        "fast",
+        "cost_effective",
+        "agentic",
+        "agentic_plus"
+       ],
+       "x-enum-order-preserved": true
+      },
+      {
+       "type": "string"
+      }
+     ],
+     "title": "Tier",
+     "description": "Parsing tier: 'fast' (rule-based, cheapest), 'cost_effective' (balanced), 'agentic' (AI-powered with custom prompts), or 'agentic_plus' (premium AI with highest accuracy)"
+    },
+    "version": {
+     "anyOf": [
+      {
+       "type": "string",
+       "enum": [
+        "latest",
+        "2026-10-28",
+        "2026-10-16",
+        "2026-09-28",
+        "2026-06-15"
+       ],
+       "x-enum-order-preserved": true
+      },
+      {
+       "type": "string"
+      }
+     ],
+     "title": "Version",
+     "description": "Version for the selected tier. Use `latest`, or pin one of that tier's dated versions.\n\nCurrent `latest` by tier:\n- `fast`: `2026-06-15`\n- `cost_effective`: `2026-09-28`\n- `agentic`: `2026-10-16`\n- `agentic_plus`: `2026-10-28`\n\nFull list: `GET /api/v2/parse/versions`."
+    },
+    "client_name": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Client Name",
+     "description": "Identifier for the client/application making the request. Used for analytics and debugging. Example: 'my-app-v2'"
+    },
+    "processing_options": {
+     "$ref": "#/components/schemas/LlamaParseProcessingOptions",
+     "description": "Document processing options including OCR, table extraction, and chart parsing"
+    },
+    "fast_options": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/LlamaParseFastOptions"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "description": "Fast tier configuration options. Auto-initialized when tier='fast'. Cannot be used with other tiers"
+    },
+    "agentic_options": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/LlamaParseAgenticOptions"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "description": "AI-powered tier configuration (custom prompts). Auto-initialized for cost_effective/agentic/agentic_plus tiers. Cannot be used with fast tier"
+    },
+    "webhook_configurations": {
+     "items": {
+      "$ref": "#/components/schemas/LlamaParseWebhookConfiguration"
+     },
+     "type": "array",
+     "title": "Webhook Configurations",
+     "description": "Webhook endpoints for job notifications. Maximum 10 total, including webhook_configuration_ids."
+    },
+    "input_options": {
+     "$ref": "#/components/schemas/LlamaParseInputOptions",
+     "description": "Format-specific options (HTML, PDF, spreadsheet, presentation). Applied based on detected input file type"
+    },
+    "crop_box": {
+     "$ref": "#/components/schemas/LlamaParseCropBox",
+     "description": "Crop boundaries to process only a portion of each page. Values are ratios 0-1 from page edges"
+    },
+    "page_ranges": {
+     "$ref": "#/components/schemas/LlamaParsePageRanges",
+     "description": "Page selection: limit total pages or specify exact pages to process"
+    },
+    "disable_cache": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Disable Cache",
+     "description": "Bypass result caching and force re-parsing. Use when document content may have changed or you need fresh results"
+    },
+    "output_options": {
+     "$ref": "#/components/schemas/LlamaParseOutputOptions",
+     "description": "Output formatting options for markdown, text, and extracted images"
+    },
+    "processing_control": {
+     "$ref": "#/components/schemas/LlamaParseProcessingControl",
+     "description": "Job execution controls including timeouts and failure thresholds"
+    },
+    "configuration_id": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Configuration Id",
+     "description": "ID of a saved parse configuration. When set, `tier` and `version` default to the saved configuration's values \u2014 omit them or pass `'configured'`."
+    },
+    "file_id": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "File Id",
+     "description": "ID of an existing file in the project to parse. Mutually exclusive with source_url"
+    },
+    "source_url": {
+     "anyOf": [
+      {
+       "type": "string",
+       "pattern": "^https?:"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Source Url",
+     "description": "Public URL of the document to parse. Mutually exclusive with file_id"
+    },
+    "http_proxy": {
+     "anyOf": [
+      {
+       "type": "string",
+       "pattern": "^https?:"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Http Proxy",
+     "description": "HTTP/HTTPS proxy for fetching source_url. Ignored if using file_id"
+    }
+   },
+   "additionalProperties": false,
+   "type": "object",
+   "required": [
+    "tier",
+    "version"
+   ],
+   "title": "ParseRequestConfiguration",
+   "description": "Unified configuration for parsing with flexible input source.\n\nSpecify exactly one input source: either an existing file by ID or a URL to fetch.\nThis endpoint consolidates file-based and URL-based parsing into a single interface."
+  },
+  "ParserLanguages": {
+   "type": "string",
+   "enum": [
+    "af",
+    "az",
+    "bs",
+    "cs",
+    "cy",
+    "da",
+    "de",
+    "en",
+    "es",
+    "et",
+    "fr",
+    "ga",
+    "hr",
+    "hu",
+    "id",
+    "is",
+    "it",
+    "ku",
+    "la",
+    "lt",
+    "lv",
+    "mi",
+    "ms",
+    "mt",
+    "nl",
+    "no",
+    "oc",
+    "pi",
+    "pl",
+    "pt",
+    "ro",
+    "rs_latin",
+    "sk",
+    "sl",
+    "sq",
+    "sv",
+    "sw",
+    "tl",
+    "tr",
+    "uz",
+    "vi",
+    "ar",
+    "fa",
+    "ug",
+    "ur",
+    "bn",
+    "as",
+    "mni",
+    "ru",
+    "rs_cyrillic",
+    "be",
+    "bg",
+    "uk",
+    "mn",
+    "abq",
+    "ady",
+    "kbd",
+    "ava",
+    "dar",
+    "inh",
+    "che",
+    "lbe",
+    "lez",
+    "tab",
+    "tjk",
+    "hi",
+    "mr",
+    "ne",
+    "bh",
+    "mai",
+    "ang",
+    "bho",
+    "mah",
+    "sck",
+    "new",
+    "gom",
+    "sa",
+    "bgc",
+    "th",
+    "ch_sim",
+    "ch_tra",
+    "ja",
+    "ko",
+    "ta",
+    "te",
+    "kn"
+   ],
+   "title": "ParserLanguages",
+   "description": "Enum for representing the languages supported by the parser."
+  }
+ }
+}

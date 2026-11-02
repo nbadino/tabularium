@@ -58,7 +58,7 @@ describe('EvaluationPage', () => {
   it('blocks evaluation after training when there are no held-out pages', async () => {
     finishedTraining = true
     render(<MemoryRouter><EvaluationPage /></MemoryRouter>)
-    await screen.findByText(/La valutazione dopo il training richiede pagine di validazione/)
+    await screen.findByText(/La valutazione dopo l’addestramento richiede pagine di validazione/)
     expect(screen.getByRole('button', { name: 'Esegui valutazione' })).toBeDisabled()
   })
 
@@ -69,6 +69,9 @@ describe('EvaluationPage', () => {
     const run = await screen.findByRole('button', { name: 'Esegui valutazione' })
     await vi.waitFor(() => expect(run).toBeEnabled())
     fireEvent.click(run)
+    // The plain summary comes first; the metrics open on request.
+    expect(await screen.findByText('zone trovate')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Dettagli delle metriche/ }))
     expect(await screen.findByText('40.0%')).toBeInTheDocument()
     expect(screen.getByText('1/2 trovati · 3 predetti')).toBeInTheDocument()
     const table = screen.getByRole('table')

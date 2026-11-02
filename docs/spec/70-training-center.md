@@ -9,7 +9,7 @@
   into a recipe by `services/train_recipes.py`: the toolchain the model's
   own vendor documentation uses, the official documentation URL, allowed types (`lora`/`full`), the
   data view, the official hyperparameters/flags and the maturity. Closed models (Gemini 4 Argon)
-  have no weights and no recipe; `inference-only` models (TeleOCR, LightOnOCR-3) declare why they
+  have no weights and no recipe; `inference-only` models (TeleOCR, LightOnOCR-3, Surya OCR 2.5, Xiaomi-OCR-0) declare why they
   cannot be trained instead of disappearing.
 - **The toolchain is per model, not one global choice**:
   - `ms-swift` — MonkeyOCRv2 (the **bundled fork** in `parsing/train/ms-swift`, where the flag is

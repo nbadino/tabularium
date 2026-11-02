@@ -23,9 +23,8 @@ def integrity(path: Path | None = None) -> dict:
     return {"ok": ok, "journal_mode": journal, "messages": [row[0] for row in result]}
 
 
-def create_backup(*, reason: str = "manual", keep: str | None = None) -> dict:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    target = backup_dir() / f"tabularium-{stamp}-{reason}.db"
+def snapshot(target: Path) -> dict:
+    """Consistent copy of the live database to `target`, verified."""
     # Connection.backup include correttamente WAL e non richiede di copiare
     # separatamente .wal/.shm mentre il backend sta lavorando.
     source = sqlite3.connect(config.DB_PATH)
@@ -36,7 +35,13 @@ def create_backup(*, reason: str = "manual", keep: str | None = None) -> dict:
     finally:
         dest.close()
         source.close()
-    check = integrity(target)
+    return integrity(target)
+
+
+def create_backup(*, reason: str = "manual", keep: str | None = None) -> dict:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    target = backup_dir() / f"tabularium-{stamp}-{reason}.db"
+    check = snapshot(target)
     if not check["ok"]:
         target.unlink(missing_ok=True)
         raise RuntimeError("backup non integro")

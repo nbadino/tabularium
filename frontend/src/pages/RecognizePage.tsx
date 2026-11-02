@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { projectPath } from '../app/projectPaths'
 import { Link, useSearchParams } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import { ApiError } from '../lib/api'
 import type { PageItem, PrefillEngines, RecognitionRun, SystemInfo } from '../lib/types'
+import { defaultEngine } from '../lib/defaultEngine'
 import { Badge, Collapsible, ErrorNotice, Field, Loading, Modal, Module, Notice, Progress, PageHeader } from '../app/ui'
-import { useProjects, writeActiveProject } from '../app/activeProject'
+import { useProjects, useRouteProjectId, writeActiveProject } from '../app/activeProject'
 import { syncInferenceFromBackend, useInference } from '../app/inference'
 import { useCanAdminister } from '../app/auth'
 import { IconArchive, IconPlayground } from '../app/icons'
@@ -75,13 +77,13 @@ function RunSummary({ run, onCancel }: { run: RecognitionRun; onCancel: () => vo
       <div className="mt-3 flex flex-wrap gap-2">
         {run.items?.[0] && (
           <Link
-            to={`/annotazione?project=${run.project_id}&page=${run.items[0].page_id}&run=${run.id}`}
+            to={projectPath(run.project_id, 'studio', { page: run.items[0].page_id, run: run.id })}
             className="btn btn-primary no-underline"
           >
             {t('recognition.openStudio')}
           </Link>
         )}
-        <Link to={`/risultati?project=${run.project_id}&run=${run.id}`} className="btn btn-primary no-underline">
+        <Link to={projectPath(run.project_id, `riconoscimenti/${run.id}`)} className="btn btn-primary no-underline">
           {t('recognition.openResults')}
         </Link>
         {active && (
@@ -109,7 +111,7 @@ export default function RecognizePage() {
   const [runs, setRuns] = useState<RecognitionRun[]>([])
   const [modelRuntime, setModelRuntime] = useState<ModelRuntimeInfo[]>([])
   const [current, setCurrent] = useState<RecognitionRun | null>(null)
-  const [engine, setEngine] = useState<'model' | 'ocr'>('model')
+  const [engine, setEngine] = useState<'model' | 'ocr'>(() => defaultEngine(null, inference))
   const [disableAfter, setDisableAfter] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
@@ -130,14 +132,16 @@ export default function RecognizePage() {
     ]).catch(() => {})
   }, [])
 
-  // Il motore di default lo decide il backend, non questa pagina: su
-  // un'installazione senza GPU «modello» è una voce disabilitata, e trovarla
-  // già selezionata manda l'utente dritto in un vicolo cieco. La scelta
-  // esplicita dell'utente vince sempre su quella suggerita.
+  // The page starts on the local OCR and switches to the model only once it
+  // answers, so an install without a GPU never flashes an unreachable-model
+  // warning. The user's explicit choice always wins.
   useEffect(() => {
-    if (engineTouched || !engines?.recommended) return
-    setEngine(engines.recommended === 'model' && !(inference.enabled && inference.available) && engines.ocr?.available ? 'ocr' : engines.recommended)
-  }, [engines?.recommended, engines?.ocr?.available, engineTouched, inference.enabled, inference.available])
+    if (engineTouched) return
+    setEngine(defaultEngine(
+      engines ? { recommended: engines.recommended, ocrAvailable: !!engines.ocr?.available } : null,
+      inference,
+    ))
+  }, [engines, engineTouched, inference])
 
   const loadRuns = async (pid: number) => {
     try {
@@ -185,6 +189,8 @@ export default function RecognizePage() {
       setError(e)
     } finally { setPagesLoading(false) }
   }
+
+  const routeProjectId = useRouteProjectId()
 
   const projects = useProjects((pid) => void onProject(Number(params.get('project')) || pid), setError)
 
@@ -321,7 +327,7 @@ export default function RecognizePage() {
     <div className="p-3">
       <PageHeader title={t('recognition.title')} intro={t('recognition.intro')} />
       <div className="mb-3 flex flex-wrap gap-2">
-        <Link to="/progetti?nuovo=1" className="btn btn-sm no-underline">{t('projects.new')}</Link>
+        {routeProjectId == null && <Link to="/progetti?nuovo=1" className="btn btn-sm no-underline">{t('projects.new')}</Link>}
         {projectId !== '' && <Link to={`/progetti/${projectId}`} className="btn btn-sm no-underline">{t('workflow.addPages')}</Link>}
       </div>
 
@@ -341,6 +347,7 @@ export default function RecognizePage() {
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
         <Module tab={t('recognition.pages')} flush aux={<span>{t('recognition.selected', { n: selected.size })} <span className="text-[color:var(--color-ink-3)]">· {t('recognition.rangeHint')}</span></span>}>
           <div className="flex flex-wrap items-end gap-3 border-b border-[color:var(--color-rule)] p-3">
+            {routeProjectId == null && (
             <div className="min-w-56 flex-1">
               <Field label={t('recognition.project')}>
                 <select value={projectId} onChange={(e) => void onProject(e.target.value === '' ? '' : Number(e.target.value))} className="fld">
@@ -349,6 +356,7 @@ export default function RecognizePage() {
                 </select>
               </Field>
             </div>
+            )}
             <div className="min-w-56 flex-1">
               <Field label={t('recognition.filterPages')}>
                 <input
@@ -527,7 +535,7 @@ export default function RecognizePage() {
               <ul className="divide-y divide-[color:var(--color-rule)]">
                 {runs.slice(0, 8).map((run) => (
                   <li key={run.id}>
-                    <Link to={`/risultati?project=${run.project_id}&run=${run.id}`} className="flex items-center gap-2 p-2 text-[12px] no-underline hover:bg-[color:var(--color-fill)]">
+                    <Link to={projectPath(run.project_id, `riconoscimenti/${run.id}`)} className="flex items-center gap-2 p-2 text-[12px] no-underline hover:bg-[color:var(--color-fill)]">
                       <span className="mono text-[11px]">#{run.id}</span>
                       <span className="min-w-0 flex-1 truncate">{runTitle(run, nameOf)}</span>
                       <Badge tone={runTone(run)}>{runLabel(run, t)}</Badge>

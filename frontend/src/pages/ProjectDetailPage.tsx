@@ -1,33 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { InputHTMLAttributes } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
+import { projectPath } from '../app/projectPaths'
+import type { InputHTMLAttributes, ReactNode } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { apiDelete, apiGet, apiPatch, apiPost } from '../lib/api'
 import { PAGE_STATUSES, PAGE_TYPES } from '../lib/types'
-import type { PageItem, Project, ScanReport } from '../lib/types'
+import type { PageItem, PrefillEngines, Project, RecognitionRun, ScanReport } from '../lib/types'
 import { pageTypeLabel, pages as pagesN, statusLabel, STATUS_TONE } from '../lib/vocab'
-import { Badge, Collapsible, ErrorNotice, Field, Loading, Menu, Modal, Module, WarnNotice } from '../app/ui'
-import { ActivityFeed, type ProjectActivity } from '../app/ActivityFeed'
+import { Badge, ErrorNotice, Field, Loading, Menu, Modal, Module, WarnNotice } from '../app/ui'
+import { PageWall } from '../app/PageWall'
+import { useInference } from '../app/inference'
+import { defaultEngine } from '../lib/defaultEngine'
+import { primaryAction } from '../lib/primaryAction'
 import ShareDialog from '../app/ShareDialog'
 import { useConfirm } from '../app/confirm'
-import { useAuth } from '../app/auth'
-import { IconCheck, IconPrev, IconScan, IconTrash, IconUsers } from '../app/icons'
+import { useAuth, useCanAdminister } from '../app/auth'
+import { IconCheck, IconScan, IconTrash, IconUsers } from '../app/icons'
 import { useI18n, tn } from '../i18n'
 import { writeActiveProject } from '../app/activeProject'
 import { accessLabel, projectAccess } from '../app/projectAccess'
 import { pageLabel } from '../lib/pageLabel'
 import { API_BASE } from '../lib/endpoints'
-
-type StudyProtocol = {
-  corpus_scope: string
-  time_start: string | null
-  time_end: string | null
-  objective: string
-  domain_profile: string
-  model_adapter: string
-  gold_pages: number[]
-  version: number
-  updated_at: string
-}
 
 /** Il referto di scansione sopravvive alla navigazione: è un risultato, non un lampo. */
 const reportKey = (id: number) => `tabularium.scanReport.${id}`
@@ -64,29 +56,21 @@ export default function ProjectDetailPage() {
   const [approveDrafts, setApproveDrafts] = useState(false)
   const [approveBusy, setApproveBusy] = useState(false)
   const [approveNotice, setApproveNotice] = useState<string | null>(null)
-  const [protocol, setProtocol] = useState<StudyProtocol | null>(null)
-  const [protocolBusy, setProtocolBusy] = useState(false)
-  const [pilot, setPilot] = useState<{ pages: Array<{ id: number; rel_path: string }>; target: number } | null>(null)
   const filesInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
-  const [domainProfiles, setDomainProfiles] = useState<Array<{ id: string; name: string }>>([])
-  const [modelAdapters, setModelAdapters] = useState<Array<{ adapter_id: string; display_name: string }>>([])
-  const [activity, setActivity] = useState<ProjectActivity[]>([])
   const [shareOpen, setShareOpen] = useState(false)
+  const [params, setParams] = useSearchParams()
+  const view = params.get('vista') === 'tabella' ? 'table' : 'thumbs'
+  const [engines, setEngines] = useState<PrefillEngines | null>(null)
+  const [recognizing, setRecognizing] = useState(false)
+  const [dragging, setDragging] = useState(false)
+  const inference = useInference()
+  const canAdminister = useCanAdminister()
   const auth = useAuth()
   const access = project ? projectAccess(project, auth) : null
   const canManage = access?.can_manage === true
   const canEdit = access?.can_edit === true
-
-  useEffect(() => {
-    apiGet<{ items: Array<{ id: string; name: string }> }>('/system/domain-profiles')
-      .then((r) => setDomainProfiles(r.items))
-      .catch(() => setDomainProfiles([]))
-    apiGet<{ items: Array<{ adapter_id: string; display_name: string }> }>('/system/model-adapters')
-      .then((r) => setModelAdapters(r.items))
-      .catch(() => setModelAdapters([]))
-  }, [])
 
   useEffect(() => {
     setProject(null)
@@ -101,10 +85,7 @@ export default function ProjectDetailPage() {
       .then((r) => setPages(r.items))
       .catch(setError)
       .finally(() => setPagesLoading(false))
-    apiGet<StudyProtocol>(`/projects/${projectId}/study-protocol`)
-      .then(setProtocol)
-      .catch(() => setProtocol(null))
-    apiGet<{ items: ProjectActivity[] }>(`/projects/${projectId}/activity`).then((r) => setActivity(r.items)).catch(() => setActivity([]))
+    apiGet<PrefillEngines>('/system/prefill-engines').then(setEngines).catch(() => setEngines(null))
   }, [projectId])
 
   const scan = async () => {
@@ -143,8 +124,8 @@ export default function ProjectDetailPage() {
     }
   }
 
-  const uploadFolder = async (files: FileList | null) => {
-    if (!files?.length) return
+  const uploadFolder = async (files: FileList | File[] | null) => {
+    if (!files || files.length === 0) return
     setUploading(true)
     setError(null)
     try {
@@ -232,31 +213,26 @@ export default function ProjectDetailPage() {
     }
   }
 
-  const saveProtocol = async () => {
-    if (!protocol) return
-    setProtocolBusy(true)
+  const engine = defaultEngine(engines ? { recommended: engines.recommended, ocrAvailable: !!engines.ocr?.available } : null, inference)
+
+  // One click from "pages added" to "pages read": the same request as the
+  // Recognitions tab, on the pages no engine has read yet (so no drafts to replace).
+  const recognizeUnread = async (pageIds: number[]) => {
+    setRecognizing(true)
+    setError(null)
     try {
-      const saved = await apiPut<StudyProtocol>(`/projects/${projectId}/study-protocol`, protocol)
-      setProtocol(saved)
+      const run = await apiPost<RecognitionRun>(`/projects/${projectId}/recognition-runs`, {
+        page_ids: pageIds,
+        engine,
+        mode: 'replace_drafts',
+        model_mode: 'native',
+        stop_policy: canAdminister && engine === 'model' ? 'disable_inference' : 'none',
+      })
+      navigate(projectPath(projectId, `riconoscimenti/${run.id}`))
     } catch (e) {
       setError(e)
-    } finally {
-      setProtocolBusy(false)
+      setRecognizing(false)
     }
-  }
-
-  const generatePilot = async () => {
-    try {
-      const sample = await apiGet<{ pages: Array<{ id: number; rel_path: string }>; target: number }>(`/projects/${projectId}/pilot-sample?target=40&seed=42`)
-      setPilot(sample)
-    } catch (e) { setError(e) }
-  }
-
-  const savePilot = async () => {
-    if (!pilot) return
-    try {
-      await apiPost(`/projects/${projectId}/pilot-sample/save`, pilot.pages.map((p) => p.id))
-    } catch (e) { setError(e) }
   }
 
   const removeProject = async () => {
@@ -297,70 +273,54 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="p-3">
-      <div className="mb-3 flex flex-wrap items-end gap-x-4 gap-y-2 border-b border-[color:var(--color-rule-strong)] pb-3">
+      <input ref={filesInputRef} type="file" multiple accept=".jpg,.jpeg,.png,.bmp,.webp,.tif,.tiff,.pdf" className="hidden" onChange={(e) => void uploadFolder(e.target.files)} />
+      <input
+        ref={folderInputRef}
+        type="file"
+        multiple
+        onChange={(e) => void uploadFolder(e.target.files)}
+        className="hidden"
+        {...({ webkitdirectory: '', directory: '' } as InputHTMLAttributes<HTMLInputElement>)}
+      />
+      <div className="mb-3 flex flex-wrap items-end gap-x-4 gap-y-2">
         <div className="min-w-0">
-          <Link
-            to="/progetti"
-            className="mb-0.5 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.04em] no-underline"
-          >
-            <IconPrev size={11} />
-            {t('project.back')}
-          </Link>
           <h1 className="truncate text-[26px] font-bold leading-tight tracking-[-0.03em]">
             {project?.name ?? t('project.fallback')}
           </h1>
-          {project?.archive_dir && (
-            <p className="mono mt-0.5 truncate text-[11px] text-[color:var(--color-ink-3)]">
-              {project.archive_dir}
-            </p>
-          )}
+          <p className="mt-0.5 text-[12px] text-[color:var(--color-ink-2)]">
+            {pagesLoading ? t('common.loading') : pagesN(pages.length)}
+            {auth.enabled && project && (project.access?.source === 'member' || (project.members_count ?? 1) > 1) && <> · {accessLabel(access)} · {t('team.ownerLine', { name: project.owner_name ?? t('team.noOwner') })}</>}
+          </p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <span className="mono text-[12px] text-[color:var(--color-ink-2)]">
-            {pagesLoading ? t('common.loading') : pagesN(pages.length)}
-          </span>
-          <button type="button" onClick={() => setShareOpen(true)} className="btn" title={t('share.buttonTitle')}>
-            <IconUsers size={13} />
-            {t(canManage ? 'share.button' : 'team.peopleAccess')}
-          </button>
-          {project?.archive_dir && <button onClick={() => project?.archive_dir ? void scan() : filesInputRef.current?.click()} disabled={!canEdit || busy || uploading} className="btn btn-primary">
-            <IconScan size={13} />
-            {busy ? t('project.scanBusy') : t('project.scan')}
-          </button>}
-          <button type="button" onClick={() => filesInputRef.current?.click()} disabled={!canEdit || uploading} className="btn btn-primary">
-            {uploading ? t('project.uploading') : t('workflow.importFiles')}
-          </button>
-          <input ref={filesInputRef} type="file" multiple accept=".jpg,.jpeg,.png,.bmp,.webp,.tif,.tiff,.pdf" className="hidden" onChange={(e) => void uploadFolder(e.target.files)} />
-          <button type="button" onClick={() => folderInputRef.current?.click()} disabled={!canEdit || uploading} className="btn">
-            {uploading ? t('project.uploading') : t('project.chooseFolder')}
-          </button>
-          <input
-            ref={folderInputRef}
-            type="file"
-            multiple
-            onChange={(e) => void uploadFolder(e.target.files)}
-            className="hidden"
-            {...({ webkitdirectory: '', directory: '' } as InputHTMLAttributes<HTMLInputElement>)}
-          />
-          {canManage && <Menu label={t('ux.projectActions')}>
-          <button
-            onClick={() => {
-              setTypedName('')
-              setConfirmingDelete(true)
-            }}
-            className="menu-item text-[color:var(--color-sig-text)]"
-          >
-            <IconTrash size={13} />
-            {t('project.delete')}
-          </button>
-          </Menu>}
+          {canEdit && pages.length > 0 && (
+            <Menu label={uploading ? t('project.uploading') : busy ? t('project.scanBusy') : t('project.addPages')}>
+              <button type="button" className="menu-item" disabled={uploading} onClick={() => filesInputRef.current?.click()}>{t('workflow.importFiles')}</button>
+              <button type="button" className="menu-item" disabled={uploading} onClick={() => folderInputRef.current?.click()}>{t('project.chooseFolder')}</button>
+              {project?.archive_dir && <button type="button" className="menu-item" disabled={busy} onClick={() => void scan()}><IconScan size={13} />{t('project.scan')}</button>}
+            </Menu>
+          )}
+          <Menu label={t('ux.projectActions')}>
+            <button type="button" onClick={() => setShareOpen(true)} className="menu-item">
+              <IconUsers size={13} />
+              {t(canManage ? 'share.button' : 'team.peopleAccess')}
+            </button>
+            <Link to={projectPath(projectId, 'avanzate')} className="menu-item no-underline">{t('project.advanced')}</Link>
+            {canManage && (
+              <button
+                onClick={() => {
+                  setTypedName('')
+                  setConfirmingDelete(true)
+                }}
+                className="menu-item text-[color:var(--color-sig-text)]"
+              >
+                <IconTrash size={13} />
+                {t('project.delete')}
+              </button>
+            )}
+          </Menu>
         </div>
       </div>
-      {project && <div className="mb-3 flex flex-wrap items-center gap-2 text-[13px]">
-        <Badge tone="neutral">{accessLabel(access)}</Badge>
-        <span>{t('team.ownerLine', { name: project.owner_name ?? t(auth.enabled ? 'team.noOwner' : 'team.localProject') })}</span>
-      </div>}
-      {canEdit && <p className="mb-3 -mt-2 text-[11px] text-[color:var(--color-ink-2)]">{t(project?.archive_dir ? 'workflow.serverImportHint' : 'workflow.uploadHint')}</p>}
 
       {error != null && (
         <div className="mb-3">
@@ -368,80 +328,48 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
-      {pages.length > 0 && <div className="mb-3 flex flex-wrap gap-2">
-        {canEdit && <Link to="/" className="btn btn-primary no-underline">{t('home.recognizePages')}</Link>}
-        <Link to={`/annotazione?project=${projectId}`} className="btn no-underline">{t(canEdit ? 'pipeline.steps.annotateAction' : 'team.openReader')}</Link>
-        <Link to="/archivio" className="btn no-underline">{t('nav.archive')}</Link>
-        {canEdit && <Link to="/fine-tuning" className="btn no-underline">{t('nav.training')}</Link>}
-      </div>}
-
-      {protocol && (
-        <div className="mb-3">
-          <Collapsible
-            tab={t('project.protocolTab', { version: protocol.version })}
-            quiet
-            aux={<span>{protocolBusy ? t('project.protocolSaving') : t('project.protocolVersioned')}</span>}
+      {canEdit && !pagesLoading && (() => {
+        const action = primaryAction(pages)
+        if (action.kind === 'import') return (
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e) => { e.preventDefault(); setDragging(false); void uploadFolder(e.dataTransfer.files) }}
+            data-dragging={dragging || undefined}
+            className="mb-4 flex flex-col items-center gap-2 border-2 border-dashed border-[color:var(--color-rule-strong)] px-6 py-12 text-center data-[dragging]:border-[color:var(--color-sig)] data-[dragging]:bg-[color:var(--color-fill)]"
           >
-            <fieldset disabled={!canEdit} className="grid min-w-0 gap-3 sm:grid-cols-2">
-              <Field label={t('project.objective')}>
-                <textarea value={protocol.objective} onChange={(e) => setProtocol((p) => p ? { ...p, objective: e.target.value } : p)} className="fld min-h-16" placeholder={t('project.objectivePlaceholder')} />
-              </Field>
-              <Field label={t('project.corpusScope')} hint={t('project.corpusScopeHint')}>
-                <input value={protocol.corpus_scope} onChange={(e) => setProtocol((p) => p ? { ...p, corpus_scope: e.target.value } : p)} className="fld" />
-              </Field>
-              <div className="grid grid-cols-2 gap-2">
-                <Field label={t('project.from')}><input type="date" value={protocol.time_start ?? ''} onChange={(e) => setProtocol((p) => p ? { ...p, time_start: e.target.value || null } : p)} className="fld" /></Field>
-                <Field label={t('project.to')}><input type="date" value={protocol.time_end ?? ''} onChange={(e) => setProtocol((p) => p ? { ...p, time_end: e.target.value || null } : p)} className="fld" /></Field>
-              </div>
-              <Field label={t('project.domainProfile')}>
-                <div className="flex gap-2">
-                  <select
-                    value={protocol.domain_profile}
-                    onChange={(e) => setProtocol((p) => p ? { ...p, domain_profile: e.target.value } : p)}
-                    className="fld"
-                  >
-                    {(domainProfiles.some((d) => d.id === protocol.domain_profile) || !protocol.domain_profile
-                      ? domainProfiles
-                      : [{ id: protocol.domain_profile, name: protocol.domain_profile }, ...domainProfiles]
-                    ).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                  </select>
-                  <select
-                    value={protocol.model_adapter}
-                    onChange={(e) => setProtocol((p) => p ? { ...p, model_adapter: e.target.value } : p)}
-                    className="fld"
-                  >
-                    {(modelAdapters.some((a) => a.adapter_id === protocol.model_adapter) || !protocol.model_adapter
-                      ? modelAdapters
-                      : [{ adapter_id: protocol.model_adapter, display_name: protocol.model_adapter }, ...modelAdapters]
-                    ).map((a) => <option key={a.adapter_id} value={a.adapter_id}>{a.display_name}</option>)}
-                  </select>
-                </div>
-              </Field>
-              <div className="flex items-end justify-end">
-                <button type="button" onClick={() => void saveProtocol()} disabled={protocolBusy} className="btn btn-sm btn-primary">{t('project.saveProtocol')}</button>
-              </div>
-            </fieldset>
-        {filteredPages.length > pageLimit && <button type="button" className="btn mt-3" onClick={() => setPageLimit((count) => count + 50)}>{t('recognition.showMorePages', { n: filteredPages.length - pageLimit })}</button>}
-
-          </Collapsible>
-        </div>
-      )}
-
-      <div className="mb-3">
-        <Collapsible tab={t('project.activityTab')} quiet>
-          <ActivityFeed items={activity} projectId={projectId} pages={pages} />
-        </Collapsible>
-      </div>
-
-      <div className="mb-3">
-        <Collapsible tab={t('project.pilotTab')} quiet aux={<span>{t('project.pilotRange')}</span>}>
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" disabled={!canEdit} onClick={() => void generatePilot()} className="btn btn-sm">{t('project.generateSample')}</button>
-            {pilot && <><span className="mono text-[12px]">{tn('project.pilotSelected', pilot.pages.length)}</span><button type="button" disabled={!canEdit} onClick={() => void savePilot()} className="btn btn-sm btn-primary">{t('project.saveToProtocol')}</button></>}
+            <p className="text-[16px] font-semibold">{t('project.dropTitle')}</p>
+            <p className="max-w-[60ch] text-[12px] text-[color:var(--color-ink-2)]">{t('project.dropHint')}</p>
+            <div className="mt-2 flex flex-wrap justify-center gap-2">
+              <button type="button" className="btn btn-primary" disabled={uploading} onClick={() => filesInputRef.current?.click()}>
+                {uploading ? t('project.uploading') : t('project.chooseFiles')}
+              </button>
+              <button type="button" className="btn" disabled={uploading} onClick={() => folderInputRef.current?.click()}>{t('project.chooseFolder')}</button>
+              {project?.archive_dir && <button type="button" className="btn" disabled={busy} onClick={() => void scan()}>{busy ? t('project.scanBusy') : t('project.scan')}</button>}
+            </div>
           </div>
-          {pilot && <p className="mt-2 mono truncate text-[11px] text-[color:var(--color-ink-3)]">{pilot.pages.slice(0, 5).map((p) => p.rel_path).join(' · ')}{pilot.pages.length > 5 ? ' …' : ''}</p>}
-        </Collapsible>
-      </div>
+        )
+        const bar = (button: ReactNode, hint: string) => (
+          <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 border-y border-[color:var(--color-rule)] py-3">
+            {button}
+            <span className="text-[12px] text-[color:var(--color-ink-2)]">{hint}</span>
+          </div>
+        )
+        if (action.kind === 'recognize') return bar(
+          <button type="button" className="btn btn-primary" disabled={recognizing} onClick={() => void recognizeUnread(action.pageIds)}>
+            {tn('project.recognizeN', action.pageIds.length)}
+          </button>,
+          t('project.recognizeHint', { engine: engine === 'model' ? (inference.model || t('recognition.activeModel')) : t('recognition.localOcr') }),
+        )
+        if (action.kind === 'review') return bar(
+          <Link to={projectPath(projectId, 'studio', { page: action.firstPageId })} className="btn btn-primary no-underline">{tn('project.reviewN', action.count)}</Link>,
+          t('project.reviewHint'),
+        )
+        return bar(
+          <Link to={projectPath(projectId, 'riconoscimenti')} className="btn btn-primary no-underline">{t('project.exportResults')}</Link>,
+          t('project.exportHint'),
+        )
+      })()}
 
       {busy && (
         <div className="mb-3">
@@ -528,6 +456,25 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
+      {pages.length > 0 && (
+        <div className="mb-3 flex items-center gap-1" role="group" aria-label={t('project.viewLabel')}>
+          {(['thumbs', 'table'] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              aria-pressed={view === v}
+              onClick={() => setParams(v === 'table' ? { vista: 'tabella' } : {}, { replace: true })}
+              className={`btn btn-sm ${view === v ? '!border-[color:var(--color-ink)] !bg-[color:var(--color-ink)] !text-white' : ''}`}
+            >
+              {t(v === 'thumbs' ? 'project.viewThumbs' : 'project.viewTable')}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {view === 'thumbs' && pages.length > 0 && <PageWall pages={pages} loading={false} />}
+
+      {view === 'table' && pages.length > 0 && (<>
       {selected.size > 0 && (
         <div className="mb-3">
           <Module
@@ -761,9 +708,11 @@ export default function ProjectDetailPage() {
 
           </div>
         )}
+        {filteredPages.length > pageLimit && <button type="button" className="btn m-3" onClick={() => setPageLimit((count) => count + 50)}>{t('recognition.showMorePages', { n: filteredPages.length - pageLimit })}</button>}
       </Module>
 
       </fieldset>
+      </>)}
 
       {shareOpen && project && (
         <ShareDialog

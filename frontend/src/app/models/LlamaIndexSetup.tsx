@@ -31,6 +31,13 @@ interface LlamaIndexSetupProps {
 const ADAPTER_ID = 'llamaindex-ocria-1'
 const DEFAULT_URL = 'https://api.cloud.llamaindex.ai'
 const MODEL = 'ocria-1'
+// The vendor's parse tiers that run a model, mapped to their i18n key.
+const TIER_KEYS: Record<string, 'costEffective' | 'agentic' | 'agenticPlus'> = {
+  cost_effective: 'costEffective',
+  agentic: 'agentic',
+  agentic_plus: 'agenticPlus',
+}
+const COST_OPTIMIZER_TIERS = new Set(['agentic', 'agentic_plus'])
 
 const LANGS = [
   'abq', 'ach', 'afr', 'aka', 'amh', 'ara', 'asm', 'ava', 'aym', 'aze', 'bak', 'bam',
@@ -159,6 +166,7 @@ export function LlamaIndexSetup({ model, onClose }: LlamaIndexSetupProps) {
   useEffect(() => { void load() }, [])
 
   const tier = str(workflow.tier, 'agentic')
+  const tierKey = TIER_KEYS[tier] ?? 'agentic'
   const effort = str(workflow.confidence_score_effort, 'standard')
   const languages = Array.isArray(workflow.languages) ? workflow.languages : ['eng']
   const cropBox = (workflow.crop_box && !Array.isArray(workflow.crop_box) && typeof workflow.crop_box === 'object')
@@ -326,7 +334,7 @@ export function LlamaIndexSetup({ model, onClose }: LlamaIndexSetupProps) {
             <span className="lbl">{t('modelsHub.llamaIndex.findingLabel')}</span>
             <p className="mt-1 text-[13px] font-semibold leading-relaxed">{t('modelsHub.llamaIndex.finding')}</p>
             <div className="mt-3 flex flex-wrap gap-2">
-              <Badge tone="sig">{tier === 'agentic' ? t('modelsHub.llamaIndex.agentic') : t('modelsHub.llamaIndex.costEffective')}</Badge>
+              <Badge tone="sig">{t(`modelsHub.llamaIndex.${tierKey}`)}</Badge>
               <Badge tone="neutral">{effort === 'high' ? t('modelsHub.llamaIndex.effortHigh') : t('modelsHub.llamaIndex.effortStandard')}</Badge>
               <Badge tone="neutral">{languages.join(' · ')}</Badge>
             </div>
@@ -407,8 +415,8 @@ export function LlamaIndexSetup({ model, onClose }: LlamaIndexSetupProps) {
               <p className="max-w-[75ch] text-[12px] leading-relaxed text-[color:var(--color-ink-2)]">
                 {t('modelsHub.llamaIndex.routingIntro')}
               </p>
-              <div role="radiogroup" aria-label={t('modelsHub.llamaIndex.tier')} className="mt-3 grid gap-2 md:grid-cols-2">
-                {(['cost_effective', 'agentic'] as const).map((value) => {
+              <div role="radiogroup" aria-label={t('modelsHub.llamaIndex.tier')} className="mt-3 grid gap-2 md:grid-cols-3">
+                {(['cost_effective', 'agentic', 'agentic_plus'] as const).map((value) => {
                   const selected = tier === value
                   return (
                     <button
@@ -418,16 +426,16 @@ export function LlamaIndexSetup({ model, onClose }: LlamaIndexSetupProps) {
                       aria-checked={selected}
                       onClick={() => {
                         update('tier', value)
-                        if (value === 'cost_effective') update('cost_optimizer', false)
+                        if (!COST_OPTIMIZER_TIERS.has(value)) update('cost_optimizer', false)
                       }}
                       className={`border p-3 text-left ${selected ? 'border-[color:var(--color-sig)] bg-[color:var(--color-sig-wash)]' : 'border-[color:var(--color-rule)] bg-[color:var(--color-sheet)]'}`}
                     >
                       <span className="flex flex-wrap items-center gap-2">
-                        <strong className="text-[14px]">{value === 'agentic' ? t('modelsHub.llamaIndex.agentic') : t('modelsHub.llamaIndex.costEffective')}</strong>
+                        <strong className="text-[14px]">{t(`modelsHub.llamaIndex.${TIER_KEYS[value]}`)}</strong>
                         {value === 'agentic' && <Badge tone="ok">{t('modelsHub.llamaIndex.recommended')}</Badge>}
                       </span>
                       <span className="mt-1 block text-[12px] leading-relaxed text-[color:var(--color-ink-2)]">
-                        {value === 'agentic' ? t('modelsHub.llamaIndex.agenticHint') : t('modelsHub.llamaIndex.costEffectiveHint')}
+                        {t(`modelsHub.llamaIndex.${TIER_KEYS[value]}Hint`)}
                       </span>
                     </button>
                   )
@@ -471,7 +479,7 @@ export function LlamaIndexSetup({ model, onClose }: LlamaIndexSetupProps) {
                 <div>
                   {toggle('aggressive_table_extraction', t('modelsHub.llamaIndex.aggressiveTable'), t('modelsHub.llamaIndex.aggressiveTableHint'))}
                   {toggle('disable_heuristics', t('modelsHub.llamaIndex.disableHeuristics'), t('modelsHub.llamaIndex.disableHeuristicsHint'))}
-                  {toggle('cost_optimizer', t('modelsHub.llamaIndex.costOptimizer'), t('modelsHub.llamaIndex.costOptimizerHint'), tier !== 'agentic')}
+                  {toggle('cost_optimizer', t('modelsHub.llamaIndex.costOptimizer'), t('modelsHub.llamaIndex.costOptimizerHint'), !COST_OPTIMIZER_TIERS.has(tier))}
                 </div>
                 <div>
                   {toggle('ignore_diagonal_text', t('modelsHub.llamaIndex.ignoreDiagonal'), t('modelsHub.llamaIndex.ignoreDiagonalHint'))}
@@ -548,7 +556,7 @@ export function LlamaIndexSetup({ model, onClose }: LlamaIndexSetupProps) {
               <div className="grid gap-3 md:grid-cols-2">
                 <Field label={t('modelsHub.llamaIndex.watermark')} hint={t('modelsHub.llamaIndex.watermarkHint')}>
                   <select className="fld mt-1 w-full" value={str(workflow.watermark_handling, 'move_to_end')} onChange={(event) => update('watermark_handling', event.target.value)}>
-                    {(['nothing', 'move_to_end', 'return_image'] as const).map((value) => (
+                    {(['move_to_end', 'move_to_start', 'remove'] as const).map((value) => (
                       <option key={value} value={value}>{t(`modelsHub.llamaIndex.watermarkMode.${value}`)}</option>
                     ))}
                   </select>
@@ -598,15 +606,11 @@ export function LlamaIndexSetup({ model, onClose }: LlamaIndexSetupProps) {
                   <input type="number" min={0} max={3600} className="fld mt-1 w-full" value={num(workflow.job_timeout_extra_time_per_page_in_seconds, 30)} onChange={(event) => update('job_timeout_extra_time_per_page_in_seconds', Number(event.target.value))} />
                 </Field>
                 <Field label={t('modelsHub.llamaIndex.failureRatio')} hint={t('modelsHub.llamaIndex.failureRatioHint')}>
-                  <input type="number" min={0} max={1} step={0.01} className="fld mt-1 w-full" value={num(workflow.allowed_failure_ratio, 0)} onChange={(event) => update('allowed_failure_ratio', Number(event.target.value))} />
+                  <input type="number" min={0} max={1} step={0.01} className="fld mt-1 w-full" value={num(workflow.allowed_page_failure_ratio, 0)} onChange={(event) => update('allowed_page_failure_ratio', Number(event.target.value))} />
                 </Field>
               </div>
-              <div className="mt-3 grid gap-x-6 md:grid-cols-2">
-                <div>
-                  {toggle('fail_on_job_timeout', t('modelsHub.llamaIndex.failJobTimeout'), t('modelsHub.llamaIndex.failJobTimeoutHint'))}
-                  {toggle('fail_on_page_timeout', t('modelsHub.llamaIndex.failPageTimeout'), t('modelsHub.llamaIndex.failPageTimeoutHint'))}
-                </div>
-                <div>{toggle('disable_cache', t('modelsHub.llamaIndex.disableCache'), t('modelsHub.llamaIndex.disableCacheHint'))}</div>
+              <div className="mt-3">
+                {toggle('disable_cache', t('modelsHub.llamaIndex.disableCache'), t('modelsHub.llamaIndex.disableCacheHint'))}
               </div>
             </Module>
           </section>
@@ -616,7 +620,7 @@ export function LlamaIndexSetup({ model, onClose }: LlamaIndexSetupProps) {
           <Module tab={t('modelsHub.llamaIndex.summaryTitle')} quiet>
             <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-[12px]">
               <dt className="text-[color:var(--color-ink-2)]">{t('modelsHub.llamaIndex.tier')}</dt>
-              <dd className="text-right font-semibold">{tier === 'agentic' ? t('modelsHub.llamaIndex.agentic') : t('modelsHub.llamaIndex.costEffective')}</dd>
+              <dd className="text-right font-semibold">{t(`modelsHub.llamaIndex.${tierKey}`)}</dd>
               <dt className="text-[color:var(--color-ink-2)]">{t('modelsHub.llamaIndex.effort')}</dt>
               <dd className="text-right font-semibold">{effort === 'high' ? t('modelsHub.llamaIndex.effortHigh') : t('modelsHub.llamaIndex.effortStandard')}</dd>
               <dt className="text-[color:var(--color-ink-2)]">{t('modelsHub.llamaIndex.version')}</dt>

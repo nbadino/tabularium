@@ -491,7 +491,7 @@ describe('ContentPane', () => {
       />,
     )
     // La bozza porta il menu della classe, come un blocco confermato.
-    await user.click(screen.getByRole('option', { name: 'Issue-date' }))
+    await user.click(screen.getByRole('option', { name: 'Data dell’uscita' }))
     expect(onDraftLabel).toHaveBeenCalledWith(42, 'Issue-date')
   })
 })

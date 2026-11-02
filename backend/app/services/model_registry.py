@@ -236,7 +236,7 @@ def install_state(adapter_id: str) -> dict:
         "error": None if installed or downloading else stored.get("error"),
         "updated_at": stored.get("updated_at"),
     }
-    if adapter_id == "paddleocr-vl":
+    if _needs_paddle_runtime(adapter_id):
         runtime = paddle_runtime.status(probe=False)
         state["runtime_ready"] = runtime["ready"]
         state["runtime_state"] = runtime["state"]
@@ -245,6 +245,15 @@ def install_state(adapter_id: str) -> dict:
         if state["state"] == "installed" and not runtime["ready"]:
             state["state"] = "runtime_" + runtime["state"]
     return state
+
+
+
+def _needs_paddle_runtime(adapter_id: str) -> bool:
+    """The adapter's official pipeline runs inside the Paddle runtime (declared, not named)."""
+    try:
+        return getattr(get_adapter(adapter_id), "official_runtime", None) == "paddle"
+    except ValueError:
+        return False
 
 
 def _will_serve_locally(adapter_id: str) -> bool:
@@ -280,7 +289,7 @@ def ensure_runtime_async(adapter_id: str) -> None:
     e ogni pagina falliva con «completa prima l'installazione», cioè con
     l'istruzione di fare una cosa che nessuno aveva iniziato.
     """
-    if adapter_id != "paddleocr-vl":
+    if not _needs_paddle_runtime(adapter_id):
         return
     if not is_installed(adapter_id) and not _will_serve_locally(adapter_id):
         return
@@ -588,7 +597,7 @@ def _monitor(adapter_id: str) -> None:
         error=None if ok else f"download terminato con codice di uscita {code}",
         updated_at=_now(),
     )
-    if ok and adapter_id == "paddleocr-vl":
+    if ok and _needs_paddle_runtime(adapter_id):
         try:
             _write_state(adapter_id, state="runtime_installing", error=None)
             paddle_runtime.ensure_ready()

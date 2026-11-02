@@ -277,3 +277,33 @@ def test_provider_detection_and_database_accept_llamaindex(tmp_path, monkeypatch
         )
         row = conn.execute("SELECT provider FROM compute_profiles WHERE name='ocria'").fetchone()
     assert row["provider"] == "llamaindex"
+
+
+def test_ocria_cost_optimizer_rule_follows_the_vendor_tiers(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "ocria-tiers.db")
+    init_db()
+    # A disabled toggle is not a use of the option: the cheap tier must save.
+    saved = model_settings.save_settings("llamaindex-ocria-1", {
+        "workflow": {"tier": "cost_effective", "cost_optimizer": False},
+    })
+    assert saved["effective"]["workflow"]["tier"] == "cost_effective"
+    # The vendor accepts the optimizer on both agentic tiers.
+    saved = model_settings.save_settings("llamaindex-ocria-1", {
+        "workflow": {"tier": "agentic_plus", "cost_optimizer": True},
+    })
+    assert saved["effective"]["workflow"]["cost_optimizer"] is True
+
+
+def test_ocria_effective_workflow_drops_keys_the_vendor_renamed(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "ocria-stale.db")
+    init_db()
+    from app.adapters import store
+
+    store.put("model_settings:llamaindex-ocria-1", {
+        "workflow": {"fail_on_job_timeout": True, "allowed_failure_ratio": 0.5, "tier": "agentic"},
+    })
+    effective = model_settings.get_settings("llamaindex-ocria-1")["effective"]["workflow"]
+    assert "fail_on_job_timeout" not in effective
+    assert "allowed_failure_ratio" not in effective
+    # The panel posts the effective workflow back: it must still validate.
+    model_settings.save_settings("llamaindex-ocria-1", {"workflow": effective})

@@ -41,10 +41,10 @@ describe('CommandPalette', () => {
     fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
     const input = screen.getByRole('combobox')
     expect(input).toHaveFocus()
-    fireEvent.change(input, { target: { value: 'archiv' } })
+    fireEvent.change(input, { target: { value: 'impostaz' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(screen.getByTestId('where')).toHaveTextContent('/archivio')
+    expect(screen.getByTestId('where')).toHaveTextContent('/impostazioni')
   })
 
   it('le frecce scelgono un progetto e lo aprono in Annotazione', async () => {
@@ -55,7 +55,7 @@ describe('CommandPalette', () => {
     await waitFor(() => expect(screen.getByRole('option', { name: /Registers 1940/ })).toBeInTheDocument())
     expect(screen.getByRole('option', { name: /Registers 1940/ })).toHaveAttribute('aria-selected', 'true')
     fireEvent.keyDown(input, { key: 'Enter' })
-    expect(screen.getByTestId('where')).toHaveTextContent('/annotazione?project=7')
+    expect(screen.getByTestId('where')).toHaveTextContent('/progetti/7')
   })
 
   it('Escape chiude senza navigare', () => {

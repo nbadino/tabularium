@@ -1,10 +1,11 @@
 /** Panoramica operativa: stato dei dati, prossimo gesto e accesso ai tre strumenti. */
+import { projectPath } from '../app/projectPaths'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { apiGet } from '../lib/api'
 import type { DatasetStatus, TrainingStatus } from '../lib/types'
 import { runStateLabel } from '../lib/vocab'
-import { useProjects, writeActiveProject } from '../app/activeProject'
+import { useProjects, useRouteProjectId, writeActiveProject } from '../app/activeProject'
 import { datasetUsable, type Workflow } from '../app/pipeline'
 import { Badge, ErrorNotice, Field, Loading, Module, PageHeader } from '../app/ui'
 import { useI18n, tn } from '../i18n'
@@ -25,6 +26,7 @@ export default function FineTuningPage() {
     setOverview(null)
     setError(null)
   }
+  const routeProjectId = useRouteProjectId()
   const projects = useProjects(onProject, setError)
 
   useEffect(() => {
@@ -51,29 +53,29 @@ export default function FineTuningPage() {
   const prepared = overview?.training.run?.prepare_job
   const modelReady = prepared?.state === 'finished' && Boolean(prepared.model_id)
   const studio = overview?.workflow.next_page
-    ? `/annotazione?project=${projectId}&page=${overview.workflow.next_page.id}`
-    : '/annotazione'
+    ? projectPath(Number(projectId), 'studio', { page: overview.workflow.next_page.id })
+    : projectPath(Number(projectId), 'studio')
   const next = readOnly
     ? { to: studio, title: 'team.readerTitle', body: 'team.readerNotice', action: 'team.openReader' }
     : active
-    ? { to: '/training', title: 'ux.nextRunning', body: 'ux.nextRunningBody', action: 'ux.monitorTraining' }
+    ? { to: projectPath(Number(projectId), 'fine-tuning/addestra'), title: 'ux.nextRunning', body: 'ux.nextRunningBody', action: 'ux.monitorTraining' }
     : !hasPages
       ? { to: `/progetti/${projectId}`, title: 'ux.nextImport', body: 'ux.nextImportBody', action: 'workflow.addPages' }
       : !dataReady && gold === 0
         ? { to: studio, title: 'ux.nextReview', body: 'ux.nextReviewBody', action: 'dataset.material.openStudio' }
         : !dataReady
-          ? { to: '/dataset', title: 'ux.nextDataset', body: 'ux.nextDatasetBody', action: 'pipeline.steps.datasetAction' }
+          ? { to: projectPath(Number(projectId), 'fine-tuning/dati'), title: 'ux.nextDataset', body: 'ux.nextDatasetBody', action: 'pipeline.steps.datasetAction' }
           : trained && !modelReady
-            ? { to: '/training', title: 'ux.nextPrepare', body: 'ux.nextPrepareBody', action: 'training.prepareCheckpoint' }
+            ? { to: projectPath(Number(projectId), 'fine-tuning/addestra'), title: 'ux.nextPrepare', body: 'ux.nextPrepareBody', action: 'training.prepareCheckpoint' }
             : trained && (inference.adapterId !== prepared?.model_id || !inference.enabled || !inference.available)
               ? { to: `/modelli?modello=${encodeURIComponent(prepared?.model_id ?? '')}&passo=dove`, title: 'ux.nextServe', body: 'ux.nextServeBody', action: 'training.serveModel' }
           : trained
-            ? { to: '/valutazione', title: 'ux.nextEvaluate', body: 'ux.nextEvaluateBody', action: 'pipeline.steps.evaluateAction' }
-            : { to: '/training?view=new', title: 'ux.nextTrain', body: 'ux.nextTrainBody', action: 'ux.configureTraining' }
+            ? { to: projectPath(Number(projectId), 'fine-tuning/valuta'), title: 'ux.nextEvaluate', body: 'ux.nextEvaluateBody', action: 'pipeline.steps.evaluateAction' }
+            : { to: projectPath(Number(projectId), 'fine-tuning/addestra', { view: 'new' }), title: 'ux.nextTrain', body: 'ux.nextTrainBody', action: 'ux.configureTraining' }
 
   return (
     <div className="p-3">
-      <PageHeader title={t('nav.training')} intro={`${t('ux.refineIntro')} ${t('ux.baselineHint')}`} aux={
+      <PageHeader title={t('nav.training')} intro={`${t('ux.refineIntro')} ${t('ux.baselineHint')}`} aux={routeProjectId == null ? (
         <div className="w-[min(24rem,100%)]">
         <Field label={t('training.project')}>
           <select className="fld" value={projectId} onChange={(e) => onProject(e.target.value ? Number(e.target.value) : '')}>
@@ -82,7 +84,7 @@ export default function FineTuningPage() {
           </select>
         </Field>
         </div>
-      } />
+      ) : undefined} />
       {error != null && <div className="mb-3"><ErrorNotice error={error} />{projectId !== '' && <button className="btn mt-2" onClick={() => setRetry((n) => n + 1)}>{t('ux.retryStatus')}</button>}</div>}
       {projectId === '' && <Module tab={t('ux.nextStep')} quiet>
         <p className="mb-3 text-[13px]">{t('ux.pickRefineProject')}</p>
@@ -100,9 +102,9 @@ export default function FineTuningPage() {
         <section aria-label={t('ux.refineTools')} className="mt-6">
           <ol className="ruled">
             {[
-              { to: '/dataset', title: 'workflow.dataset', status: dataReady ? t('ux.dataReady') : tn('ux.goldCount', gold) },
-              { to: '/training', title: 'workflow.train', status: overview.training.run ? runStateLabel(overview.training.run.state) : t('ux.noTraining') },
-              { to: '/valutazione', title: 'workflow.evaluate', status: gold > 0 ? tn('ux.goldCount', gold) : t('ux.needsGold') },
+              { to: projectPath(Number(projectId), 'fine-tuning/dati'), title: 'workflow.dataset', status: dataReady ? t('ux.dataReady') : tn('ux.goldCount', gold) },
+              { to: projectPath(Number(projectId), 'fine-tuning/addestra'), title: 'workflow.train', status: overview.training.run ? runStateLabel(overview.training.run.state) : t('ux.noTraining') },
+              { to: projectPath(Number(projectId), 'fine-tuning/valuta'), title: 'workflow.evaluate', status: gold > 0 ? tn('ux.goldCount', gold) : t('ux.needsGold') },
             ].map((step) => <li key={step.to}><Link to={step.to} className="flex flex-wrap items-center gap-x-5 gap-y-2 py-4 no-underline hover:bg-[color:var(--color-fill)]">
               <div className="min-w-0 flex-1 basis-64">
                 <h3 className="text-[15px] font-semibold">{t(step.title)}</h3>

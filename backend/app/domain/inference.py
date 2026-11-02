@@ -208,16 +208,16 @@ def llamaindex_configuration(workflow: dict[str, Any]) -> tuple[dict[str, Any], 
         "disable_heuristics": bool(workflow.get("disable_heuristics", False)),
         "ocr_parameters": {"languages": list(workflow.get("languages") or ["eng"])},
         "ignore": {
-            "diagonal_text": bool(workflow.get("ignore_diagonal_text", False)),
-            "hidden_text": bool(workflow.get("ignore_hidden_text", False)),
-            "text_in_image": bool(workflow.get("ignore_text_in_image", False)),
+            "ignore_diagonal_text": bool(workflow.get("ignore_diagonal_text", False)),
+            "ignore_hidden_text": bool(workflow.get("ignore_hidden_text", False)),
+            "ignore_text_in_image": bool(workflow.get("ignore_text_in_image", False)),
         },
     }
     if workflow.get("confidence_score_effort") == "high":
         processing["confidence_score_effort"] = "high"
     if workflow.get("specialized_chart_parsing") not in (None, "off"):
         processing["specialized_chart_parsing"] = workflow["specialized_chart_parsing"]
-    if workflow.get("tier") == "agentic" and workflow.get("cost_optimizer"):
+    if workflow.get("tier") in ("agentic", "agentic_plus") and workflow.get("cost_optimizer"):
         processing["cost_optimizer"] = {"enable": True}
 
     markdown: dict = {
@@ -250,9 +250,7 @@ def llamaindex_configuration(workflow: dict[str, Any]) -> tuple[dict[str, Any], 
                 ),
             },
             "job_failure_conditions": {
-                "allowed_failure_ratio": float(workflow.get("allowed_failure_ratio", 0.0)),
-                "fail_on_job_timeout": bool(workflow.get("fail_on_job_timeout", False)),
-                "fail_on_page_timeout": bool(workflow.get("fail_on_page_timeout", False)),
+                "allowed_page_failure_ratio": float(workflow.get("allowed_page_failure_ratio", 0.0)),
             },
         },
     }

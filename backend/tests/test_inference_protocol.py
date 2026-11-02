@@ -1,6 +1,9 @@
 """The protocol halves that need no socket: request shape, answer meaning."""
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from app.domain import inference as protocol
 
 
@@ -177,3 +180,67 @@ def test_openai_request_does_not_mutate_the_sampling_it_receives() -> None:
     body = protocol.openai_request("m", [], max_tokens=1, stream=False, sampling=sampling)
     assert body["temperature"] == 0.1
     assert sampling == {"temperature": 0.1, "no_repeat_ngram_size": 30}
+
+
+# The vendor's request schema, fetched from LlamaCloud's OpenAPI and stored next to
+# the tests (R3): every sub-object is `additionalProperties: false`, so a renamed key
+# is a rejected job, not an ignored option.
+_LLAMA_SCHEMA = json.loads(
+    (Path(__file__).parent / "fixtures" / "llamacloud_parse_v2_schema.json").read_text()
+)
+
+
+def _llama_violations(value, node, path: str = "") -> list[str]:
+    schemas = _LLAMA_SCHEMA["schemas"]
+    if "$ref" in node:
+        return _llama_violations(value, schemas[node["$ref"].split("/")[-1]], path)
+    alternatives = node.get("anyOf")
+    if alternatives:
+        results = [_llama_violations(value, alt, path) for alt in alternatives]
+        return [] if any(not r for r in results) else min(results, key=len)
+    if isinstance(value, dict):
+        if node.get("type") not in (None, "object"):
+            return [f"{path}: object where {node.get('type')} expected"]
+        props = node.get("properties", {})
+        errors = [f"{path}.{key}: not in the vendor schema" for key in value if key not in props]
+        for key, item in value.items():
+            if key in props:
+                errors += _llama_violations(item, props[key], f"{path}.{key}")
+        return errors
+    if "enum" in node and value not in node["enum"]:
+        return [f"{path}: {value!r} not in {node['enum']}"]
+    if "const" in node and value != node["const"]:
+        return [f"{path}: {value!r} != {node['const']!r}"]
+    if node.get("type") == "null" and value is not None:
+        return [f"{path}: expected null"]
+    return []
+
+
+def _llama_workflows():
+    from app.models.types import llamaindex_workflow_fields
+
+    fields = llamaindex_workflow_fields()
+    base = {field.key: field.default for field in fields}
+    yield base
+    yield {**base, **{field.key: True for field in fields if field.kind == "bool"}, "tier": "agentic"}
+    for field in fields:
+        for value in field.values if field.kind == "enum" else ():
+            yield {**base, field.key: value}
+    yield {**base, "crop_enabled": True, "custom_prompt": "keep columns"}
+
+
+def test_llamaindex_configuration_matches_the_vendor_schema() -> None:
+    root = {"$ref": f"#/components/schemas/{_LLAMA_SCHEMA['root']}"}
+    for workflow in _llama_workflows():
+        payload, _ = protocol.llamaindex_configuration(workflow)
+        payload["file_id"] = "file-1"
+        assert _llama_violations(payload, root) == [], workflow
+
+
+def test_llamaindex_exposes_every_vendor_tier_that_runs_a_model() -> None:
+    from app.models.types import LLAMAINDEX_WORKFLOW_ENUMS
+
+    vendor = _LLAMA_SCHEMA["schemas"]["ParseRequestConfiguration"]["properties"]["tier"]
+    tiers = set(vendor["anyOf"][0]["enum"])
+    # `fast` is rule-based (no model): Tabularium is a recognition tool, not a text extractor.
+    assert LLAMAINDEX_WORKFLOW_ENUMS["tier"] == tiers - {"fast"}

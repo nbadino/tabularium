@@ -5,6 +5,7 @@
  * non direbbe né l'azione né la pagina. Usato sia nella pagina del progetto sia
  * nella finestra di condivisione: un'unica resa, una sola tabella di traduzione.
  */
+import { projectPath } from './projectPaths'
 import { Link } from 'react-router'
 import type { PageItem } from '../lib/types'
 import { useI18n } from '../i18n'
@@ -62,7 +63,7 @@ export function ActivityFeed({
               {page && (
                 <>
                   {' · '}
-                  <Link className="mono" to={`/annotazione?project=${projectId}&page=${page.id}`}>{page.rel_path}</Link>
+                  <Link className="mono" to={projectPath(projectId, 'studio', { page: page.id })}>{page.rel_path}</Link>
                 </>
               )}
             </span>

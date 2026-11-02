@@ -24,7 +24,9 @@ from ..models.mineru2_5 import MINERU_LAYOUT_LABELS, MINERU_NATIVE_LABELS
 from ..models.paddleocr_vl import PADDLE_LABELS
 from ..models.qwen3_vl_8b import QWEN3_LABELS
 from ..models.teleocr import TELEOCR_LABELS
+from ..models.surya_ocr import SURYA_LABELS
 from ..models.unlimited_ocr import UNLIMITED_LABELS
+from ..models.unlimited_ocr2 import UNLIMITED2_LABELS
 from .labeling import PUBLIC_LABELS
 
 LIGHTON_LABELS: dict[str, str] = model_specs.spec_for("lightonocr-3").value("labels")
