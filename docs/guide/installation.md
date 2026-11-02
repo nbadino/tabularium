@@ -54,9 +54,14 @@ of Python on your computer doesn't matter.
 2. Install and start Tabularium:
 
     ```bash
-    uv tool install tabularium
+    uv tool install --python 3.13 tabularium
     tabularium
     ```
+
+    Tabularium supports Python 3.11–3.13. `--python 3.13` matters: without it, uv
+    builds the environment with the system Python, which is 3.14 on recent
+    distributions (Ubuntu 26.04, Fedora), and does not warn. uv downloads 3.13 if the
+    system does not have it. `tabularium doctor` reports an unsupported interpreter.
 
 The browser opens on **<http://localhost:8787>**; the first visit asks you to
 create an administrator account. Keep the terminal open while using the app and
@@ -69,7 +74,7 @@ press `Ctrl+C` to stop it.
 | `tabularium --port 9000` | use another port |
 | `tabularium --data /path/to/folder` | keep data somewhere else than `~/Tabularium` |
 | `tabularium --host 0.0.0.0` | accept connections from other computers (for a shared lab server) |
-| `uv tool upgrade tabularium` | upgrade to the latest release ([back up first](upgrading.md)) |
+| `uv tool upgrade --python 3.13 tabularium` | upgrade to the latest release ([back up first](upgrading.md)) |
 | `uv tool uninstall tabularium` | remove the app (your data folder is kept) |
 | `tabularium backup` | archive the data folder and the vault key ([Upgrading](upgrading.md)) |
 

@@ -21,7 +21,6 @@ import AccountSection from './AccountSection'
 import DataSection from './DataSection'
 import EnvironmentSection from './EnvironmentSection'
 import InstanceSection from './InstanceSection'
-import ModelSettingsSection from './ModelSettingsSection'
 
 /** Ogni zona riceve solo ciò che cambia il suo comportamento: chi governa. */
 export interface SectionProps {
@@ -35,7 +34,6 @@ const SECTIONS: Array<{
 }> = [
   { id: 'account', labelKey: 'settings.tabAccount', Section: AccountSection },
   { id: 'istanza', labelKey: 'settings.tabInstance', Section: InstanceSection },
-  { id: 'modelli', labelKey: 'settings.tabModels', Section: ModelSettingsSection },
   { id: 'dati', labelKey: 'settings.tabData', Section: DataSection },
   { id: 'ambiente', labelKey: 'settings.tabEnv', Section: EnvironmentSection },
 ]
@@ -54,7 +52,7 @@ export default function SettingsPage() {
 
   // Compatibilità con i vecchi link: modello e provider ora hanno una sola
   // sede, l'hub Modelli, invece di essere duplicati nelle impostazioni.
-  if (params.get('s') === 'calcolo') return <Navigate to="/modelli" replace />
+  if (params.get('s') === 'calcolo' || params.get('s') === 'modelli') return <Navigate to="/modelli" replace />
 
   const current = SECTIONS.find((s) => s.id === params.get('s')) ?? SECTIONS[0]
   const Section = current.Section
@@ -63,7 +61,7 @@ export default function SettingsPage() {
     <div className="p-3">
       <PageHeader
         title={t('settings.title')}
-        intro={t('settings.intro')}
+       
         className="pb-2"
         aux={version && <span className="mono text-[12px] text-[color:var(--color-ink-3)]">Tabularium v{version}</span>}
       />

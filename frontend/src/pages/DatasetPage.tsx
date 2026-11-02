@@ -163,7 +163,7 @@ export default function DatasetPage() {
 
   return (
     <div className="p-3">
-      <PageHeader title={t('dataset.title')} intro={t('dataset.intro')} />
+      <PageHeader title={t('dataset.title')} />
 
       {error != null && (
         <div className="mb-3">

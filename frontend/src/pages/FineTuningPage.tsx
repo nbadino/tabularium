@@ -75,7 +75,7 @@ export default function FineTuningPage() {
 
   return (
     <div className="p-3">
-      <PageHeader title={t('nav.training')} intro={`${t('ux.refineIntro')} ${t('ux.baselineHint')}`} aux={routeProjectId == null ? (
+      <PageHeader title={t('nav.training')} aux={routeProjectId == null ? (
         <div className="w-[min(24rem,100%)]">
         <Field label={t('training.project')}>
           <select className="fld" value={projectId} onChange={(e) => onProject(e.target.value ? Number(e.target.value) : '')}>

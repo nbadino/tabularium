@@ -70,8 +70,6 @@ export const it = {
   },
 
   team: {
-    pageHelp: 'Guida',
-    projectsIntro: "Qui trovi i progetti a cui hai accesso. Apri un progetto per consultare le pagine o lavorarci, secondo il permesso assegnato.",
     "accessAdded": "Accesso aggiunto per {name}.",
     "newRole": "Accesso da assegnare",
     "editorHelp": "Può annotare, correggere e approvare le pagine del progetto.",
@@ -99,7 +97,6 @@ export const it = {
     "accessFor": "Persone e accessi di {name}",
     "peopleAccess": "Persone e accessi",
     "readerTitle": "Consulta le pagine",
-    "readerIntro": "Leggi scansioni, trascrizioni e tabelle salvate. Le modifiche dei colleghi vengono ricaricate mentre consulti la pagina.",
     "readerNotice": "Accesso in sola lettura: puoi consultare il lavoro, senza modificare o approvare le pagine.",
     "readerProjectHint": "Apri la consultazione per leggere pagine e contenuti, oppure Persone e accessi per sapere chi gestisce il progetto.",
     "openReader": "Consulta le pagine",
@@ -130,7 +127,6 @@ export const it = {
     firstProjectHint: "Crea un progetto per raccogliere immagini, risultati e correzioni. Puoi importare le pagine subito dopo.",
     clearSearch: "Cancella ricerca",
     overview: "Panoramica",
-    refineIntro: "Migliora il riconoscimento con le tue correzioni. Qui trovi lo stato del progetto, il prossimo passo e gli strumenti per preparare i dati, addestrare e confrontare la qualità.",
     nextStep: "Prossimo passo",
     nextRunning: "L’addestramento è in corso",
     nextRunningBody: "Apri il monitoraggio per seguire avanzamento, loss e log dell’addestramento.",
@@ -159,7 +155,6 @@ export const it = {
     evaluateBody: "Misura layout, testo e tabelle rispetto alle annotazioni approvate.",
     needsGold: "Servono pagine approvate",
     openEvaluation: "Apri valutazione",
-    baselineHint: "Puoi valutare anche il modello di partenza prima del fine-tuning: sarà il riferimento con cui confrontare il risultato. Per una prova temporanea su una pagina usa Modelli → Prova modello.",
     projectActions: "Altre azioni",
     projectReady: "Le pagine sono nel progetto",
     projectReadyBody: "Riconosci pagine avvia un riconoscimento e salva i risultati. Apri lo Studio per correggere o annotare a mano. Il fine-tuning è il percorso facoltativo per migliorare un modello con le tue correzioni.",
@@ -187,6 +182,7 @@ export const it = {
   },
 
   nav: {
+    help: 'Aiuto',
     pages: 'Pagine',
     recognitions: 'Riconoscimenti',
     projectNav: 'Progetto',
@@ -222,7 +218,6 @@ export const it = {
     noneInFilter: 'Nessuna pagina in questo filtro.',
     filter: { all: 'Tutte {n}', drafts: 'Da verificare {n}', empty: 'Senza blocchi {n}', failed: 'Con errori {n}' },
     title: 'Riconosci immagini',
-    intro: 'Riconosci una selezione di pagine, salva ogni risultato e rivedilo quando vuoi. Il modello può essere disattivato appena termina il riconoscimento.',
     newRun: 'Nuovo riconoscimento',
     project: "Progetto",
     activeModel: 'Modello in uso',
@@ -296,7 +291,6 @@ export const it = {
     recent: 'Riconoscimenti recenti',
     noRuns: 'Nessun riconoscimento ancora.',
     resultsTitle: 'Risultati',
-    resultsIntro: 'Esporta l’output così com’è oppure apri le pagine da verificare nello Studio. La revisione non richiede un modello attivo.',
     pickRun: 'Scegli un riconoscimento per vedere le pagine riconosciute.',
     rawExport: 'Esporta output originale',
     reviewedExport: 'Esporta versione corrente',
@@ -438,13 +432,13 @@ export const it = {
   },
 
   modelsHub: {
-    intro:
-      'Tre passi, nell’ordine in cui si decide: scegli il modello, scegli dove eseguirlo, configuralo. Riconoscimento, revisione ed export restano identici qualunque sia la destinazione.',
+    tryPage: 'Prova su una pagina',
+    chooseAnother: 'Scegli un altro modello',
+    modelParams: 'Parametri del modello',
     inUseTitle: 'In uso ora',
     nothingInUse: 'Nessun modello',
     nothingInUseHint: 'Nessun modello è ancora in servizio: comincia dal passo 1.',
     runningModel: 'Modello',
-    endpoint: 'Endpoint',
     manageInUse: 'Gestisci',
     goRecognize: 'Vai a Riconosci',
     tryPlayground: "Prova su una pagina",
@@ -485,19 +479,19 @@ export const it = {
     publishBadge: 'Pubblica checkpoint',
     youWillNeed: 'Ti servirà:',
     dest: {
-      localBody: 'Gratis, e le pagine non lasciano questo computer. Runtime: {runtime}.',
+      localBody: 'Gratis, e le pagine non lasciano questo computer.',
       localNeedsMlx: 'niente da installare: {repo} si scarica al primo avvio.',
       localNeedsVllm: 'spazio per i pesi ({size}) e una GPU NVIDIA con abbastanza VRAM.',
-      modalBody: 'Serverless a consumo: paghi i secondi di GPU e si spegne da solo quando non lavora.',
-      modalNeeds: 'un account Modal e il suo token.',
-      vastBody: 'Una GPU noleggiata a ore, collegata a Tabularium con un tunnel SSH.',
-      vastNeeds: 'una API key Vast.ai e credito sull’account.',
-      runpodBody: 'Un Pod RunPod, raggiunto attraverso il proxy HTTPS di RunPod.',
-      runpodNeeds: 'una API key RunPod.',
-      llamaindexBody: 'OCRia-1 tramite l’API nativa LlamaCloud: upload della pagina, parsing asincrono e impostazioni di effort, tabelle e qualità.',
-      llamaindexNeeds: 'una API key LlamaCloud personale e credito sull’account.',
-      manualBody: 'Un endpoint esterno che hai già: un server OpenAI-compatibile (vLLM, SGLang…) o un gateway con protocollo proprio, come OpenCode per Gemini 4 Argon.',
-      manualNeeds: 'l’URL dell’endpoint e il nome del modello servito.',
+      modalBody: 'Paghi solo i secondi in cui il modello lavora; si spegne da solo.',
+      modalNeeds: 'un account Modal.',
+      vastBody: 'Noleggi una GPU a ore: Tabularium la prepara e la spegne quando hai finito.',
+      vastNeeds: 'un account Vast.ai con credito.',
+      runpodBody: 'Noleggi una GPU su RunPod: Tabularium la usa via internet.',
+      runpodNeeds: 'un account RunPod.',
+      llamaindexBody: 'OCRia-1 di LlamaIndex: le pagine vengono inviate al servizio LlamaCloud.',
+      llamaindexNeeds: 'un account LlamaCloud con credito.',
+      manualBody: 'Un server che hai già e che parla l’API di OpenAI.',
+      manualNeeds: 'l’indirizzo del server e il nome del modello.',
     },
     why: {
       noCloudRecipe: 'Non c’è ancora una ricetta di serving remoto verificata per questo modello.',
@@ -718,7 +712,6 @@ export const it = {
   projects: {
     picker: { open: 'Sfoglia…', nativeWaiting: 'In attesa della finestra cartelle… si apre sul computer che esegue il server.', title: 'Scegli la cartella sorgente', up: 'Su', use: 'Usa questa cartella', files: { one: '{n} immagine o PDF qui', other: '{n} immagini o PDF qui' }, recursive: 'La scansione include anche le sottocartelle.', noSubfolders: 'Nessuna sottocartella.', truncated: 'Cartella molto grande: l\u2019elenco è parziale.' },
     title: 'Progetti',
-    intro: "Un progetto raccoglie pagine, riconoscimenti e correzioni. Crea un progetto, importa le pagine, poi scegli se riconoscerle automaticamente o annotarle.",
     new: 'Nuovo progetto',
     name: 'Nome',
     namePlaceholder: 'Es. Historic Shipping Index 1904',
@@ -1548,8 +1541,6 @@ export const it = {
     emptyBuildHint: 'L\u2019ultima costruzione non conteneva pagine: approva delle pagine e ricostruisci.',
     localTime: 'ora locale',
     title: 'Dataset',
-    intro:
-      'Trasforma le annotazioni manuali nei JSONL ms-swift che l’addestramento ufficiale accetta: split riproducibile, coordinate normalizzate 0–1000, tabelle in OTSL.',
     build: 'Costruzione',
     project: 'Progetto',
     trainShare: 'Quota di train — {pct}%',
@@ -1667,8 +1658,6 @@ export const it = {
       okBody: 'dataset con {train} campioni di train e {val} di validazione.',
     },
     title: "Fine-tuning",
-    intro:
-      'Genera e lancia l’addestramento ms-swift (LoRA o full-SFT) sull’ambiente GPU dedicato, con gli script e gli iperparametri canonici del repo ufficiale. Prima costruisci il dataset nella sezione Dataset.',
     project: 'Progetto',
     preset: 'Preset',
     essentials: 'Parametri essenziali',
@@ -1926,7 +1915,6 @@ export const it = {
     showUnready: 'Mostra anche le {n} pagine da verificare',
     title: 'Confronta modelli',
     goldOnly: 'Solo pagine approvate',
-    intro: 'Confronta più modelli sulle stesse pagine approvate. La verità è la tua annotazione, non l’output di un altro modello: il report resta su disco e non tocca il progetto.',
     adapter: 'Modello',
     endpoint: 'Endpoint',
     model: 'Nome servito',
@@ -1986,7 +1974,6 @@ export const it = {
     needsGold: 'Serve almeno una pagina approvata: è la verità con cui si confronta il modello. Le bozze non verificate non contano.',
     baselineNote: { one: 'Nessun addestramento completato: misuri il modello di partenza su {n} pagina approvata. È il riferimento che il fine-tuning deve battere.', other: 'Nessun addestramento completato: misuri il modello di partenza su {n} pagine approvate. È il riferimento che il fine-tuning deve battere.' },
     title: 'Valutazione',
-    intro: 'Misura un modello — quello di partenza o quello affinato — contro le pagine approvate del tuo progetto: layout, ordine di lettura, testo e tabelle. Senza fine-tuning è il riferimento da battere.',
     run: 'Esecuzione',
     project: 'Progetto',
     server: 'Server vLLM',
@@ -2055,8 +2042,6 @@ export const it = {
     engineOcr: 'OCR locale · {engine}',
     ocrNote: 'Solo righe di testo, senza layout né tabelle: dice subito se la pagina si legge.',
     title: "Prova modello",
-    intro:
-      "Controlla come il modello in uso legge una pagina prima di riconoscere un intero progetto. Puoi provare anche l’OCR locale. I risultati della prova non vengono salvati nel progetto.",
     run: 'Prova',
     project: 'Progetto',
     page: 'Pagina',
@@ -2625,7 +2610,6 @@ export const it = {
     kindProject: 'Progetto',
     kindPage: 'Pagina',
     kindAction: 'Azione',
-    language: 'Lingua',
   },
 
   account: {
@@ -2672,14 +2656,11 @@ export const it = {
     },
     localNoAccounts: 'Modalità locale (TABULARIUM_AUTH=off): non ci sono account, quindi registrazione, ruoli e utenti non si applicano.',
     title: 'Impostazioni',
-    intro:
-      'Gestisci il tuo account, gli accessi, i backup e l’ambiente dell’istanza. Modelli e provider si configurano nell’area Modelli.',
     sections: 'Zone delle impostazioni',
     readOnly: 'Stai consultando la configurazione dell’istanza: solo un amministratore può cambiarla.',
 
     tabAccount: 'Account',
     tabInstance: 'Istanza',
-    tabModels: 'Modelli',
     tabData: 'Dati e backup',
     tabEnv: 'Ambiente',
     modelTuning: 'Preset e parametri per modello',
@@ -2769,15 +2750,10 @@ export const it = {
     account: 'Il mio account',
     accountUser: 'Nome utente',
     accountRole: 'Ruolo',
-    accountEmail: 'Email',
-    accountNoEmail: 'nessuna',
     localModeTitle: 'Istanza senza account',
     localModeBody:
       'Questa installazione gira in modalità locale (`TABULARIUM_AUTH=off`): non ci sono utenti né sessioni e tutte le operazioni sono consentite. La lingua dell’interfaccia resta una scelta di questo browser.',
     changePassword: 'Cambia password',
-    language: 'Lingua',
-    languageHint: 'Vale per questo browser: non cambia la lingua degli altri utenti.',
-
     instance: 'Identità e accesso',
     instanceName: 'Nome dell’istanza',
     instanceNameHint: 'Il nome mostrato nella schermata di accesso.',
@@ -2908,8 +2884,6 @@ export const it = {
 
   users: {
     title: 'Utenti',
-    intro:
-      'Gli account di questa istanza: chi può entrare, con quale ruolo, e come. Il ruolo decide cosa si può fare — l’admin governa tutto, l’editor lavora sui progetti, il viewer legge.',
     newUser: 'Nuovo utente',
     list: 'Utenti',
     username: 'Nome utente',

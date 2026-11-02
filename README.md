@@ -143,16 +143,19 @@ Missing a model? [Open an issue](https://github.com/nbadino/tabularium/issues/ne
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
 
 ```bash
-uv tool install tabularium
+uv tool install --python 3.13 tabularium
 tabularium
 ```
 
-That's it: uv fetches a compatible Python by itself, and `tabularium` opens the
+That's it: uv fetches Python 3.13 by itself if the system does not have it, and `tabularium` opens the
 app in your browser at <http://localhost:8787>, where you create the
 administrator account. Your data lives in `~/Tabularium`. No GPU, Node.js or git
 needed.
 
-To upgrade later: `uv tool upgrade tabularium`, after a backup; the full procedure
+Tabularium supports Python 3.11–3.13. Keep `--python 3.13`: without it, uv uses the
+system Python, which is 3.14 on recent distributions (Ubuntu 26.04, Fedora).
+
+To upgrade later: `uv tool upgrade --python 3.13 tabularium`, after a backup; the full procedure
 and the way back are in [Upgrading and rollback](docs/guide/upgrading.md). Other ways
 to install (release archive, from source) are in the
 [installation guide](docs/guide/installation.md).

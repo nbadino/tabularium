@@ -105,7 +105,7 @@ export default function PlaygroundPage() {
 
   return (
     <div className="p-3">
-      <PageHeader title={t('playground.title')} intro={t('playground.intro')} />
+      <PageHeader title={t('playground.title')} />
       <div className="mb-3 flex flex-wrap items-center gap-3 border border-[color:var(--color-rule)] p-3">
         <p className="max-w-[85ch] text-[13px] text-[color:var(--color-ink-2)]">{t('workflow.tryHint')}</p>
         <Link to={projectId !== '' && pageId ? `/?project=${projectId}&pages=${pageId}` : '/'} className="btn no-underline">{t('workflow.saveRecognition')}</Link>

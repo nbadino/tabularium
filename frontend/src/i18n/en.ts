@@ -71,8 +71,6 @@ export const en: Dict = {
   },
 
   team: {
-    pageHelp: 'Help',
-    projectsIntro: "Find the projects you can access here. Open a project to view or work on its pages, according to your assigned permission.",
     "accessAdded": "Access added for {name}.",
     "newRole": "Access to assign",
     "editorHelp": "Can annotate, correct and approve pages in this project.",
@@ -100,7 +98,6 @@ export const en: Dict = {
     "accessFor": "People and access for {name}",
     "peopleAccess": "People and access",
     "readerTitle": "Read pages",
-    "readerIntro": "Read saved scans, transcriptions and tables. Changes from teammates reload while you view the page.",
     "readerNotice": "Read-only access: you can view work without editing or approving pages.",
     "readerProjectHint": "Open the reader to view pages and content, or People and access to see who manages the project.",
     "openReader": "Read pages",
@@ -131,7 +128,6 @@ export const en: Dict = {
     firstProjectHint: "Create a project to collect images, results and corrections. Import pages in the next step.",
     clearSearch: "Clear search",
     overview: "Overview",
-    refineIntro: "Improve recognition using your corrections. See the project status, the next step and the tools for preparing data, training and comparing quality.",
     nextStep: "Next step",
     nextRunning: "The training run is in progress",
     nextRunningBody: "Open monitoring to follow progress, loss and training run logs.",
@@ -160,7 +156,6 @@ export const en: Dict = {
     evaluateBody: "Measure layout, text and tables against approved annotations.",
     needsGold: "Approved pages required",
     openEvaluation: "Open evaluation",
-    baselineHint: "Evaluate the base model before fine-tuning to establish a reference for comparison. For a temporary single-page trial, use Models → Try model.",
     projectActions: "More actions",
     projectReady: "Your pages are in the project",
     projectReadyBody: "Recognize pages starts a recognition and saves the results. Open the Studio to correct or annotate manually. Fine-tuning is optional and improves a model using your corrections.",
@@ -188,6 +183,7 @@ export const en: Dict = {
   },
 
   nav: {
+    help: 'Help',
     pages: 'Pages',
     recognitions: 'Recognitions',
     projectNav: 'Project',
@@ -223,7 +219,6 @@ export const en: Dict = {
     noneInFilter: 'No page in this filter.',
     filter: { all: 'All {n}', drafts: 'To check {n}', empty: 'No blocks {n}', failed: 'Errors {n}' },
     title: 'Recognize images',
-    intro: 'Recognize a selection of pages, save every result, and review it at any time. The model can be disabled as soon as the recognition finishes.',
     newRun: 'New recognition',
     project: "Project",
     activeModel: 'Model in use',
@@ -297,7 +292,6 @@ export const en: Dict = {
     recent: 'Recent recognitions',
     noRuns: 'No recognitions yet.',
     resultsTitle: 'Results',
-    resultsIntro: 'Export the original output or open pages for verification in the Studio. Review does not require an active model.',
     pickRun: 'Choose a recognition to see its recognized pages.',
     rawExport: 'Export original output',
     reviewedExport: 'Export current version',
@@ -439,13 +433,13 @@ export const en: Dict = {
   },
 
   modelsHub: {
-    intro:
-      'Three steps, in the order the decision is made: pick the model, pick where it runs, configure it. Recognition, review and export stay the same wherever it runs.',
+    tryPage: 'Try on a page',
+    chooseAnother: 'Choose another model',
+    modelParams: 'Model parameters',
     inUseTitle: 'In use now',
     nothingInUse: 'No model',
     nothingInUseHint: 'No model is serving yet: start from step 1.',
     runningModel: 'Model',
-    endpoint: 'Endpoint',
     manageInUse: 'Manage',
     goRecognize: 'Go to Recognize',
     tryPlayground: "Try on one page",
@@ -486,19 +480,19 @@ export const en: Dict = {
     publishBadge: 'Publish checkpoint',
     youWillNeed: 'You will need:',
     dest: {
-      localBody: 'Free, and pages never leave this computer. Runtime: {runtime}.',
+      localBody: 'Free, and the pages never leave this computer.',
       localNeedsMlx: 'nothing to install: {repo} downloads on first start.',
       localNeedsVllm: 'room for the weights ({size}) and an NVIDIA GPU with enough VRAM.',
-      modalBody: 'Pay-per-use serverless: you pay for GPU seconds and it shuts down by itself when idle.',
-      modalNeeds: 'a Modal account and its token.',
-      vastBody: 'A GPU rented by the hour, linked to Tabularium through an SSH tunnel.',
-      vastNeeds: 'a Vast.ai API key and credit on the account.',
-      runpodBody: 'A RunPod Pod, reached through RunPod’s HTTPS proxy.',
-      runpodNeeds: 'a RunPod API key.',
-      llamaindexBody: 'OCRia-1 through the native LlamaCloud API: page upload, asynchronous parsing and controls for effort, tables and quality.',
-      llamaindexNeeds: 'a personal LlamaCloud API key and account credit.',
-      manualBody: 'An external endpoint you already have: an OpenAI-compatible server (vLLM, SGLang…) or a gateway with its own protocol, such as OpenCode for Gemini 4 Argon.',
-      manualNeeds: 'the endpoint URL and the served model name.',
+      modalBody: 'You pay only for the seconds the model works; it switches itself off.',
+      modalNeeds: 'a Modal account.',
+      vastBody: 'Rent a GPU by the hour: Tabularium sets it up and switches it off when you are done.',
+      vastNeeds: 'a Vast.ai account with credit.',
+      runpodBody: 'Rent a GPU on RunPod: Tabularium reaches it over the internet.',
+      runpodNeeds: 'a RunPod account.',
+      llamaindexBody: 'LlamaIndex OCRia-1: the pages are sent to the LlamaCloud service.',
+      llamaindexNeeds: 'a LlamaCloud account with credit.',
+      manualBody: 'A server you already have that speaks the OpenAI API.',
+      manualNeeds: 'the server address and the model name.',
     },
     why: {
       noCloudRecipe: 'There is no verified remote serving recipe for this model yet.',
@@ -719,7 +713,6 @@ export const en: Dict = {
   projects: {
     picker: { open: 'Browse…', nativeWaiting: 'Waiting for the folder window… it opens on the computer running the server.', title: 'Choose the source folder', up: 'Up', use: 'Use this folder', files: { one: '{n} image or PDF here', other: '{n} images or PDFs here' }, recursive: 'The scan also includes subfolders.', noSubfolders: 'No subfolders.', truncated: 'Very large folder: the list is partial.' },
     title: 'Projects',
-    intro: "A project holds pages, recognition results and corrections. Create a project, import pages, then recognize them automatically or annotate them.",
     new: 'New project',
     name: 'Name',
     namePlaceholder: 'E.g. Historic Shipping Index 1904',
@@ -1548,8 +1541,6 @@ export const en: Dict = {
     emptyBuildHint: 'The last build contained no pages: approve some pages and rebuild.',
     localTime: 'local time',
     title: 'Dataset',
-    intro:
-      'Turn the manual annotations into the ms-swift JSONL files that official training accepts: reproducible split, normalized coordinates 0–1000, tables in OTSL.',
     build: 'Build',
     project: 'Project',
     trainShare: 'Train share — {pct}%',
@@ -1667,8 +1658,6 @@ export const en: Dict = {
       okBody: 'dataset with {train} training and {val} validation samples.',
     },
     title: "Fine-tuning",
-    intro:
-      'Generate and launch the ms-swift training (LoRA or full-SFT) in the dedicated GPU environment, with the canonical scripts and hyperparameters of the official repo. Build the dataset first in the Dataset section.',
     project: 'Project',
     preset: 'Preset',
     essentials: 'Essential parameters',
@@ -1926,7 +1915,6 @@ export const en: Dict = {
     showUnready: 'Also show {n} pages needing review',
     title: 'Compare models',
     goldOnly: 'Approved pages only',
-    intro: 'Compare several models on the same approved pages. The truth is your annotation, not another model’s output: the report stays on disk and never touches the project.',
     adapter: 'Model',
     endpoint: 'Endpoint',
     model: 'Served name',
@@ -1986,7 +1974,6 @@ export const en: Dict = {
     needsGold: 'At least one approved page is needed: it is the ground truth the model is compared with. Unchecked drafts do not count.',
     baselineNote: { one: 'No finished training run: you are measuring the starting model on {n} approved page. It is the baseline fine-tuning must beat.', other: 'No finished training run: you are measuring the starting model on {n} approved pages. It is the baseline fine-tuning must beat.' },
     title: 'Evaluation',
-    intro: 'Measure a model — the starting one or the fine-tuned one — against your project\u2019s approved pages: layout, reading order, text and tables. Without fine-tuning, it is the baseline to beat.',
     run: 'Run',
     project: 'Project',
     server: 'vLLM server',
@@ -2055,8 +2042,6 @@ export const en: Dict = {
     engineOcr: 'Local OCR · {engine}',
     ocrNote: 'Text lines only, no layout or tables: it tells you at once whether the page reads.',
     title: "Try model",
-    intro:
-      "Check how the current model reads a page before recognizing an entire project. You can also try local OCR. Trial results are not saved in the project.",
     run: 'Try',
     project: 'Project',
     page: 'Page',
@@ -2624,7 +2609,6 @@ export const en: Dict = {
     kindProject: 'Project',
     kindPage: 'Page',
     kindAction: 'Action',
-    language: 'Language',
   },
 
   account: {
@@ -2671,14 +2655,11 @@ export const en: Dict = {
     },
     localNoAccounts: 'Local mode (TABULARIUM_AUTH=off): there are no accounts, so registration, roles and users do not apply.',
     title: 'Settings',
-    intro:
-      'Manage your account, access, backups, and instance environment. Models and providers are configured in Models.',
     sections: 'Settings zones',
     readOnly: 'You are viewing the instance configuration: only an administrator can change it.',
 
     tabAccount: 'Account',
     tabInstance: 'Instance',
-    tabModels: 'Models',
     tabData: 'Data and backups',
     tabEnv: 'Environment',
     modelTuning: 'Model presets and tuning',
@@ -2768,15 +2749,10 @@ export const en: Dict = {
     account: 'My account',
     accountUser: 'Username',
     accountRole: 'Role',
-    accountEmail: 'Email',
-    accountNoEmail: 'none',
     localModeTitle: 'Instance without accounts',
     localModeBody:
       'This installation runs in local mode (`TABULARIUM_AUTH=off`): there are no users or sessions and every operation is allowed. The interface language remains a choice of this browser.',
     changePassword: 'Change password',
-    language: 'Language',
-    languageHint: 'Applies to this browser: it does not change other users’ language.',
-
     instance: 'Identity and access',
     instanceName: 'Instance name',
     instanceNameHint: 'The name shown on the sign-in screen.',
@@ -2907,8 +2883,6 @@ export const en: Dict = {
 
   users: {
     title: 'Users',
-    intro:
-      'The accounts on this instance: who can sign in, with which role, and how. The role decides what you can do — the admin governs everything, editors work on projects, viewers read.',
     newUser: 'New user',
     list: 'Users',
     username: 'Username',

@@ -139,6 +139,12 @@ export function destinationVerdict(model: ModelItem, dest: Destination): Destina
 }
 
 /** La prima destinazione praticabile nell'ordine di `DESTINATIONS`. */
+/** The destinations that can host the model first, the others (greyed, with their reason) after. */
+export function orderedDestinations(model: ModelItem): Destination[] {
+  const ok = DESTINATIONS.filter((d) => destinationVerdict(model, d).ok)
+  return [...ok, ...DESTINATIONS.filter((d) => !ok.includes(d))]
+}
+
 export function recommendedDestination(model: ModelItem): Destination | null {
   return DESTINATIONS.find((d) => destinationVerdict(model, d).ok) ?? null
 }

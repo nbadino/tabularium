@@ -156,7 +156,7 @@ export default function BenchmarkPage() {
 
   return (
     <div className="p-3">
-      <PageHeader title={t('benchmark.title')} intro={t('benchmark.intro')} />
+      <PageHeader title={t('benchmark.title')} />
 
       {error != null && <div className="mb-3"><ErrorNotice error={error} onDismiss={() => setError(null)} /></div>}
 

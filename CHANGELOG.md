@@ -7,6 +7,15 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Changed
+- Models: a fresh install opens on choosing a model, not on a "local" destination this machine
+  cannot run. Destinations that can host the model come first, the others greyed at the end with
+  their reason, in plain language. "In use now" offers **Try on a page** and **Choose another
+  model**; the 1-2-3 steps show only while choosing. Model parameters moved here from Settings.
+  The catalog shows "models that run here" first when there are any.
+- Settings: Account, Instance, Data and backup, Environment. The language lives in the user menu
+  only; the email appears once. The user menu links to the user guide (**Help**).
+- No folded "Guide" on every page any more; the command palette no longer repeats the language
+  switch and logout of the user menu.
 - Fine-tuning is one path in three steps: **Prepare the data · Train · Evaluate**. Comparing
   models (formerly *Benchmark*) is part of evaluating. Preparing the data states its defaults in
   one line, with every choice under *Parameters*; the training type joins epochs and learning
@@ -47,6 +56,11 @@ Notable changes to Tabularium. The format follows
 ### Removed
 - Unused `ClassPalette` component and unused interface strings.
 - The separate Archive page: its thumbnail wall is now the project's Pages tab.
+
+### Fixed
+- An unsupported Python is no longer silent: `tabularium doctor` fails outside 3.11–3.13 and
+  startup prints a warning, both with the reinstall command. The install and upgrade commands
+  pin `--python 3.13`, because `uv tool install` otherwise uses a system Python 3.14 (#32).
 
 ## [0.5.0] - 2026-11-02
 
