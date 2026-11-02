@@ -75,7 +75,6 @@ export default function LoginPage() {
         <div className="mod-body">
           <h1 className="text-[22px] font-bold leading-tight tracking-[-0.03em]">
             {instanceName || 'Tabularium'}
-            <span className="text-[color:var(--color-sig-text)]">Lab</span>
           </h1>
           <p className="mt-1 text-[12px] text-[color:var(--color-ink-2)]">
             {mode === 'login' ? t('auth.loginSubtitle') : t('auth.registerSubtitle')}

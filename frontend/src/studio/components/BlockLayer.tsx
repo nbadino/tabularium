@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { Arrow, Label, Line, Rect, Tag, Text, Transformer } from 'react-konva'
 import Konva from 'konva'
 import { bboxPoints } from '../../lib/coords'
+import { labelName } from '../../i18n/labelName'
 import type { DisplayBlock, Tool } from '../types'
 
 /** Riempimento appena accennato: sulla scansione deve restare leggibile la
@@ -210,7 +211,7 @@ export default function BlockLayer({
           <Label key={`tag-${b.id}`} x={bb.x} y={bb.y - size - 4 / viewportK} listening={false}>
             <Tag fill={selected ? sigPlate : colorFor(b.label) || '#64748b'} cornerRadius={3 / viewportK} />
             <Text
-              text={b.label}
+              text={labelName(b.label)}
               fontSize={size}
               fontStyle="bold"
               padding={2 / viewportK}

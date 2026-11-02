@@ -7,7 +7,8 @@
  */
 import { useState } from 'react'
 import { Field } from '../app/ui'
-import { useAuth } from '../app/auth'
+import { bootstrap, useAuth } from '../app/auth'
+import { ApiError } from '../lib/api'
 import { describeError } from '../lib/errors'
 import { useI18n } from '../i18n'
 
@@ -37,6 +38,12 @@ export default function SetupPage() {
       await setup(username.trim(), password, email)
       // Il gate reagisce allo stato aggiornato: si entra nell'app.
     } catch (err) {
+      // Someone else created the administrator while this tab was open: let the
+      // gate re-read the state and show the login instead of a dead form.
+      if (err instanceof ApiError && err.status === 409) {
+        await bootstrap()
+        return
+      }
       setError(describeError(err).messaggio)
     } finally {
       setBusy(false)
@@ -51,7 +58,7 @@ export default function SetupPage() {
         </div>
         <div className="mod-body">
           <h1 className="text-[22px] font-bold leading-tight tracking-[-0.03em]">
-            Tabularium<span className="text-[color:var(--color-sig-text)]">Lab</span>
+            Tabularium
           </h1>
           <p className="mt-1 text-[12px] text-[color:var(--color-ink-2)]">
             {t('auth.setupSubtitle')}
@@ -107,6 +114,7 @@ export default function SetupPage() {
             >
               {busy ? t('auth.busy') : t('auth.setupSubmit')}
             </button>
+            <p className="text-[11px] text-[color:var(--color-ink-3)]">{t('auth.setupKeepPassword')}</p>
           </form>
         </div>
       </div>

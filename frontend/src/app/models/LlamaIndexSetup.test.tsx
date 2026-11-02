@@ -107,6 +107,7 @@ describe('LlamaIndexSetup', () => {
     })
     vi.mocked(saveInferenceToBackend).mockResolvedValue({
       enabled: true,
+      configured: true,
       url: 'https://api.cloud.llamaindex.ai',
       model: 'ocria-1',
       adapterId: 'llamaindex-ocria-1',

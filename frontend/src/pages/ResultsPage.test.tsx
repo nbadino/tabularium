@@ -25,7 +25,7 @@ afterEach(cleanup)
 
 it('keeps original detections visible after the run’s saved blocks have been replaced during review', async () => {
   render(<MemoryRouter initialEntries={['/risultati?project=1&run=24']}><ResultsPage /></MemoryRouter>)
-  expect(await screen.findByText('317 blocchi riconosciuti in questa elaborazione')).toBeInTheDocument()
+  expect(await screen.findByText('317 blocchi trovati in questo riconoscimento')).toBeInTheDocument()
   expect(screen.getByText('Pagina attuale: Approvata')).toBeInTheDocument()
   expect(screen.queryByText('Senza blocchi')).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Esporta versione corrente' })).toBeInTheDocument()

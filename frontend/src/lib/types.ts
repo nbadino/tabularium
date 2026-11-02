@@ -913,6 +913,7 @@ export interface PlaygroundResult {
 
 export interface InferenceConfig {
   enabled?: boolean
+  configured?: boolean
   url: string
   model: string
   adapter_id?: string

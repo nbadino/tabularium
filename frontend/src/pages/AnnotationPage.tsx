@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { labelName } from '../i18n/labelName'
 import { useFitOneRow } from '../lib/fitRow'
 import { Link, useSearchParams } from 'react-router'
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
@@ -1241,8 +1242,8 @@ export default function AnnotationPage() {
               className="fld !w-auto"
             >
               {labels.map((l) => (
-                <option key={l.name} value={l.name}>
-                  {l.name}
+                <option key={l.name} value={l.name} title={l.name}>
+                  {labelName(l.name)}
                 </option>
               ))}
             </select>

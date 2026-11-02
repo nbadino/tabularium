@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import { ApiError } from '../lib/api'
 import type { PageItem, PrefillEngines, RecognitionRun, SystemInfo } from '../lib/types'
+import { defaultEngine } from '../lib/defaultEngine'
 import { Badge, Collapsible, ErrorNotice, Field, Loading, Modal, Module, Notice, Progress, PageHeader } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { syncInferenceFromBackend, useInference } from '../app/inference'
@@ -109,7 +110,7 @@ export default function RecognizePage() {
   const [runs, setRuns] = useState<RecognitionRun[]>([])
   const [modelRuntime, setModelRuntime] = useState<ModelRuntimeInfo[]>([])
   const [current, setCurrent] = useState<RecognitionRun | null>(null)
-  const [engine, setEngine] = useState<'model' | 'ocr'>('model')
+  const [engine, setEngine] = useState<'model' | 'ocr'>(() => defaultEngine(null, inference))
   const [disableAfter, setDisableAfter] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
@@ -130,14 +131,16 @@ export default function RecognizePage() {
     ]).catch(() => {})
   }, [])
 
-  // Il motore di default lo decide il backend, non questa pagina: su
-  // un'installazione senza GPU «modello» è una voce disabilitata, e trovarla
-  // già selezionata manda l'utente dritto in un vicolo cieco. La scelta
-  // esplicita dell'utente vince sempre su quella suggerita.
+  // The page starts on the local OCR and switches to the model only once it
+  // answers, so an install without a GPU never flashes an unreachable-model
+  // warning. The user's explicit choice always wins.
   useEffect(() => {
-    if (engineTouched || !engines?.recommended) return
-    setEngine(engines.recommended === 'model' && !(inference.enabled && inference.available) && engines.ocr?.available ? 'ocr' : engines.recommended)
-  }, [engines?.recommended, engines?.ocr?.available, engineTouched, inference.enabled, inference.available])
+    if (engineTouched) return
+    setEngine(defaultEngine(
+      engines ? { recommended: engines.recommended, ocrAvailable: !!engines.ocr?.available } : null,
+      inference,
+    ))
+  }, [engines, engineTouched, inference])
 
   const loadRuns = async (pid: number) => {
     try {

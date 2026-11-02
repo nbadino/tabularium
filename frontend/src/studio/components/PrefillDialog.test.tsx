@@ -53,7 +53,7 @@ describe('PrefillDialog', () => {
   it('conferma trasmette la modalità scelta', () => {
     const { onRun } = renderDialog({ blocks: 5, drafts: 2, tables: 1 })
     fireEvent.click(screen.getByRole('radio', { name: /Sostituisci tutto/ }))
-    fireEvent.click(screen.getByRole('button', { name: /Esegui prefill/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Riconosci pagina/ }))
     expect(onRun).toHaveBeenCalledWith('replace_all')
   })
 

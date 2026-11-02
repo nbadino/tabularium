@@ -339,6 +339,7 @@ def get_inference_settings() -> dict:
             "url": cfg["url"],
             "model": cfg["model"],
             "adapter_id": cfg.get("adapter_id", "monkeyocrv2-parsing"),
+            "configured": cfg.get("configured", True),
             "has_api_key": bool(cfg.get("api_key")),
             # Gli header possono contenere token: restano server-only.
             "extra_headers": {},
@@ -377,6 +378,7 @@ def get_inference_settings() -> dict:
         "url": cfg["url"],
         "model": cfg["model"],
         "adapter_id": cfg.get("adapter_id", "monkeyocrv2-parsing"),
+        "configured": cfg.get("configured", True),
         "has_api_key": bool(cfg.get("api_key")),
         "extra_headers": {},
         "timeout": cfg.get("timeout", 180),
