@@ -6,6 +6,21 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Changed
+- A fresh install without a GPU no longer opens on errors: the header model status appears only
+  once a model has been chosen, and Recognize starts on the local OCR until a model answers.
+  `/api/system/inference` reports `configured`.
+- One name per concept across Italian, English and French: *project* replaces archive/corpus,
+  *recognition* replaces processing/session/run/prefill, and a single fine-tuning job is a
+  *training run*. Default region classes are shown translated; stored and exported names are
+  unchanged.
+- The app is called Tabularium everywhere (no "TabulariumLab"); the browser title is "Tabularium".
+- First-run setup no longer promises recovery emails, and a setup tab left open after the
+  administrator was created elsewhere returns to the login.
+
+### Removed
+- Unused `ClassPalette` component and unused interface strings.
+
 ## [0.5.0] - 2026-11-02
 
 ### Added
