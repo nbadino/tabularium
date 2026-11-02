@@ -15,6 +15,8 @@ interface PageSidebarProps {
   pages: PageItem[]
   currentPage: PageItem | null
   onProjectChange: (pid: number | '') => void
+  /** The project comes from the URL: no selector of its own. */
+  projectFixed?: boolean
   onPageSelect: (pid: number) => void
   /** Larghezza in px governata dallo splitter: se assente vale il default. */
   width?: number
@@ -57,6 +59,7 @@ export default function PageSidebar({
   pages,
   currentPage,
   onProjectChange,
+  projectFixed = false,
   onPageSelect,
   width,
   reviewScope,
@@ -122,6 +125,7 @@ export default function PageSidebar({
             </Link>
           </div>
         )}
+        {!projectFixed && <>
         <div className="flex items-baseline justify-between">
           <span className="lbl">{t('sidebar.project')}</span>
           {!reviewScope && (
@@ -141,6 +145,7 @@ export default function PageSidebar({
             ...projects.map((p) => ({ value: String(p.id), label: p.name })),
           ]}
         />
+        </>}
         {/* Su poche pagine la lista si scorre a occhio: la ricerca serve
             quando l'archivio cresce. */}
         {pages.length > SEARCH_FROM && (

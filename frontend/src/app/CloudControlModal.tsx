@@ -2081,7 +2081,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
                       inferenceOk ? (
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="mono text-[11px]">{localUrl}</span>
-                          <Link to="/" className="btn btn-primary no-underline">{t('modelsHub.goRecognize')}</Link>
+                          <Link to="/riconosci" className="btn btn-primary no-underline">{t('modelsHub.goRecognize')}</Link>
                           <button type="button" className="btn btn-sm" disabled={tunnelBusy} onClick={() => void handleStopTunnel()}>
                             {t('cloud.control.vastGuide.disconnect')}
                           </button>

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import '@testing-library/jest-dom/vitest'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import Layout from './Layout'
@@ -40,65 +40,41 @@ describe('Layout', () => {
     expect(screen.queryByTitle('Cambia modello o esecuzione')).not.toBeInTheDocument()
   })
 
-  it('reports a chosen model that does not answer', () => {
-    inferenceState.value = { ...inferenceState.value, enabled: true, configured: true, model: 'MinerU', url: 'https://x.modal.run/v1', provider: 'modal' }
-    renderAt('/')
-    expect(screen.getByText('Non disponibile')).toBeInTheDocument()
-  })
-
   it('names the app Tabularium', () => {
     renderAt('/')
     expect(screen.getByText('Tabularium')).toBeInTheDocument()
     expect(screen.queryByText('Lab')).not.toBeInTheDocument()
   })
 
-  it('una linguetta riapre la sezione dove la si era lasciata', () => {
-    render(
-      <MemoryRouter initialEntries={['/annotazione?project=1&page=7']}>
-        <Routes>
-          <Route element={<Layout />}>
-            <Route path="*" element={<Where />} />
-          </Route>
-        </Routes>
-      </MemoryRouter>,
-    )
-    fireEvent.click(screen.getByRole('link', { name: 'Riconosci' }))
-    fireEvent.click(screen.getByRole('link', { name: 'Risultati' }))
-    expect(screen.getByTestId('where')).toHaveTextContent(/^\/risultati$/)
-    fireEvent.click(screen.getByText('Annotazione'))
-    expect(screen.getByTestId('where')).toHaveTextContent('/annotazione?project=1&page=7')
-  })
-  it('keeps the selected recognition run when returning through contextual navigation', () => {
-    render(<MemoryRouter initialEntries={['/risultati?project=2&run=24']}>
-      <Routes><Route element={<Layout />}><Route path="*" element={<Where />} /></Route></Routes>
-    </MemoryRouter>)
-    fireEvent.click(screen.getByRole('link', { name: 'Archivio' }))
-    fireEvent.click(screen.getByRole('link', { name: 'Riconosci' }))
-    fireEvent.click(screen.getByRole('link', { name: 'Risultati' }))
-    expect(screen.getByTestId('where')).toHaveTextContent('/risultati?project=2&run=24')
+  it('the main navigation is Progetti and Modelli', () => {
+    renderAt('/progetti')
+    const nav = screen.getByRole('navigation', { name: 'Sezioni' })
+    expect(within(nav).getByRole('link', { name: 'Progetti' })).toHaveAttribute('href', '/progetti')
+    expect(within(nav).getByRole('link', { name: 'Modelli' })).toHaveAttribute('href', '/modelli')
+    for (const old of ['Archivio', 'Riconosci', 'Annotazione', 'Fine-tuning']) {
+      expect(within(nav).queryByRole('link', { name: old })).not.toBeInTheDocument()
+    }
   })
 
-  it.each([
-    ['/training', 'Fine-tuning'],
-    ['/valutazione', 'Fine-tuning'],
-    ['/playground', 'Modelli'],
-    ['/archivio', 'Archivio'],
-  ])('la sottosezione %s mantiene visibile la sezione %s', (path, label) => {
-    render(
-      <MemoryRouter initialEntries={[path]}>
-        <Routes><Route element={<Layout />}><Route path="*" element={<Where />} /></Route></Routes>
-      </MemoryRouter>,
-    )
-    expect(screen.getByRole('link', { name: label })).toHaveAttribute('aria-current', 'page')
+  it('inside a project, its sections are tabs of the project', () => {
+    renderAt('/progetti/3/riconoscimenti')
+    const nav = screen.getByRole('navigation', { name: 'Progetto' })
+    expect(within(nav).getByRole('link', { name: 'Pagine' })).toHaveAttribute('href', '/progetti/3')
+    expect(within(nav).getByRole('link', { name: 'Riconoscimenti' })).toHaveAttribute('aria-current', 'page')
+    expect(within(nav).getByRole('link', { name: 'Fine-tuning' })).toHaveAttribute('href', '/progetti/3/fine-tuning')
+    expect(screen.getByRole('link', { name: 'Progetti' })).toHaveAttribute('aria-current', 'page')
   })
 
-  it('Archive returns to the overview after project creation', () => {
-    render(<MemoryRouter initialEntries={['/progetti?nuovo=1']}>
-      <Routes><Route element={<Layout />}><Route path="*" element={<Where />} /></Route></Routes>
-    </MemoryRouter>)
-    fireEvent.click(screen.getByRole('link', { name: 'Riconosci' }))
-    fireEvent.click(screen.getByRole('link', { name: 'Archivio' }))
-    expect(screen.getByTestId('where')).toHaveTextContent(/^\/archivio$/)
+  it('the fine-tuning steps sit under the project tab', () => {
+    renderAt('/progetti/3/fine-tuning/addestra')
+    const steps = screen.getByRole('navigation', { name: 'Percorso di fine-tuning' })
+    expect(within(steps).getByRole('link', { name: '2 · Addestra' })).toHaveAttribute('href', '/progetti/3/fine-tuning/addestra')
+    expect(within(steps).getByRole('link', { name: '1 · Prepara il dataset' })).toHaveAttribute('href', '/progetti/3/fine-tuning/dati')
+  })
+
+  it('the model trial stays under Modelli', () => {
+    renderAt('/playground')
+    expect(screen.getByRole('link', { name: 'Modelli' })).toHaveAttribute('aria-current', 'page')
   })
 
 })

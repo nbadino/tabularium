@@ -7,6 +7,12 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Changed
+- The project is the container of the work. The main navigation is **Projects** and **Models**;
+  inside a project, **Pages**, **Recognitions** and **Fine-tuning** are its tabs, and the project
+  switcher in that bar is the only project selector (the eleven per-page selectors are gone).
+  Every section lives under `/progetti/:id/…`; `/` resumes the last project. The old addresses
+  (`/annotazione`, `/risultati`, `/dataset`, `/training`, …) redirect to their place in the
+  project. The model status no longer sits in the global header.
 - A fresh install without a GPU no longer opens on errors: the header model status appears only
   once a model has been chosen, and Recognize starts on the local OCR until a model answers.
   `/api/system/inference` reports `configured`.

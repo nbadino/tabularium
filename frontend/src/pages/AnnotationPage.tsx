@@ -20,7 +20,8 @@ import {
   summarizePage,
   type PrefillMode,
 } from '../studio/prefill'
-import { useProjects, writeActiveProject } from '../app/activeProject'
+import { useProjects, useRouteProjectId, writeActiveProject } from '../app/activeProject'
+import { projectPath } from '../app/projectPaths'
 import { useConfirm } from '../app/confirm'
 import { connectPage, disconnectPage, notifyEditing, onAnnotationsChanged, useLive } from '../app/live'
 import { initialsOf } from '../lib/avatar'
@@ -124,7 +125,8 @@ export default function AnnotationPage() {
   const { t } = useI18n()
   const confirm = useConfirm()
   const [searchParams, setSearchParams] = useSearchParams()
-  const requestedProject = Number(searchParams.get('project')) || null
+  const routeProjectId = useRouteProjectId()
+  const requestedProject = routeProjectId ?? (Number(searchParams.get('project')) || null)
   const requestedPage = Number(searchParams.get('page')) || null
   const requestedRun = Number(searchParams.get('run')) || null
   const inf = useInference()
@@ -617,7 +619,7 @@ export default function AnnotationPage() {
     // L'URL dice dove si lavora: un refresh o un link riaprono lo stesso
     // punto. Cambiare progetto lascia cadere pagina e sessione, che
     // appartenevano all'altro.
-    if (pid !== requestedProject) {
+    if (routeProjectId == null && pid !== requestedProject) {
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev)
         if (pid === '') next.delete('project')
@@ -1159,7 +1161,7 @@ export default function AnnotationPage() {
       {reviewRun && studioMode !== 'all' && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-2 py-1 text-[11px]">
           <b>{t('annotate.reviewRun', { id: reviewRun.id, count: pages.length })}</b>
-          <Link to={`/risultati?project=${reviewRun.project_id}&run=${reviewRun.id}`} className="btn btn-sm no-underline">
+          <Link to={projectPath(reviewRun.project_id, `riconoscimenti/${reviewRun.id}`)} className="btn btn-sm no-underline">
             {t('annotate.backToResults')}
           </Link>
         </div>
@@ -1167,6 +1169,7 @@ export default function AnnotationPage() {
       <div className="flex min-h-0 flex-1 overflow-hidden">
       {studioMode === 'all' && <PageSidebar
         projects={projects}
+        projectFixed={routeProjectId != null}
         projectId={projectId}
         pages={pages}
         currentPage={page}
@@ -1177,7 +1180,7 @@ export default function AnnotationPage() {
         width={sidebarWidth}
         reviewScope={reviewRun ? {
           label: t('annotate.reviewRun', { id: reviewRun.id, count: pages.length }),
-          backTo: `/risultati?project=${reviewRun.project_id}&run=${reviewRun.id}`,
+          backTo: projectPath(reviewRun.project_id, `riconoscimenti/${reviewRun.id}`),
           backLabel: t('annotate.backToResults'),
         } : null}
       />}

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { projectPath } from '../app/projectPaths'
 import type { InputHTMLAttributes } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
@@ -10,7 +11,7 @@ import { ActivityFeed, type ProjectActivity } from '../app/ActivityFeed'
 import ShareDialog from '../app/ShareDialog'
 import { useConfirm } from '../app/confirm'
 import { useAuth } from '../app/auth'
-import { IconCheck, IconPrev, IconScan, IconTrash, IconUsers } from '../app/icons'
+import { IconCheck, IconScan, IconTrash, IconUsers } from '../app/icons'
 import { useI18n, tn } from '../i18n'
 import { writeActiveProject } from '../app/activeProject'
 import { accessLabel, projectAccess } from '../app/projectAccess'
@@ -299,13 +300,6 @@ export default function ProjectDetailPage() {
     <div className="p-3">
       <div className="mb-3 flex flex-wrap items-end gap-x-4 gap-y-2 border-b border-[color:var(--color-rule-strong)] pb-3">
         <div className="min-w-0">
-          <Link
-            to="/progetti"
-            className="mb-0.5 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.04em] no-underline"
-          >
-            <IconPrev size={11} />
-            {t('project.back')}
-          </Link>
           <h1 className="truncate text-[26px] font-bold leading-tight tracking-[-0.03em]">
             {project?.name ?? t('project.fallback')}
           </h1>
@@ -369,10 +363,8 @@ export default function ProjectDetailPage() {
       )}
 
       {pages.length > 0 && <div className="mb-3 flex flex-wrap gap-2">
-        {canEdit && <Link to="/" className="btn btn-primary no-underline">{t('home.recognizePages')}</Link>}
-        <Link to={`/annotazione?project=${projectId}`} className="btn no-underline">{t(canEdit ? 'pipeline.steps.annotateAction' : 'team.openReader')}</Link>
-        <Link to="/archivio" className="btn no-underline">{t('nav.archive')}</Link>
-        {canEdit && <Link to="/fine-tuning" className="btn no-underline">{t('nav.training')}</Link>}
+        {canEdit && <Link to={projectPath(Number(projectId), 'riconoscimenti')} className="btn btn-primary no-underline">{t('home.recognizePages')}</Link>}
+        <Link to={projectPath(Number(projectId), 'studio')} className="btn no-underline">{t(canEdit ? 'pipeline.steps.annotateAction' : 'team.openReader')}</Link>
       </div>}
 
       {protocol && (

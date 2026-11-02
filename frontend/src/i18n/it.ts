@@ -176,6 +176,10 @@ export const it = {
   },
 
   nav: {
+    pages: 'Pagine',
+    recognitions: 'Riconoscimenti',
+    projectNav: 'Progetto',
+    switchProject: 'Cambia progetto',
     recognize: 'Riconosci',
     results: 'Risultati',
     models: 'Modelli',
