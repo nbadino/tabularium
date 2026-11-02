@@ -171,7 +171,7 @@ export const en: Dict = {
     importFiles: 'Import images or PDFs',
     refineNav: "Fine-tuning workflow",
     modelNav: "Model setup and trial",
-    dataset: "1 · Prepare dataset",
+    dataset: "1 · Prepare the data",
     train: "2 · Train",
     evaluate: "3 · Evaluate quality",
     configure: "Configure model",
@@ -196,7 +196,7 @@ export const en: Dict = {
     results: 'Results',
     models: 'Models',
     archive: 'Archive',
-    benchmark: 'Benchmark',
+    benchmark: 'Compare models',
     projects: 'Projects',
     annotate: 'Annotate',
     dataset: 'Dataset',
@@ -1535,6 +1535,10 @@ export const en: Dict = {
   },
 
   dataset: {
+    params: 'Parameters',
+    summary: '{pct}% of the pages for training, the rest for checking · split by {unit} · {scope}.',
+    scopeApproved: 'approved pages only',
+    scopeAll: 'every page with regions, drafts included',
     needsHeldOut: "This dataset has no validation pages. To evaluate after training, approve more independent pages or adjust the split and rebuild the dataset.",
     warningSummary: "Some samples need attention and may have been excluded. Check the counts per family before training; to recover samples, correct the pages in Studio and rebuild the dataset.",
     warningDetails: "Show sample details",
@@ -1559,8 +1563,6 @@ export const en: Dict = {
     pilotOnly: 'Saved pilot sample only',
     seed: 'Split seed',
     seedHint: 'Same seed = same split, always.',
-    advanced: 'Set once per project',
-    advancedCount: '3 values',
     splitUnit: 'Split unit',
     splitUnitHint: 'Splitting by issue keeps sibling pages from ending up on both sides.',
     building: 'Building…',
@@ -1600,6 +1602,8 @@ export const en: Dict = {
   },
 
   training: {
+    params: 'Parameters',
+    modelStep: 'Starting model',
     comparison: {
       trainingContext: "Training run: {pages} pages, {samples} samples, {steps} weight updates.",
       outputChanges: "Changed outputs: {changed}/{total}. Small differences may leave aggregate metrics unchanged.",
@@ -1665,7 +1669,6 @@ export const en: Dict = {
     title: "Fine-tuning",
     intro:
       'Generate and launch the ms-swift training (LoRA or full-SFT) in the dedicated GPU environment, with the canonical scripts and hyperparameters of the official repo. Build the dataset first in the Dataset section.',
-    corpusPreset: "Model and parameters",
     project: 'Project',
     preset: 'Preset',
     essentials: 'Essential parameters',
@@ -1677,7 +1680,6 @@ export const en: Dict = {
     epochsHint: 'How many times the model re-reads the whole dataset.',
     lr: 'Learning rate',
     lrHint: 'Lower = more cautious. Below 1e-6 the model learns very little.',
-    advanced: 'Advanced parameters',
     advancedCount: '15 values',
     auto: {
       released: 'GPU released: deletion confirmed.',
@@ -1922,7 +1924,7 @@ export const en: Dict = {
 
   benchmark: {
     showUnready: 'Also show {n} pages needing review',
-    title: 'Model benchmark',
+    title: 'Compare models',
     goldOnly: 'Approved pages only',
     intro: 'Compare several models on the same approved pages. The truth is your annotation, not another model’s output: the report stays on disk and never touches the project.',
     adapter: 'Model',
@@ -1963,6 +1965,18 @@ export const en: Dict = {
   },
 
   evaluate: {
+    headlineTitle: 'Result at a glance',
+    headline: {
+      text: 'characters wrong in the text',
+      textHint: 'Lower is better. Compared with the verified transcription.',
+      regions: 'regions found',
+      regionsHint: 'Of the regions you marked, how many the model finds.',
+      tables: 'tables with the right structure',
+      tablesHint: 'Rows, columns and merged cells as in the verified table.',
+    },
+    details: 'Metric details',
+    compareHint: 'Want to know whether another model does better on your pages?',
+    compareLink: 'Compare models',
     needsHeldOut: "Evaluation after training needs validation pages held out of training. The current dataset has none: update the data and rebuild the split.",
     modelUnreachableTitle: '{model} is not listening',
     modelUnreachableBody: 'The endpoint {url} is not responding. Check the connection or open Models to choose a compatible model and execution destination.',

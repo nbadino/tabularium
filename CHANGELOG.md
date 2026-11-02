@@ -7,6 +7,11 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Changed
+- Fine-tuning is one path in three steps: **Prepare the data · Train · Evaluate**. Comparing
+  models (formerly *Benchmark*) is part of evaluating. Preparing the data states its defaults in
+  one line, with every choice under *Parameters*; the training type joins epochs and learning
+  rate under *Parameters*. Evaluation leads with three plain numbers (characters wrong in the
+  text, regions found, tables with the right structure); the full metrics open under *Details*.
 - Studio: one way to finish a page, **Verify and go to the next** (Ctrl/⌘+Enter), with the
   existing confirmation when drafts are still unchecked. The header says which page this is
   ("Page 2 of 5") and leads back to the pages; J/K move between pages. The page list can be

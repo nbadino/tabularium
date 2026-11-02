@@ -279,7 +279,7 @@ export default function TrainingConfigForm({
       </Module>}
 
       {/* Choose the base model before the execution destination. */}
-      <Module tab={`1 · ${t('training.corpusPreset')}`}>
+      <Module tab={`1 · ${t('training.modelStep')}`}>
         <div className="grid gap-3 sm:grid-cols-2">
           {/* Il modello *è* la ricetta: scegliere un adapter cambia toolchain,
               tipi di training ammessi e default. Niente più deduzione dal
@@ -295,20 +295,6 @@ export default function TrainingConfigForm({
                 <option key={r.adapter_id} value={r.adapter_id} disabled={!r.trainable}>
                   {r.display_name}
                   {!r.trainable ? ` · ${t('training.recipeNotTrainable')}` : ''}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label={t('training.trainType')}>
-            <select
-              value={cfg.train_type}
-              onChange={(e) => chooseTrainType(e.target.value as 'lora' | 'full')}
-              className="fld"
-              disabled={!recipe || recipe.train_types.length <= 1}
-            >
-              {(recipe?.train_types ?? (['lora', 'full'] as const)).map((k) => (
-                <option key={k} value={k}>
-                  {trainTypeLabel(k)}
                 </option>
               ))}
             </select>
@@ -346,8 +332,26 @@ export default function TrainingConfigForm({
         )}
       </Module>
 
-      <Collapsible tab={t('training.advanced')} quiet>
+      {/* The recipe's defaults are the official ones: type, epochs and learning rate
+          are choices for who knows why to change them. */}
+      <Collapsible tab={t('training.params')} quiet>
         <p className="mb-3 max-w-[80ch] text-[12px] text-[color:var(--color-ink-2)]">{t('training.advancedHint')}</p>
+        <div className="mb-3 max-w-sm">
+          <Field label={t('training.trainType')}>
+            <select
+              value={cfg.train_type}
+              onChange={(e) => chooseTrainType(e.target.value as 'lora' | 'full')}
+              className="fld"
+              disabled={!recipe || recipe.train_types.length <= 1}
+            >
+              {(recipe?.train_types ?? (['lora', 'full'] as const)).map((k) => (
+                <option key={k} value={k}>
+                  {trainTypeLabel(k)}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
         <div className="mb-3 flex flex-wrap gap-2">
           {recipe && <button type="button" className="btn btn-sm" onClick={() => set(recipeDefaults(recipe, cfg.train_type ?? 'lora'))}>{t('training.restoreDefaults')}</button>}
           {recipe?.adapter_id === DEFAULT_MODEL_ID && cfg.train_type !== 'full' && <button type="button" className="btn btn-sm" onClick={() => set(MONKEYOCR_8GB)}>{t('training.apply8gb')}</button>}
