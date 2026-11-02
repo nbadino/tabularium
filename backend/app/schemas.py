@@ -17,6 +17,8 @@ class SetupIn(BaseModel):
     username: str = Field(min_length=1, max_length=100)
     password: str = Field(min_length=1, max_length=500)
     email: str | None = Field(default=None, max_length=300)
+    # Printed in the server log and stored in <data>/setup-token (services/setup_token.py).
+    setup_token: str | None = Field(default=None, max_length=200)
 
 
 class RegisterIn(BaseModel):

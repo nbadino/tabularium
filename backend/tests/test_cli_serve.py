@@ -75,3 +75,16 @@ def test_reset_password_sets_a_new_password_and_closes_sessions(capsys) -> None:
 
     assert security.verify_password("new-password-1", row["salt"], row["password_hash"])
     assert cli.main(["reset-password", "nobody-here", "--password", "new-password-1"]) == 1
+
+
+def test_the_browser_opens_on_the_setup_link_until_an_admin_exists(monkeypatch) -> None:
+    from app.services import setup_token
+
+    opened = {}
+    monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(run=lambda *a, **kw: None))
+    monkeypatch.setattr(config, "AUTH_MODE", "on")
+    monkeypatch.setattr(setup_token, "pending", lambda: "tok123")
+    monkeypatch.setattr(cli.threading, "Thread", lambda target, args, daemon: types.SimpleNamespace(
+        start=lambda: opened.update(args=args)))
+    assert cli.main(["--port", "8798"]) == 0
+    assert opened["args"] == ("http://localhost:8798", "http://localhost:8798/?setup_token=tok123")

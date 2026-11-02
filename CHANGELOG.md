@@ -80,6 +80,12 @@ Notable changes to Tabularium. The format follows
   accepts CIDR ranges), and `tabularium doctor` warns when an HTTPS deploy trusts only
   loopback (#35).
 
+### Security
+- The first administrator can no longer be claimed by whoever reaches a new instance first.
+  Setup needs a one-time token, printed in the server log at startup and stored in
+  `<data>/setup-token` (owner-only); `tabularium` opens the browser with it, and the setup
+  form asks for it otherwise. The file is removed once the administrator exists (#33).
+
 ## [0.5.0] - 2026-11-02
 
 ### Added

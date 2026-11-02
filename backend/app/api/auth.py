@@ -31,6 +31,7 @@ from ..services import settings as settingssvc
 from ..services import users as usersvc
 from ..services import rate_limit
 from ..services import security
+from ..services import setup_token
 
 router = APIRouter(tags=["auth"])
 
@@ -101,6 +102,10 @@ def setup_first_admin(payload: SetupIn, response: Response) -> UserOut:
         conn.execute("BEGIN IMMEDIATE")
         if usersvc.count_users(conn) > 0:
             raise HTTPException(status_code=409, detail="il primo avvio è già stato completato")
+        # Checked after the 409, so a finished setup still says so; before the claim,
+        # so a missing token creates nobody.
+        if not setup_token.matches(payload.setup_token):
+            raise HTTPException(status_code=403, detail="token di configurazione mancante o errato: è nel log del server e in <data>/setup-token")
         admin = usersvc.create_user(
             conn, payload.username, payload.password, email=payload.email, role="admin"
         )
@@ -108,6 +113,7 @@ def setup_first_admin(payload: SetupIn, response: Response) -> UserOut:
         conn.execute("UPDATE projects SET owner_id=? WHERE owner_id IS NULL", (admin["id"],))
     # Sessione dopo il commit della scrittura: create_session apre una seconda
     # connessione, che su SQLite resterebbe bloccata con la transazione aperta.
+    setup_token.clear()
     token, expires = authsvc.create_session(admin["id"])
     authsvc.set_session_cookie(response, token, expires)
     return UserOut(**admin)

@@ -1,7 +1,10 @@
 /**
  * Primo avvio: creazione dell'amministratore dell'istanza (self-hosted).
  *
- * Il backend accetta lo setup una sola volta, finché non esistono utenti.
+ * Il backend accetta lo setup una sola volta, finché non esistono utenti, e
+ * solo con il token che il server scrive nel log e in <data>/setup-token: su
+ * un'istanza pubblica chiunque arrivi per primo non diventa amministratore.
+ * `tabularium` apre il browser con il token nell'URL (?setup_token=).
  * Chi lo completa diventa amministratore e le sessioni/progetti orfani
  * (creati in modalità locale) vengono assegnati a questo account.
  */
@@ -19,12 +22,15 @@ export default function SetupPage() {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [email, setEmail] = useState('')
+  const [setupToken, setSetupToken] = useState(
+    () => new URLSearchParams(window.location.search).get('setup_token') ?? '',
+  )
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!username.trim() || !password) {
+    if (!username.trim() || !password || !setupToken.trim()) {
       setError(t('auth.fillRequired'))
       return
     }
@@ -35,7 +41,7 @@ export default function SetupPage() {
     setBusy(true)
     setError(null)
     try {
-      await setup(username.trim(), password, email)
+      await setup(username.trim(), password, email, setupToken)
       // Il gate reagisce allo stato aggiornato: si entra nell'app.
     } catch (err) {
       // Someone else created the administrator while this tab was open: let the
@@ -65,6 +71,16 @@ export default function SetupPage() {
           </p>
 
           <form onSubmit={submit} className="mt-4 space-y-3">
+            <Field label={t('auth.setupToken')} hint={t('auth.setupTokenHint')}>
+              <input
+                type="text"
+                value={setupToken}
+                onChange={(e) => setSetupToken(e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                className="fld font-mono"
+              />
+            </Field>
             <Field label={t('auth.username')}>
               <input
                 type="text"

@@ -15,12 +15,12 @@ import urllib.request
 import webbrowser
 
 
-def _open_when_ready(url: str, timeout: float = 60.0) -> None:
+def _open_when_ready(url: str, target: str | None = None, timeout: float = 60.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(f"{url}/api/health", timeout=2):  # noqa: S310
-                webbrowser.open(url)
+                webbrowser.open(target or url)
                 return
         except OSError:
             time.sleep(0.5)
@@ -397,7 +397,12 @@ def main(argv: list[str] | None = None) -> int:
         print("  stop:      Ctrl+C")
     sys.stdout.flush()
     if not args.no_browser:
-        threading.Thread(target=_open_when_ready, args=(url,), daemon=True).start()
+        from .services import setup_token
+
+        # The first visit creates the administrator: the browser we open carries the token.
+        token = setup_token.pending()
+        target = f"{url}/?setup_token={token}" if token else url
+        threading.Thread(target=_open_when_ready, args=(url, target), daemon=True).start()
     uvicorn.run(
         "app.main:app", host=args.host, port=args.port, workers=1,
         proxy_headers=True, forwarded_allow_ips=config.FORWARDED_ALLOW_IPS,

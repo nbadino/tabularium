@@ -2567,6 +2567,9 @@ export const fr: Dict = {
     setupTitle: 'Configuration initiale',
     setupSubtitle:
       'Créez le compte administrateur de cette instance.',
+    setupToken: 'Jeton de configuration',
+    setupTokenHint:
+      'Il figure dans le journal du serveur au démarrage et dans le fichier setup-token du dossier de données. Le lien ouvert par tabularium le contient déjà.',
     setupSubmit: 'Créer l’administrateur',
     setupKeepPassword: 'Conservez ce mot de passe : Tabularium n’envoie pas d’e-mail de récupération.',
     switchToRegister: 'Pas encore de compte ? S’inscrire',

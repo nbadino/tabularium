@@ -65,6 +65,8 @@ async def lifespan(_app: FastAPI):
         config.ensure_vault_key()
     if problem := vault.key_problem():
         logging.getLogger("uvicorn.error").warning(problem)
+    from .services import setup_token
+    setup_token.announce()
     trainer.reconcile_jobs()
     serve_manager.reconcile_jobs()
     recognition.reconcile_runs()

@@ -7,8 +7,8 @@
 #   docker build -f docker/app/Dockerfile -t tabularium .
 #   docker run -p 127.0.0.1:8787:8787 -v tabularium-data:/data tabularium
 #
-# Bind to loopback and put a TLS proxy in front: until the first admin exists,
-# /api/auth/setup is open to whoever reaches it first.
+# Bind to loopback and put a TLS proxy in front. Creating the first admin needs the
+# setup token printed in the container log (docker logs) and stored in /data/setup-token.
 # Digests pinned for reproducible builds; Dependabot (docker) proposes the updates.
 FROM node:22-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da AS frontend
 WORKDIR /src/frontend
