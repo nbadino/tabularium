@@ -111,11 +111,11 @@ Stop Tabularium, then pick the section for your installation.
 **Installed with uv (from PyPI).** The data root is outside the package.
 
 ```bash
-uv tool upgrade tabularium
+uv tool upgrade --python 3.13 tabularium
 ```
 
 If you installed from a wheel URL, install the new wheel over it:
-`uv tool install --force https://github.com/nbadino/tabularium/releases/download/v<version>/tabularium-<version>-py3-none-any.whl`.
+`uv tool install --force --python 3.13 https://github.com/nbadino/tabularium/releases/download/v<version>/tabularium-<version>-py3-none-any.whl`.
 
 **Container.** The data is in the volume, which survives a new image. Releases after
 0.4.0 publish `ghcr.io/nbadino/tabularium:<version>`:
@@ -216,7 +216,7 @@ Use this when the new version does not start or does not work for you.
     server.
 
 3. Reinstall the previous version:
-    - uv: `uv tool install --force tabularium==<previous version>`
+    - uv: `uv tool install --force --python 3.13 tabularium==<previous version>`
     - container: run the previous image tag on the same volume
     - checkout: `git checkout v<previous version>`, then run the two setup scripts
     - release archive: start from the old folder again (put `data/` back there if you

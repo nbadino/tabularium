@@ -305,6 +305,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    problem = config.python_problem()
+    if problem:
+        print(f"tabularium: warning: {problem}. Reinstall with: {config.PYTHON_REINSTALL}", file=sys.stderr)
+
     import uvicorn
 
     shown_host = "localhost" if args.host in {"127.0.0.1", "0.0.0.0", "::"} else args.host

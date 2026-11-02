@@ -57,6 +57,11 @@ Notable changes to Tabularium. The format follows
 - Unused `ClassPalette` component and unused interface strings.
 - The separate Archive page: its thumbnail wall is now the project's Pages tab.
 
+### Fixed
+- An unsupported Python is no longer silent: `tabularium doctor` fails outside 3.11–3.13 and
+  startup prints a warning, both with the reinstall command. The install and upgrade commands
+  pin `--python 3.13`, because `uv tool install` otherwise uses a system Python 3.14 (#32).
+
 ## [0.5.0] - 2026-11-02
 
 ### Added

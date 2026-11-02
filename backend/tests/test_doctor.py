@@ -100,3 +100,14 @@ def test_a_database_from_a_newer_release_names_the_way_back() -> None:
         store.put_raw("schema_version", db.SCHEMA_VERSION)
     assert check.status == doctor.FAIL
     assert "restore-db" in check.hint
+
+
+def test_an_unsupported_python_is_a_failure_with_the_reinstall_command(monkeypatch) -> None:
+    monkeypatch.setattr(doctor.sys, "version_info", (3, 14, 4, "final", 0))
+    check = doctor.check_python()
+    assert check.status == doctor.FAIL
+    assert "3.14" in check.detail
+    assert "--python 3.13" in check.hint
+    monkeypatch.setattr(doctor.sys, "version_info", (3, 13, 1, "final", 0))
+    assert doctor.check_python().status == doctor.OK
+    assert "python" in {check.name for check in doctor.run("127.0.0.1", _free_port())}
