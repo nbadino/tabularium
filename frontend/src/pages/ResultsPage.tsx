@@ -178,7 +178,7 @@ export default function ResultsPage() {
 
   return (
     <div className="p-3">
-      <PageHeader title={t('recognition.resultsTitle')} intro={t('recognition.resultsIntro')} />
+      <PageHeader title={t('recognition.resultsTitle')} />
       {error != null && <div className="mb-3"><ErrorNotice error={error} onDismiss={() => setError(null)} /></div>}
 
       <div className="space-y-6">

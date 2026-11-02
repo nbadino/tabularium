@@ -83,6 +83,15 @@ describe('SettingsPage', () => {
     expect(await screen.findByText('Tabularium v0.1.0')).toBeInTheDocument()
   })
 
+  it('model parameters live in Models, the language in the user menu, the email once', async () => {
+    renderPage()
+    await screen.findByRole('region', { name: 'Il mio account' })
+    expect(screen.queryByRole('button', { name: 'Modelli' })).toBeNull()
+    expect(screen.queryByRole('combobox', { name: /Lingua/ })).toBeNull()
+    expect(screen.queryByText('x@y.z')).toBeNull()
+    expect(screen.getByDisplayValue('x@y.z')).toBeInTheDocument()
+  })
+
   it('manda i vecchi link del calcolo all’hub Modelli', async () => {
     renderLegacyComputeLink()
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/modelli'))

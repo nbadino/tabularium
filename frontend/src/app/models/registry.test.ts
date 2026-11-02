@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { destinationForProvider, destinationVerdict, isSelectable, recommendedDestination, resolveStep, type ModelItem } from './registry'
+import { destinationForProvider, destinationVerdict, isSelectable, orderedDestinations, recommendedDestination, resolveStep, type ModelItem } from './registry'
 
 function model(over: Partial<ModelItem> = {}): ModelItem {
   return {
@@ -131,5 +131,16 @@ describe('resolveStep', () => {
     expect(resolveStep('configure', model(), 'modal')).toBe('configure')
     expect(resolveStep('model', model(), 'modal')).toBe('model')
     expect(resolveStep('destination', model(), 'modal')).toBe('destination')
+  })
+})
+
+describe('orderedDestinations', () => {
+  it('lists what can host the model first and keeps the rest, greyed, at the end', () => {
+    const order = orderedDestinations(model())
+    const firstImpossible = order.findIndex((d) => !destinationVerdict(model(), d).ok)
+    expect(firstImpossible).toBeGreaterThan(0)
+    expect(order.slice(firstImpossible).every((d) => !destinationVerdict(model(), d).ok)).toBe(true)
+    expect(order).toContain('local')
+    expect(order.indexOf('local')).toBeGreaterThanOrEqual(firstImpossible)
   })
 })

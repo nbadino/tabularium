@@ -325,7 +325,7 @@ export default function RecognizePage() {
 
   return (
     <div className="p-3">
-      <PageHeader title={t('recognition.title')} intro={t('recognition.intro')} />
+      <PageHeader title={t('recognition.title')} />
       <div className="mb-3 flex flex-wrap gap-2">
         {routeProjectId == null && <Link to="/progetti?nuovo=1" className="btn btn-sm no-underline">{t('projects.new')}</Link>}
         {projectId !== '' && <Link to={`/progetti/${projectId}`} className="btn btn-sm no-underline">{t('workflow.addPages')}</Link>}

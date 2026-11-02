@@ -115,7 +115,7 @@ export default function ProjectsPage() {
 
   return (
     <div className="p-3">
-      <PageHeader title={t('projects.title')} intro={t(canCreate ? 'projects.intro' : 'team.projectsIntro')}
+      <PageHeader title={t('projects.title')}
         aux={canCreate && <button type="button" className="btn btn-primary" onClick={openCreate}><IconPlus size={13} />{t('projects.new')}</button>}
       />
 

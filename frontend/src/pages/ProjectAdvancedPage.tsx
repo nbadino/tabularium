@@ -87,7 +87,7 @@ export default function ProjectAdvancedPage() {
 
   return (
     <div className="p-3">
-      <PageHeader title={t('project.advancedTitle')} intro={t('project.advancedIntro')} />
+      <PageHeader title={t('project.advancedTitle')} />
       {error != null && <div className="mb-3"><ErrorNotice error={error} onDismiss={() => setError(null)} /></div>}
 
       <div className="space-y-6">

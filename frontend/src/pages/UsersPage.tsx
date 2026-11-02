@@ -145,7 +145,7 @@ export default function UsersPage() {
 
   return (
     <div className="p-3">
-      <PageHeader title={t('users.title')} intro={t('users.intro')} />
+      <PageHeader title={t('users.title')} />
 
       {error != null && (
         <div className="mb-3">

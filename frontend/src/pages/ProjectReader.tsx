@@ -61,7 +61,7 @@ export default function ProjectReader({ project, projects }: { project: Project;
   }, [page?.id])
 
   return <div className="p-3">
-    <PageHeader title={t('team.readerTitle')} intro={`${t('team.readerIntro')} ${t('team.readerNotice')}`} aux={<Badge tone="neutral">{t('share.roleViewer')}</Badge>} />
+    <PageHeader title={t('team.readerTitle')} aux={<Badge tone="neutral">{t('share.roleViewer')}</Badge>} />
     <div className="my-3 grid gap-3 sm:grid-cols-2">
       <Field label={t('training.project')}><select className="fld" value={project.id} onChange={(e) => { writeActiveProject(Number(e.target.value)); setParams({ project: e.target.value }) }}>
         {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
