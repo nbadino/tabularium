@@ -18,6 +18,9 @@ from typing import Any
 
 SUPPORTED = ("it", "en", "fr")
 DEFAULT = "it"
+# A client that names no supported language (curl, a script) gets English: the interface
+# always sends Accept-Language, so only API users see this fallback.
+CLIENT_DEFAULT = "en"
 
 _IT: dict[str, str] = {
     "work_conflict": "L’assegnazione è cambiata. Ricarica prima di procedere.",
@@ -839,13 +842,13 @@ CATALOG: dict[str, dict[str, str]] = {"it": _IT, "en": _EN, "fr": _FR}
 def parse_lang(header: str | None) -> str:
     """Estrae `it|en|fr` da un header Accept-Language (fallback: italiano)."""
     if not header:
-        return DEFAULT
+        return CLIENT_DEFAULT
     for part in header.split(","):
         code = part.strip().split(";")[0].strip().lower()
         base = code.split("-")[0]
         if base in SUPPORTED:
             return base
-    return DEFAULT
+    return CLIENT_DEFAULT
 
 
 def msg(key: str, lang: str | None = None, **kwargs: Any) -> str:

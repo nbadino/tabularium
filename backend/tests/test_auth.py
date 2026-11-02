@@ -451,7 +451,7 @@ def test_cannot_deactivate_project_owner():
         _login(client, "boss")
         r = client.patch(f"/api/users/{owner['id']}", json={"active": False})
         assert r.status_code == 409
-        assert "trasferisci" in r.json()["detail"]
+        assert "transfer the user" in r.json()["detail"]
 
 
 def test_reset_password_invalidates_sessions():

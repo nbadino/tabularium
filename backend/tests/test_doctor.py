@@ -30,7 +30,10 @@ def test_the_report_is_machine_readable() -> None:
     checks = doctor.run("127.0.0.1", _free_port())
     payload = json.loads(doctor.to_json(checks))
     assert [item["name"] for item in payload] == [check.name for check in checks]
-    assert doctor.format_report(checks, "0.0.0").startswith("Tabularium 0.0.0")
+    report = doctor.format_report(checks, "0.0.0")
+    assert report.startswith("Tabularium 0.0.0")
+    # Which installation was checked: a service's data folder is not the caller's.
+    assert str(doctor.config.ROOT_DIR) in report and str(doctor.config.ENV_FILE) in report
 
 
 def test_a_busy_port_is_a_failure_not_a_warning() -> None:

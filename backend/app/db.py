@@ -561,6 +561,11 @@ def _execute_additive_migration(conn: sqlite3.Connection, ddl: str) -> None:
             conn.execute(sql)
 
 
+def _has_tables() -> bool:
+    with closing(sqlite3.connect(config.DB_PATH)) as conn:
+        return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1").fetchone() is not None
+
+
 def _stored_version_before_changes() -> int | None:
     """The schema version on disk, read before init_db writes anything."""
     with closing(sqlite3.connect(config.DB_PATH)) as conn:
@@ -579,6 +584,8 @@ def _guard_upgrade() -> None:
 
     Migrations only go forward, so the copy taken here is the way back (R9).
     """
+    if not _has_tables():
+        return  # an empty file, created before the first init: nothing to protect
     stored = _stored_version_before_changes()
     if stored is not None and stored > int(SCHEMA_VERSION):
         raise RuntimeError(
