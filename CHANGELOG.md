@@ -6,6 +6,62 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Models: a fresh install opens on choosing a model, not on a "local" destination this machine
+  cannot run. Destinations that can host the model come first, the others greyed at the end with
+  their reason, in plain language. "In use now" offers **Try on a page** and **Choose another
+  model**; the 1-2-3 steps show only while choosing. Model parameters moved here from Settings.
+  The catalog shows "models that run here" first when there are any.
+- Settings: Account, Instance, Data and backup, Environment. The language lives in the user menu
+  only; the email appears once. The user menu links to the user guide (**Help**).
+- No folded "Guide" on every page any more; the command palette no longer repeats the language
+  switch and logout of the user menu.
+- Fine-tuning is one path in three steps: **Prepare the data · Train · Evaluate**. Comparing
+  models (formerly *Benchmark*) is part of evaluating. Preparing the data states its defaults in
+  one line, with every choice under *Parameters*; the training type joins epochs and learning
+  rate under *Parameters*. Evaluation leads with three plain numbers (characters wrong in the
+  text, regions found, tables with the right structure); the full metrics open under *Details*.
+- Studio: one way to finish a page, **Verify and go to the next** (Ctrl/⌘+Enter), with the
+  existing confirmation when drafts are still unchecked. The header says which page this is
+  ("Page 2 of 5") and leads back to the pages; J/K move between pages. The page list can be
+  closed and starts closed below 1440 px. Assignment and review controls appear only when the
+  project has more than one member or the page is assigned. The view switch moved into the
+  More menu, and the class selector shows only while drawing. The table editor's back button
+  has a label.
+- The Pages tab leads with the one thing the project needs next: drop images or PDFs into an
+  empty project; **Recognize N pages** reads the unread pages in one click (local OCR, or the
+  model when it answers) and opens the result; then **Review N pages with drafts**, then
+  **Export**. Pages show as thumbnails, with the editable register one click away (Table view).
+- Study protocol, pilot sample, region classes, transcription rules, table schema and the
+  activity log moved to the project's **Advanced** page (project menu).
+- The projects list shows owner, access and people only for shared projects, and its filters
+  only once a project has been shared with you.
+- The project is the container of the work. The main navigation is **Projects** and **Models**;
+  inside a project, **Pages**, **Recognitions** and **Fine-tuning** are its tabs, and the project
+  switcher in that bar is the only project selector (the eleven per-page selectors are gone).
+  Every section lives under `/progetti/:id/…`; `/` resumes the last project. The old addresses
+  (`/annotazione`, `/risultati`, `/dataset`, `/training`, …) redirect to their place in the
+  project. The model status no longer sits in the global header.
+- A fresh install without a GPU no longer opens on errors: the header model status appears only
+  once a model has been chosen, and Recognize starts on the local OCR until a model answers.
+  `/api/system/inference` reports `configured`.
+- One name per concept across Italian, English and French: *project* replaces archive/corpus,
+  *recognition* replaces processing/session/run/prefill, and a single fine-tuning job is a
+  *training run*. Default region classes are shown translated; stored and exported names are
+  unchanged.
+- The app is called Tabularium everywhere (no "TabulariumLab"); the browser title is "Tabularium".
+- First-run setup no longer promises recovery emails, and a setup tab left open after the
+  administrator was created elsewhere returns to the login.
+
+### Removed
+- Unused `ClassPalette` component and unused interface strings.
+- The separate Archive page: its thumbnail wall is now the project's Pages tab.
+
+### Fixed
+- An unsupported Python is no longer silent: `tabularium doctor` fails outside 3.11–3.13 and
+  startup prints a warning, both with the reinstall command. The install and upgrade commands
+  pin `--python 3.13`, because `uv tool install` otherwise uses a system Python 3.14 (#32).
+
 ## [0.5.0] - 2026-11-02
 
 ### Added

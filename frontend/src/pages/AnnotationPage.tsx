@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { labelName } from '../i18n/labelName'
 import { useFitOneRow } from '../lib/fitRow'
 import { Link, useSearchParams } from 'react-router'
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
@@ -11,6 +12,7 @@ import NewLabelDialog from '../studio/components/NewLabelDialog'
 import Splitter from '../studio/components/Splitter'
 import { clamp } from '../studio/canvasGeometry'
 import PageWorkControl from '../studio/components/PageWorkControl'
+import StudioHeader, { isTeamWork, type StudioFinish } from '../studio/components/StudioHeader'
 import { useDraftEdits } from '../studio/useDraftEdits'
 import { useAnnotationState } from '../studio/useAnnotationState'
 import { runPrelabelStream } from '../studio/prefillStream'
@@ -19,7 +21,8 @@ import {
   summarizePage,
   type PrefillMode,
 } from '../studio/prefill'
-import { useProjects, writeActiveProject } from '../app/activeProject'
+import { useProjects, useRouteProjectId, writeActiveProject } from '../app/activeProject'
+import { projectPath } from '../app/projectPaths'
 import { useConfirm } from '../app/confirm'
 import { connectPage, disconnectPage, notifyEditing, onAnnotationsChanged, useLive } from '../app/live'
 import { initialsOf } from '../lib/avatar'
@@ -27,7 +30,6 @@ import type { DisplayBlock, LivePrefillOutput, PrefillDraft, Tool } from '../stu
 import type { PrefillEngines, TableDetectOut, TableDetectRequest, TableGrid, TableSaveOut } from '../lib/types'
 import { useI18n, tn } from '../i18n'
 import {
-  IconNext,
   IconCheck,
   IconFlow,
   IconHand,
@@ -44,7 +46,7 @@ import {
 
 import { useInference } from '../app/inference'
 import { useModelNames } from '../app/models/names'
-import { ErrorNotice, Menu, PageHeader } from '../app/ui'
+import { ErrorNotice, Menu } from '../app/ui'
 import { pageLabel } from '../lib/pageLabel'
 import { API_BASE } from '../lib/endpoints'
 
@@ -58,6 +60,7 @@ const SIDEBAR_MIN = 176
 const SIDEBAR_MAX = 420
 const CONTENT_MIN = 320
 type StudioMode = 'all' | 'canvas' | 'transcription'
+const SIDEBAR_KEY = 'tabularium.studio.sidebar'
 
 function loadStudioMode(): StudioMode {
   try {
@@ -123,7 +126,8 @@ export default function AnnotationPage() {
   const { t } = useI18n()
   const confirm = useConfirm()
   const [searchParams, setSearchParams] = useSearchParams()
-  const requestedProject = Number(searchParams.get('project')) || null
+  const routeProjectId = useRouteProjectId()
+  const requestedProject = routeProjectId ?? (Number(searchParams.get('project')) || null)
   const requestedPage = Number(searchParams.get('page')) || null
   const requestedRun = Number(searchParams.get('run')) || null
   const inf = useInference()
@@ -236,6 +240,25 @@ export default function AnnotationPage() {
   const sidebarWidth = Math.min(split.sidebar, Math.max(SIDEBAR_MIN, viewportWidth * 0.22))
   const contentWidth = Math.min(split.content, Math.max(CONTENT_MIN, viewportWidth - sidebarWidth - 320))
   const [studioMode, setStudioMode] = useState<StudioMode>(loadStudioMode)
+  // The page list is a convenience, not the work: closed by default on screens
+  // narrower than 1440px, where the scan needs the width. The choice is kept.
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(SIDEBAR_KEY)
+      if (saved != null) return saved === '1'
+    } catch {
+      /* storage unavailable */
+    }
+    return typeof window === 'undefined' || window.innerWidth >= 1440
+  })
+  const toggleSidebar = () => setSidebarOpen((open) => {
+    try {
+      localStorage.setItem(SIDEBAR_KEY, open ? '0' : '1')
+    } catch {
+      /* storage unavailable */
+    }
+    return !open
+  })
   const setMode = (mode: StudioMode) => {
     setStudioMode(mode)
     try {
@@ -616,7 +639,7 @@ export default function AnnotationPage() {
     // L'URL dice dove si lavora: un refresh o un link riaprono lo stesso
     // punto. Cambiare progetto lascia cadere pagina e sessione, che
     // appartenevano all'altro.
-    if (pid !== requestedProject) {
+    if (routeProjectId == null && pid !== requestedProject) {
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev)
         if (pid === '') next.delete('project')
@@ -843,7 +866,7 @@ export default function AnnotationPage() {
     if (requestedPage !== p.id) {
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev)
-        if (projectId !== '') next.set('project', String(projectId))
+        if (projectId !== '' && routeProjectId == null) next.set('project', String(projectId))
         next.set('page', String(p.id))
         return next
       }, { replace: true })
@@ -1064,8 +1087,8 @@ export default function AnnotationPage() {
     }
     return () => { current = false }
   }, [page?.id, page?.status, page?.annotation_revision])
-  const approveCurrentPage = async (confirmDrafts = false) => {
-    if (!page || projectId === '') return
+  const approveCurrentPage = async (confirmDrafts = false): Promise<boolean> => {
+    if (!page || projectId === '') return false
     setError(null)
     setApproving(true)
     try {
@@ -1081,6 +1104,7 @@ export default function AnnotationPage() {
       setPages((cur) => cur.map((p) => (p.id === page.id ? { ...p, status: 'approved' } : p)))
       const queue = await apiGet<{ items: Array<{ id: number; reason: string; rel_path?: string }> }>(`/projects/${projectId}/annotation-queue?limit=1`)
       setNextTask(queue.items[0] ?? null)
+      return true
     } catch (e) {
       // 409: la pagina non è pronta (di solito bozze non verificate). Non è un
       // vicolo cieco: si offre di confermarle e approvare, scelta esplicita.
@@ -1101,14 +1125,39 @@ export default function AnnotationPage() {
           return approveCurrentPage(true)
         }
         setApproving(false)
-        return
+        return false
       }
       setError(e)
+      return false
     } finally {
       setApproving(false)
     }
   }
   const approved = (page?.status === 'approved' || page?.status === 'exported') && approvalReady !== false
+
+  // One way to finish a page (docs/UX_SIMPLIFICATION.md, Studio): verify it and
+  // move on. An assigned page follows the review workflow, so it only moves on.
+  const team = isTeamWork(projects.find((p) => p.id === projectId), page ?? undefined)
+  const assignedWork = Boolean(page?.work?.assignee_id || page?.work?.reviewer_id)
+  const pageIndex = page ? pages.findIndex((p) => p.id === page.id) : -1
+  const hasNextTask = reviewRun
+    ? Boolean(nextReviewPage)
+    : pages.some((p) => p.id !== page?.id && (p.work?.can_submit || p.work?.can_review || (!p.work?.assignee_id && !['approved', 'exported'].includes(p.status))))
+  const finish: StudioFinish | null = !page
+    ? null
+    : assignedWork || approved
+      ? { kind: 'next', onClick: openNextTask, disabled: !hasNextTask || navBusy || prefillBusy }
+      : {
+          kind: hasNextTask ? 'verify' : 'last',
+          disabled: approving || navBusy || prefillBusy,
+          onClick: () => void (async () => {
+            if ((await approveCurrentPage()) && hasNextTask) openNextTask()
+          })(),
+        }
+  const stepPage = (delta: number) => {
+    const next = pageIndex >= 0 ? pages[pageIndex + delta] : undefined
+    if (next && !navBusy) void onPageSelect(next.id)
+  }
 
   const contentCount = prefillDrafts.length + ann.blocks.length
 
@@ -1118,54 +1167,46 @@ export default function AnnotationPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <PageHeader title={t('annotate.title')} intro={t('annotate.intro')} className="shrink-0 px-3 py-1.5" aux={<>
-        <select className="fld !w-auto text-[12px]" aria-label={t('annotate.viewModeAria')} value={studioMode} onChange={(e) => setMode(e.target.value as StudioMode)}>
-          {(['all', 'canvas', 'transcription'] as const).map((mode) => <option key={mode} value={mode}>{t(`annotate.view${mode[0].toUpperCase()}${mode.slice(1)}`)}</option>)}
-        </select>
-        {page && <PageWorkControl
-        key={page.id} page={page} revision={ann.getRevision()} disabled={navBusy || prefillBusy}
-        beforeAction={async () => { await flushEdits(); return ann.getRevision() }}
-        onReview={() => setMode('all')}
-        onChanged={(work, mutated) => {
-          const status = !mutated && !work.assignee_id && !work.reviewer_id ? page.status : work.state === 'pending' ? 'qa' : work.state === 'approved' ? 'approved' : work.state === 'changes_requested' ? 'review' : page.status === 'approved' || page.status === 'qa' || page.status === 'exported' ? 'annotated' : page.status
-          setPage((p) => p ? { ...p, work, status } : p)
-          setPages((items) => items.map((p) => p.id === work.page_id ? { ...p, work, status } : p))
+      <StudioHeader
+        backTo={projectId === '' ? '/progetti' : projectPath(Number(projectId))}
+        pageName={page ? pageLabel(page) : null}
+        index={pageIndex}
+        total={pages.length}
+        finish={finish}
+        onPrev={() => stepPage(-1)}
+        onNext={() => stepPage(1)}
+        sidebarOpen={sidebarOpen && studioMode === 'all'}
+        onToggleSidebar={() => {
+          if (studioMode !== 'all') {
+            setMode('all')
+            if (!sidebarOpen) toggleSidebar()
+          } else toggleSidebar()
         }}
-      />}
-            {!page?.work?.assignee_id && !page?.work?.reviewer_id && <button
-              type="button"
-              onClick={() => void approveCurrentPage()}
-              disabled={!page || approved || approving || navBusy || prefillBusy}
-              className="btn whitespace-nowrap"
-              title={t('project.approveTitle')}
-            >
-              <IconCheck size={12} />
-              {approved ? t('annotate.approved') : t('project.approve')}
-            </button>}
-            <button
-              type="button"
-              onClick={openNextTask}
-              disabled={reviewRun ? !nextReviewPage : !pages.some((p) => p.id !== page?.id && (p.work?.can_submit || p.work?.can_review || (!p.work?.assignee_id && !['approved', 'exported'].includes(p.status))))}
-              className="btn btn-primary whitespace-nowrap"
-              title={reviewRun ? t('annotate.nextRunPage') : nextTask?.reason}
-            >
-              <IconNext size={12} />
-              {t('sidebar.nextPage')}
-            </button>
-
-      </>} />
+      >
+        {team && page && <PageWorkControl
+          key={page.id} page={page} revision={ann.getRevision()} disabled={navBusy || prefillBusy}
+          beforeAction={async () => { await flushEdits(); return ann.getRevision() }}
+          onReview={() => setMode('all')}
+          onChanged={(work, mutated) => {
+            const status = !mutated && !work.assignee_id && !work.reviewer_id ? page.status : work.state === 'pending' ? 'qa' : work.state === 'approved' ? 'approved' : work.state === 'changes_requested' ? 'review' : page.status === 'approved' || page.status === 'qa' || page.status === 'exported' ? 'annotated' : page.status
+            setPage((p) => p ? { ...p, work, status } : p)
+            setPages((items) => items.map((p) => p.id === work.page_id ? { ...p, work, status } : p))
+          }}
+        />}
+      </StudioHeader>
       {error != null && <div className="shrink-0 px-3 py-2"><ErrorNotice error={error} onDismiss={() => setError(null)} /></div>}
       {reviewRun && studioMode !== 'all' && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] px-2 py-1 text-[11px]">
           <b>{t('annotate.reviewRun', { id: reviewRun.id, count: pages.length })}</b>
-          <Link to={`/risultati?project=${reviewRun.project_id}&run=${reviewRun.id}`} className="btn btn-sm no-underline">
+          <Link to={projectPath(reviewRun.project_id, `riconoscimenti/${reviewRun.id}`)} className="btn btn-sm no-underline">
             {t('annotate.backToResults')}
           </Link>
         </div>
       )}
       <div className="flex min-h-0 flex-1 overflow-hidden">
-      {studioMode === 'all' && <PageSidebar
+      {studioMode === 'all' && sidebarOpen && <PageSidebar
         projects={projects}
+        projectFixed={routeProjectId != null}
         projectId={projectId}
         pages={pages}
         currentPage={page}
@@ -1176,12 +1217,12 @@ export default function AnnotationPage() {
         width={sidebarWidth}
         reviewScope={reviewRun ? {
           label: t('annotate.reviewRun', { id: reviewRun.id, count: pages.length }),
-          backTo: `/risultati?project=${reviewRun.project_id}&run=${reviewRun.id}`,
+          backTo: projectPath(reviewRun.project_id, `riconoscimenti/${reviewRun.id}`),
           backLabel: t('annotate.backToResults'),
         } : null}
       />}
 
-      {studioMode === 'all' && <Splitter
+      {studioMode === 'all' && sidebarOpen && <Splitter
         value={sidebarWidth}
         min={SIDEBAR_MIN}
         max={SIDEBAR_MAX}
@@ -1238,11 +1279,12 @@ export default function AnnotationPage() {
               disabled={ann.tool !== 'rect' && ann.tool !== 'polygon'}
               aria-label={t('inspector.class')}
               title={t('inspector.class')}
-              className="fld !w-auto"
+              // Only while drawing; invisible rather than removed so the bar does not shift.
+              className={`fld !w-auto ${ann.tool !== 'rect' && ann.tool !== 'polygon' ? 'invisible' : ''}`}
             >
               {labels.map((l) => (
-                <option key={l.name} value={l.name}>
-                  {l.name}
+                <option key={l.name} value={l.name} title={l.name}>
+                  {labelName(l.name)}
                 </option>
               ))}
             </select>
@@ -1285,11 +1327,6 @@ export default function AnnotationPage() {
                 {t('live.editing', { name: editingPeer.username })}
               </span>
             )}
-            {page && (
-              <span className="tb-name mono max-w-[16ch] truncate text-[11px] text-[color:var(--color-ink-3)]" title={`${pageLabel(page)} · ${page.width}×${page.height}`}>
-                {pageLabel(page)}
-              </span>
-            )}
             {prefillBusy && (
               <button
                 type="button"
@@ -1302,6 +1339,14 @@ export default function AnnotationPage() {
             )}
             <button type="button" className="btn" disabled={!page || navBusy || prefillBusy} onClick={onPrefillClick}><IconPrefill size={12} />{t('work.recognize')}</button>
             <Menu label={t('annotate.more')}>
+              <span className="lbl px-2 pt-1">{t('studio.viewMode')}</span>
+              {(['all', 'canvas', 'transcription'] as const).map((mode) => (
+                <button key={mode} type="button" className="menu-item" aria-pressed={studioMode === mode} onClick={() => setMode(mode)}>
+                  {t(`annotate.view${mode[0].toUpperCase()}${mode.slice(1)}`)}
+                  {studioMode === mode && <IconCheck size={12} className="ml-auto text-[color:var(--color-sig-text)]" />}
+                </button>
+              ))}
+              <hr className="menu-sep" />
             <button
               type="button"
               onClick={() => setNewLabelOpen(true)}

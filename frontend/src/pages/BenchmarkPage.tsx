@@ -6,13 +6,14 @@
  * riferimento è l'annotazione umana; il benchmark non scrive nel DB, produce
  * solo un report su disco.
  */
+import { projectPath } from '../app/projectPaths'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import type { BenchStatus, BenchmarkReport, BenchmarkTarget } from '../lib/types'
 import type { ModelItem } from '../app/models/registry'
 import { ErrorNotice, Field, Module, Notice, Loading, PageHeader, Badge } from '../app/ui'
-import { useProjects, writeActiveProject } from '../app/activeProject'
+import { useProjects, useRouteProjectId, writeActiveProject } from '../app/activeProject'
 import { useInference } from '../app/inference'
 import { useModelNames } from '../app/models/names'
 import { useI18n, tn } from '../i18n'
@@ -54,6 +55,7 @@ export default function BenchmarkPage() {
     setReport(null)
     setPicked(new Set())
   }
+  const routeProjectId = useRouteProjectId()
   const projects = useProjects(onProject, setError)
 
   useEffect(() => {
@@ -154,11 +156,12 @@ export default function BenchmarkPage() {
 
   return (
     <div className="p-3">
-      <PageHeader title={t('benchmark.title')} intro={t('benchmark.intro')} />
+      <PageHeader title={t('benchmark.title')} />
 
       {error != null && <div className="mb-3"><ErrorNotice error={error} onDismiss={() => setError(null)} /></div>}
 
       <Module tab={t('benchmark.run')}>
+        {routeProjectId == null && (
         <Field label={t('benchmark.project')}>
           <select
             value={projectId}
@@ -171,6 +174,7 @@ export default function BenchmarkPage() {
             ))}
           </select>
         </Field>
+        )}
       </Module>
 
       {projectId !== '' && (
@@ -260,7 +264,7 @@ export default function BenchmarkPage() {
                 </div>
               )}
               {!pagesLoading && pages.some((page) => !page.ready) && <label className="mt-2 flex items-center gap-2 text-[12px] text-[color:var(--color-ink-2)]"><input type="checkbox" checked={showUnready} onChange={(e) => setShowUnready(e.target.checked)} />{t('benchmark.showUnready', { n: pages.length - readyPages.length })}</label>}
-              {!pagesLoading && pages.length > 0 && readyPages.length === 0 && <Notice>{t('benchmark.noPages')}{' '}<Link to={`/annotazione?project=${projectId}`}>{t('dataset.material.openStudio')}</Link></Notice>}
+              {!pagesLoading && pages.length > 0 && readyPages.length === 0 && <Notice>{t('benchmark.noPages')}{' '}<Link to={projectPath(Number(projectId), 'studio')}>{t('dataset.material.openStudio')}</Link></Notice>}
               <div className="mt-3 flex flex-wrap items-end gap-3">
                 <Field label={t('benchmark.pages')} hint={t('benchmark.limitHint')}>
                   <input type="number" min={1} max={200} className="fld !w-24" value={limit} onChange={(e) => setLimit(Math.max(1, Math.min(200, Number(e.target.value) || 1)))} />

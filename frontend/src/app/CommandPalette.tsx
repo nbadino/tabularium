@@ -12,8 +12,9 @@ import { useNavigate } from 'react-router'
 import { apiGet } from '../lib/api'
 import { pageLabel } from '../lib/pageLabel'
 import type { PageItem, Project } from '../lib/types'
-import { LOCALES, LOCALE_LABELS, useI18n } from '../i18n'
+import { useI18n } from '../i18n'
 import { readActiveProject, writeActiveProject } from './activeProject'
+import { projectPath } from './projectPaths'
 import { useAuth } from './auth'
 import { IconSearch } from './icons'
 
@@ -23,17 +24,19 @@ type Command = { id: string; kind: string; label: string; run: () => void }
 // Oltre, la lista smette di essere una scelta: si affina la ricerca.
 const MAX_RESULTS = 50
 
+// Project sections go through the legacy paths, which open them in the
+// current project (app/legacyRoutes.ts).
 const SECTIONS = [
-  { to: '/', key: 'nav.recognize' },
-  { to: '/annotazione', key: 'nav.annotate' },
-  { to: '/risultati', key: 'nav.results' },
-  { to: '/archivio', key: 'nav.archive' },
-  { to: '/modelli', key: 'nav.models' },
   { to: '/progetti', key: 'nav.projects' },
-  { to: '/dataset', key: 'nav.dataset' },
+  { to: '/archivio', key: 'nav.pages' },
+  { to: '/riconosci', key: 'nav.recognize' },
+  { to: '/risultati', key: 'nav.results' },
+  { to: '/annotazione', key: 'nav.annotate' },
   { to: '/fine-tuning', key: 'nav.training' },
-  { to: '/training', key: 'training.title' },
+  { to: '/dataset', key: 'nav.dataset' },
   { to: '/valutazione', key: 'nav.evaluation' },
+  { to: '/benchmark', key: 'nav.benchmark' },
+  { to: '/modelli', key: 'nav.models' },
   { to: '/playground', key: 'nav.playground' },
   { to: '/impostazioni', key: 'nav.settings' },
 ] as const
@@ -51,8 +54,8 @@ export function matchesQuery(label: string, query: string): boolean {
 }
 
 export function CommandPalette() {
-  const { t, locale, setLocale } = useI18n()
-  const { user, logout } = useAuth()
+  const { t } = useI18n()
+  const { user } = useAuth()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -121,7 +124,7 @@ export function CommandPalette() {
         label: p.name,
         run: () => {
           writeActiveProject(p.id)
-          go(`/annotazione?project=${p.id}`)()
+          go(projectPath(p.id))()
         },
       })
     // Le pagine sono centinaia: entrano solo quando si cerca qualcosa.
@@ -131,20 +134,10 @@ export function CommandPalette() {
           id: `page:${pg.id}`,
           kind: `${t('commands.kindPage')} · ${pages.project.name}`,
           label: pageLabel(pg),
-          run: go(`/annotazione?project=${pages.project.id}&page=${pg.id}`),
+          run: go(projectPath(pages.project.id, 'studio', { page: pg.id })),
         })
-    for (const l of LOCALES)
-      if (l !== locale)
-        out.push({
-          id: `locale:${l}`,
-          kind: t('commands.kindAction'),
-          label: `${t('commands.language')}: ${LOCALE_LABELS[l]}`,
-          run: () => setLocale(l),
-        })
-    if (user)
-      out.push({ id: 'logout', kind: t('commands.kindAction'), label: t('layout.logout'), run: () => void logout() })
     return out
-  }, [t, user, projects, pages, query, locale, setLocale, logout, navigate])
+  }, [t, user, projects, pages, query, navigate])
 
   const results = useMemo(
     () => commands.filter((c) => matchesQuery(`${c.label} ${c.kind}`, query)).slice(0, MAX_RESULTS),

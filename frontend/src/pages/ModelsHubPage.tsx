@@ -16,7 +16,9 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
-import { Badge, ErrorNotice, Modal, Module, Notice, PageHeader } from '../app/ui'
+import { Badge, Collapsible, ErrorNotice, Modal, Module, Notice, PageHeader } from '../app/ui'
+import { useCanAdminister } from '../app/auth'
+import ModelSettingsSection from './settings/ModelSettingsSection'
 import { apiGet, apiPut } from '../lib/api'
 import type { SystemInfo } from '../lib/types'
 import { syncInferenceFromBackend, useInference } from '../app/inference'
@@ -82,7 +84,10 @@ export default function ModelsHubPage() {
   // La configurazione salvata è il punto di partenza quando l'URL non dice
   // niente: si riapre il passo «Configura» di ciò che è in uso, così lo
   // stato del server o dell'istanza è la prima cosa che si vede.
-  const configured = Boolean(inference.provider && inference.adapterId)
+  // The built-in default endpoint is not a choice (backend `configured`): a fresh
+  // install opens on choosing a model, not on a "local" it cannot run.
+  const configured = inference.configured && Boolean(inference.provider && inference.adapterId)
+  const isAdmin = useCanAdminister()
   const urlModel = params.get('modello')
   const urlDest = params.get('dove')
   const urlStep = PARAM_STEP[params.get('passo') ?? ''] ?? null
@@ -170,7 +175,7 @@ export default function ModelsHubPage() {
 
   return (
     <div className="p-4">
-      <PageHeader title={t('nav.models')} intro={t('modelsHub.intro')} />
+      <PageHeader title={t('nav.models')} />
 
       {error != null && <div className="mb-3"><ErrorNotice error={error} /></div>}
 
@@ -197,11 +202,7 @@ export default function ModelsHubPage() {
             </div>
             <div>
               <span className="lbl">{t('cloud.models.destinationLabel')}</span>
-              <div className="text-[14px] font-semibold">{t(`recognition.provider.${inUseDest ?? inference.provider}`)}</div>
-            </div>
-            <div className="min-w-0">
-              <span className="lbl">{t('modelsHub.endpoint')}</span>
-              <div className="mono truncate text-[12px]">{inference.url || '—'}</div>
+              <div className="text-[14px] font-semibold" title={inference.url || undefined}>{t(`recognition.provider.${inUseDest ?? inference.provider}`)}</div>
             </div>
             <div className="ml-auto flex flex-wrap gap-2">
               {!(step === 'configure' && modelId === inference.adapterId && dest === inUseDest) && (
@@ -220,7 +221,17 @@ export default function ModelsHubPage() {
                 </button>
               )}
               {inUseReady && (
-                <Link to="/" className="btn btn-primary no-underline">
+                <Link to="/playground" className="btn no-underline">
+                  {t('modelsHub.tryPage')}
+                </Link>
+              )}
+              {inUse && pristine && (
+                <button type="button" className="btn" onClick={() => go({ model: null, dest: null, step: 'model' })}>
+                  {t('modelsHub.chooseAnother')}
+                </button>
+              )}
+              {inUseReady && (
+                <Link to="/riconosci" className="btn btn-primary no-underline">
                   {t('modelsHub.goRecognize')}
                 </Link>
               )}
@@ -233,7 +244,9 @@ export default function ModelsHubPage() {
 
       {/* I tre passi: la linguetta porta la scelta fatta, così tornare
           indietro non costa rileggere la pagina per ricordarla. */}
-      <nav ref={stepsRef} aria-label={t('modelsHub.stepsLabel')} className="mt-3 scroll-mt-3">
+      {/* The 1-2-3 steps belong to choosing; with a model in use and nothing being
+          changed they are noise. */}
+      <nav ref={stepsRef} aria-label={t('modelsHub.stepsLabel')} className={`mt-3 scroll-mt-3 ${inUse && pristine ? 'hidden' : ''}`}>
         <ol className="grid gap-4 border-b border-[color:var(--color-rule)] sm:grid-cols-3">
           {stepTabs.map((s) => {
             const active = s.id === step
@@ -295,7 +308,7 @@ export default function ModelsHubPage() {
             {remoteDone && (
               <Notice tone="ok">
                 {t('modelsHub.remoteDone', { model: model.display_name, provider: t(`recognition.provider.${dest}`) })}{' '}
-                <Link to="/">{t('modelsHub.goRecognize')}</Link>
+                <Link to="/riconosci">{t('modelsHub.goRecognize')}</Link>
               </Notice>
             )}
             {dest === 'llamaindex' ? (
@@ -325,6 +338,12 @@ export default function ModelsHubPage() {
               />
             )}
           </div>
+        )}
+
+        {step === 'configure' && model && (
+          <Collapsible tab={t('modelsHub.modelParams')} quiet>
+            <ModelSettingsSection isAdmin={isAdmin} />
+          </Collapsible>
         )}
 
         {step !== 'model' && !model && !loading && (

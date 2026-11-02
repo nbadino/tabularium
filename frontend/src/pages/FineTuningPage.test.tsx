@@ -29,8 +29,8 @@ afterEach(() => { cleanup(); vi.clearAllMocks() })
 it('con sole bozze propone un campione corretto e mantiene visibili tutti gli strumenti', async () => {
   render(<MemoryRouter><FineTuningPage /></MemoryRouter>)
   await screen.findByRole('heading', { name: 'Prepara un campione corretto' })
-  expect(screen.getByRole('link', { name: 'Apri lo Studio' })).toHaveAttribute('href', '/annotazione?project=1&page=4')
-  expect(screen.getByRole('link', { name: /2 · Addestra/ })).toHaveAttribute('href', '/training')
+  expect(screen.getByRole('link', { name: 'Apri lo Studio' })).toHaveAttribute('href', '/progetti/1/studio?page=4')
+  expect(screen.getByRole('link', { name: /2 · Addestra/ })).toHaveAttribute('href', '/progetti/1/fine-tuning/addestra')
   expect(screen.getByRole('link', { name: /3 · Valuta la qualità/ })).toBeInTheDocument()
   expect(screen.getByText('0 pagine approvate')).toBeInTheDocument()
 })
@@ -56,7 +56,7 @@ it('a finished run with failed preparation goes back to the checkpoint instead o
   training = { active: false, run: { state: 'finished', prepare_job: { state: 'failed' } } }
   render(<MemoryRouter><FineTuningPage /></MemoryRouter>)
   await screen.findByRole('heading', { name: 'Prepara il modello addestrato' })
-  expect(screen.getByRole('link', { name: 'Prepara e registra il modello' })).toHaveAttribute('href', '/training')
+  expect(screen.getByRole('link', { name: 'Prepara e registra il modello' })).toHaveAttribute('href', '/progetti/1/fine-tuning/addestra')
 })
 
 it('a registered checkpoint points to its own inference setup before evaluation', async () => {

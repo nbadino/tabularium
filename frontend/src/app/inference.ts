@@ -14,6 +14,8 @@ const KEY = 'tabularium.inference.preferences'
 
 export interface InferenceCfg {
   enabled: boolean
+  /** A model endpoint was chosen; false means the built-in default is untouched. */
+  configured: boolean
   url: string
   model: string
   adapterId: string
@@ -32,6 +34,7 @@ export interface InferenceCfg {
 
 const EMPTY: InferenceCfg = {
   enabled: true,
+  configured: false,
   url: '',
   model: '',
   adapterId: DEFAULT_MODEL_ID,
@@ -153,6 +156,7 @@ export async function syncInferenceFromBackend(): Promise<InferenceCfg> {
     current = {
       ...current,
       enabled: res.enabled ?? true,
+      configured: res.configured ?? true,
       url: res.url,
       model: res.model,
       adapterId: res.adapter_id ?? current.adapterId,

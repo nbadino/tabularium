@@ -7,6 +7,7 @@
  * progetto. I default non si toccano (modello additivo): qui si modificano solo
  * le custom, ed è questo che il PUT sostituisce.
  */
+import { labelName } from '../../i18n/labelName'
 import { useEffect, useMemo, useState } from 'react'
 
 import { apiPut } from '../../lib/api'
@@ -205,7 +206,7 @@ export default function LabelsEditor({
                 className="h-3 w-3 shrink-0 rounded-sm border border-[color:var(--color-rule)]"
                 style={{ background: label.color }}
               />
-              <span className="font-semibold">{label.name}</span>
+              <span className="font-semibold" title={label.name}>{labelName(label.name)}</span>
               <Badge tone={label.origin === 'public' ? 'ok' : 'warn'}>
                 {label.origin === 'public' ? t('labels.originPublic') : t('labels.originCustom')}
               </Badge>

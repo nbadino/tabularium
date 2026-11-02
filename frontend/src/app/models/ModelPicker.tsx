@@ -66,7 +66,8 @@ export function ModelPicker({ models, loading, selectedId, onSelect, onChanged }
   const { t } = useI18n()
   const inf = useInference()
   const [query, setQuery] = useState('')
-  const [onlyHere, setOnlyHere] = useState(false)
+  // null = not chosen yet: then models that run here come first when there are any.
+  const [onlyHereChoice, setOnlyHere] = useState<boolean | null>(null)
   const [showAddCustom, setShowAddCustom] = useState(false)
   const [customForm, setCustomForm] = useState<CustomModelForm>(EMPTY_CUSTOM_FORM)
   const [customBusy, setCustomBusy] = useState(false)
@@ -74,6 +75,7 @@ export function ModelPicker({ models, loading, selectedId, onSelect, onChanged }
   const [notice, setNotice] = useState<string | null>(null)
 
   const runnableHere = models.filter((m) => m.local?.runnable).length
+  const onlyHere = onlyHereChoice ?? runnableHere > 0
   const needle = query.trim().toLocaleLowerCase()
   const visible = models.filter((m) => {
     if (onlyHere && !m.local?.runnable) return false
@@ -184,7 +186,7 @@ export function ModelPicker({ models, loading, selectedId, onSelect, onChanged }
       <ul className="divide-y divide-[color:var(--color-rule)]">
         {visible.map((m) => {
           const selected = selectedId === m.adapter_id
-          const inUse = inf.enabled && inf.adapterId === m.adapter_id && !!inf.provider
+          const inUse = inf.enabled && inf.configured && inf.adapterId === m.adapter_id && !!inf.provider
           const selectable = isSelectable(m)
           return (
             <li
