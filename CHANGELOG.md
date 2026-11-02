@@ -6,6 +6,8 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-02
+
 ### Added
 - Surya OCR 2.5 (`surya-ocr-2.5`): the vendor's full-page path on its vLLM image
   (`vllm/vllm-openai:v0.25.1`, NVIDIA locally and on Vast.ai), with a decoder for its compact
@@ -578,7 +580,8 @@ Notable changes to Tabularium. The format follows
 ### Added
 - Recognition, annotation, dataset export, training and evaluation workflow.
 
-[Unreleased]: https://github.com/nbadino/tabularium/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/nbadino/tabularium/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/nbadino/tabularium/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/nbadino/tabularium/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/nbadino/tabularium/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nbadino/tabularium/compare/v0.1.0...v0.2.0
