@@ -121,19 +121,15 @@ def main() -> int:
         stage = "dataset UI"
         built = requests.post(f"{BASE}/api/projects/{project_id}/datasets/build", json={"split_ratio": 0.5, "approved_only": True}, timeout=30)
         assert built.status_code == 200, built.text
-        driver.get(f"{BASE}/dataset")
+        driver.get(f"{BASE}/progetti/{project_id}/fine-tuning/dati")
         wait_for(driver, EC.presence_of_element_located((By.XPATH, "//*[contains(., 'Dataset')]")))
         report = requests.get(f"{BASE}/api/projects/{project_id}/datasets", timeout=10).json()
         assert report.get("built") is True and report["report"]["pages"]["with_blocks"] == 1
 
         # Editor tabellare e preview OTSL nel DOM.
         stage = "table editor DOM"
-        driver.get(f"{BASE}/annotazione")
-        # Il selettore del progetto è la tendina `Select` (app/ui.tsx), non un
-        # <select> nativo: si apre e si sceglie la voce per valore. È la prima
-        # tendina della pagina, nella colonna di sinistra.
-        wait_for(driver, EC.element_to_be_clickable((By.CSS_SELECTOR, "summary[role='combobox']"))).click()
-        wait_for(driver, EC.element_to_be_clickable((By.CSS_SELECTOR, f"[role='option'][data-value='{project_id}']"))).click()
+        # The project is in the URL: the Studio opens on it without a selector.
+        driver.get(f"{BASE}/progetti/{project_id}/studio")
         wait_for(driver, EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'page.png')]"))).click()
         # Un blocco già verificato sta su una riga sola e si apre col clic:
         # si apre quello di testo, come farebbe una persona.
@@ -220,7 +216,7 @@ def main() -> int:
 
         # Training center e preflight.
         stage = "training UI"
-        driver.get(f"{BASE}/training")
+        driver.get(f"{BASE}/progetti/{project_id}/fine-tuning/addestra")
         wait_for(driver, EC.presence_of_element_located((By.XPATH, "//h1[contains(., 'Fine-tuning')]")))
         preflight = requests.post(f"{BASE}/api/projects/{project_id}/training/preflight", json={}, timeout=10)
         assert preflight.status_code == 200, preflight.text

@@ -8,7 +8,7 @@ import { formatShortDate } from '../lib/dates'
 import { useModelNames } from '../app/models/names'
 import { PipelineStrip } from '../app/PipelineView'
 import { buildPipeline, datasetUsable, usePipelineState } from '../app/pipeline'
-import { useProjects, writeActiveProject } from '../app/activeProject'
+import { useProjects, useRouteProjectId, writeActiveProject } from '../app/activeProject'
 import TrainingConfigForm, { effectiveExecutor } from './training/TrainingConfigForm'
 import TrainingStatusPanel from './training/TrainingStatusPanel'
 import TrainingDashboard, { type GpuPoint, type PreparePoint } from './training/TrainingDashboard'
@@ -160,6 +160,8 @@ export default function TrainingPage() {
     if (percent == null) return
     setPrepareHistory((prev) => [...prev.slice(-119), { i: Date.now(), percent }])
   }, [status?.run?.prepare_job?.progress?.percent])
+
+  const routeProjectId = useRouteProjectId()
 
   const projects = useProjects(onProject, setError)
 
@@ -377,7 +379,7 @@ export default function TrainingPage() {
 
   return (
     <div className="p-3">
-      <PageHeader title={t('training.title')} intro={t('training.intro')} aux={
+      <PageHeader title={t('training.title')} intro={t('training.intro')} aux={routeProjectId == null ? (
         <div className="w-[min(24rem,100%)]">
           <Field label={t('training.project')}>
             <select className="fld" value={projectId} onChange={(e) => onProject(e.target.value === '' ? '' : Number(e.target.value))}>
@@ -386,7 +388,7 @@ export default function TrainingPage() {
             </select>
           </Field>
         </div>
-      } />
+      ) : undefined} />
 
       {error != null && (
         <div className="mb-3">

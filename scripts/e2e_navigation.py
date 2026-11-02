@@ -15,17 +15,21 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 
 BASE = os.environ.get("TABULARIUM_E2E_URL", "http://127.0.0.1:8787").rstrip("/")
+# `{p}` is a temporary project created for the run: every working section lives
+# inside a project (docs/UX_SIMPLIFICATION.md); the old addresses redirect there.
 ROUTES = {
-    "/": ("Riconosci immagini", "Recognize images", "Reconnaître les images"),
-    "/risultati": ("Risultati", "Results", "Résultats"),
-    "/archivio": ("Archivio attivo", "Archive review", "Archives"),
-    "/modelli": ("Modelli", "Models", "Modèles"),
     "/progetti": ("Progetti", "Projects", "Projets"),
-    "/annotazione": ("Pagine", "Pages", "Pages"),
-    "/dataset": ("Dataset",),
-    "/training": ("Fine-tuning", "Training", "Fine tuning"),
-    "/valutazione": ("Valutazione", "Evaluation", "Évaluation"),
-    "/playground": ("Playground",),
+    "/progetti/{p}": ("Registro pagine", "Page register", "Registre des pages"),
+    "/progetti/{p}/riconoscimenti": ("Riconosci immagini", "Recognize images", "Reconnaître les images"),
+    "/progetti/{p}/studio": ("Annotazione", "Annotation"),
+    "/progetti/{p}/fine-tuning": ("Fine-tuning",),
+    "/progetti/{p}/fine-tuning/dati": ("Dataset",),
+    "/progetti/{p}/fine-tuning/addestra": ("Fine-tuning",),
+    "/progetti/{p}/fine-tuning/valuta": ("Valutazione", "Evaluation", "Évaluation"),
+    "/progetti/{p}/fine-tuning/confronta": ("Benchmark",),
+    "/annotazione": ("Annotazione", "Annotation"),
+    "/modelli": ("Modelli", "Models", "Modèles"),
+    "/playground": ("Prova modello", "Try a model", "Essayer"),
 }
 
 
@@ -55,9 +59,15 @@ def main() -> int:
     )
     wait = WebDriverWait(driver, 20)
     checked: list[str] = []
+    created = requests.post(f"{BASE}/api/projects", json={"name": "E2E navigation"}, timeout=10)
+    created.raise_for_status()
+    project_id = created.json()["id"]
     try:
         driver.set_window_size(1440, 1000)
-        for route, headings in ROUTES.items():
+        # The old addresses resolve through the remembered project.
+        driver.get(f"{BASE}/progetti/{project_id}")
+        for template, headings in ROUTES.items():
+            route = template.format(p=project_id)
             driver.get(f"{BASE}{route}")
 
             def page_is_ready(d: webdriver.Chrome) -> bool:
@@ -76,6 +86,7 @@ def main() -> int:
         print(f"e2e navigation OK: {', '.join(checked)}")
         return 0
     finally:
+        requests.delete(f"{BASE}/api/projects/{project_id}?confirm=true", timeout=10)
         driver.quit()
         shutil.rmtree(root, ignore_errors=True)
 

@@ -177,6 +177,10 @@ export const fr: Dict = {
   },
 
   nav: {
+    pages: 'Pages',
+    recognitions: 'Reconnaissances',
+    projectNav: 'Projet',
+    switchProject: 'Changer de projet',
     recognize: 'Reconnaître',
     results: 'Résultats',
     models: 'Modèles',

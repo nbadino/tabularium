@@ -1,21 +1,16 @@
 /** Navigazione globale per attività, con sottosezioni visibili nel loro contesto. */
-import { Link, NavLink, Outlet, useLocation } from 'react-router'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router'
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { apiGet } from '../lib/api'
-import { syncInferenceFromBackend, useInference } from './inference'
-import { useModelNames } from './models/names'
-import type { HealthResponse } from '../lib/types'
+import { syncInferenceFromBackend } from './inference'
+import type { HealthResponse, Project } from '../lib/types'
+import { projectIdOf, projectPath, switchProjectPath } from './projectPaths'
+import { writeActiveProject } from './activeProject'
 import { LOCALES, LOCALE_LABELS, useI18n } from '../i18n'
 import { useAuth } from './auth'
 import { CommandPalette } from './CommandPalette'
 import { Menu, PageSkeleton } from './ui'
-import {
-  IconArchive,
-  IconAnnotate,
-  IconModels,
-  IconPlayground,
-  IconTraining,
-} from './icons'
+import { IconArchive, IconModels } from './icons'
 
 interface NavItem {
   to: string
@@ -23,11 +18,10 @@ interface NavItem {
   Icon: (p: { size?: number }) => React.ReactElement
 }
 
+// The project is the container of the work (docs/UX_SIMPLIFICATION.md): the
+// main navigation only chooses between projects and the instance's models.
 const NAV: NavItem[] = [
-  { to: '/archivio', labelKey: 'nav.archive', Icon: IconArchive },
-  { to: '/', labelKey: 'nav.recognize', Icon: IconPlayground },
-  { to: '/annotazione', labelKey: 'nav.annotate', Icon: IconAnnotate },
-  { to: '/fine-tuning', labelKey: 'nav.training', Icon: IconTraining },
+  { to: '/progetti', labelKey: 'nav.projects', Icon: IconArchive },
   { to: '/modelli', labelKey: 'nav.models', Icon: IconModels },
 ]
 
@@ -116,21 +110,92 @@ function AccountMenu() {
   )
 }
 
-/**
- * Ultimo indirizzo visto per le sezioni che mantengono filtri nella query. Vive
- * per la sessione del documento; dopo un ricaricamento è l'URL stesso a ripristinarli.
- */
-const lastSearch = new Map<string, string>()
-
-const REFINE_PATHS = ['/fine-tuning', '/dataset', '/training', '/valutazione', '/benchmark']
-const RECOGNITION_PATHS = ['/', '/risultati']
 const MODEL_PATHS = ['/modelli', '/playground']
 function sectionOf(path: string): string {
-  if (REFINE_PATHS.includes(path)) return '/fine-tuning'
-  if (RECOGNITION_PATHS.includes(path)) return '/'
   if (MODEL_PATHS.includes(path)) return '/modelli'
-  if (path === '/archivio' || path === '/progetti' || path.startsWith('/progetti/')) return '/archivio'
+  if (path === '/' || path === '/progetti' || path.startsWith('/progetti/')) return '/progetti'
   return path
+}
+
+const PROJECT_TABS = [
+  { section: '', key: 'nav.pages' },
+  { section: 'riconoscimenti', key: 'nav.recognitions' },
+  { section: 'fine-tuning', key: 'nav.training' },
+] as const
+
+const FINE_TUNING_STEPS = [
+  { section: 'fine-tuning', key: 'ux.overview' },
+  { section: 'fine-tuning/dati', key: 'workflow.dataset' },
+  { section: 'fine-tuning/addestra', key: 'workflow.train' },
+  { section: 'fine-tuning/valuta', key: 'workflow.evaluate' },
+  { section: 'fine-tuning/confronta', key: 'nav.benchmark' },
+] as const
+
+/**
+ * What remounts the page: a new section or a new project, not a new item inside
+ * the same section (opening another run keeps the results page mounted).
+ */
+function pageKey(pathname: string): string {
+  const m = /^\/progetti\/(\d+)\/?([^/]*)/.exec(pathname)
+  return m ? `/progetti/${m[1]}/${m[2]}` : pathname
+}
+
+/** The project's own bar: which project (switchable) and its three sections. */
+function ProjectNav({ id, pathname }: { id: number; pathname: string }) {
+  const { t } = useI18n()
+  const navigate = useNavigate()
+  const [projects, setProjects] = useState<Project[] | null>(null)
+  useEffect(() => {
+    writeActiveProject(id)
+  }, [id])
+  useEffect(() => {
+    let alive = true
+    apiGet<{ items: Project[] }>('/projects').then((r) => alive && setProjects(r.items)).catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
+  const rest = pathname.replace(/^\/progetti\/\d+\/?/, '')
+  const current = rest.startsWith('riconoscimenti') ? 'riconoscimenti' : rest.startsWith('fine-tuning') ? 'fine-tuning' : rest.startsWith('studio') ? 'studio' : ''
+  return (
+    <>
+      <nav aria-label={t('nav.projectNav')} className="section-nav items-center">
+        {projects && projects.length > 1 ? (
+          <select
+            aria-label={t('nav.switchProject')}
+            value={id}
+            onChange={(e) => navigate(switchProjectPath(pathname, Number(e.target.value)))}
+            className="fld mr-2 w-auto max-w-[28ch] py-0.5 text-[13px] font-semibold"
+          >
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        ) : (
+          <span className="mr-2 max-w-[28ch] truncate text-[13px] font-semibold">
+            {projects?.find((p) => p.id === id)?.name ?? ''}
+          </span>
+        )}
+        {PROJECT_TABS.map(({ section, key }) => (
+          <Link
+            key={key}
+            to={section ? projectPath(id, section) : projectPath(id)}
+            aria-current={current === section ? 'page' : undefined}
+            className="section-link"
+          >
+            {t(key)}
+          </Link>
+        ))}
+      </nav>
+      {current === 'fine-tuning' && (
+        <nav aria-label={t('workflow.refineNav')} className="section-nav">
+          {FINE_TUNING_STEPS.map(({ section, key }) => (
+            <NavLink key={section} to={projectPath(id, section)} end className="section-link">
+              {t(key)}
+            </NavLink>
+          ))}
+        </nav>
+      )}
+    </>
+  )
 }
 
 /**
@@ -180,14 +245,10 @@ function NavMark({ pathname }: { pathname: string }) {
 
 export default function Layout() {
   const { t } = useI18n()
-  const inference = useInference()
-  const nameOf = useModelNames()
   const location = useLocation()
   // Il contenuto è scorso sotto la testata: lei lo dice con un'ombra.
   const [scrolled, setScrolled] = useState(false)
-  if (NAV.some(({ to }) => to === location.pathname) || [...REFINE_PATHS, ...RECOGNITION_PATHS, ...MODEL_PATHS].includes(location.pathname)) {
-    lastSearch.set(location.pathname, location.pathname === '/archivio' ? '' : location.search)
-  }
+  const projectId = projectIdOf(location.pathname)
   // Ogni pagina legge lo stato inferenza (chip GPU, banner, motori prefill):
   // il sync all'avvio evita di mostrare disponibilità/latenza stantie da
   // localStorage, che prima si aggiornavano solo aprendo la Home.
@@ -212,36 +273,6 @@ export default function Layout() {
             Tabularium
           </span>
           <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2">
-            {location.pathname !== '/modelli' && (inference.configured || inference.available) && (() => {
-              const providerKey = inference.provider && ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom', 'llamaindex'].includes(inference.provider)
-                ? `recognition.provider.${inference.provider}`
-                : null
-              const providerLabel = providerKey
-                ? t(providerKey)
-                : inference.isCloud
-                  ? t('recognition.locationCloud')
-                  : t('recognition.locationLocal')
-              const statusLabel = inference.enabled && inference.available
-                ? t('recognition.modelReady')
-                : !inference.enabled
-                  ? t('recognition.modelOff')
-                  : inference.model
-                    ? t('recognition.modelUnavailable')
-                    : t('recognition.modelOff')
-              return (
-            <Link
-              to="/modelli"
-              className="flex min-w-0 items-center gap-1.5 rounded-[var(--radius-sm)] border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] px-3 py-1 text-[11px] no-underline hover:bg-[color:var(--color-fill)]"
-              title={t('recognition.changeModel')}
-            >
-              <span className="max-w-[24ch] truncate font-semibold" title={inference.model || undefined}>{nameOf(inference.adapterId) ?? (inference.model || t('recognition.activeModel'))}</span>
-              <span className="text-[color:var(--color-ink-3)]">· {providerLabel}</span>
-              <span className={inference.enabled && inference.available ? 'text-[color:var(--color-ok)]' : 'text-[color:var(--color-warn)]'}>
-                {statusLabel}
-              </span>
-            </Link>
-              )
-            })()}
             <CommandPalette />
             <AccountMenu />
           </div>
@@ -251,7 +282,7 @@ export default function Layout() {
         <nav aria-label={t('app.navSections')} className="nav-rail relative flex min-w-0 max-w-full flex-wrap md:flex-nowrap md:overflow-x-auto">
 
           {NAV.map(({ to, labelKey, Icon }) => (
-            <Link key={to} to={{ pathname: to, search: lastSearch.get(to) ?? '' }} aria-current={sectionOf(location.pathname) === to ? 'page' : undefined} className="shrink-0">
+            <Link key={to} to={to} aria-current={sectionOf(location.pathname) === to ? 'page' : undefined} className="shrink-0">
                 <span className="navtab" data-active={sectionOf(location.pathname) === to}>
                   <Icon size={13} />
                   {t(labelKey)}
@@ -260,27 +291,14 @@ export default function Layout() {
           ))}
           <NavMark pathname={location.pathname} />
         </nav>
-        {(REFINE_PATHS.includes(location.pathname) || RECOGNITION_PATHS.includes(location.pathname) || MODEL_PATHS.includes(location.pathname)) && (
-          <nav aria-label={t(REFINE_PATHS.includes(location.pathname) ? 'workflow.refineNav' : MODEL_PATHS.includes(location.pathname) ? 'workflow.modelNav' : 'workflow.recognitionNav')} className="section-nav">
-            {(REFINE_PATHS.includes(location.pathname)
-              ? [
-                  { to: '/fine-tuning', key: 'ux.overview' },
-                  { to: '/dataset', key: 'workflow.dataset' },
-                  { to: '/training', key: 'workflow.train' },
-                  { to: '/valutazione', key: 'workflow.evaluate' },
-                  { to: '/benchmark', key: 'nav.benchmark' },
-                ]
-              : MODEL_PATHS.includes(location.pathname)
-                ? [
-                    { to: '/modelli', key: 'workflow.configure' },
-                    { to: '/playground', key: 'nav.playground' },
-                  ]
-                : [
-                    { to: '/', key: 'nav.recognize' },
-                    { to: '/risultati', key: 'nav.results' },
-                  ]
-            ).map(({ to, key }) => (
-              <NavLink key={to} to={{ pathname: to, search: lastSearch.get(to) ?? '' }} className="section-link">
+        {projectId != null && <ProjectNav id={projectId} pathname={location.pathname} />}
+        {MODEL_PATHS.includes(location.pathname) && (
+          <nav aria-label={t('workflow.modelNav')} className="section-nav">
+            {[
+              { to: '/modelli', key: 'workflow.configure' },
+              { to: '/playground', key: 'nav.playground' },
+            ].map(({ to, key }) => (
+              <NavLink key={to} to={to} className="section-link">
                 {t(key)}
               </NavLink>
             ))}
@@ -297,7 +315,7 @@ export default function Layout() {
             mentre il suo codice arriva resta la sua forma — la testata e le
             linguette restano dove sono. */}
         <Suspense fallback={<PageSkeleton label={t('app.loadingModule')} />}>
-          <div key={location.pathname} className={`h-full ${location.pathname.startsWith('/annotazione') || location.pathname.startsWith('/tabella') ? '' : 'workspace-page'}`}>
+          <div key={pageKey(location.pathname)} className={`h-full ${/^\/progetti\/\d+\/studio/.test(location.pathname) || location.pathname.startsWith('/tabella') ? '' : 'workspace-page'}`}>
             <Outlet />
           </div>
         </Suspense>

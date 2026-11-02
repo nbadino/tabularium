@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { projectPath } from '../app/projectPaths'
 import { Link } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import type { EvalPage, EvalReport } from '../lib/types'
@@ -6,7 +7,7 @@ import { pages } from '../lib/vocab'
 import { ErrorNotice, Field, Loading, Module, Notice, WarnNotice, PageHeader } from '../app/ui'
 import { PipelineStrip } from '../app/PipelineView'
 import { buildPipeline, usePipelineState } from '../app/pipeline'
-import { useProjects, writeActiveProject } from '../app/activeProject'
+import { useProjects, useRouteProjectId, writeActiveProject } from '../app/activeProject'
 import { setInference, testInferenceConnection, useInference } from '../app/inference'
 import { IconEvaluate, IconPlayground } from '../app/icons'
 import { useI18n, tn } from '../i18n'
@@ -71,6 +72,8 @@ export default function EvaluationPage() {
     setReport(null)
     setSelPage(null)
   }
+
+  const routeProjectId = useRouteProjectId()
 
   const projects = useProjects(onProject, setError)
 
@@ -200,6 +203,7 @@ export default function EvaluationPage() {
       <div className="mb-3">
         <Module tab={t('evaluate.run')}>
           <div className="grid gap-3 sm:grid-cols-2">
+            {routeProjectId == null && (
             <Field label={t('evaluate.project')}>
               <select
                 value={projectId}
@@ -214,6 +218,7 @@ export default function EvaluationPage() {
                 ))}
               </select>
             </Field>
+            )}
             <div className="flex items-end pb-1.5">
               <label className="flex cursor-pointer items-center gap-2 text-[12px]">
                 <input
@@ -247,7 +252,7 @@ export default function EvaluationPage() {
             <Notice>{t('evaluate.baselineNote', { n: goldPages })}</Notice>
           )}
           {projectId !== '' && trainingReady && !heldOutReady && <Notice tone="warn">
-            {t('evaluate.needsHeldOut')}{' '}<Link to="/dataset" className="font-semibold underline underline-offset-2">{t('pipeline.steps.datasetAction')}</Link>
+            {t('evaluate.needsHeldOut')}{' '}<Link to={projectPath(Number(projectId), 'fine-tuning/dati')} className="font-semibold underline underline-offset-2">{t('pipeline.steps.datasetAction')}</Link>
           </Notice>}
           {inference.enabled && !inferenceReady && (
             <WarnNotice title={t('evaluate.modelUnreachableTitle', { model: nameOf(inference.adapterId) ?? inference.model })}>

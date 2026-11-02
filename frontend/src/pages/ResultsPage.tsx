@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { projectPath } from '../app/projectPaths'
 import { apiDownload, apiGet, apiPost } from '../lib/api'
 import type { RecognitionRun } from '../lib/types'
 import { Badge, ErrorNotice, Field, Loading, Module, Notice, Progress, PageHeader } from '../app/ui'
-import { useProjects, writeActiveProject } from '../app/activeProject'
+import { useProjects, useRouteProjectId, writeActiveProject } from '../app/activeProject'
 import { syncInferenceFromBackend, toggleInferenceEnabled, useInference } from '../app/inference'
 import { useI18n } from '../i18n'
 import { IconAlert, IconCheck, IconNext, IconWarn } from '../app/icons'
@@ -45,6 +46,8 @@ export default function ResultsPage() {
   const nameOf = useModelNames()
   const [pageFilter, setPageFilter] = useState<PageFilter>('all')
   const [params, setParams] = useSearchParams()
+  const { runId: routeRunId } = useParams()
+  const navigate = useNavigate()
   const inference = useInference()
   const canManageInference = useCanAdminister()
   const [projectId, setProjectId] = useState<number | ''>(() => Number(params.get('project')) || '')
@@ -55,6 +58,13 @@ export default function ResultsPage() {
   const [exportFormat, setExportFormat] = useState<'json' | 'text' | 'csv'>('text')
   const [error, setError] = useState<unknown>(null)
 
+  // Inside a project the run is part of the path; the old query form stays for
+  // links that still carry it.
+  const showRun = (pid: number, runId: number) => {
+    if (routeProjectId != null) navigate(projectPath(pid, `riconoscimenti/${runId}`), { replace: true })
+    else setParams({ project: String(pid), run: String(runId) }, { replace: true })
+  }
+
   const openRun = async (pid: number, runId: number) => {
     setRequestedRunId(runId)
     setOpeningRun(true)
@@ -63,7 +73,7 @@ export default function ResultsPage() {
       const next = await apiGet<RecognitionRun>(`/projects/${pid}/recognition-runs/${runId}`)
       setRun(next)
       setPageFilter('all')
-      setParams({ project: String(pid), run: String(runId) }, { replace: true })
+      showRun(pid, runId)
     } catch (error) {
       setRequestedRunId(null)
       setError(error)
@@ -79,13 +89,15 @@ export default function ResultsPage() {
     try {
       const out = await apiGet<{ items: RecognitionRun[] }>(`/recognition-runs?project_id=${pid}`)
       setRuns(out.items)
-      const requested = Number(params.get('run'))
+      const requested = Number(routeRunId) || Number(params.get('run'))
       const first = out.items.find((item) => item.id === requested) ?? out.items[0]
       if (first) await openRun(pid, first.id)
     } catch (e) {
       setError(e)
     }
   }
+
+  const routeProjectId = useRouteProjectId()
 
   const projects = useProjects((fallback) => void onProject(projectId === '' ? fallback : projectId), setError)
 
@@ -137,7 +149,7 @@ export default function ResultsPage() {
       const next = await apiPost<RecognitionRun>(`/projects/${run.project_id}/recognition-runs/${run.id}/retry`)
       setRuns((before) => [next, ...before.filter((item) => item.id !== next.id)])
       setRun(next)
-      setParams({ project: String(next.project_id), run: String(next.id) }, { replace: true })
+      showRun(next.project_id, next.id)
     } catch (e) {
       setError(e)
     }
@@ -169,12 +181,14 @@ export default function ResultsPage() {
 
       <div className="space-y-6">
         <div className="grid gap-4 sm:grid-cols-[minmax(12rem,1fr)_minmax(0,2fr)]">
+          {routeProjectId == null && (
           <Field label={t('recognition.projectPick')}>
             <select value={projectId} onChange={(e) => void onProject(e.target.value === '' ? '' : Number(e.target.value))} className="fld">
               <option value="">{t('common.chooseProject')}</option>
               {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
             </select>
           </Field>
+          )}
           <Field label={t('recognition.recent')}>
             <select className="fld" value={requestedRunId ?? run?.id ?? ''} disabled={runs.length === 0 || openingRun} onChange={(e) => { if (projectId !== '' && e.target.value) void openRun(projectId, Number(e.target.value)) }}>
               {runs.length === 0 && <option value="">{t('recognition.noRuns')}</option>}
@@ -203,7 +217,7 @@ export default function ResultsPage() {
                 <span className="mono text-[11px] text-[color:var(--color-ink-3)]">{providerLabel(run.provider, run.engine, t)} · {run.adapter_id}</span>
                 <span className="ml-auto flex flex-wrap gap-2">
                   {nextReview && (
-                    <Link to={`/annotazione?project=${run.project_id}&page=${nextReview.page_id}&run=${run.id}`} className="btn btn-primary no-underline">
+                    <Link to={projectPath(run.project_id, 'studio', { page: nextReview.page_id, run: run.id })} className="btn btn-primary no-underline">
                       {isActive(run) ? t('recognition.openStudio') : t('recognition.startReview')}
                     </Link>
                   )}
@@ -285,7 +299,7 @@ export default function ResultsPage() {
                         </div>
                         {item.error && <p className="mt-1 text-[11px] text-[color:var(--color-sig-text)]">{item.error}</p>}
                       </div>
-                      <Link to={`/annotazione?project=${run.project_id}&page=${item.page_id}&run=${run.id}`} className="btn col-span-2 justify-center no-underline sm:col-span-1">
+                      <Link to={projectPath(run.project_id, 'studio', { page: item.page_id, run: run.id })} className="btn col-span-2 justify-center no-underline sm:col-span-1">
                         {t('recognition.review')}
                         <IconNext size={12} />
                       </Link>

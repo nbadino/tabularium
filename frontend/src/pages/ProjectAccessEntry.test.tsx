@@ -37,7 +37,7 @@ it('il progetto editor monta lo Studio dopo aver risolto il permesso', async () 
 it('la tabella risolve il progetto dal blocco e ignora la query contraffatta', async () => {
   render(<MemoryRouter initialEntries={['/tabelle/7?project=999&page=888']}><Routes><Route path="/tabelle/:blockId" element={<TableEntry />} /></Routes></MemoryRouter>)
   const link = await screen.findByRole('link')
-  expect(link).toHaveAttribute('href', '/annotazione?project=3&page=19')
+  expect(link).toHaveAttribute('href', '/progetti/3/studio?page=19')
   expect(h.calls).toEqual(['/blocks/7', '/projects/3'])
   expect(screen.queryByText('Editor tabella montato')).not.toBeInTheDocument()
 })
