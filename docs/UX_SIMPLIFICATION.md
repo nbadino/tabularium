@@ -1,343 +1,361 @@
-# Semplificazione dell'interfaccia — specifica
+# Interface simplification — specification
 
-Stato: **bozza da discutere**, 2 novembre 2026. Nessuna modifica al codice è ancora stata fatta.
+Written 2 November 2026 as a draft for discussion.
 
-## Perché
+## Status
 
-Le revisioni del 17–23 ottobre ([UX_WORKFLOW_AUDIT](UX_WORKFLOW_AUDIT.md),
+Phases 1–6 are implemented and merged:
+
+- Phase 1 — defaults that work, one name per concept, honest first run: https://github.com/nbadino/tabularium/pull/38
+- Phase 2 — the project is the container of the work: https://github.com/nbadino/tabularium/pull/39
+- Phase 3 — Pages tab with one next action, Advanced page: https://github.com/nbadino/tabularium/pull/40
+- Phase 4 — Studio with one closing action: https://github.com/nbadino/tabularium/pull/41
+- Phase 5 — fine-tuning as one path in three steps: https://github.com/nbadino/tabularium/pull/42
+- Phase 6 — Models and Settings, no folded guides: https://github.com/nbadino/tabularium/pull/43
+
+The rest of this document describes the problem and the target design as specified. Quoted UI
+strings are from the Italian locale, with the English label in parentheses where useful.
+
+## Why
+
+The reviews of 17–23 October ([UX_WORKFLOW_AUDIT](UX_WORKFLOW_AUDIT.md),
 [UX_USE_CASE_VERIFICATION](UX_USE_CASE_VERIFICATION.md), [UX_TEAM_WORKSPACE](UX_TEAM_WORKSPACE.md))
-hanno ripulito le singole pagine: meno cornici, sezioni apribili, caricamento a blocchi. La
-struttura non è cambiata, ed è lì che nasce la complessità.
+cleaned up the individual pages: fewer frames, collapsible sections, chunked loading. The
+structure did not change, and that is where the complexity comes from.
 
-Un'installazione nuova (0.5.0 su un server senza GPU, 2 novembre) mostra il problema:
+A fresh install (0.5.0 on a server without a GPU, 2 November) shows the problem:
 
-- l'utente atterra su **Riconosci** con l'avviso *"L'endpoint http://127.0.0.1:8888/v1 non
-  risponde"*; ogni pagina ripete in rosso *"MonkeyOCRv2-Parsing · Locale · Non disponibile"*,
-  mentre l'OCR su CPU è pronto e funziona;
-- per riconoscere la prima pagina servono circa **10 clic** su quattro schermate: Riconosci →
-  Nuovo progetto → nome → crea → Importa → file → Riconosci → scegli progetto → seleziona
-  tutte → cambia motore → avvia → apri risultati;
-- un progetto vuoto mostra Protocollo studio *versionato*, Perimetro corpus, *Profilo dominio /
-  adapter modello*, Pilot iniziale *30–50 pagine bilanciate* e *Approva tutte* con 0 pagine;
-- il progetto si sceglie in **11 selettori diversi**, uno per pagina.
+- the user lands on **Riconosci** (Recognize) with the warning *"L'endpoint
+  http://127.0.0.1:8888/v1 non risponde"* (the endpoint is not responding); every page repeats in
+  red *"MonkeyOCRv2-Parsing · Locale · Non disponibile"* (Local · Unavailable), while CPU OCR is
+  ready and works;
+- recognizing the first page takes about **10 clicks** across four screens: Recognize → New
+  project → name → create → Import → file → Recognize → choose project → select all → change
+  engine → start → open results;
+- an empty project shows a *versioned* Study protocol, Corpus scope, *Domain profile / model
+  adapter*, Initial pilot *30–50 balanced pages* and *Approve all* with 0 pages;
+- the project is chosen in **11 different selectors**, one per page.
 
-L'interfaccia è organizzata attorno alle fasi interne del sistema (riconoscimento, annotazione,
-dataset, training, provider). L'utente ragiona attorno a **un archivio e le sue pagine**.
+The interface is organized around the system's internal phases (recognition, annotation,
+dataset, training, provider). The user thinks in terms of **an archive and its pages**.
 
-## Obiettivo
+## Goal
 
-> Chi installa Tabularium riconosce la prima pagina in meno di un minuto, senza leggere niente,
-> e trova ogni funzione avanzata quando gli serve, non prima.
+> Someone who installs Tabularium recognizes their first page in under a minute, without reading
+> anything, and finds every advanced feature when they need it, not before.
 
-Misure di successo, verificate nel browser su un'installazione nuova senza GPU:
+Success measures, checked in the browser on a fresh install without a GPU:
 
-| Misura | Oggi | Obiettivo |
+| Measure | Today | Target |
 |---|---:|---:|
-| Clic da "progetto creato" al primo risultato OCR | ~8 | ≤ 3 |
-| Voci della navigazione principale | 5 + 3 sotto-menu | 2 |
-| Selettori di progetto | 11 | 1 (nell'intestazione del progetto) |
-| Errori o avvisi rossi al primo avvio, senza GPU | 2 per pagina | 0 |
-| Controlli visibili in un progetto senza pagine | ~25 | ≤ 4 |
-| Sinonimi per lo stesso concetto (vedi glossario) | 4 gruppi | 0 |
+| Clicks from "project created" to the first OCR result | ~8 | ≤ 3 |
+| Items in the main navigation | 5 + 3 sub-menus | 2 |
+| Project selectors | 11 | 1 (in the project header) |
+| Errors or red warnings on first run, without a GPU | 2 per page | 0 |
+| Visible controls in a project with no pages | ~25 | ≤ 4 |
+| Synonyms for the same concept (see glossary) | 4 groups | 0 |
 
-## Principi
+## Principles
 
-1. **Il progetto è il contenitore di tutto.** Riconoscere, correggere, esportare e fare
-   fine-tuning sono azioni *su un progetto*, non sezioni dell'app. Il progetto vive nell'URL
-   (`/progetti/:id/...`), non in un selettore per pagina.
-2. **Il default è ciò che funziona.** Senza un modello raggiungibile il motore è l'OCR locale,
-   e non si mostra nessun errore. Un modello non configurato non è un guasto.
-3. **Una sola azione principale per schermata**, scelta in base allo stato: senza pagine è
-   *Importa*, con pagine non riconosciute è *Riconosci*, con bozze è *Rivedi*, con tutto
-   verificato è *Esporta*.
-4. **Mostrare le funzioni avanzate solo quando servono.** Se una funzione serve a una minoranza,
-   o solo dopo un certo punto del lavoro, sta dietro un ingresso con un nome chiaro
-   ("Avanzate", "Parametri"), mai in vista nel flusso base.
-5. **L'interfaccia si spiega da sola.** Niente "▸ Guida" chiuso in ogni pagina: stati vuoti che
-   dicono cosa fare, etichette in linguaggio comune, termini tecnici solo nei tooltip e nei
-   dettagli. La documentazione resta raggiungibile da un link "Aiuto" nel menu utente.
-6. **Un concetto, un nome, un posto.** Ogni azione ha un posto principale; le scorciatoie (palette
-   comandi, tastiera) sono in più, non sostituiscono il posto principale.
-7. **Il lavoro di squadra compare quando c'è una squadra.** Assegnazioni, revisione, presenza e
-   accessi restano tutti, ma si mostrano quando il progetto ha più di un membro.
+1. **The project is the container of everything.** Recognizing, correcting, exporting and
+   fine-tuning are actions *on a project*, not sections of the app. The project lives in the URL
+   (`/progetti/:id/...`), not in a per-page selector.
+2. **The default is what works.** Without a reachable model the engine is local OCR, and no error
+   is shown. A model that is not configured is not a fault.
+3. **One main action per screen**, chosen by state: with no pages it is *Import*, with
+   unrecognized pages it is *Recognize*, with drafts it is *Review*, with everything verified it
+   is *Export*.
+4. **Show advanced features only when they are needed.** If a feature serves a minority, or is
+   only useful after a certain point in the work, it sits behind an entry point with a clear name
+   ("Avanzate" (Advanced), "Parametri" (Parameters)), never in view in the basic flow.
+5. **The interface explains itself.** No closed "▸ Guida" (Guide) on every page: empty states
+   that say what to do, labels in plain language, technical terms only in tooltips and details.
+   The documentation stays reachable from a "Help" link in the user menu.
+6. **One concept, one name, one place.** Every action has one main place; shortcuts (command
+   palette, keyboard) are extra and do not replace the main place.
+7. **Teamwork appears when there is a team.** Assignments, review, presence and access all stay,
+   but they are shown when the project has more than one member.
 
-Cosa **non** cambia: semantica dei dati, regola "generato non è verificato", conferme sulle
-operazioni distruttive, formati di export, ricette di training, sistema visivo di
-[DESIGN.md](../DESIGN.md). Questa è una revisione della struttura e dei testi, non un
-ridisegno visivo.
+What does **not** change: data semantics, the "generated is not verified" rule, confirmations on
+destructive operations, export formats, training recipes, the visual system of
+[DESIGN.md](../DESIGN.md). This is a revision of structure and copy, not a visual redesign.
 
-## Glossario
+## Glossary
 
-Un termine per concetto, nelle tre lingue. I termini a destra spariscono dall'interfaccia.
+One term per concept, in the three languages. The terms on the right disappear from the
+interface.
 
-| Concetto | Termine (IT · EN · FR) | Da eliminare |
+| Concept | Term (IT · EN · FR) | To remove |
 |---|---|---|
-| Insieme di pagine di un lavoro | **Progetto** · Project · Projet | archivio, corpus, archivio attivo |
-| Lancio del modello su più pagine | **Riconoscimento** · Recognition · Reconnaissance | elaborazione, sessione, run, coda |
-| Lancio del modello su una pagina nello Studio | **Riconosci pagina** | prefill, prefill della pagina, inferenza nativa |
-| Risultato del modello non ancora controllato | **Bozza** · Draft · Brouillon | — (già usato, va reso coerente) |
-| Pagina controllata da una persona | **Verificata** · Verified · Vérifiée | approvata, confermata (vedi decisione D4) |
-| Editor della pagina | **Studio** · Studio · Studio | annotazione, studio di annotazione |
-| Riquadro sulla pagina | **Zona** · Region · Zone | blocco, block |
-| Adattamento del modello alle proprie pagine | **Fine-tuning** · Fine-tuning · Fine-tuning | addestramento, training, refine |
-| Una sessione di fine-tuning | **Addestramento** · Training run · Entraînement | run |
-| Dove gira il modello | **Esecuzione** (questo computer, GPU a noleggio, servizio esterno) | destinazione, provider, endpoint |
+| Set of pages for one piece of work | **Progetto** · Project · Projet | archivio, corpus, archivio attivo |
+| Running the model on several pages | **Riconoscimento** · Recognition · Reconnaissance | elaborazione, sessione, run, coda |
+| Running the model on one page in the Studio | **Riconosci pagina** (Recognize page) | prefill, prefill della pagina, inferenza nativa |
+| Model output not yet checked | **Bozza** · Draft · Brouillon | — (already used, to be made consistent) |
+| Page checked by a person | **Verificata** · Verified · Vérifiée | approvata, confermata (see decision D4) |
+| Page editor | **Studio** · Studio · Studio | annotazione, studio di annotazione |
+| Box on the page | **Zona** · Region · Zone | blocco, block |
+| Adapting the model to one's own pages | **Fine-tuning** · Fine-tuning · Fine-tuning | addestramento, training, refine |
+| One fine-tuning session | **Addestramento** · Training run · Entraînement | run |
+| Where the model runs | **Esecuzione** (this computer, rented GPU, external service) | destinazione, provider, endpoint |
 
-Le classi delle zone (Title, Page-header, Byline…) vanno tradotte nell'interfaccia; il nome
-tecnico resta nel tooltip e nell'export.
+Region classes (Title, Page-header, Byline…) are to be translated in the interface; the technical
+name stays in the tooltip and in the export.
 
-## Nuova struttura
+## New structure
 
-### Navigazione
+### Navigation
 
 ```
-Intestazione:  Tabularium   [Progetti]  [Modelli]          Cerca ⌘K   Utente ▾
-                                                                       ├ Impostazioni
-                                                                       ├ Utenti (admin)
-                                                                       ├ Aiuto
-                                                                       ├ Lingua: IT EN FR
-                                                                       └ Esci
+Header:        Tabularium   [Projects]  [Models]           Search ⌘K   User ▾
+                                                                       ├ Settings
+                                                                       ├ Users (admin)
+                                                                       ├ Help
+                                                                       ├ Language: IT EN FR
+                                                                       └ Sign out
 
-Progetto:      ← Progetti / Nome progetto ▾      [Pagine] [Riconoscimenti] [Fine-tuning]   ⋯
-                                                                              ⋯ = Condividi, Avanzate, Elimina
+Project:       ← Projects / Project name ▾      [Pages] [Recognitions] [Fine-tuning]   ⋯
+                                                                              ⋯ = Share, Advanced, Delete
 ```
 
-- **Progetti** è la pagina iniziale (`/`). Con un solo progetto, `/` apre direttamente quel
-  progetto.
-- **Modelli** resta in alto perché è un'impostazione dell'istanza, condivisa dai progetti.
-- Il nome del progetto nell'intestazione è l'unico selettore di progetto (menu a tendina).
-- Le schede del progetto sono tre. **Fine-tuning** è un percorso principale (decisione D2) e
-  resta sempre visibile; senza pagine verificate mostra cosa manca invece di un modulo vuoto.
-- La pillola di stato del modello in intestazione sparisce dalla navigazione globale e diventa
-  una riga nella scheda Riconoscimenti, dove serve.
+- **Projects** is the home page (`/`). With only one project, `/` opens that project directly.
+- **Models** stays at the top because it is an instance setting, shared by all projects.
+- The project name in the header is the only project selector (dropdown menu).
+- The project has three tabs. **Fine-tuning** is a primary path (decision D2) and is always
+  visible; with no verified pages it shows what is missing instead of an empty form.
+- The model status pill in the header leaves the global navigation and becomes a line in the
+  Recognitions tab, where it is needed.
 
-### Corrispondenza vecchie → nuove rotte
+### Old → new routes
 
-Tutte le vecchie rotte restano come redirect, così link e segnalibri continuano a funzionare.
+All old routes remain as redirects, so links and bookmarks keep working.
 
-| Oggi | Dopo |
+| Today | After |
 |---|---|
-| `/` Riconosci | `/progetti/:id/riconoscimenti` |
+| `/` Riconosci (Recognize) | `/progetti/:id/riconoscimenti` |
 | `/risultati` | `/progetti/:id/riconoscimenti/:runId` |
-| `/archivio` Archivio (`HomePage`) | `/progetti/:id` scheda Pagine |
-| `/progetti` | `/` (lista progetti) |
-| `/progetti/:id` (`ProjectDetailPage`) | `/progetti/:id` scheda Pagine |
+| `/archivio` Archivio (`HomePage`) | `/progetti/:id` Pages tab |
+| `/progetti` | `/` (project list) |
+| `/progetti/:id` (`ProjectDetailPage`) | `/progetti/:id` Pages tab |
 | `/annotazione?project=&page=` | `/progetti/:id/studio/:pageId` |
 | `/tabella/:blockId` | `/progetti/:id/studio/:pageId/tabella/:blockId` |
-| `/fine-tuning`, `/dataset`, `/training`, `/valutazione` | `/progetti/:id/fine-tuning` (un percorso a passi) |
+| `/fine-tuning`, `/dataset`, `/training`, `/valutazione` | `/progetti/:id/fine-tuning` (one stepped path) |
 | `/benchmark` | `/progetti/:id/fine-tuning/confronta` |
-| `/playground` Prova modello | rimossa: *Prova su una pagina* nella pagina Modelli |
+| `/playground` Prova modello (Try model) | removed: *Try on a page* in the Models page |
 | `/modelli` | `/modelli` |
-| `/impostazioni`, `/utenti` | invariate |
+| `/impostazioni`, `/utenti` | unchanged |
 
-## Schermata per schermata
+## Screen by screen
 
-Per ogni schermata: cosa resta in vista, cosa va dietro un ingresso, cosa sparisce.
+For each screen: what stays in view, what goes behind an entry point, what disappears.
 
-### Primo avvio, accesso
+### First run, sign-in
 
-| Resta | Cambia |
+| Stays | Changes |
 |---|---|
-| Setup con nome utente, password, conferma | Niente flash della pagina di login mentre si carica lo stato |
-| Login con OIDC opzionale | Se non esiste ancora un admin, il login porta al setup invece di rispondere "credenziali errate" |
-| | Email: testo *"Facoltativa, usata per recuperi e notifiche"* → *"Facoltativa"*. Non esiste invio di email; non promettere recuperi |
-| | Sotto il pulsante: *"Conserva questa password: per reimpostarla serve l'accesso al server"*, insieme a un comando `tabularium reset-password` (backend, fuori da questa spec) |
-| | Una scheda rimasta sul setup dopo che l'admin è stato creato altrove si aggiorna e passa al login |
+| Setup with username, password, confirmation | No flash of the login page while the state loads |
+| Login with optional OIDC | If no admin exists yet, login leads to setup instead of answering "wrong credentials" |
+| | Email: text *"Facoltativa, usata per recuperi e notifiche"* (Optional, used for recovery and notifications) → *"Facoltativa"* (Optional). No email sending exists; do not promise recovery |
+| | Below the button: *"Conserva questa password: per reimpostarla serve l'accesso al server"* (Keep this password: resetting it requires access to the server), together with a `tabularium reset-password` command (backend, outside this spec) |
+| | A tab left on setup after the admin was created elsewhere refreshes and switches to login |
 
-### Progetti (`/`)
+### Projects (`/`)
 
-- **Nessun progetto**: una sola area centrale, *"Crea il tuo primo progetto"*, con nome e zona
-  di trascinamento file **nella stessa schermata**. Creare il progetto e caricare le pagine è un
-  solo passo, non due.
-- **Con progetti**: lista con nome, numero di pagine, avanzamento (verificate / totali), data
-  dell'ultima modifica. Un pulsante principale *Nuovo progetto*.
-- I filtri *Tutti / Di mia proprietà / Condivisi con me* compaiono solo se l'utente ha almeno un
-  progetto condiviso.
-- "Da una cartella sul server" resta come seconda opzione del modulo di creazione, solo per gli
-  admin.
-- Sparisce: il pulsante "Persone e accessi" su ogni riga (si raggiunge dal progetto).
+- **No projects**: a single central area, *"Create your first project"*, with name and a file
+  drop zone **on the same screen**. Creating the project and uploading pages is one step, not
+  two.
+- **With projects**: list with name, number of pages, progress (verified / total), date of last
+  change. One main button, *New project*.
+- The filters *All / Owned by me / Shared with me* appear only if the user has at least one
+  shared project.
+- "From a folder on the server" stays as the second option of the creation form, for admins only.
+- Disappears: the "People and access" button on every row (reachable from the project).
 
-### Progetto → Pagine (scheda iniziale)
+### Project → Pages (initial tab)
 
-Unisce `HomePage` (parete di miniature) e `ProjectDetailPage` (registro). Oggi sono due
-schermate che si sovrappongono.
+Merges `HomePage` (thumbnail wall) and `ProjectDetailPage` (register). Today they are two
+overlapping screens.
 
-- **In vista**: miniature delle pagine con stato (nuova, bozza, verificata), filtro per stato,
-  ricerca (oltre 20 pagine), una **barra dell'azione principale** che segue il principio 3:
-  - 0 pagine → zona di trascinamento *Aggiungi immagini o PDF*;
-  - pagine non riconosciute → *Riconosci N pagine* (con l'OCR locale o il modello configurato,
-    in un clic, senza passare dalla scheda Riconoscimenti);
-  - bozze presenti → *Rivedi N bozze* (apre lo Studio sulla prima);
-  - tutto verificato → *Esporta*.
-- **Vista tabella** (interruttore miniature ↔ righe): la tabella del registro con metadati
-  modificabili (data, numero, tipo) e modifica di più pagine insieme. È la vista di chi cura i
-  metadati, non quella iniziale.
-- **Menu ⋯ del progetto**: Condividi · Avanzate · Elimina progetto.
-- **Avanzate** (pagina dedicata del progetto, `/progetti/:id/avanzate`): Protocollo studio,
-  Pilot iniziale, pagine di test protette (gold), classi delle zone, regole di trascrizione,
-  schema tabella, attività recente, cartella sorgente sul server e nuova scansione.
-- Sparisce dalla vista base: Protocollo studio, Pilot, Attività recente, il percorso assoluto
-  della cartella, "Conferma anche le bozze", "Approva tutte" (resta nella vista tabella, con
-  conferma).
+- **In view**: page thumbnails with status (new, draft, verified), status filter, search (above
+  20 pages), a **main action bar** that follows principle 3:
+  - 0 pages → drop zone *Add images or PDFs*;
+  - unrecognized pages → *Recognize N pages* (with local OCR or the configured model, in one
+    click, without going through the Recognitions tab);
+  - drafts present → *Review N drafts* (opens the Studio on the first one);
+  - everything verified → *Export*.
+- **Table view** (thumbnails ↔ rows toggle): the register table with editable metadata (date,
+  number, type) and multi-page editing. It is the view for people who curate metadata, not the
+  initial one.
+- **Project ⋯ menu**: Share · Advanced · Delete project.
+- **Advanced** (dedicated project page, `/progetti/:id/avanzate`): Study protocol, Initial pilot,
+  protected test pages (gold), region classes, transcription rules, table schema, recent
+  activity, source folder on the server and rescan.
+- Disappears from the basic view: Study protocol, Pilot, Recent activity, the absolute folder
+  path, "Also confirm drafts", "Approve all" (stays in the table view, with confirmation).
 
-### Progetto → Riconoscimenti
+### Project → Recognitions
 
-Unisce `RecognizePage` e `ResultsPage`.
+Merges `RecognizePage` and `ResultsPage`.
 
-- **In alto, una riga**: *Motore: OCR locale · Pronto* oppure *Modello: MinerU2.5 su Modal ·
-  Pronto*, con il link *Cambia*. Se un modello è configurato ma non risponde: *Il modello non
-  risponde. Puoi usare l'OCR locale o controllare in Modelli*. Mai l'URL dell'endpoint.
-- **Nuovo riconoscimento**: quali pagine (*Non ancora riconosciute (N)*, preselezionato; *Tutte*;
-  *Scegli…* apre la griglia di selezione), motore, *Avvia*. La griglia di 100 miniature non è
-  più in vista per default.
-- **Elenco dei riconoscimenti**: data, motore, pagine fatte / totali, stato. Aprirne uno mostra
-  avanzamento, pagine con problemi, *Rivedi nello Studio*, *Esporta* (formato + originale o
-  corretto), *Riprova le pagine non riuscite*.
-- "Disattiva il modello al termine" diventa un'opzione dentro *Avvia* (solo admin, solo per un
-  modello a noleggio), e sparisce il pulsante doppio "Disattiva modello" dai risultati.
-- Il riquadro di conferma "Sostituisci le bozze" resta: protegge il lavoro.
+- **At the top, one line**: *Engine: local OCR · Ready* or *Model: MinerU2.5 on Modal · Ready*,
+  with a *Change* link. If a model is configured but does not respond: *The model is not
+  responding. You can use local OCR or check in Models*. Never the endpoint URL.
+- **New recognition**: which pages (*Not yet recognized (N)*, preselected; *All*; *Choose…* opens
+  the selection grid), engine, *Start*. The grid of 100 thumbnails is no longer in view by
+  default.
+- **List of recognitions**: date, engine, pages done / total, status. Opening one shows progress,
+  pages with problems, *Review in the Studio*, *Export* (format + original or corrected), *Retry
+  failed pages*.
+- "Shut down the model when finished" becomes an option inside *Start* (admin only, only for a
+  rented model), and the duplicate "Shut down model" button disappears from the results.
+- The "Replace drafts" confirmation box stays: it protects the work.
 
 ### Studio
 
-La pagina più usata e la più carica (`AnnotationPage.tsx`, 1.601 righe). Obiettivo: l'utente vede
-la pagina, le zone e il testo; tutto il resto si apre quando serve.
+The most used and most crowded page (`AnnotationPage.tsx`, 1,601 lines). Goal: the user sees the
+page, the regions and the text; everything else opens when needed.
 
-- **Intestazione**: ← Pagine · nome pagina · *Pagina 3 di 40* · un'unica azione di chiusura
-  **Verifica e vai alla successiva** (Invio). Oggi chiudere una pagina significa scegliere tra
-  "Approva", "Pagina successiva", "Invia al revisore" e il menu di stato.
-- **Barra strumenti**: Seleziona · Rettangolo · Poligono · Sposta (con le lettere V R P H),
-  Annulla, *Riconosci pagina*. Il selettore della classe compare solo mentre si disegna o con una
-  zona selezionata. "Nuova classe", "Flusso di lettura", "Ripeti", "Salva", "Riparti da zero"
-  restano nel menu ⋯ (Salva è automatico: il menu mostra solo lo stato).
-- **Barra laterale pagine**: chiusa di default su schermi sotto 1440 px; le frecce e la
-  scorciatoia J/K bastano per scorrere. Il selettore di progetto sparisce (il progetto è
-  nell'URL).
-- **Riquadro contenuto**: zone in ordine di lettura, testo modificabile, *Verificata* per zona.
-  Il menu "Opzioni" (Rinumera, Regole, Classi, Schema tabella) passa in ⋯; Classi, Regole e Schema
-  tabella sono le stesse pagine di *Avanzate* del progetto.
-- **Selettore "Vista"** (Tutto / Solo pagina / Solo testo): diventa due pulsanti di
-  ridimensionamento sul divisore, come in un editor di codice.
-- **Lavoro di squadra** (Assegna, Invia al revisore, Richiedi correzioni, coda "Da revisionare"):
-  compare solo se il progetto ha più di un membro (principio 7).
-- **Riconosci pagina** (oggi "Prefill della pagina"): motore preselezionato come nella scheda
-  Riconoscimenti; il modo è *Aggiungi alle zone esistenti* per default, *Sostituisci le bozze* e
-  *Sostituisci tutto* restano con la conferma attuale.
-- **Tabella**: resta l'editor attuale (oggetto di [UX_STUDIO_REVIEW](UX_STUDIO_REVIEW.md)); in
-  questa fase si allinea solo il percorso e il pulsante indietro con etichetta.
+- **Header**: ← Pages · page name · *Page 3 of 40* · a single closing action **Verify and go to
+  next** (Enter). Today closing a page means choosing between "Approve", "Next page", "Send to
+  reviewer" and the status menu.
+- **Toolbar**: Select · Rectangle · Polygon · Pan (with the letters V R P H), Undo, *Recognize
+  page*. The class selector appears only while drawing or with a region selected. "New class",
+  "Reading order", "Redo", "Save", "Start over" stay in the ⋯ menu (Save is automatic: the menu
+  only shows the state).
+- **Page sidebar**: closed by default on screens below 1440 px; the arrows and the J/K shortcut
+  are enough to move through pages. The project selector disappears (the project is in the URL).
+- **Content panel**: regions in reading order, editable text, *Verified* per region. The
+  "Options" menu (Renumber, Rules, Classes, Table schema) moves into ⋯; Classes, Rules and Table
+  schema are the same pages as the project's *Advanced*.
+- **"View" selector** (All / Page only / Text only): becomes two resize buttons on the divider,
+  as in a code editor.
+- **Teamwork** (Assign, Send to reviewer, Request changes, "To review" queue): appears only if the
+  project has more than one member (principle 7).
+- **Recognize page** (today "Prefill della pagina", page prefill): engine preselected as in the
+  Recognitions tab; the mode is *Add to existing regions* by default, *Replace drafts* and
+  *Replace everything* stay with the current confirmation.
+- **Table**: stays the current editor (subject of [UX_STUDIO_REVIEW](UX_STUDIO_REVIEW.md)); in
+  this phase only the route and the labelled back button are aligned.
 
-### Progetto → Fine-tuning
+### Project → Fine-tuning
 
-Percorso principale (decisione D2), ma presentato come **un solo percorso a tre passi**, non
-quattro pagine con selettori propri.
+A primary path (decision D2), but presented as **one path in three steps**, not four pages with
+their own selectors.
 
 ```
-1 Prepara i dati  →  2 Addestra  →  3 Valuta
+1 Prepare the data  →  2 Train  →  3 Evaluate
 ```
 
-- In cima, una sola card **Prossimo passo** con lo stato e un pulsante (oggi esiste già in
-  `FineTuningPage`; diventa l'intestazione dell'intero percorso).
-- **Prepara i dati**: *Prepara il dataset* con i default (80 % addestramento, split per pagina,
-  solo pagine verificate). In vista: quante pagine e zone entrano, un avviso se sono troppo
-  poche. Dietro *Parametri*: quota, unità di split, seed, adattatore, solo campione pilot,
-  formati per altri modelli, anteprima dei file generati.
-- **Addestra**: scelta della GPU in linguaggio comune (*Questo computer* se ha una GPU adatta,
-  *GPU a noleggio (Vast.ai)* con budget orario, *Un server mio (SSH)*), modello di partenza,
-  *Avvia*. Tipo (LoRA / completo), epoche e learning rate dietro *Parametri*, i 15 parametri
-  avanzati dentro quello. Durante l'addestramento: grafico, tempo stimato, costo, *Ferma*; il
-  log si apre su richiesta (come oggi).
-- **Valuta**: tre numeri in linguaggio comune in cima (*Testo: 2,1 % di caratteri errati*,
-  *Zone trovate: 94 %*, *Tabelle corrette: 81 %*), con il confronto col modello di partenza.
-  Precision, recall, IoU, TEDS, WER e la tabella per classe stanno sotto *Dettagli*.
-- **Confronta modelli** (oggi Benchmark): una sezione dentro Valuta. Gli URL e i nomi serviti
-  si scelgono dai modelli configurati, non si digitano.
-- Cosa sparisce: i selettori di progetto su Dataset, Training, Evaluation, Benchmark; la
-  scheda "Panoramica" (diventa la card Prossimo passo); il doppio pulsante "Ferma il run".
+- At the top, a single **Next step** card with the status and a button (it already exists in
+  `FineTuningPage`; it becomes the header of the whole path).
+- **Prepare the data**: *Prepare the dataset* with the defaults (80 % training, split by page,
+  verified pages only). In view: how many pages and regions go in, a warning if there are too
+  few. Behind *Parameters*: ratio, split unit, seed, adapter, pilot sample only, formats for other
+  models, preview of the generated files.
+- **Train**: GPU choice in plain language (*This computer* if it has a suitable GPU, *Rented GPU
+  (Vast.ai)* with an hourly budget, *A server of mine (SSH)*), base model, *Start*. Type (LoRA /
+  full), epochs and learning rate behind *Parameters*, the 15 advanced parameters inside that.
+  During training: chart, estimated time, cost, *Stop*; the log opens on request (as today).
+- **Evaluate**: three numbers in plain language at the top (*Text: 2.1 % wrong characters*,
+  *Regions found: 94 %*, *Tables correct: 81 %*), with the comparison against the base model.
+  Precision, recall, IoU, TEDS, WER and the per-class table sit under *Details*.
+- **Compare models** (today Benchmark): a section inside Evaluate. URLs and served names are
+  chosen from the configured models, not typed.
+- What disappears: the project selectors on Dataset, Training, Evaluation, Benchmark; the
+  "Overview" tab (it becomes the Next step card); the duplicate "Stop the run" button.
 
-### Modelli
+### Models
 
-- **In uso ora**: nome del modello, dove gira, stato, *Cambia*, *Prova su una pagina* (sostituisce
-  la pagina Prova modello).
-- **Scegliere un modello** (passo 1): restano ricerca e schede; il filtro *Girano su questo
-  computer* è attivo per default quando ce n'è almeno uno. "Aggiungi un modello da Hugging Face"
-  diventa un link in fondo alla lista, non un modulo sempre aperto.
-- **Dove farlo girare** (passo 2): prima le opzioni possibili su questa macchina, poi le altre.
-  Un'opzione impossibile (oggi *Locale* selezionato ma "Questa macchina non può servire modelli
-  in locale") non è mai preselezionata; va in fondo, grigia, con la causa in una riga.
-  Descrizioni senza gergo:
-  - *Questo computer* — "Usa la GPU di questa macchina."
-  - *Modal* — "Paghi solo i secondi in cui il modello lavora. Serve un account Modal."
-  - *Vast.ai* — "Noleggi una GPU a ore. Serve un account Vast.ai con credito."
-  - *RunPod* — "Noleggi una GPU su RunPod. Serve un account RunPod."
-  - *Un server che hai già* — "Indica l'indirizzo di un server compatibile."
-  Nei dettagli (tooltip): vLLM, SGLang, tunnel SSH, proxy HTTPS.
-- **Configura** (passo 3): invariato nella logica; parametri del modello oggi in *Impostazioni →
-  Modelli* (preset, override vLLM/MLX) si spostano qui sotto *Parametri del modello*.
-- L'indicatore 1-2-3 resta solo durante la configurazione, non quando un modello è già in uso.
+- **In use now**: model name, where it runs, status, *Change*, *Try on a page* (replaces the Try
+  model page).
+- **Choose a model** (step 1): search and tabs stay; the *Run on this computer* filter is on by
+  default when there is at least one. "Add a model from Hugging Face" becomes a link at the bottom
+  of the list, not an always-open form.
+- **Where to run it** (step 2): first the options possible on this machine, then the others. An
+  impossible option (today *Local* is selected but "This machine cannot serve models locally") is
+  never preselected; it goes to the bottom, greyed out, with the reason in one line.
+  Descriptions without jargon:
+  - *This computer* — "Uses this machine's GPU."
+  - *Modal* — "You pay only for the seconds the model is working. Requires a Modal account."
+  - *Vast.ai* — "You rent a GPU by the hour. Requires a Vast.ai account with credit."
+  - *RunPod* — "You rent a GPU on RunPod. Requires a RunPod account."
+  - *A server you already have* — "Enter the address of a compatible server."
+  In the details (tooltip): vLLM, SGLang, SSH tunnel, HTTPS proxy.
+- **Configure** (step 3): logic unchanged; model parameters currently in *Settings → Models*
+  (presets, vLLM/MLX overrides) move here under *Model parameters*.
+- The 1-2-3 indicator stays only during configuration, not when a model is already in use.
 
-### Impostazioni
+### Settings
 
-- **Account**: nome, ruolo, email (una volta sola, modificabile: oggi compare due volte),
-  *Cambia password*. La lingua esce da qui: resta nel menu utente.
-- **Istanza** (admin): nome, ruolo di default, registrazione, accesso istituzionale (OIDC).
-- **Dati e backup** (admin): invariato.
-- **Ambiente**: invariato, in fondo.
-- La scheda **Modelli** sparisce (vedi sopra). Il link "Gestisci utenti" resta; Utenti è anche
-  nel menu utente.
+- **Account**: name, role, email (once only, editable: today it appears twice), *Change
+  password*. Language leaves this page: it stays in the user menu.
+- **Instance** (admin): name, default role, registration, institutional sign-in (OIDC).
+- **Data and backup** (admin): unchanged.
+- **Environment**: unchanged, at the bottom.
+- The **Models** tab disappears (see above). The "Manage users" link stays; Users is also in the
+  user menu.
 
-### Intestazione e palette comandi
+### Header and command palette
 
-- Logo e titolo della scheda: **Tabularium** ovunque. Oggi il logo dice "TabulariumLab" e il
-  titolo passa da "Fine-tuning MonkeyOCRv2" (`index.html`) a "Riconoscimento documenti".
-- Palette comandi (⌘K): resta, con progetti, pagine e azioni del progetto corrente. Escono
-  lingua ed Esci (sono nel menu utente); entra Confronta modelli, oggi assente.
+- Logo and tab title: **Tabularium** everywhere. Today the logo says "TabulariumLab" and the title
+  changes from "Fine-tuning MonkeyOCRv2" (`index.html`) to "Riconoscimento documenti" (Document
+  recognition).
+- Command palette (⌘K): stays, with projects, pages and actions for the current project. Language
+  and Sign out leave it (they are in the user menu); Compare models, missing today, is added.
 
-## Cosa si rimuove dal codice
+## What is removed from the code
 
-| Elemento | Motivo |
+| Item | Reason |
 |---|---|
-| `HomePage.tsx` (`/archivio`) | assorbita dalla scheda Pagine |
-| `PlaygroundPage.tsx` | sostituita da *Prova su una pagina* in Modelli |
-| `PageHeader` con `<details>` "Guida" | sostituito da stati vuoti e testi in linea (principio 5) |
-| 11 selettori di progetto e la logica "progetto con più pagine" di `activeProject.ts` | il progetto è nell'URL |
-| `studio/components/ClassPalette.tsx` | non usato |
-| chiavi i18n `home.next*`, `home.env*`, `settings.tabCompute` | non usate |
-| pillola modello nell'intestazione globale | spostata nella scheda Riconoscimenti |
-| scheda Impostazioni → Modelli | spostata in Modelli |
+| `HomePage.tsx` (`/archivio`) | absorbed by the Pages tab |
+| `PlaygroundPage.tsx` | replaced by *Try on a page* in Models |
+| `PageHeader` with `<details>` "Guida" (Guide) | replaced by empty states and inline text (principle 5) |
+| 11 project selectors and the "project with the most pages" logic in `activeProject.ts` | the project is in the URL |
+| `studio/components/ClassPalette.tsx` | unused |
+| i18n keys `home.next*`, `home.env*`, `settings.tabCompute` | unused |
+| model pill in the global header | moved to the Recognitions tab |
+| Settings → Models tab | moved to Models |
 
-Nessuna rotta backend viene rimossa.
+No backend route is removed.
 
-## Fasi
+## Phases
 
-Ogni fase è una PR indipendente, verificata nel browser su un'installazione nuova e su un
-progetto con dati reali, con screenshot nella descrizione.
+Each phase is an independent PR, checked in the browser on a fresh install and on a project with
+real data, with screenshots in the description. All six phases are implemented and merged.
 
-1. **Default e testi** (piccola, nessun cambio di struttura)
-   - motore di default = OCR locale senza modello raggiungibile, nessun avviso rosso al primo avvio;
-   - nome "Tabularium" ovunque, titolo della pagina;
-   - glossario applicato alle stringhe in `i18n/*.ts`, classi tradotte;
-   - primo avvio: flash del login, testo email, login senza admin → setup;
-   - rimozione del codice morto (tabella sopra).
-2. **Progetto al centro**: nuove rotte con redirect, intestazione del progetto con il suo
-   selettore, schede Pagine e Riconoscimenti, rimozione dei selettori per pagina e di `HomePage`.
-3. **Pagine e Avanzate**: barra dell'azione principale, creazione + caricamento in un passo,
-   vista tabella, pagina Avanzate del progetto.
-4. **Studio**: azione unica di chiusura, barra strumenti ridotta, lavoro di squadra condizionale,
-   barra laterale chiudibile.
-5. **Fine-tuning a passi**: percorso unico, parametri dietro *Parametri*, valutazione in
-   linguaggio comune, Confronta modelli dentro Valuta.
-6. **Modelli e Impostazioni**: ordine delle opzioni, testi, Prova su una pagina, spostamento dei
-   parametri dei modelli, pulizia di Impostazioni.
+1. **Defaults and copy** (small, no structural change) — implemented in
+   [#38](https://github.com/nbadino/tabularium/pull/38)
+   - default engine = local OCR when no model is reachable, no red warning on first run;
+   - the name "Tabularium" everywhere, page title;
+   - glossary applied to the strings in `i18n/*.ts`, classes translated;
+   - first run: login flash, email text, login without admin → setup;
+   - removal of dead code (table above).
+2. **Project at the centre**: new routes with redirects, project header with its own selector,
+   Pages and Recognitions tabs, removal of the per-page selectors and of `HomePage` —
+   implemented in [#39](https://github.com/nbadino/tabularium/pull/39).
+3. **Pages and Advanced**: main action bar, creation + upload in one step, table view, the
+   project's Advanced page — implemented in [#40](https://github.com/nbadino/tabularium/pull/40).
+4. **Studio**: single closing action, reduced toolbar, conditional teamwork, collapsible
+   sidebar — implemented in [#41](https://github.com/nbadino/tabularium/pull/41).
+5. **Stepped fine-tuning**: one path, parameters behind *Parameters*, evaluation in plain
+   language, Compare models inside Evaluate — implemented in
+   [#42](https://github.com/nbadino/tabularium/pull/42).
+6. **Models and Settings**: order of the options, copy, Try on a page, moving the model
+   parameters, Settings cleanup — implemented in
+   [#43](https://github.com/nbadino/tabularium/pull/43).
 
-Le fasi 1 e 6 non dipendono dalle altre. La 2 è il prerequisito di 3, 4 e 5.
+Phases 1 and 6 do not depend on the others. Phase 2 is the prerequisite for 3, 4 and 5.
 
-## Decisioni aperte
+## Decisions
 
-| # | Domanda | Proposta in questa bozza |
-|---|---|---|
-| D1 | Utente principale: ricercatore singolo o team? | Singolo; il lavoro di squadra compare con più membri |
-| D2 | Peso del fine-tuning | **Principale** (indicato il 2 novembre): scheda sempre visibile nel progetto |
-| D3 | Protocollo, pilot, gold set, attività, benchmark: tenere, nascondere, togliere? | Nascondere in *Avanzate* del progetto; benchmark dentro Valuta |
-| D4 | "Verificata" e "approvata" sono due stati diversi (zona verificata, pagina approvata)? | Unificare in *Verificata* per l'utente singolo; *Approvata* solo nel flusso di revisione di squadra |
-| D5 | Con un solo progetto, `/` apre direttamente il progetto? | Sì |
-| D6 | Lingua di default dell'interfaccia | Quella del browser, inglese se non disponibile (oggi italiano) |
-| D7 | La vista tabella del registro resta nella scheda Pagine o va in Avanzate? | Resta, come interruttore |
+D2 is decided. The other questions have not been formally decided; the right-hand column is the
+proposal written in the draft.
+
+| # | Question | Status | Outcome or proposal |
+|---|---|---|---|
+| D1 | Main user: single researcher or team? | Open | Proposal: single; teamwork appears with more than one member |
+| D2 | Weight of fine-tuning | **Decided** by the owner, 2 November 2026 | **Primary path**: a tab always visible in the project |
+| D3 | Protocol, pilot, gold set, activity, benchmark: keep, hide, remove? | Open | Proposal: hide in the project's *Advanced*; benchmark inside Evaluate |
+| D4 | Are "Verified" and "approved" two different states (region verified, page approved)? | Open | Proposal: unify as *Verified* for the single user; *Approved* only in the team review flow |
+| D5 | With only one project, does `/` open the project directly? | Open | Proposal: yes |
+| D6 | Default interface language | Open | Proposal: the browser's language, English if not available (today Italian) |
+| D7 | Does the register's table view stay in the Pages tab or move to Advanced? | Open | Proposal: it stays, as a toggle |
