@@ -287,8 +287,9 @@ def _run_job(project_id: int, run_id: str, plan: dict, run_dir: Path) -> None:
         job["model_name"] = model.get("display_name")
         job["error"] = None
         meta["checkpoint"] = trainer.checkpoint_info(run_dir)
-        _save(run_dir, meta, job)
+        # Log first: a reader that sees "finished" must also find the final line.
         _append(run_dir, f">> registrato: {model.get('display_name')} ({model.get('id')})")
+        _save(run_dir, meta, job)
     except Exception as exc:  # noqa: BLE001 - il job deve raccontare l'errore, non sparire
         job["state"] = "failed"
         job["ended_at"] = _now()
