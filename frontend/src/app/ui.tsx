@@ -44,31 +44,26 @@ export function Module({
 /* ------------------------------------------------------------ PageHeader -- */
 
 /**
- * Un titolo operativo; la spiegazione si apre su richiesta.
+ * An operative title. No folded "Guide": a screen explains itself through its
+ * empty states and labels (docs/UX_SIMPLIFICATION.md, principle 5); the user
+ * guide is linked from the user menu.
  */
 export function PageHeader({
   title,
-  intro,
   aux,
   className = 'mb-3 pb-2',
 }: {
   title: ReactNode
-  intro: string
-  /** Contenuto accanto al titolo (versione, conteggi). */
+  /** Content next to the title (version, counts). */
   aux?: ReactNode
   className?: string
 }) {
-  const { t } = useI18n()
   return (
     <div className={`page-heading ${className}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <h1 className="text-[24px] font-bold leading-tight tracking-[-0.03em]">{title}</h1>
         <div className="ml-auto flex flex-wrap items-center gap-2">{aux}</div>
       </div>
-      <details className="mt-1 text-[12px] text-[color:var(--color-ink-2)]">
-        <summary className="w-fit cursor-pointer">{t('team.pageHelp')}</summary>
-        <p className="mt-2 max-w-[100ch] text-[13px] leading-relaxed">{intro}</p>
-      </details>
     </div>
   )
 }

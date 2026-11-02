@@ -379,7 +379,7 @@ export default function TrainingPage() {
 
   return (
     <div className="p-3">
-      <PageHeader title={t('training.title')} intro={t('training.intro')} aux={routeProjectId == null ? (
+      <PageHeader title={t('training.title')} aux={routeProjectId == null ? (
         <div className="w-[min(24rem,100%)]">
           <Field label={t('training.project')}>
             <select className="fld" value={projectId} onChange={(e) => onProject(e.target.value === '' ? '' : Number(e.target.value))}>

@@ -1,20 +1,15 @@
 /**
- * Il proprio account: chi sei per questa istanza e le due sole cose che puoi
- * cambiare da solo — la lingua dell'interfaccia e la password.
- *
- * I valori d'identità (utente, ruolo, email) sono di sola lettura per
- * chiunque, admin compreso: si cambiano nella pagina Utenti, dove vive
- * l'amministrazione degli account.
+ * Your account: who you are on this instance, your email and your password.
+ * The interface language lives in the user menu (one place per setting).
  */
 import { useState } from 'react'
 import { useAuth } from '../../app/auth'
 import ChangePasswordModal from '../../app/ChangePasswordModal'
 import { Field, Module } from '../../app/ui'
-import { LOCALES, LOCALE_LABELS, useI18n } from '../../i18n'
-import type { Locale } from '../../i18n'
+import { useI18n } from '../../i18n'
 
 export default function AccountSection() {
-  const { locale, setLocale, t } = useI18n()
+  const { t } = useI18n()
   const { user, updateProfile } = useAuth()
   const [pwOpen, setPwOpen] = useState(false)
   const [email, setEmail] = useState(user?.email ?? '')
@@ -30,21 +25,6 @@ export default function AccountSection() {
         <p className="mt-1 max-w-[72ch] text-[12px] text-[color:var(--color-ink-2)]">
           {t('settings.localModeBody')}
         </p>
-        <div className="mt-3 grid items-end gap-3 sm:grid-cols-[minmax(220px,360px)_auto]">
-          <Field label={t('settings.language')} hint={t('settings.languageHint')}>
-            <select
-              className="fld"
-              value={locale}
-              onChange={(e) => setLocale(e.target.value as Locale)}
-            >
-              {LOCALES.map((item) => (
-                <option key={item} value={item}>
-                  {LOCALE_LABELS[item]}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </div>
       </Module>
     )
   }
@@ -70,7 +50,7 @@ export default function AccountSection() {
             {t('account.mustChangeNotice')}
           </p>
         )}
-        <dl className="grid gap-x-6 gap-y-3 border-b border-[color:var(--color-rule)] pb-3 sm:grid-cols-3">
+        <dl className="grid gap-x-6 gap-y-3 border-b border-[color:var(--color-rule)] pb-3 sm:grid-cols-2">
           <div className="min-w-0">
             <dt className="lbl">{t('settings.accountUser')}</dt>
             <dd className="truncate text-[13px] font-semibold">{user.username}</dd>
@@ -79,28 +59,9 @@ export default function AccountSection() {
             <dt className="lbl">{t('settings.accountRole')}</dt>
             <dd className="text-[13px]">{t(roleKey)}</dd>
           </div>
-          <div className="min-w-0">
-            <dt className="lbl">{t('settings.accountEmail')}</dt>
-            <dd className="truncate text-[13px] text-[color:var(--color-ink-2)]" title={user.email || undefined}>
-              {user.email || t('settings.accountNoEmail')}
-            </dd>
-          </div>
         </dl>
 
-        <div className="mt-3 grid items-end gap-3 sm:grid-cols-[minmax(200px,320px)_minmax(200px,320px)_auto]">
-          <Field label={t('settings.language')} hint={t('settings.languageHint')}>
-            <select
-              className="fld"
-              value={locale}
-              onChange={(e) => setLocale(e.target.value as Locale)}
-            >
-              {LOCALES.map((item) => (
-                <option key={item} value={item}>
-                  {LOCALE_LABELS[item]}
-                </option>
-              ))}
-            </select>
-          </Field>
+        <div className="mt-3 grid items-end gap-3 sm:grid-cols-[minmax(200px,320px)_auto]">
           <Field
             label={t('account.email')}
             hint={

@@ -12,7 +12,7 @@ import { useNavigate } from 'react-router'
 import { apiGet } from '../lib/api'
 import { pageLabel } from '../lib/pageLabel'
 import type { PageItem, Project } from '../lib/types'
-import { LOCALES, LOCALE_LABELS, useI18n } from '../i18n'
+import { useI18n } from '../i18n'
 import { readActiveProject, writeActiveProject } from './activeProject'
 import { projectPath } from './projectPaths'
 import { useAuth } from './auth'
@@ -54,8 +54,8 @@ export function matchesQuery(label: string, query: string): boolean {
 }
 
 export function CommandPalette() {
-  const { t, locale, setLocale } = useI18n()
-  const { user, logout } = useAuth()
+  const { t } = useI18n()
+  const { user } = useAuth()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -136,18 +136,8 @@ export function CommandPalette() {
           label: pageLabel(pg),
           run: go(projectPath(pages.project.id, 'studio', { page: pg.id })),
         })
-    for (const l of LOCALES)
-      if (l !== locale)
-        out.push({
-          id: `locale:${l}`,
-          kind: t('commands.kindAction'),
-          label: `${t('commands.language')}: ${LOCALE_LABELS[l]}`,
-          run: () => setLocale(l),
-        })
-    if (user)
-      out.push({ id: 'logout', kind: t('commands.kindAction'), label: t('layout.logout'), run: () => void logout() })
     return out
-  }, [t, user, projects, pages, query, locale, setLocale, logout, navigate])
+  }, [t, user, projects, pages, query, navigate])
 
   const results = useMemo(
     () => commands.filter((c) => matchesQuery(`${c.label} ${c.kind}`, query)).slice(0, MAX_RESULTS),

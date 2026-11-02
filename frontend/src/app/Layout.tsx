@@ -96,6 +96,9 @@ function AccountMenu() {
         <NavLink to="/impostazioni" className="menu-item">
           {t('nav.settings')}
         </NavLink>
+        <a href={HELP_URL} target="_blank" rel="noreferrer" className="menu-item no-underline">
+          {t('nav.help')}
+        </a>
         <LocaleSwitch />
         {user && (
           <>
@@ -109,6 +112,9 @@ function AccountMenu() {
     </>
   )
 }
+
+/** The user guide (mkdocs site_url): the interface explains itself, the guide goes deeper. */
+const HELP_URL = 'https://nbadino.github.io/tabularium/'
 
 const MODEL_PATHS = ['/modelli', '/playground']
 function sectionOf(path: string): string {
@@ -297,18 +303,6 @@ export default function Layout() {
           <NavMark pathname={location.pathname} />
         </nav>
         {projectId != null && <ProjectNav id={projectId} pathname={location.pathname} />}
-        {MODEL_PATHS.includes(location.pathname) && (
-          <nav aria-label={t('workflow.modelNav')} className="section-nav">
-            {[
-              { to: '/modelli', key: 'workflow.configure' },
-              { to: '/playground', key: 'nav.playground' },
-            ].map(({ to, key }) => (
-              <NavLink key={to} to={to} className="section-link">
-                {t(key)}
-              </NavLink>
-            ))}
-          </nav>
-        )}
       </header>
 
       <main

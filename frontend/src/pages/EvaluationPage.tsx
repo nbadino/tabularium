@@ -181,7 +181,7 @@ export default function EvaluationPage() {
 
   return (
     <div className="p-3">
-      <PageHeader title={t('evaluate.title')} intro={t('evaluate.intro')} />
+      <PageHeader title={t('evaluate.title')} />
 
       {error != null && (
         <div className="mb-3">

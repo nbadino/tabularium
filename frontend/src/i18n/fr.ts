@@ -71,8 +71,6 @@ export const fr: Dict = {
   },
 
   team: {
-    pageHelp: 'Aide',
-    projectsIntro: "Retrouvez ici les projets auxquels vous avez accès. Ouvrez un projet pour consulter ses pages ou y travailler selon votre autorisation.",
     "accessAdded": "Accès ajouté pour {name}.",
     "newRole": "Accès à attribuer",
     "editorHelp": "Peut annoter, corriger et approuver les pages du projet.",
@@ -100,7 +98,6 @@ export const fr: Dict = {
     "accessFor": "Personnes et accès de {name}",
     "peopleAccess": "Personnes et accès",
     "readerTitle": "Consulter les pages",
-    "readerIntro": "Consultez les scans, transcriptions et tableaux enregistrés. Les modifications des collègues sont rechargées pendant la consultation.",
     "readerNotice": "Accès en lecture seule : vous pouvez consulter le travail sans modifier ni approuver les pages.",
     "readerProjectHint": "Ouvrez la consultation pour lire les pages, ou Personnes et accès pour voir qui gère le projet.",
     "openReader": "Consulter les pages",
@@ -131,7 +128,6 @@ export const fr: Dict = {
     firstProjectHint: "Créez un projet pour regrouper images, résultats et corrections. Importez les pages à l’étape suivante.",
     clearSearch: "Effacer la recherche",
     overview: "Vue d’ensemble",
-    refineIntro: "Améliorez la reconnaissance avec vos corrections. Retrouvez l’état du projet, la prochaine étape et les outils pour préparer les données, entraîner et comparer la qualité.",
     nextStep: "Prochaine étape",
     nextRunning: "L’entraînement est en cours",
     nextRunningBody: "Ouvrez le suivi pour consulter la progression, la loss et les journaux.",
@@ -160,7 +156,6 @@ export const fr: Dict = {
     evaluateBody: "Mesurez mise en page, texte et tableaux par rapport aux annotations approuvées.",
     needsGold: "Pages approuvées requises",
     openEvaluation: "Ouvrir l’évaluation",
-    baselineHint: "Évaluez le modèle de base avant le fine-tuning pour établir une référence de comparaison. Pour un essai temporaire sur une page, utilisez Modèles → Essayer le modèle.",
     projectActions: "Autres actions",
     projectReady: "Les pages sont dans le projet",
     projectReadyBody: "Reconnaître les pages lance une reconnaissance et enregistre les résultats. Ouvrez le Studio pour corriger ou annoter manuellement. Le fine-tuning est facultatif et améliore un modèle avec vos corrections.",
@@ -188,6 +183,7 @@ export const fr: Dict = {
   },
 
   nav: {
+    help: 'Aide',
     pages: 'Pages',
     recognitions: 'Reconnaissances',
     projectNav: 'Projet',
@@ -223,7 +219,6 @@ export const fr: Dict = {
     noneInFilter: 'Aucune page dans ce filtre.',
     filter: { all: 'Toutes {n}', drafts: 'À vérifier {n}', empty: 'Sans blocs {n}', failed: 'Erreurs {n}' },
     title: 'Reconnaître des images',
-    intro: 'Reconnaissez une sélection de pages, enregistrez chaque résultat et révisez-le plus tard. Le modèle peut être désactivé dès la fin de la reconnaissance.',
     newRun: 'Nouvelle reconnaissance',
     project: "Projet",
     activeModel: 'Modèle utilisé',
@@ -297,7 +292,6 @@ export const fr: Dict = {
     recent: 'Reconnaissances récentes',
     noRuns: 'Aucune reconnaissance pour le moment.',
     resultsTitle: 'Résultats',
-    resultsIntro: 'Exportez la sortie originale ou ouvrez les pages à vérifier dans le Studio. La révision ne nécessite pas de modèle actif.',
     pickRun: 'Choisissez une reconnaissance pour voir les pages reconnues.',
     rawExport: 'Exporter la sortie originale',
     reviewedExport: 'Exporter la version actuelle',
@@ -439,13 +433,13 @@ export const fr: Dict = {
   },
 
   modelsHub: {
-    intro:
-      'Trois étapes, dans l’ordre où l’on décide : choisir le modèle, choisir où l’exécuter, le configurer. Reconnaissance, révision et export restent identiques quelle que soit la destination.',
+    tryPage: 'Essayer sur une page',
+    chooseAnother: 'Choisir un autre modèle',
+    modelParams: 'Paramètres du modèle',
     inUseTitle: 'Utilisé maintenant',
     nothingInUse: 'Aucun modèle',
     nothingInUseHint: 'Aucun modèle n’est encore en service : commencez par l’étape 1.',
     runningModel: 'Modèle',
-    endpoint: 'Endpoint',
     manageInUse: 'Gérer',
     goRecognize: 'Aller à Reconnaître',
     tryPlayground: "Essayer sur une page",
@@ -486,19 +480,19 @@ export const fr: Dict = {
     publishBadge: 'Publier le checkpoint',
     youWillNeed: 'Il vous faudra :',
     dest: {
-      localBody: 'Gratuit, et les pages ne quittent pas cet ordinateur. Runtime : {runtime}.',
+      localBody: 'Gratuit, et les pages ne quittent pas cet ordinateur.',
       localNeedsMlx: 'rien à installer : {repo} se télécharge au premier démarrage.',
       localNeedsVllm: 'de la place pour les poids ({size}) et un GPU NVIDIA avec assez de VRAM.',
-      modalBody: 'Serverless à la consommation : vous payez les secondes de GPU et il s’éteint seul au repos.',
-      modalNeeds: 'un compte Modal et son token.',
-      vastBody: 'Un GPU loué à l’heure, relié à Tabularium par un tunnel SSH.',
-      vastNeeds: 'une clé API Vast.ai et du crédit sur le compte.',
-      runpodBody: 'Un Pod RunPod, joint via le proxy HTTPS de RunPod.',
-      runpodNeeds: 'une clé API RunPod.',
-      llamaindexBody: 'OCRia-1 via l’API native LlamaCloud : envoi de la page, parsing asynchrone et réglages d’effort, de tableaux et de qualité.',
-      llamaindexNeeds: 'une clé API LlamaCloud personnelle et du crédit sur le compte.',
-      manualBody: 'Un endpoint externe que vous avez déjà : un serveur compatible OpenAI (vLLM, SGLang…) ou une passerelle avec son propre protocole, comme OpenCode pour Gemini 4 Argon.',
-      manualNeeds: 'l’URL de l’endpoint et le nom du modèle servi.',
+      modalBody: 'Vous ne payez que les secondes où le modèle travaille ; il s’éteint tout seul.',
+      modalNeeds: 'un compte Modal.',
+      vastBody: 'Louez un GPU à l’heure : Tabularium le prépare et l’éteint quand vous avez fini.',
+      vastNeeds: 'un compte Vast.ai approvisionné.',
+      runpodBody: 'Louez un GPU sur RunPod : Tabularium l’utilise via internet.',
+      runpodNeeds: 'un compte RunPod.',
+      llamaindexBody: 'OCRia-1 de LlamaIndex : les pages sont envoyées au service LlamaCloud.',
+      llamaindexNeeds: 'un compte LlamaCloud approvisionné.',
+      manualBody: 'Un serveur que vous avez déjà, compatible avec l’API d’OpenAI.',
+      manualNeeds: 'l’adresse du serveur et le nom du modèle.',
     },
     why: {
       noCloudRecipe: 'Il n’existe pas encore de recette de serving distant vérifiée pour ce modèle.',
@@ -719,7 +713,6 @@ export const fr: Dict = {
   projects: {
     picker: { open: 'Parcourir…', nativeWaiting: 'En attente de la fenêtre de dossiers… elle s\u2019ouvre sur l\u2019ordinateur qui exécute le serveur.', title: 'Choisir le dossier source', up: 'Haut', use: 'Utiliser ce dossier', files: { one: '{n} image ou PDF ici', other: '{n} images ou PDF ici' }, recursive: 'L\u2019analyse inclut aussi les sous-dossiers.', noSubfolders: 'Aucun sous-dossier.', truncated: 'Dossier très volumineux : la liste est partielle.' },
     title: 'Projets',
-    intro: "Un projet regroupe pages, résultats et corrections. Créez un projet, importez les pages, puis reconnaissez-les automatiquement ou annotez-les.",
     new: 'Nouveau projet',
     name: 'Nom',
     namePlaceholder: 'Ex. Historic Shipping Index 1904',
@@ -1548,8 +1541,6 @@ export const fr: Dict = {
     emptyBuildHint: 'La dernière construction ne contenait aucune page : approuvez des pages et reconstruisez.',
     localTime: 'heure locale',
     title: 'Dataset',
-    intro:
-      'Transforme les annotations manuelles en JSONL ms-swift que l’entraînement officiel accepte : split reproductible, coordonnées normalisées 0–1000, tableaux en OTSL.',
     build: 'Construction',
     project: 'Projet',
     trainShare: 'Part de train — {pct}%',
@@ -1667,8 +1658,6 @@ export const fr: Dict = {
       okBody: 'dataset avec {train} échantillons d\u2019entraînement et {val} de validation.',
     },
     title: "Fine-tuning",
-    intro:
-      'Génère et lance l’entraînement ms-swift (LoRA ou full-SFT) dans l’environnement GPU dédié, avec les scripts et hyperparamètres canoniques du repo officiel. Construisez d’abord le dataset dans la section Dataset.',
     project: 'Projet',
     preset: 'Preset',
     essentials: 'Paramètres essentiels',
@@ -1926,7 +1915,6 @@ export const fr: Dict = {
     showUnready: 'Afficher aussi les {n} pages à vérifier',
     title: 'Comparer les modèles',
     goldOnly: 'Pages approuvées uniquement',
-    intro: 'Comparez plusieurs modèles sur les mêmes pages approuvées. La vérité est votre annotation, pas la sortie d’un autre modèle : le rapport reste sur disque et ne touche pas le projet.',
     adapter: 'Modèle',
     endpoint: 'Endpoint',
     model: 'Nom servi',
@@ -1986,7 +1974,6 @@ export const fr: Dict = {
     needsGold: 'Il faut au moins une page approuvée : c\u2019est la vérité à laquelle on compare le modèle. Les brouillons non vérifiés ne comptent pas.',
     baselineNote: { one: 'Aucun entraînement terminé : vous mesurez le modèle de départ sur {n} page approuvée. C\u2019est la référence que le fine-tuning doit battre.', other: 'Aucun entraînement terminé : vous mesurez le modèle de départ sur {n} pages approuvées. C\u2019est la référence que le fine-tuning doit battre.' },
     title: 'Évaluation',
-    intro: 'Mesurez un modèle — celui de départ ou celui affiné — face aux pages approuvées de votre projet : mise en page, ordre de lecture, texte et tableaux. Sans fine-tuning, c\u2019est la référence à battre.',
     run: 'Exécution',
     project: 'Projet',
     server: 'Serveur vLLM',
@@ -2055,8 +2042,6 @@ export const fr: Dict = {
     engineOcr: 'OCR local · {engine}',
     ocrNote: 'Seulement des lignes de texte, sans mise en page ni tableaux : dit tout de suite si la page se lit.',
     title: "Essayer le modèle",
-    intro:
-      "Vérifiez comment le modèle actif lit une page avant de reconnaître tout un projet. Vous pouvez aussi essayer l’OCR local. Les résultats de l’essai ne sont pas enregistrés dans le projet.",
     run: 'Essayer',
     project: 'Projet',
     page: 'Page',
@@ -2625,7 +2610,6 @@ export const fr: Dict = {
     kindProject: 'Projet',
     kindPage: 'Page',
     kindAction: 'Action',
-    language: 'Langue',
   },
 
   account: {
@@ -2672,14 +2656,11 @@ export const fr: Dict = {
     },
     localNoAccounts: 'Mode local (TABULARIUM_AUTH=off) : il n\u2019y a pas de comptes, donc inscription, rôles et utilisateurs ne s\u2019appliquent pas.',
     title: 'Paramètres',
-    intro:
-      'Gérez votre compte, les accès, les sauvegardes et l’environnement de l’instance. Les modèles et fournisseurs se configurent dans Modèles.',
     sections: 'Zones des paramètres',
     readOnly: 'Vous consultez la configuration de l’instance : seul un administrateur peut la modifier.',
 
     tabAccount: 'Compte',
     tabInstance: 'Instance',
-    tabModels: 'Modèles',
     tabData: 'Données et sauvegardes',
     tabEnv: 'Environnement',
     modelTuning: 'Préréglages et réglages par modèle',
@@ -2769,15 +2750,10 @@ export const fr: Dict = {
     account: 'Mon compte',
     accountUser: 'Nom d’utilisateur',
     accountRole: 'Rôle',
-    accountEmail: 'E-mail',
-    accountNoEmail: 'aucun',
     localModeTitle: 'Instance sans comptes',
     localModeBody:
       'Cette installation fonctionne en mode local (`TABULARIUM_AUTH=off`) : il n’y a ni utilisateurs ni sessions et toutes les opérations sont permises. La langue de l’interface reste un choix de ce navigateur.',
     changePassword: 'Changer le mot de passe',
-    language: 'Langue',
-    languageHint: 'Vaut pour ce navigateur : la langue des autres utilisateurs ne change pas.',
-
     instance: 'Identité et accès',
     instanceName: 'Nom de l’instance',
     instanceNameHint: 'Le nom affiché sur l’écran de connexion.',
@@ -2909,8 +2885,6 @@ export const fr: Dict = {
 
   users: {
     title: 'Utilisateurs',
-    intro:
-      'Les comptes de cette instance : qui peut se connecter, avec quel rôle, et comment. Le rôle décide de ce qu’on peut faire — l’admin gouverne tout, les éditeurs travaillent sur les projets, les lecteurs lisent.',
     newUser: 'Nouvel utilisateur',
     list: 'Utilisateurs',
     username: 'Nom d’utilisateur',

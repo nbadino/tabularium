@@ -47,6 +47,16 @@ describe('CommandPalette', () => {
     expect(screen.getByTestId('where')).toHaveTextContent('/impostazioni')
   })
 
+  it('language and logout stay in the user menu', () => {
+    setup()
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
+    const input = screen.getByRole('combobox')
+    fireEvent.change(input, { target: { value: 'lingua' } })
+    expect(screen.queryByRole('option', { name: /Lingua/ })).toBeNull()
+    fireEvent.change(input, { target: { value: 'esci' } })
+    expect(screen.queryByRole('option', { name: /Esci/ })).toBeNull()
+  })
+
   it('le frecce scelgono un progetto e lo aprono in Annotazione', async () => {
     setup()
     fireEvent.click(screen.getByRole('button', { name: /Cerca/ }))

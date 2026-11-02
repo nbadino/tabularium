@@ -40,6 +40,11 @@ describe('Layout', () => {
     expect(screen.queryByTitle('Cambia modello o esecuzione')).not.toBeInTheDocument()
   })
 
+  it('the user menu leads to the help', () => {
+    renderAt('/progetti')
+    expect(screen.getByRole('link', { name: 'Aiuto' })).toHaveAttribute('href', 'https://nbadino.github.io/tabularium/')
+  })
+
   it('names the app Tabularium', () => {
     renderAt('/')
     expect(screen.getByText('Tabularium')).toBeInTheDocument()

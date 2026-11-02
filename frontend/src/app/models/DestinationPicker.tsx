@@ -11,7 +11,7 @@ import type { SystemInfo } from '../../lib/types'
 import { useI18n } from '../../i18n'
 import { Badge, Module } from '../ui'
 import { IconWarn } from '../icons'
-import { DESTINATIONS, destinationVerdict, recommendedDestination, type Destination, type ModelItem } from './registry'
+import { destinationVerdict, orderedDestinations, recommendedDestination, type Destination, type ModelItem } from './registry'
 
 interface DestinationPickerProps {
   model: ModelItem
@@ -48,9 +48,10 @@ export function DestinationPicker({ model, selected, caps, onSelect }: Destinati
       )}
 
       <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-        {DESTINATIONS.map((dest) => {
+        {orderedDestinations(model).map((dest) => {
           const verdict = destinationVerdict(model, dest)
-          const isSelected = selected === dest
+          // A destination that cannot host the model is never shown as chosen.
+          const isSelected = selected === dest && verdict.ok
           const isRecommended = recommended === dest
           return (
             <button
