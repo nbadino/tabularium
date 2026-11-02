@@ -45,6 +45,15 @@ def test_a_current_database_is_not_backed_up_at_every_start():
     assert backup.list_backups() == []
 
 
+def test_an_empty_database_file_is_not_backed_up_as_a_legacy_one():
+    # Something may create the file before init_db runs (a first connection, an
+    # interrupted first start): with no tables there is nothing to protect.
+    _reset_db()
+    config.DB_PATH.touch()
+    db.init_db()
+    assert backup.list_backups() == []
+
+
 def test_a_newer_database_is_refused_with_a_clear_message():
     _reset_db()
     db.init_db()
@@ -116,6 +125,23 @@ def test_cli_backup_archives_data_and_vault_key(tmp_path, monkeypatch):
         snapshot.write_bytes(tar.extractfile("data/tabularium.db").read())
     with sqlite3.connect(snapshot) as conn:
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+
+def test_cli_backup_keeps_one_copy_of_a_vault_key_inside_the_data_root(tmp_path, monkeypatch):
+    _reset_db()
+    db.init_db()
+    env_file = config.ROOT_DIR / ".env"
+    env_file.write_text("TABULARIUM_VAULT_KEY=k\n")
+    monkeypatch.setattr(config, "ENV_FILE", env_file)
+    out = tmp_path / "b.tar.gz"
+    try:
+        assert cli.main(["backup", "--out", str(out)]) == 0
+    finally:
+        env_file.unlink()
+    with tarfile.open(out) as tar:
+        names = tar.getnames()
+    assert names.count(".env") == 1
+    assert "data/.env" not in names
 
 
 def test_cli_restore_db_sets_the_old_database_aside_without_migrating(monkeypatch):

@@ -76,7 +76,10 @@ press `Ctrl+C` to stop it.
 | `tabularium --host 0.0.0.0` | accept connections from other computers (for a shared lab server) |
 | `uv tool upgrade --python 3.13 tabularium` | upgrade to the latest release ([back up first](upgrading.md)) |
 | `uv tool uninstall tabularium` | remove the app (your data folder is kept) |
-| `tabularium backup` | archive the data folder and the vault key ([Upgrading](upgrading.md)) |
+| `tabularium backup` | archive the data folder and the vault key into the current directory, or `--out FILE` ([Upgrading](upgrading.md)) |
+| `tabularium doctor` | check the installation without starting it; `--data DIR` for another data folder |
+| `tabularium reset-password <user>` | set a new password for a user locked out of the app |
+| `tabularium --help` | list every command |
 
 **Your data** (projects, database, models, settings) lives in `~/Tabularium`,
 outside the installed package, so upgrades never touch it. The folder also
@@ -245,8 +248,8 @@ the prefix belongs to the proxy, not to the application.
 
 ## Offline installation
 
-Two things normally come from the network: model checkpoints, and the OCR engine's own
-models on first use.
+Only model checkpoints come from the network. The local OCR engine works offline
+from the first start.
 
 **Checkpoints.** `tabularium models import` copies a directory that contains
 `config.json` and the weights into `<data>/models/<adapter>`, with the same state a
@@ -269,19 +272,18 @@ mirror works without changing the application:
 export HF_ENDPOINT=https://hf-mirror.internal.example
 ```
 
-**OCR engine models.** The bundled RapidOCR engine downloads its own models the first
-time it runs and keeps them in its cache, outside Tabularium's data directory; there is
-no import command for them yet. On an air-gapped host, either run the engine once on a
-connected machine and copy that cache, or use a model served from the network. This is
-the remaining item of phase P5 in `docs/architecture/program.md`.
+**OCR engine models.** The wheel installs RapidOCR together with its `.onnx` models
+(in the package's `rapidocr/models/` folder), so local OCR needs no download, on first
+use or later. Its log line `File exists and is valid` on first use means it found them.
 
 ## Next steps
 
-1. **Projects** → create a project and import scans (from the browser, or from
-   a folder on the server).
-2. **Models** → pick a model and where it runs (skip this to use local OCR only).
-3. **Recognize** → select pages and start.
-4. **Results** → check, open pages in **Annotate** to correct, export.
+1. **Projects** → create a project and drop scans into its **Pages** tab (from the
+   browser, or from a folder on the server).
+2. **Recognize N pages** reads them with local OCR, or with a model once one answers
+   (**Models**: pick a model and where it runs).
+3. **Review N pages with drafts** opens the Studio; **Verify and go to the next**
+   finishes each page. Then **Export**.
 
 Model serving details are in [Local inference](local-inference.md);
 rented GPUs (Vast.ai, RunPod, Modal, SSH tunnels) in

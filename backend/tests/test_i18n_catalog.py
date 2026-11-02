@@ -89,3 +89,11 @@ def test_every_constant_error_detail_is_in_the_catalog():
                 if i18n.localize_detail(value, "en") == value:
                     untranslated.append(f"{path.relative_to(app)}:{node.lineno} {value!r}")
     assert not untranslated, "\n".join(untranslated)
+
+
+def test_a_client_without_a_language_gets_english() -> None:
+    from app.services.i18n import parse_lang
+
+    assert parse_lang(None) == "en"
+    assert parse_lang("de-DE,de;q=0.9") == "en"
+    assert parse_lang("it-IT,it;q=0.9") == "it"

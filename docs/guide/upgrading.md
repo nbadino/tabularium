@@ -72,7 +72,9 @@ before the upgrade.
 tabularium backup --out /somewhere/safe/tabularium-backup.tar.gz
 ```
 
-The archive holds the data root under `data/` and the vault key as `.env`; the
+Without `--out`, the archive is written to the current directory as
+`tabularium-backup-<time>.tar.gz`; the command prints its path. It holds the data root
+under `data/` and the vault key once, as `.env`; the
 database is copied consistently even if the app is running. Model runtimes, caches and
 zoom tiles are left out, because the app rebuilds them. The archive contains the vault
 key: keep it as private as the credentials it protects. From a release archive or a

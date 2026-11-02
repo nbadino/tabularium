@@ -53,6 +53,10 @@ Notable changes to Tabularium. The format follows
 - First-run setup no longer promises recovery emails, and a setup tab left open after the
   administrator was created elsewhere returns to the login.
 
+### Added
+- `tabularium reset-password [user]`: a new password for a user locked out of the app
+  (before, only `scripts/reset_password.py` in a checkout).
+
 ### Removed
 - Unused `ClassPalette` component and unused interface strings.
 - The separate Archive page: its thumbnail wall is now the project's Pages tab.
@@ -61,6 +65,16 @@ Notable changes to Tabularium. The format follows
 - An unsupported Python is no longer silent: `tabularium doctor` fails outside 3.11–3.13 and
   startup prints a warning, both with the reinstall command. The install and upgrade commands
   pin `--python 3.13`, because `uv tool install` otherwise uses a system Python 3.14 (#32).
+- `tabularium doctor` is in English, like the rest of the command line, and names the data
+  folder and the `.env` it checked. API errors go to clients that send no supported
+  `Accept-Language` (curl, scripts) in English instead of Italian; the interface is unchanged.
+- `tabularium --help` lists the commands. Under systemd or in a container the startup banner
+  shows `TABULARIUM_PUBLIC_URL` when set, and no longer says "Ctrl+C".
+- A brand-new database no longer gets a `pre-migration-vlegacy` backup.
+- `tabularium backup` stores the vault key once (`.env`), not also as `data/.env`; the docs
+  say where the archive goes without `--out`.
+- The offline installation guide no longer says RapidOCR downloads its models: they ship in
+  the package (#36).
 
 ## [0.5.0] - 2026-11-02
 

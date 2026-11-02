@@ -49,6 +49,7 @@ def python_problem() -> str | None:
         f"(Tabularium runs on {low[0]}.{low[1]}–{high[0]}.{high[1]})"
     )
 
+
 # --- Radice dati -------------------------------------------------------------
 # Da un checkout i dati stanno accanto al codice; installato, il pacchetto vive
 # in un ambiente che un aggiornamento sostituisce, quindi i dati vanno nella
