@@ -41,10 +41,10 @@ describe('CommandPalette', () => {
     fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
     const input = screen.getByRole('combobox')
     expect(input).toHaveFocus()
-    fireEvent.change(input, { target: { value: 'modell' } })
+    fireEvent.change(input, { target: { value: 'impostaz' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(screen.getByTestId('where')).toHaveTextContent('/modelli')
+    expect(screen.getByTestId('where')).toHaveTextContent('/impostazioni')
   })
 
   it('le frecce scelgono un progetto e lo aprono in Annotazione', async () => {

@@ -170,7 +170,7 @@ export const it = {
     importFiles: 'Importa immagini o PDF',
     refineNav: "Percorso di fine-tuning",
     modelNav: "Configurazione e prova del modello",
-    dataset: "1 · Prepara il dataset",
+    dataset: "1 · Prepara i dati",
     train: "2 · Addestra",
     evaluate: "3 · Valuta la qualità",
     configure: "Configura modello",
@@ -195,7 +195,7 @@ export const it = {
     results: 'Risultati',
     models: 'Modelli',
     archive: 'Archivio',
-    benchmark: 'Benchmark',
+    benchmark: 'Confronta modelli',
     projects: 'Progetti',
     annotate: 'Annotazione',
     dataset: 'Dataset',
@@ -1535,6 +1535,10 @@ export const it = {
   },
 
   dataset: {
+    params: 'Parametri',
+    summary: '{pct}% delle pagine per l’addestramento, il resto per la verifica · divisione per {unit} · {scope}.',
+    scopeApproved: 'solo pagine approvate',
+    scopeAll: 'tutte le pagine con blocchi, bozze comprese',
     needsHeldOut: "Questo dataset non contiene pagine di validazione. Per valutare il modello dopo l’addestramento, approva altre pagine indipendenti oppure modifica lo split e ricostruisci il dataset.",
     warningSummary: "Alcuni campioni richiedono attenzione e possono essere stati esclusi. Controlla i conteggi per famiglia prima di addestrare; per recuperare i campioni correggi le pagine nello Studio e ricostruisci il dataset.",
     warningDetails: "Mostra i dettagli dei campioni",
@@ -1559,8 +1563,6 @@ export const it = {
     pilotOnly: 'Solo campione pilot salvato',
     seed: 'Seed dello split',
     seedHint: 'Stesso seed = stesso split, sempre.',
-    advanced: 'Scelte da fare una volta',
-    advancedCount: '3 valori',
     splitUnit: 'Unità di split',
     splitUnitHint: 'Tagliare per edizione evita che pagine gemelle finiscano di qua e di là.',
     building: 'Costruzione…',
@@ -1600,6 +1602,8 @@ export const it = {
   },
 
   training: {
+    params: 'Parametri',
+    modelStep: 'Modello di partenza',
     comparison: {
       trainingContext: "Addestramento: {pages} pagine, {samples} esempi, {steps} aggiornamenti dei pesi.",
       outputChanges: "Risposte diverse: {changed}/{total}. Piccole differenze possono lasciare invariate le metriche.",
@@ -1665,7 +1669,6 @@ export const it = {
     title: "Fine-tuning",
     intro:
       'Genera e lancia l’addestramento ms-swift (LoRA o full-SFT) sull’ambiente GPU dedicato, con gli script e gli iperparametri canonici del repo ufficiale. Prima costruisci il dataset nella sezione Dataset.',
-    corpusPreset: "Modello e parametri",
     project: 'Progetto',
     preset: 'Preset',
     essentials: 'Parametri essenziali',
@@ -1677,7 +1680,6 @@ export const it = {
     epochsHint: 'Quante volte il modello rilegge l’intero dataset.',
     lr: 'Learning rate',
     lrHint: 'Più basso = più cauto. Sotto 1e-6 il modello impara pochissimo.',
-    advanced: 'Parametri avanzati',
     advancedCount: '15 valori',
     auto: {
       released: 'GPU rilasciata: eliminazione confermata.',
@@ -1922,7 +1924,7 @@ export const it = {
 
   benchmark: {
     showUnready: 'Mostra anche le {n} pagine da verificare',
-    title: 'Benchmark modelli',
+    title: 'Confronta modelli',
     goldOnly: 'Solo pagine approvate',
     intro: 'Confronta più modelli sulle stesse pagine approvate. La verità è la tua annotazione, non l’output di un altro modello: il report resta su disco e non tocca il progetto.',
     adapter: 'Modello',
@@ -1963,6 +1965,18 @@ export const it = {
   },
 
   evaluate: {
+    headlineTitle: 'Risultato in breve',
+    headline: {
+      text: 'caratteri sbagliati nel testo',
+      textHint: 'Più basso è meglio. Confronto con la trascrizione verificata.',
+      regions: 'zone trovate',
+      regionsHint: 'Delle zone che hai segnato, quante il modello trova.',
+      tables: 'tabelle con la struttura giusta',
+      tablesHint: 'Righe, colonne e celle unite come nella tabella verificata.',
+    },
+    details: 'Dettagli delle metriche',
+    compareHint: 'Vuoi sapere se un altro modello va meglio sulle tue pagine?',
+    compareLink: 'Confronta modelli',
     needsHeldOut: "La valutazione dopo l’addestramento richiede pagine di validazione mai usate per addestrare. Il dataset attuale non ne contiene: aggiorna i dati e ricostruisci lo split.",
     modelUnreachableTitle: '{model} non è in ascolto',
     modelUnreachableBody: 'L’endpoint {url} non risponde. Controlla la connessione oppure apri Modelli per scegliere un modello e una destinazione compatibili.',

@@ -123,12 +123,12 @@ const PROJECT_TABS = [
   { section: 'fine-tuning', key: 'nav.training' },
 ] as const
 
+// Three steps (docs/UX_SIMPLIFICATION.md, Fine-tuning). The overview is the tab
+// itself; comparing models belongs to evaluating.
 const FINE_TUNING_STEPS = [
-  { section: 'fine-tuning', key: 'ux.overview' },
-  { section: 'fine-tuning/dati', key: 'workflow.dataset' },
-  { section: 'fine-tuning/addestra', key: 'workflow.train' },
-  { section: 'fine-tuning/valuta', key: 'workflow.evaluate' },
-  { section: 'fine-tuning/confronta', key: 'nav.benchmark' },
+  { section: 'fine-tuning/dati', key: 'workflow.dataset', also: [] as string[] },
+  { section: 'fine-tuning/addestra', key: 'workflow.train', also: [] as string[] },
+  { section: 'fine-tuning/valuta', key: 'workflow.evaluate', also: ['fine-tuning/confronta'] },
 ] as const
 
 /**
@@ -187,10 +187,15 @@ function ProjectNav({ id, pathname }: { id: number; pathname: string }) {
       </nav>
       {current === 'fine-tuning' && (
         <nav aria-label={t('workflow.refineNav')} className="section-nav">
-          {FINE_TUNING_STEPS.map(({ section, key }) => (
-            <NavLink key={section} to={projectPath(id, section)} end className="section-link">
+          {FINE_TUNING_STEPS.map(({ section, key, also }) => (
+            <Link
+              key={section}
+              to={projectPath(id, section)}
+              aria-current={rest === section || (also as readonly string[]).includes(rest) ? 'page' : undefined}
+              className="section-link"
+            >
               {t(key)}
-            </NavLink>
+            </Link>
           ))}
         </nav>
       )}

@@ -27,7 +27,7 @@ ROUTES = {
     "/progetti/{p}/fine-tuning/dati": ("Dataset",),
     "/progetti/{p}/fine-tuning/addestra": ("Fine-tuning",),
     "/progetti/{p}/fine-tuning/valuta": ("Valutazione", "Evaluation", "Évaluation"),
-    "/progetti/{p}/fine-tuning/confronta": ("Benchmark",),
+    "/progetti/{p}/fine-tuning/confronta": ("Confronta modelli", "Compare models"),
     "/annotazione": ("Elenco pagine", "Page list"),
     "/modelli": ("Modelli", "Models", "Modèles"),
     "/playground": ("Prova modello", "Try a model", "Essayer"),

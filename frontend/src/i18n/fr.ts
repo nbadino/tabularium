@@ -171,7 +171,7 @@ export const fr: Dict = {
     importFiles: 'Importer des images ou PDF',
     refineNav: "Parcours de fine-tuning",
     modelNav: "Configuration et essai du modèle",
-    dataset: "1 · Préparer le dataset",
+    dataset: "1 · Préparer les données",
     train: "2 · Entraîner",
     evaluate: "3 · Évaluer la qualité",
     configure: "Configurer le modèle",
@@ -196,7 +196,7 @@ export const fr: Dict = {
     results: 'Résultats',
     models: 'Modèles',
     archive: 'Archives',
-    benchmark: 'Benchmark',
+    benchmark: 'Comparer les modèles',
     projects: 'Projets',
     annotate: 'Annotation',
     dataset: 'Dataset',
@@ -1535,6 +1535,10 @@ export const fr: Dict = {
   },
 
   dataset: {
+    params: 'Paramètres',
+    summary: '{pct} % des pages pour l’entraînement, le reste pour la vérification · découpage par {unit} · {scope}.',
+    scopeApproved: 'pages approuvées uniquement',
+    scopeAll: 'toutes les pages avec des zones, brouillons compris',
     needsHeldOut: "Ce dataset ne contient aucune page de validation. Pour évaluer après l’entraînement, approuvez davantage de pages indépendantes ou ajustez le partage, puis reconstruisez le dataset.",
     warningSummary: "Certains échantillons demandent votre attention et peuvent avoir été exclus. Vérifiez les comptes par famille avant l’entraînement ; pour récupérer les échantillons, corrigez les pages dans le Studio et reconstruisez le dataset.",
     warningDetails: "Afficher les détails des échantillons",
@@ -1559,8 +1563,6 @@ export const fr: Dict = {
     pilotOnly: 'Uniquement l’échantillon pilot enregistré',
     seed: 'Seed du split',
     seedHint: 'Même seed = même split, toujours.',
-    advanced: 'À régler une seule fois',
-    advancedCount: '3 valeurs',
     splitUnit: 'Unité de split',
     splitUnitHint: 'Couper par édition évite que des pages jumelles se retrouvent de part et d’autre.',
     building: 'Construction…',
@@ -1600,6 +1602,8 @@ export const fr: Dict = {
   },
 
   training: {
+    params: 'Paramètres',
+    modelStep: 'Modèle de départ',
     comparison: {
       trainingContext: "Entraînement : {pages} pages, {samples} exemples, {steps} mises à jour des poids.",
       outputChanges: "Réponses différentes : {changed}/{total}. De petits écarts peuvent laisser les métriques inchangées.",
@@ -1665,7 +1669,6 @@ export const fr: Dict = {
     title: "Fine-tuning",
     intro:
       'Génère et lance l’entraînement ms-swift (LoRA ou full-SFT) dans l’environnement GPU dédié, avec les scripts et hyperparamètres canoniques du repo officiel. Construisez d’abord le dataset dans la section Dataset.',
-    corpusPreset: "Modèle et paramètres",
     project: 'Projet',
     preset: 'Preset',
     essentials: 'Paramètres essentiels',
@@ -1677,7 +1680,6 @@ export const fr: Dict = {
     epochsHint: 'Combien de fois le modèle relit l’ensemble du dataset.',
     lr: 'Learning rate',
     lrHint: 'Plus bas = plus prudent. Sous 1e-6, le modèle apprend très peu.',
-    advanced: 'Paramètres avancés',
     advancedCount: '15 valeurs',
     auto: {
       released: 'GPU libéré : suppression confirmée.',
@@ -1922,7 +1924,7 @@ export const fr: Dict = {
 
   benchmark: {
     showUnready: 'Afficher aussi les {n} pages à vérifier',
-    title: 'Benchmark des modèles',
+    title: 'Comparer les modèles',
     goldOnly: 'Pages approuvées uniquement',
     intro: 'Comparez plusieurs modèles sur les mêmes pages approuvées. La vérité est votre annotation, pas la sortie d’un autre modèle : le rapport reste sur disque et ne touche pas le projet.',
     adapter: 'Modèle',
@@ -1963,6 +1965,18 @@ export const fr: Dict = {
   },
 
   evaluate: {
+    headlineTitle: 'Résultat en bref',
+    headline: {
+      text: 'caractères erronés dans le texte',
+      textHint: 'Plus c’est bas, mieux c’est. Comparé à la transcription vérifiée.',
+      regions: 'zones trouvées',
+      regionsHint: 'Parmi les zones que vous avez marquées, combien le modèle en trouve.',
+      tables: 'tableaux à la bonne structure',
+      tablesHint: 'Lignes, colonnes et cellules fusionnées comme dans le tableau vérifié.',
+    },
+    details: 'Détail des métriques',
+    compareHint: 'Un autre modèle fait-il mieux sur vos pages ?',
+    compareLink: 'Comparer les modèles',
     needsHeldOut: "L’évaluation après l’entraînement nécessite des pages de validation exclues de l’entraînement. Le dataset actuel n’en contient pas : complétez les données et reconstruisez le partage.",
     modelUnreachableTitle: '{model} n’écoute pas',
     modelUnreachableBody: 'L’endpoint {url} ne répond pas. Vérifiez la connexion ou ouvrez Modèles pour choisir un modèle et une destination compatibles.',

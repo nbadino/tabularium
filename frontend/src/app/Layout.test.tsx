@@ -69,7 +69,16 @@ describe('Layout', () => {
     renderAt('/progetti/3/fine-tuning/addestra')
     const steps = screen.getByRole('navigation', { name: 'Percorso di fine-tuning' })
     expect(within(steps).getByRole('link', { name: '2 · Addestra' })).toHaveAttribute('href', '/progetti/3/fine-tuning/addestra')
-    expect(within(steps).getByRole('link', { name: '1 · Prepara il dataset' })).toHaveAttribute('href', '/progetti/3/fine-tuning/dati')
+    expect(within(steps).getByRole('link', { name: '1 · Prepara i dati' })).toHaveAttribute('href', '/progetti/3/fine-tuning/dati')
+    expect(within(steps).getAllByRole('link')).toHaveLength(3)
+  })
+
+  it('comparing models is part of the evaluation step', () => {
+    renderAt('/progetti/3/fine-tuning/confronta')
+    const steps = screen.getByRole('navigation', { name: 'Percorso di fine-tuning' })
+    expect(within(steps).getByRole('link', { name: '3 · Valuta la qualità' })).toHaveAttribute('aria-current', 'page')
+    expect(within(steps).queryByRole('link', { name: 'Benchmark' })).not.toBeInTheDocument()
+    expect(within(steps).queryByRole('link', { name: 'Panoramica' })).not.toBeInTheDocument()
   })
 
   it('the model trial stays under Modelli', () => {

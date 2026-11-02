@@ -213,6 +213,16 @@ export default function DatasetPage() {
               </select>
             </Field>
             )}
+          </div>
+
+          {/* The defaults fit most projects: they are stated in one line, and every
+              choice (share, split, scope, seed, adapter, pilot) sits under Parameters. */}
+          <p className="text-[12px] text-[color:var(--color-ink-2)]">
+            {t('dataset.summary', { pct: (ratio * 100).toFixed(0), unit: splitStrategyLabel(splitStrategy).toLocaleLowerCase(), scope: t(approvedOnly ? 'dataset.scopeApproved' : 'dataset.scopeAll') })}
+          </p>
+          <div className="mt-3">
+            <Collapsible tab={t('dataset.params')} quiet>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Field
               label={t('dataset.trainShare', { pct: (ratio * 100).toFixed(0) })}
               hint={t('dataset.trainShareHint', { pct: (100 - ratio * 100).toFixed(0) })}
@@ -248,12 +258,6 @@ export default function DatasetPage() {
               <input type="checkbox" checked={approvedOnly} onChange={(e) => setApprovedOnly(e.target.checked)} />
               {t('dataset.approvedOnly')}
             </label>
-          </div>
-
-          {/* Seed e adapter si decidono una volta per corpus: stanno sotto. */}
-          <div className="mt-3">
-            <Collapsible tab={t('dataset.advanced')} quiet aux={<span>{t('dataset.advancedCount')}</span>}>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <Field label={t('dataset.seed')} hint={t('dataset.seedHint')}>
                   <input
                     type="number"

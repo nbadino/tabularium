@@ -4,7 +4,8 @@ import { Link } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
 import type { EvalPage, EvalReport } from '../lib/types'
 import { pages } from '../lib/vocab'
-import { ErrorNotice, Field, Loading, Module, Notice, WarnNotice, PageHeader } from '../app/ui'
+import { Collapsible, ErrorNotice, Field, Loading, Module, Notice, WarnNotice, PageHeader } from '../app/ui'
+import { evaluationHeadline } from '../lib/evaluationHeadline'
 import { PipelineStrip } from '../app/PipelineView'
 import { buildPipeline, usePipelineState } from '../app/pipeline'
 import { useProjects, useRouteProjectId, writeActiveProject } from '../app/activeProject'
@@ -42,7 +43,7 @@ function Metric({
 }
 
 export default function EvaluationPage() {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const [projectId, setProjectId] = useState<number | ''>('')
   const inference = useInference()
   const nameOf = useModelNames()
@@ -290,6 +291,22 @@ export default function EvaluationPage() {
 
       {report && a && (
         <div className="space-y-3">
+          {/* Three plain answers first; the full metrics are one click away. */}
+          <section aria-label={t('evaluate.headlineTitle')} className="grid gap-4 border-y border-[color:var(--color-rule)] py-4 sm:grid-cols-3">
+            {evaluationHeadline(a).map((item) => (
+              <div key={item.key}>
+                <div className="text-[28px] font-bold leading-none tracking-[-0.02em]">{item.value.toLocaleString(locale, { maximumFractionDigits: 1 })}%</div>
+                <div className="mt-1 text-[13px] font-semibold">{t(`evaluate.headline.${item.key}`)}</div>
+                <div className="text-[12px] text-[color:var(--color-ink-2)]">{t(`evaluate.headline.${item.key}Hint`)}</div>
+              </div>
+            ))}
+          </section>
+          <p className="text-[12px] text-[color:var(--color-ink-2)]">
+            {t('evaluate.compareHint')}{' '}
+            <Link to={projectPath(Number(projectId), 'fine-tuning/confronta')} className="font-semibold underline underline-offset-2">{t('evaluate.compareLink')}</Link>
+          </p>
+          <Collapsible tab={t('evaluate.details')} quiet>
+          <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <Metric
               tab={t('evaluate.pagesEvaluated')}
@@ -380,6 +397,8 @@ export default function EvaluationPage() {
               <p className="px-2 py-1.5 text-[11px] text-[color:var(--color-ink-2)]">{t('evaluate.perLabelMeaning')}</p>
             </Module>
           )}
+          </div>
+          </Collapsible>
 
           {report.warnings.length > 0 && (
             <WarnNotice title={tn('common.warningsCount', report.warnings.length)}>
