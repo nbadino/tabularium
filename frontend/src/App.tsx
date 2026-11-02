@@ -12,6 +12,7 @@ const ResultsPage = lazy(() => import('./pages/ResultsPage'))
 const ModelsHubPage = lazy(() => import('./pages/ModelsHubPage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
+const ProjectAdvancedPage = lazy(() => import('./pages/ProjectAdvancedPage'))
 const AnnotationPage = lazy(() => import('./pages/AnnotationEntry'))
 const TableWorkspacePage = lazy(() => import('./pages/TableEntry'))
 const FineTuningPage = lazy(() => import('./pages/FineTuningPage'))
@@ -136,6 +137,7 @@ export default function App() {
                   <Route path="riconoscimenti" element={<RecognizePage />} />
                   <Route path="riconoscimenti/:runId" element={<ResultsPage />} />
                   <Route path="studio" element={<AnnotationPage />} />
+                  <Route path="avanzate" element={<ProjectAdvancedPage />} />
                   <Route path="fine-tuning" element={<FineTuningPage />} />
                   <Route path="fine-tuning/dati" element={<DatasetPage />} />
                   <Route path="fine-tuning/addestra" element={<TrainingPage />} />

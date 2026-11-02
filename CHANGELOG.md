@@ -7,6 +7,14 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Changed
+- The Pages tab leads with the one thing the project needs next: drop images or PDFs into an
+  empty project; **Recognize N pages** reads the unread pages in one click (local OCR, or the
+  model when it answers) and opens the result; then **Review N pages with drafts**, then
+  **Export**. Pages show as thumbnails, with the editable register one click away (Table view).
+- Study protocol, pilot sample, region classes, transcription rules, table schema and the
+  activity log moved to the project's **Advanced** page (project menu).
+- The projects list shows owner, access and people only for shared projects, and its filters
+  only once a project has been shared with you.
 - The project is the container of the work. The main navigation is **Projects** and **Models**;
   inside a project, **Pages**, **Recognitions** and **Fine-tuning** are its tabs, and the project
   switcher in that bar is the only project selector (the eleven per-page selectors are gone).
@@ -26,6 +34,7 @@ Notable changes to Tabularium. The format follows
 
 ### Removed
 - Unused `ClassPalette` component and unused interface strings.
+- The separate Archive page: its thumbnail wall is now the project's Pages tab.
 
 ## [0.5.0] - 2026-11-02
 

@@ -19,7 +19,8 @@ BASE = os.environ.get("TABULARIUM_E2E_URL", "http://127.0.0.1:8787").rstrip("/")
 # inside a project (docs/UX_SIMPLIFICATION.md); the old addresses redirect there.
 ROUTES = {
     "/progetti": ("Progetti", "Projects", "Projets"),
-    "/progetti/{p}": ("Registro pagine", "Page register", "Registre des pages"),
+    "/progetti/{p}": ("Trascina qui immagini o PDF", "Drop images or PDFs here"),
+    "/progetti/{p}/avanzate": ("Regole di trascrizione", "Transcription rules"),
     "/progetti/{p}/riconoscimenti": ("Riconosci immagini", "Recognize images", "Reconnaître les images"),
     "/progetti/{p}/studio": ("Annotazione", "Annotation"),
     "/progetti/{p}/fine-tuning": ("Fine-tuning",),
