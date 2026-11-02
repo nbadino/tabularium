@@ -58,6 +58,17 @@ export const it = {
     }
 },
 
+  studio: {
+    backToPages: 'Pagine',
+    pagesList: 'Elenco pagine',
+    position: 'Pagina {n} di {total}',
+    verifyNext: 'Verifica e vai alla successiva',
+    verify: 'Verifica la pagina',
+    next: 'Vai alla successiva',
+    finishShortcut: 'Ctrl+Invio (⌘+Invio su Mac) · J/K per scorrere le pagine',
+    viewMode: 'Vista',
+  },
+
   team: {
     pageHelp: 'Guida',
     projectsIntro: "Qui trovi i progetti a cui hai accesso. Apri un progetto per consultare le pagine o lavorarci, secondo il permesso assegnato.",
@@ -1292,6 +1303,7 @@ export const it = {
   },
 
   table: {
+    backToStudio: 'Torna allo Studio',
     blockVerified: "Blocco verificato",
     blockVerifiedHint: "La verifica del blocco e quella delle celle sono indipendenti. Controlla le celle nel foglio: i testi non verificati vengono esclusi dal dataset approvato.",
     splitFromRight: "Separa da destra",
