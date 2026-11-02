@@ -1717,6 +1717,20 @@ class VllmClient:
         return result(False, f"gateway non disponibile (HTTP {response.status_code})")
 
 
+def is_configured(rows: dict, profile, environ) -> bool:
+    """Whether someone chose a model endpoint, as opposed to the built-in default.
+
+    A fresh database seeds a ``legacy-active`` profile that mirrors the default
+    endpoint, so that profile alone is not a choice. The UI uses this to treat an
+    unreachable default as "no model yet" instead of as a failure.
+    """
+    if environ.get("TABULARIUM_VLLM_URL") or environ.get("TABULARIUM_VLLM_MODEL"):
+        return True
+    if rows.get("inference_url") or rows.get("inference_provider"):
+        return True
+    return bool(profile) and profile["name"] != "legacy-active"
+
+
 def get_inference_config() -> dict:
     """Carica la configurazione di inferenza runtime (da SQLite meta o env)."""
     rows = configstore.overrides()
@@ -1840,6 +1854,7 @@ def get_inference_config() -> dict:
 
     return {
         "enabled": enabled,
+        "configured": is_configured(rows, profile, os.environ),
         "url": url,
         "model": model,
         "api_key": api_key,

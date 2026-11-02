@@ -6,9 +6,12 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import Layout from './Layout'
 
 vi.mock('../lib/api', () => ({ apiGet: vi.fn(() => new Promise(() => {})) }))
+const inferenceState = vi.hoisted(() => ({
+  value: { enabled: false, available: false, configured: false, url: '', model: '', adapterId: '', provider: null as string | null },
+}))
 vi.mock('./inference', () => ({
   syncInferenceFromBackend: vi.fn(async () => {}),
-  useInference: () => ({ enabled: false, available: false, url: '', model: '', adapterId: '', provider: null }),
+  useInference: () => inferenceState.value,
 }))
 vi.mock('./models/names', () => ({ useModelNames: () => () => null }))
 vi.mock('./auth', () => ({ useAuth: () => ({ user: null }), logout: vi.fn() }))
@@ -19,7 +22,35 @@ function Where() {
 }
 
 describe('Layout', () => {
-  afterEach(cleanup)
+  afterEach(() => {
+    cleanup()
+    inferenceState.value = { enabled: false, available: false, configured: false, url: '', model: '', adapterId: '', provider: null }
+  })
+
+  const renderAt = (path: string) => render(
+    <MemoryRouter initialEntries={[path]}>
+      <Routes><Route element={<Layout />}><Route path="*" element={<Where />} /></Route></Routes>
+    </MemoryRouter>,
+  )
+
+  it('shows no model status before a model is chosen', () => {
+    inferenceState.value = { ...inferenceState.value, enabled: true, model: 'MonkeyOCRv2', url: 'http://127.0.0.1:8888/v1' }
+    renderAt('/')
+    expect(screen.queryByText('Non disponibile')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('Cambia modello o esecuzione')).not.toBeInTheDocument()
+  })
+
+  it('reports a chosen model that does not answer', () => {
+    inferenceState.value = { ...inferenceState.value, enabled: true, configured: true, model: 'MinerU', url: 'https://x.modal.run/v1', provider: 'modal' }
+    renderAt('/')
+    expect(screen.getByText('Non disponibile')).toBeInTheDocument()
+  })
+
+  it('names the app Tabularium', () => {
+    renderAt('/')
+    expect(screen.getByText('Tabularium')).toBeInTheDocument()
+    expect(screen.queryByText('Lab')).not.toBeInTheDocument()
+  })
 
   it('una linguetta riapre la sezione dove la si era lasciata', () => {
     render(

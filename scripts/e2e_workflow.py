@@ -221,7 +221,7 @@ def main() -> int:
         # Training center e preflight.
         stage = "training UI"
         driver.get(f"{BASE}/training")
-        wait_for(driver, EC.presence_of_element_located((By.XPATH, "//h1[contains(., 'Addestramento') or contains(., 'Training') or contains(., 'Entraînement')]")))
+        wait_for(driver, EC.presence_of_element_located((By.XPATH, "//h1[contains(., 'Fine-tuning')]")))
         preflight = requests.post(f"{BASE}/api/projects/{project_id}/training/preflight", json={}, timeout=10)
         assert preflight.status_code == 200, preflight.text
         print("e2e workflow OK: UI import/scan -> annotation -> dataset snapshot -> training preflight")

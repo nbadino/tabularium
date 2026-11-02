@@ -58,7 +58,7 @@ describe('EvaluationPage', () => {
   it('blocks evaluation after training when there are no held-out pages', async () => {
     finishedTraining = true
     render(<MemoryRouter><EvaluationPage /></MemoryRouter>)
-    await screen.findByText(/La valutazione dopo il training richiede pagine di validazione/)
+    await screen.findByText(/La valutazione dopo l’addestramento richiede pagine di validazione/)
     expect(screen.getByRole('button', { name: 'Esegui valutazione' })).toBeDisabled()
   })
 

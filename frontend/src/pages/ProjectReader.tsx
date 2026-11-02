@@ -5,6 +5,7 @@ import { apiGet } from '../lib/api'
 import type { BlockListOut, BlockOut, PageItem, Project, TableGridOut } from '../lib/types'
 import { pageLabel } from '../lib/pageLabel'
 import { useI18n } from '../i18n'
+import { labelName } from '../i18n/labelName'
 import { Badge, ErrorNotice, Field, Loading, Module, PageHeader } from '../app/ui'
 import { connectPage, disconnectPage, onAnnotationsChanged } from '../app/live'
 import { writeActiveProject } from '../app/activeProject'
@@ -80,7 +81,7 @@ export default function ProjectReader({ project, projects }: { project: Project;
         {!blocks && !error && <Loading label={t('common.loading')} />}
         {blocks?.length === 0 && <p className="text-[13px]">{t('team.noBlocks')}</p>}
         <ol className="divide-y divide-[color:var(--color-rule)]">{blocks?.slice().sort((a, b) => (a.order_idx ?? 1e9) - (b.order_idx ?? 1e9)).map((block, i) => <li key={block.id} className="py-3">
-          <div className="mb-2 flex flex-wrap items-center gap-2"><span className="font-semibold">{i + 1} · {block.label}</span><Badge tone={block.confirmed ? 'ok' : 'warn'}>{t(block.confirmed ? 'team.verified' : 'team.draft')}</Badge></div>
+          <div className="mb-2 flex flex-wrap items-center gap-2"><span className="font-semibold">{i + 1} · {labelName(block.label)}</span><Badge tone={block.confirmed ? 'ok' : 'warn'}>{t(block.confirmed ? 'team.verified' : 'team.draft')}</Badge></div>
           {block.label === 'Table' ? <TablePreview block={block} /> : <p className="whitespace-pre-wrap text-[13px] leading-relaxed">{block.content}</p>}
         </li>)}</ol>
       </Module>

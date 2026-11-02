@@ -209,10 +209,10 @@ export default function Layout() {
         {/* riga 1 — identità e stato globale */}
         <div className="flex min-w-0 flex-wrap items-center gap-3 border-b border-[color:var(--color-rule)] bg-[color:var(--color-fill)] py-1.5 pl-4 pr-3">
           <span className="text-[13px] font-bold tracking-[-0.02em]">
-            Tabularium<span className="text-[color:var(--color-sig-text)]">Lab</span>
+            Tabularium
           </span>
           <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2">
-            {location.pathname !== '/modelli' && (() => {
+            {location.pathname !== '/modelli' && (inference.configured || inference.available) && (() => {
               const providerKey = inference.provider && ['local', 'ssh', 'vast', 'runpod', 'modal', 'custom', 'llamaindex'].includes(inference.provider)
                 ? `recognition.provider.${inference.provider}`
                 : null

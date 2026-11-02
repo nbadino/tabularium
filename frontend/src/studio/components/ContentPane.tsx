@@ -14,6 +14,7 @@
  * leggibile da uno screen reader, che è la ragione per cui esisteva
  * l'elenco dei livelli. Le regole vivono dietro il loro pulsante.
  */
+import { labelName } from '../../i18n/labelName'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Menu, Modal, Module, Select } from '../../app/ui'
 import { IconDown, IconTrash, IconUp } from '../../app/icons'
@@ -355,7 +356,7 @@ function RowShell({
             onFocus={onSelect}
             ariaLabel={t('inspector.class')}
             className="fld !w-auto text-xs"
-            options={labels.map((l) => ({ value: l.name, label: l.name }))}
+            options={labels.map((l) => ({ value: l.name, label: labelName(l.name) }))}
           />
         ) : (
           <span className="mono text-[11px] uppercase tracking-[0.04em] text-[color:var(--color-ink-3)]">
