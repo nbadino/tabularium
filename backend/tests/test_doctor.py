@@ -114,3 +114,17 @@ def test_an_unsupported_python_is_a_failure_with_the_reinstall_command(monkeypat
     monkeypatch.setattr(doctor.sys, "version_info", (3, 13, 1, "final", 0))
     assert doctor.check_python().status == doctor.OK
     assert "python" in {check.name for check in doctor.run("127.0.0.1", _free_port())}
+
+
+def test_a_public_deploy_trusting_only_loopback_is_warned_about_cdns(monkeypatch) -> None:
+    monkeypatch.setattr(doctor.config, "SESSION_COOKIE_SECURE", True)
+    monkeypatch.setattr(doctor.config, "FORWARDED_ALLOW_IPS", "127.0.0.1,::1")
+    check = doctor.check_forwarded()
+    assert check.status == doctor.WARN
+    assert "CDN" in check.hint and "CIDR" in check.hint
+    monkeypatch.setattr(doctor.config, "FORWARDED_ALLOW_IPS", "127.0.0.1,173.245.48.0/20")
+    assert doctor.check_forwarded().status == doctor.OK
+    monkeypatch.setattr(doctor.config, "SESSION_COOKIE_SECURE", False)
+    monkeypatch.setattr(doctor.config, "FORWARDED_ALLOW_IPS", "127.0.0.1")
+    assert doctor.check_forwarded().status == doctor.OK
+    assert "trusted proxies" in {check.name for check in doctor.run("127.0.0.1", _free_port())}
