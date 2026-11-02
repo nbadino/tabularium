@@ -109,6 +109,8 @@ export default function ResultsPage() {
         const next = await apiGet<RecognitionRun>(`/projects/${run.project_id}/recognition-runs/${run.id}`)
         if (!stopped) {
           setRun(next)
+          // The picker lists the same run: keep its state and counts in step.
+          setRuns((before) => before.map((item) => (item.id === next.id ? next : item)))
           if (!isActive(next)) await syncInferenceFromBackend()
         }
       } catch (e) {
