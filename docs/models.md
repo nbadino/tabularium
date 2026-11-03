@@ -19,6 +19,7 @@ reason behind each cell, is in
 [local inference guide](guide/local-inference.md); training
 support per model is in the [training guide](guide/training.md); the official
 prompts, sampling and serving flags each model runs with are audited in
-[MODELS_AUDIT.md](MODELS_AUDIT.md).
+[MODELS_AUDIT.md](MODELS_AUDIT.md). The catalog is ordered by the public OmniDocBench v1.6
+score declared in `backend/app/models/benchmarks.py`, with its source.
 Missing a model? [Open an issue](https://github.com/nbadino/tabularium/issues/new?template=feature_request.yml).
 

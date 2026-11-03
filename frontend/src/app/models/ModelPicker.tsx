@@ -12,7 +12,7 @@ import { localRuntimeLabel } from '../../lib/vocab'
 import { useI18n } from '../../i18n'
 import { Badge, Module, Notice } from '../ui'
 import { useInference } from '../inference'
-import { isCustom, isSelectable, type ModelItem } from './registry'
+import { byPublicScore, isCustom, isSelectable, type ModelItem } from './registry'
 import { DEFAULT_MODEL_ID } from '../../lib/constants'
 
 const MATURITY_KEY: Record<string, string> = {
@@ -63,7 +63,7 @@ interface ModelPickerProps {
 }
 
 export function ModelPicker({ models, loading, selectedId, onSelect, onChanged }: ModelPickerProps) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const inf = useInference()
   const [query, setQuery] = useState('')
   // null = not chosen yet: then models that run here come first when there are any.
@@ -77,11 +77,16 @@ export function ModelPicker({ models, loading, selectedId, onSelect, onChanged }
   const runnableHere = models.filter((m) => m.local?.runnable).length
   const onlyHere = onlyHereChoice ?? runnableHere > 0
   const needle = query.trim().toLocaleLowerCase()
-  const visible = models.filter((m) => {
-    if (onlyHere && !m.local?.runnable) return false
-    if (!needle) return true
-    return `${m.display_name} ${m.adapter_id} ${m.hf_repo}`.toLocaleLowerCase().includes(needle)
-  })
+  const visible = models
+    .filter((m) => {
+      if (onlyHere && !m.local?.runnable) return false
+      if (!needle) return true
+      return `${m.display_name} ${m.adapter_id} ${m.hf_repo}`.toLocaleLowerCase().includes(needle)
+    })
+    .sort(byPublicScore)
+  const benchmarkName = models.find((m) => m.benchmark)?.benchmark?.benchmark ?? null
+  const leaderboard = models.find((m) => m.benchmark?.reported_by === 'leaderboard')?.benchmark?.source ?? null
+  const score = new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
   const taskSummary = (m: ModelItem) =>
     TASK_ORDER.filter((task) => m.tasks.includes(task))
@@ -181,6 +186,20 @@ export function ModelPicker({ models, loading, selectedId, onSelect, onChanged }
         </div>
       </div>
 
+      {/* L'ordine del catalogo si dichiara: un punteggio senza la sua fonte
+          sarebbe un'opinione. */}
+      {benchmarkName && (
+        <p className="border-b border-[color:var(--color-rule)] px-3 py-2 text-[11px] text-[color:var(--color-ink-2)]">
+          {t('modelsHub.benchmarkOrder', { benchmark: benchmarkName })}
+          {leaderboard && (
+            <>
+              {' '}
+              <a href={leaderboard} target="_blank" rel="noreferrer">{t('modelsHub.benchmarkLeaderboard')}</a>
+            </>
+          )}
+        </p>
+      )}
+
       {notice && <div className="px-3"><Notice tone="warn">{notice}</Notice></div>}
 
       <ul className="divide-y divide-[color:var(--color-rule)]">
@@ -227,6 +246,25 @@ export function ModelPicker({ models, loading, selectedId, onSelect, onChanged }
                     )}
                   </div>
                 </details>
+              </div>
+
+              <div className="w-[7.5rem] text-right leading-tight">
+                {m.benchmark?.value != null ? (
+                  <>
+                    <span className="block text-[15px] font-bold" title={`${m.benchmark.benchmark} · ${m.benchmark.metric}${m.benchmark.note ? ` — ${m.benchmark.note}` : ''}`}>
+                      {score.format(m.benchmark.value)}
+                    </span>
+                    {m.benchmark.source ? (
+                      <a className="text-[11px]" href={m.benchmark.source} target="_blank" rel="noreferrer">
+                        {t(m.benchmark.reported_by === 'vendor' ? 'modelsHub.benchmarkVendor' : 'modelsHub.benchmarkBoard')}
+                      </a>
+                    ) : null}
+                  </>
+                ) : (
+                  <span className="block text-[11px] text-[color:var(--color-ink-3)]" title={m.benchmark?.note || undefined}>
+                    {t('modelsHub.benchmarkNone')}
+                  </span>
+                )}
               </div>
 
               {/* Il verdetto per questa macchina, scritto: non si scopre al

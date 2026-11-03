@@ -19,6 +19,7 @@ from pathlib import Path
 
 from .. import config
 from .. import models as model_specs
+from ..models.benchmarks import public_benchmark
 from .model_adapters import get_adapter, list_adapters, supported_prefill_modes, supports_export
 from . import hardware
 from . import paddle_runtime
@@ -468,6 +469,8 @@ def list_models() -> list[dict]:
             # causa scritta quando non gira. È la risposta a «posso usarlo in
             # locale?»: la UI non deve dedurla dall'OS né dal solo fatto che
             # esista un comando di serving.
+            # Public score that orders the catalog, with where it comes from.
+            "benchmark": public_benchmark(cap["adapter_id"]),
             "local": {
                 **hardware.plan_local(
                     cap.get("local_runtimes") or (),
