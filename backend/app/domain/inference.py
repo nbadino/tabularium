@@ -22,6 +22,8 @@ GOOGLE_SAMPLING = {"temperature": "temperature", "top_p": "topP", "top_k": "topK
 # Default LlamaCloud host: the client reads it from here, so a spec or a test never
 # has to repeat the string.
 LLAMAINDEX_BASE_URL = "https://api.cloud.llamaindex.ai"
+# LlamaCloud keys belong to one region: an EU key gets 401 on the default (US) host.
+LLAMAINDEX_EU_BASE_URL = "https://api.cloud.eu.llamaindex.ai"
 
 
 def google_request(
@@ -253,11 +255,15 @@ def llamaindex_configuration(workflow: dict[str, Any]) -> tuple[dict[str, Any], 
                     workflow.get("job_timeout_extra_time_per_page_in_seconds", 30)
                 ),
             },
-            "job_failure_conditions": {
-                "allowed_page_failure_ratio": float(workflow.get("allowed_page_failure_ratio", 0.0)),
-            },
         },
     }
+    # The vendor wants a ratio > 0. Zero ("any failed page fails the job") is what it
+    # already does for a one-page job, which is all Tabularium sends: leave the key out.
+    failure_ratio = float(workflow.get("allowed_page_failure_ratio", 0.0))
+    if failure_ratio > 0:
+        payload["processing_control"]["job_failure_conditions"] = {
+            "allowed_page_failure_ratio": failure_ratio,
+        }
     if workflow.get("camera_photo_correction"):
         payload["input_options"] = {"image": {"camera_photo_correction": True}}
     if workflow.get("crop_enabled"):

@@ -214,6 +214,16 @@ def _llama_violations(value, node, path: str = "") -> list[str]:
         return [f"{path}: {value!r} != {node['const']!r}"]
     if node.get("type") == "null" and value is not None:
         return [f"{path}: expected null"]
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        # A bound the vendor enforces is a 422, the same as a renamed key.
+        if node.get("type") in ("string", "boolean", "array"):
+            return [f"{path}: number where {node['type']} expected"]
+        if "exclusiveMinimum" in node and value <= node["exclusiveMinimum"]:
+            return [f"{path}: {value!r} <= exclusive minimum {node['exclusiveMinimum']!r}"]
+        if "minimum" in node and value < node["minimum"]:
+            return [f"{path}: {value!r} < minimum {node['minimum']!r}"]
+        if "maximum" in node and value > node["maximum"]:
+            return [f"{path}: {value!r} > maximum {node['maximum']!r}"]
     return []
 
 
@@ -228,6 +238,7 @@ def _llama_workflows():
         for value in field.values if field.kind == "enum" else ():
             yield {**base, field.key: value}
     yield {**base, "crop_enabled": True, "custom_prompt": "keep columns"}
+    yield {**base, "allowed_page_failure_ratio": 0.1}
 
 
 def test_llamaindex_configuration_matches_the_vendor_schema() -> None:
@@ -245,3 +256,12 @@ def test_llamaindex_exposes_every_vendor_tier_that_runs_a_model() -> None:
     tiers = set(vendor["anyOf"][0]["enum"])
     # `fast` is rule-based (no model): Tabularium is a recognition tool, not a text extractor.
     assert LLAMAINDEX_WORKFLOW_ENUMS["tier"] == tiers - {"fast"}
+
+
+def test_llamaindex_failure_ratio_zero_is_left_to_the_vendor() -> None:
+    from app.models.types import llamaindex_workflow_defaults
+
+    payload, _ = protocol.llamaindex_configuration({**llamaindex_workflow_defaults(), "allowed_page_failure_ratio": 0.0})
+    assert "job_failure_conditions" not in payload["processing_control"]
+    payload, _ = protocol.llamaindex_configuration({**llamaindex_workflow_defaults(), "allowed_page_failure_ratio": 0.25})
+    assert payload["processing_control"]["job_failure_conditions"] == {"allowed_page_failure_ratio": 0.25}

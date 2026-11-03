@@ -321,3 +321,81 @@ def test_every_native_runner_takes_the_prefill_callbacks():
     for name in runners:
         params = inspect.signature(getattr(infmod.VllmClient, name)).parameters
         assert {"on_delta", "cancel_event"} <= params.keys(), name
+
+
+class _RegionResponse:
+    def __init__(self, data, status_code=200):
+        self._data = data
+        self.status_code = status_code
+        self.text = "" if status_code < 400 else '{"detail":"Invalid API Key. Please check your region"}'
+
+    def json(self):
+        return self._data
+
+
+def _eu_only(url):
+    """LlamaCloud keys are per region: this one is valid on the EU host only."""
+    return url.startswith(infmod.LLAMAINDEX_EU_BASE_URL)
+
+
+def test_ocria_native_job_moves_an_eu_key_to_the_eu_region(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "ocria-region.db")
+    init_db()
+    monkeypatch.setattr(infmod, "_LLAMAINDEX_REGION", {})
+    calls: list[str] = []
+
+    def post(url, **kwargs):
+        calls.append(url)
+        if not _eu_only(url):
+            return _RegionResponse({}, 401)
+        if url.endswith("/api/v1/beta/files"):
+            return _RegionResponse({"id": "file-1"})
+        return _RegionResponse({"job": {"id": "job-1", "status": "PENDING"}})
+
+    def get(url, **kwargs):
+        calls.append(url)
+        assert _eu_only(url)
+        return _RegionResponse({"job": {"id": "job-1", "status": "COMPLETED"}, "items": {"pages": []}})
+
+    monkeypatch.setattr(infmod.requests, "post", post)
+    monkeypatch.setattr(infmod.requests, "get", get)
+
+    def page():
+        return infmod.VllmClient(
+            url=infmod.LLAMAINDEX_BASE_URL, model="ocria-1", api_key="llx-eu",
+            adapter=get_adapter("llamaindex-ocria-1"), provider="llamaindex",
+        ).llamaindex_native_page(Image.new("RGB", (20, 10), "white"))
+
+    assert page() == []
+    assert calls[0].startswith(infmod.LLAMAINDEX_BASE_URL)
+    assert all(_eu_only(url) for url in calls[1:])
+    # The region is remembered: the next page goes straight to the EU host.
+    calls.clear()
+    page()
+    assert all(_eu_only(url) for url in calls)
+
+
+def test_ocria_connection_test_finds_the_eu_region_and_a_bad_key_names_it(monkeypatch):
+    monkeypatch.setattr(infmod, "_LLAMAINDEX_REGION", {})
+
+    def get(url, **kwargs):
+        if _eu_only(url) and kwargs["headers"]["Authorization"] == "Bearer llx-eu":
+            return _RegionResponse({"versions": ["latest"]})
+        return _RegionResponse({}, 401)
+
+    monkeypatch.setattr(infmod.requests, "get", get)
+
+    def test(key, url=infmod.LLAMAINDEX_BASE_URL):
+        return infmod.VllmClient(
+            url=url, model="ocria-1", api_key=key,
+            adapter=get_adapter("llamaindex-ocria-1"), provider="llamaindex",
+        ).test_connection(timeout=1)
+
+    found = test("llx-eu")
+    assert found["ok"] is True
+    assert found["url"] == infmod.LLAMAINDEX_EU_BASE_URL
+    rejected = test("llx-wrong")
+    assert rejected["ok"] is False
+    assert "regione" in rejected["error"]
+    # A host the user typed is theirs: no switching behind their back.
+    assert test("llx-eu", url="https://llama.example.org")["ok"] is False
