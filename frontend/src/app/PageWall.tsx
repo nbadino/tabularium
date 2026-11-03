@@ -17,10 +17,35 @@ const DRAFTS_FILTER = '__drafts'
 const BATCH = 80
 const SEARCH_FROM = 20
 
-function PageCell({ page }: { page: PageItem }) {
+/** The drag payload: the ids of the pages being moved to a collection. */
+export const PAGES_MIME = 'application/x-tabularium-pages'
+
+/** Selection and drag-and-drop, when the wall is used to sort pages into collections. */
+export interface WallSelection {
+  selected: Set<number>
+  onToggle: (pageId: number) => void
+}
+
+function PageCell({ page, selection }: { page: PageItem; selection?: WallSelection }) {
   const { t } = useI18n()
+  const checked = selection?.selected.has(page.id) ?? false
   return (
-    <li className="relative border-b border-r border-[color:var(--color-rule)] bg-[color:var(--color-sheet)]">
+    <li
+      className="relative border-b border-r border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] data-[checked]:outline data-[checked]:outline-2 data-[checked]:-outline-offset-2 data-[checked]:outline-[color:var(--color-sig)]"
+      data-checked={checked || undefined}
+      draggable={selection ? true : undefined}
+      onDragStart={selection ? (e) => {
+        // Dragging a selected page moves the whole selection; any other page moves alone.
+        const ids = checked ? [...selection.selected] : [page.id]
+        e.dataTransfer.setData(PAGES_MIME, JSON.stringify(ids))
+        e.dataTransfer.effectAllowed = 'move'
+      } : undefined}
+    >
+      {selection && (
+        <label className="absolute left-1 top-1 z-10 flex items-center rounded-[var(--radius-sm)] bg-[color:var(--color-sheet)] p-0.5">
+          <input type="checkbox" checked={checked} onChange={() => selection.onToggle(page.id)} aria-label={t('collections.selectPage', { page: pageLabel(page) })} />
+        </label>
+      )}
       <Link to={projectPath(page.project_id, 'studio', { page: page.id })} className="block text-[color:var(--color-ink)] no-underline hover:bg-[color:var(--color-fill)]">
         <div className="lighttable aspect-[3/4] overflow-hidden">
           <img data-fade
@@ -46,7 +71,7 @@ function PageCell({ page }: { page: PageItem }) {
   )
 }
 
-export function PageWall({ pages, loading }: { pages: PageItem[]; loading: boolean }) {
+export function PageWall({ pages, loading, selection }: { pages: PageItem[]; loading: boolean; selection?: WallSelection }) {
   const { t } = useI18n()
   const [filter, setFilter] = useState('')
   const [query, setQuery] = useState('')
@@ -99,7 +124,7 @@ export function PageWall({ pages, loading }: { pages: PageItem[]; loading: boole
       </div>
       {shown.length > 0 ? (
         <ul className="cascade grid grid-cols-2 border-l border-t border-[color:var(--color-rule)] sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
-          {shown.slice(0, limit).map((p) => <PageCell key={p.id} page={p} />)}
+          {shown.slice(0, limit).map((p) => <PageCell key={p.id} page={p} selection={selection} />)}
         </ul>
       ) : (
         <div className="flex flex-col items-start gap-2 py-6">

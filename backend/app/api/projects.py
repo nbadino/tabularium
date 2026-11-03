@@ -10,6 +10,7 @@ import threading
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 
 from .. import config
+from ..adapters import collections as collectionstore
 from ..adapters import projects as projectstore
 from ..db import connect  # noqa: F401  (scan, membership, delete: P7.1)
 from ..schemas import (
@@ -682,12 +683,16 @@ async def import_uploaded_folder(
     project_id: int,
     request: Request,
     files: list[UploadFile] = File(...),
+    # The collection the pages go into; omitted: no collection.
+    collection_id: int | None = Query(default=None),
     _auth: dict = Depends(require_resource(write=True)),
 ) -> ScanReportOut:
     """Importa una cartella scelta dal browser senza esporre percorsi locali."""
     lang = parse_lang(request.headers.get("accept-language"))
     with connect() as conn:
         _get_project_or_404(None, project_id)
+    if collection_id is not None and collectionstore.get(project_id, collection_id) is None:
+        raise HTTPException(status_code=404, detail=msg("collection_not_found", lang))
     if not files:
         raise HTTPException(status_code=400, detail=msg("no_file_selected", lang))
     session_dir = config.DATA_DIR / str(project_id) / "uploads" / uuid.uuid4().hex
@@ -708,5 +713,5 @@ async def import_uploaded_folder(
             errors.append(f"{name}: {exc}")
     report = scanmod.ScanReport(found_files=saved)
     report.errors.extend(errors)
-    scanmod.register_uploads(project_id, session_dir, report, lang=lang)
+    scanmod.register_uploads(project_id, session_dir, report, lang=lang, collection_id=collection_id)
     return ScanReportOut(**report.to_dict())

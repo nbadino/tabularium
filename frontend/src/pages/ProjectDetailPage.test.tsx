@@ -20,6 +20,7 @@ vi.mock('../lib/api', () => ({
     if (path === '/projects/5') return { id: 5, name: 'Registri', archive_dir: null, pages_count: state.pages.length }
     if (path === '/projects/5/pages') return { items: state.pages }
     if (path === '/system/prefill-engines') return { recommended: 'ocr', ocr: { available: true }, model: { available: false } }
+    if (path === '/projects/5/collections') return { collections: [], unassigned: { key: 'none', pages: 0, with_drafts: 0, by_status: {} }, total: { pages: 0, with_drafts: 0, by_status: {} } }
     return { items: [] }
   }),
   apiPost: vi.fn(async (path: string, body: unknown) => {
