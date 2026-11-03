@@ -117,3 +117,17 @@ def test_projects_owner_id_has_foreign_key_and_restricts_delete():
         assert any(row[2] == "users" and row[6] == "RESTRICT" for row in foreign_keys)
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute("DELETE FROM users WHERE id=?", (owner_id,))
+
+
+def test_additive_migrations_have_no_semicolon_in_comments():
+    """Additive migrations are split on ';' before comments are stripped: a ';' in a
+    comment cuts a statement in half (it broke migration 22 once)."""
+    import re as _re
+
+    additive = {"16", "17", "18", "21", "22"}
+    for version, ddl in db._MIGRATIONS:
+        if version not in additive:
+            continue
+        for line in ddl.splitlines():
+            if _re.match(r"\s*--", line):
+                assert ";" not in line, f"migration {version}: ';' in a comment: {line.strip()}"

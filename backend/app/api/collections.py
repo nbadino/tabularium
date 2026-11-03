@@ -25,6 +25,11 @@ class CollectionIn(BaseModel):
     name: CollectionName
 
 
+class CoverIn(BaseModel):
+    # `null` removes the cover: the declared state "no cover".
+    page_id: int | None
+
+
 class MovePagesIn(BaseModel):
     page_ids: list[int] = Field(min_length=1, max_length=10000)
     # `null` is the declared state "no collection", not a missing value.
@@ -82,6 +87,22 @@ def rename_collection(
         return collectionstore.rename(project_id, collection_id, payload.name)
     except sqlite3.IntegrityError as exc:
         raise HTTPException(status_code=409, detail=msg("collection_name_taken", lang, name=payload.name)) from exc
+
+
+@router.put("/api/projects/{project_id}/collections/{collection_id}/cover")
+def set_collection_cover(
+    project_id: int,
+    collection_id: int,
+    payload: CoverIn,
+    request: Request,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> dict:
+    """The page shown for the collection in the list, chosen among its own pages."""
+    lang = _lang(request)
+    _collection_or_404(project_id, collection_id, lang)
+    if not collectionstore.set_cover(project_id, collection_id, payload.page_id):
+        raise HTTPException(status_code=422, detail=msg("collection_cover_not_member", lang))
+    return collectionstore.get(project_id, collection_id)
 
 
 @router.delete("/api/projects/{project_id}/collections/{collection_id}")

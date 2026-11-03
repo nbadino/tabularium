@@ -103,6 +103,12 @@ def assign(project_id: int, page_ids: list[int], collection_id: int | None) -> i
         return 0
     marks = ",".join("?" * len(page_ids))
     with connect() as conn:
+        # A page that leaves a collection is no longer its cover.
+        conn.execute(
+            f"UPDATE collections SET cover_page_id=NULL WHERE project_id=? AND cover_page_id IN ({marks}) "
+            "AND id IS NOT ?",
+            (project_id, *page_ids, collection_id),
+        )
         if collection_id is None:
             cur = conn.execute(
                 f"UPDATE pages SET collection_id=NULL WHERE project_id=? AND id IN ({marks})",
@@ -125,7 +131,7 @@ def counts(project_id: int) -> dict[str, Any]:
     """
     with connect() as conn:
         collections = conn.execute(
-            "SELECT id, name, created_at, updated_at FROM collections WHERE project_id=? "
+            "SELECT id, name, cover_page_id, created_at, updated_at FROM collections WHERE project_id=? "
             "ORDER BY name COLLATE NOCASE",
             (project_id,),
         ).fetchall()
@@ -184,3 +190,20 @@ def page_collections(project_id: int) -> dict[int, int | None]:
     with connect() as conn:
         rows = conn.execute("SELECT id, collection_id FROM pages WHERE project_id=?", (project_id,)).fetchall()
     return {int(r["id"]): r["collection_id"] for r in rows}
+
+
+def set_cover(project_id: int, collection_id: int, page_id: int | None) -> bool:
+    """Set or clear the cover; `False` when the page is not in the collection."""
+    with connect() as conn:
+        if page_id is not None:
+            row = conn.execute(
+                "SELECT 1 FROM pages WHERE id=? AND project_id=? AND collection_id=?",
+                (page_id, project_id, collection_id),
+            ).fetchone()
+            if row is None:
+                return False
+        conn.execute(
+            "UPDATE collections SET cover_page_id=?, updated_at=datetime('now') WHERE id=? AND project_id=?",
+            (page_id, collection_id, project_id),
+        )
+    return True

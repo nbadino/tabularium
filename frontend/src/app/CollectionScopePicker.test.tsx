@@ -14,8 +14,8 @@ import type { CollectionsOverview, PageItem } from '../lib/types'
 
 const overview: CollectionsOverview = {
   collections: [
-    { id: 1, name: 'Registri', created_at: '', updated_at: '', pages: 10, with_drafts: 0, by_status: { approved: 4, new: 6 } },
-    { id: 2, name: 'Lettere', created_at: '', updated_at: '', pages: 3, with_drafts: 0, by_status: { exported: 1, new: 2 } },
+    { id: 1, name: 'Registri', cover_page_id: null, created_at: '', updated_at: '', pages: 10, with_drafts: 0, by_status: { approved: 4, new: 6 } },
+    { id: 2, name: 'Lettere', cover_page_id: null, created_at: '', updated_at: '', pages: 3, with_drafts: 0, by_status: { exported: 1, new: 2 } },
   ],
   unassigned: { key: 'none', pages: 2, with_drafts: 0, by_status: { new: 2 } },
   total: { pages: 15, with_drafts: 0, by_status: { approved: 4, exported: 1, new: 10 } },

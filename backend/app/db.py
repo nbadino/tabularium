@@ -16,7 +16,7 @@ from contextlib import closing
 
 from . import config
 
-SCHEMA_VERSION = "21"
+SCHEMA_VERSION = "22"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -448,6 +448,12 @@ _MIGRATIONS: list[tuple[str, str]] = [
             REFERENCES collections(id) ON DELETE SET NULL;
         CREATE INDEX IF NOT EXISTS idx_pages_collection ON pages(project_id, collection_id);
     """),
+    ("22", """
+        -- The page shown as a collection's cover in the page list. NULL is the
+        -- declared state "no cover". Additive like 21.
+        ALTER TABLE collections ADD COLUMN cover_page_id INTEGER
+            REFERENCES pages(id) ON DELETE SET NULL;
+    """),
 ]
 
 
@@ -510,7 +516,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     for version, ddl in sorted(_MIGRATIONS, key=lambda m: int(m[0])):
         if int(version) <= current:
             continue
-        if version in {"16", "17", "18", "21"}:
+        if version in {"16", "17", "18", "21", "22"}:
             _execute_additive_migration(conn, ddl)
             conn.execute("UPDATE meta SET value=? WHERE key='schema_version'", (version,))
             conn.commit()

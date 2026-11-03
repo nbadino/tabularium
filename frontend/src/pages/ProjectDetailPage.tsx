@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { projectPath } from '../app/projectPaths'
 import type { InputHTMLAttributes, ReactNode } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
-import { apiDelete, apiGet, apiPatch, apiPost } from '../lib/api'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
 import { PAGE_STATUSES, PAGE_TYPES } from '../lib/types'
 import type { PageItem, PrefillEngines, Project, RecognitionRun, ScanReport } from '../lib/types'
 import { pageTypeLabel, pages as pagesN, statusLabel, STATUS_TONE } from '../lib/vocab'
@@ -352,6 +352,22 @@ export default function ProjectDetailPage() {
     }
   }
 
+  const setCover = async (collectionId: number, pageId: number | null) => {
+    setError(null)
+    try {
+      await apiPut(`/projects/${projectId}/collections/${collectionId}/cover`, { page_id: pageId })
+      setSelected(new Set())
+      const name = collections?.collections.find((c) => c.id === collectionId)?.name ?? ''
+      setMoveNotice(t(pageId == null ? 'collections.coverCleared' : 'collections.coverSet', { name }))
+      await refreshCollections()
+    } catch (e) {
+      setError(e)
+    }
+  }
+  // "Use as cover" needs one page that already sits in a collection.
+  const coverCandidate = selected.size === 1 ? pages.find((p) => selected.has(p.id) && p.collection_id != null) ?? null : null
+  const coverCollection = coverCandidate ? collections?.collections.find((c) => c.id === coverCandidate.collection_id) ?? null : null
+
   const allSelected = scopedPages.length > 0 && scopedPages.every((p) => selected.has(p.id))
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(scopedPages.map((p) => p.id)))
   const toggleOne = (pid: number) =>
@@ -604,6 +620,7 @@ export default function ProjectDetailPage() {
           onCreate={() => setNameDialog({ collection: null })}
           onRename={(collection) => setNameDialog({ collection })}
           onDelete={setDeleteDialog}
+          onClearCover={(collection) => void setCover(collection.id, null)}
           onDropPages={(ids, target) => void movePages(ids, target)}
         />
       )}
@@ -640,6 +657,11 @@ export default function ProjectDetailPage() {
             <button type="button" className="menu-item italic" onClick={() => void movePages([...selected], null)}>{t('collections.none')}</button>
             <button type="button" className="menu-item text-[color:var(--color-sig-text)]" onClick={() => setNameDialog({ collection: null })}>+ {t('collections.createWithSelection')}</button>
           </Menu>
+          {coverCandidate && coverCollection && coverCollection.cover_page_id !== coverCandidate.id && (
+            <button type="button" className="btn btn-sm" onClick={() => void setCover(coverCollection.id, coverCandidate.id)}>
+              {t('collections.useAsCover', { name: coverCollection.name })}
+            </button>
+          )}
           {hasCollections && view === 'thumbs' && <span className="text-[12px] text-[color:var(--color-ink-2)]">{t('collections.dragHint')}</span>}
           <button type="button" className="btn btn-sm ml-auto" onClick={() => setSelected(new Set())}>{t('project.deselect')}</button>
         </div>

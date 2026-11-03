@@ -201,6 +201,8 @@ export interface CollectionCounts {
 export interface CollectionItem extends CollectionCounts {
   id: number
   name: string
+  /** The page shown for the collection; `null` is the declared state "no cover". */
+  cover_page_id: number | null
   created_at: string
   updated_at: string
 }

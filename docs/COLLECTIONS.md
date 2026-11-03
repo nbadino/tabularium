@@ -168,6 +168,11 @@ owner chose **the column**:
   selection, a bar offers *Move to…* (the collections, *No collection*, *New collection with these
   pages*). Dragging a thumbnail onto a row moves it, or the whole selection if it is selected.
 - Files and ZIPs dropped while a collection is being viewed go into that collection.
+- **Cover** (migration 22, owner's request 3 November 2026): each collection row shows its cover
+  page as a small thumbnail, or a dashed block with the initial when it has none (`cover_page_id
+  NULL`, the declared "no cover"). Selecting one page of a collection offers *Use as the cover of
+  "X"*; the row menu has *Remove the cover*. The cover must be a page of the collection
+  (`PUT …/collections/{cid}/cover {page_id|null}`, 422 otherwise); moving it out clears it.
 - With no collections the column is not shown: a project that does not use them looks as before,
   with one quiet *Create a collection* link next to the view switch.
 
