@@ -335,12 +335,16 @@ def compute_split(
             return str(page["abs_path"])
         if strategy == "page_type":
             return str(page["page_type"] or "unclassified")
-        if strategy in {"scanner", "collection"}:
+        if strategy == "collection":
+            # The real collection; the pages without one form one group.
+            cid = page["collection_id"] if "collection_id" in page.keys() else None
+            return f"collection:{cid}" if cid is not None else "collection:none"
+        if strategy == "scanner":
             try:
                 metadata = json.loads(page["meta_json"] or "{}")
             except (TypeError, ValueError):
                 metadata = {}
-            return str(metadata.get(strategy) or page["abs_path"])
+            return str(metadata.get("scanner") or page["abs_path"])
         return str(page["id"])
 
     groups: dict[str, list[int]] = {}

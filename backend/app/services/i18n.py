@@ -301,6 +301,13 @@ _IT: dict[str, str] = {
     "label_prompt_missing": "la classe «{name}» di tipo {kind} richiede un prompt",
     "label_alias_invalid": "sinonimo non valido per «{name}»: «{alias}»",
     "unmapped_native_label": "classi native non mappate: {labels} — ricadute su Text",
+    "collection_name_taken": "esiste già una collezione «{name}» in questo progetto",
+    "collection_not_found": "collezione non trovata",
+    "collection_filter_invalid": "filtro collezione non valido: un id oppure «none»",
+    "collection_pages_not_found": "alcune pagine non appartengono a questo progetto",
+    "collection_delete_confirm": "eliminare anche le pagine è irreversibile: passa ?confirm=true",
+    "collection_delete_owner": "solo il proprietario del progetto può eliminare le pagine",
+    "collection_pages_busy": "un riconoscimento sta ancora lavorando su queste pagine: attendi che finisca",
 }
 
 _EN: dict[str, str] = {
@@ -569,6 +576,13 @@ _EN: dict[str, str] = {
     "label_prompt_missing": "class “{name}” of kind {kind} requires a prompt",
     "label_alias_invalid": "invalid alias for “{name}”: “{alias}”",
     "unmapped_native_label": "unmapped native classes: {labels} — fell back to Text",
+    "collection_name_taken": "a collection named “{name}” already exists in this project",
+    "collection_not_found": "collection not found",
+    "collection_filter_invalid": "invalid collection filter: an id or “none”",
+    "collection_pages_not_found": "some pages do not belong to this project",
+    "collection_delete_confirm": "deleting the pages too cannot be undone: pass ?confirm=true",
+    "collection_delete_owner": "only the project owner can delete pages",
+    "collection_pages_busy": "a recognition is still working on these pages: wait for it to finish",
 }
 
 _FR: dict[str, str] = {
@@ -837,6 +851,13 @@ _FR: dict[str, str] = {
     "label_prompt_missing": "la classe « {name} » de type {kind} exige un prompt",
     "label_alias_invalid": "synonyme invalide pour « {name} » : « {alias} »",
     "unmapped_native_label": "classes natives non mappées : {labels} — repli sur Text",
+    "collection_name_taken": "une collection « {name} » existe déjà dans ce projet",
+    "collection_not_found": "collection introuvable",
+    "collection_filter_invalid": "filtre de collection invalide : un id ou « none »",
+    "collection_pages_not_found": "certaines pages n’appartiennent pas à ce projet",
+    "collection_delete_confirm": "supprimer aussi les pages est irréversible : passez ?confirm=true",
+    "collection_delete_owner": "seul le propriétaire du projet peut supprimer des pages",
+    "collection_pages_busy": "une reconnaissance traite encore ces pages : attendez qu’elle se termine",
 }
 
 CATALOG: dict[str, dict[str, str]] = {"it": _IT, "en": _EN, "fr": _FR}

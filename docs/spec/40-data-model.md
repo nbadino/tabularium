@@ -18,6 +18,11 @@
 - `tables(id, block_id, grid_json)` — `grid_json`: `{rows: n, cols: m, cells:[{r,c,rowspan,colspan,
   text, source, verified}], vlines:[...], hlines:[...]}` (physical grid; spans are the merges;
   `source` = who wrote the cell text, `verified` = human confirmation — only cells with text).
+- `collections(id, project_id, name, created_at, updated_at)` (migration 21): named groups of
+  pages inside a project, name unique per project (case-insensitive). `pages.collection_id`
+  (nullable, `ON DELETE SET NULL` as a safety net) puts a page in at most one collection;
+  `NULL` is the declared state "no collection" (`none` in the API). Deleting a collection goes
+  through the API, which requires `pages=unassign|delete` (see `docs/COLLECTIONS.md`).
 - `page_work` (migration 19): per-page annotator, reviewer, state
   (`annotation`/`pending`/`changes_requested`/`approved`) and optimistic version.
 - Coordinates **stored in source pixels**; normalization to 0–1000 **only at export** (§7).
@@ -50,7 +55,7 @@
   database last ran from; when it differs from `config.ROOT_DIR`, paths under the old root are
   rewritten after a `pre-relocation` backup. Paths outside the root (server folders) are left
   alone, and so are paths inside `jobs.command_json`.
-  Current `SCHEMA_VERSION`: **20**. Upgrade tests in `tests/test_db_migrations.py`. The historical
+  Current `SCHEMA_VERSION`: **21**. Upgrade tests in `tests/test_db_migrations.py`. The historical
   test suite runs with `TABULARIUM_AUTH=off`; `test_auth.py` turns it `on` with a fixture.
 
 ---

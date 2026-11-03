@@ -22,11 +22,21 @@ def list_for_project(
     *,
     page_type: str | None = None,
     status: str | None = None,
+    collection: int | str | None = None,
     limit: int = 10000,
 ) -> tuple[list[dict[str, Any]], int]:
-    """A project's pages with their block/draft counts, and the total before the limit."""
+    """A project's pages with their block/draft counts, and the total before the limit.
+
+    `collection` is a collection id, `"none"` for the pages without one, or `None`
+    for every page.
+    """
     where = "project_id=?"
     params: list = [project_id]
+    if collection == "none":
+        where += " AND collection_id IS NULL"
+    elif collection is not None:
+        where += " AND collection_id=?"
+        params.append(int(collection))
     if page_type:
         where += " AND page_type=?"
         params.append(page_type)
@@ -162,6 +172,7 @@ def insert_image_page(
     page_no: str | None,
     page_type: str | None,
     meta_json: str,
+    collection_id: int | None = None,
 ) -> int | None:
     """Insert an image page; `None` when the path is already there.
 
@@ -172,8 +183,9 @@ def insert_image_page(
     cursor = conn.execute(
         "INSERT OR IGNORE INTO pages "
         "(project_id, rel_path, abs_path, source_kind, width, height, "
-        "issue_no, page_no, page_type, meta_json) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (project_id, rel_path, abs_path, "image", width, height, issue_no, page_no, page_type, meta_json),
+        "issue_no, page_no, page_type, meta_json, collection_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (project_id, rel_path, abs_path, "image", width, height, issue_no, page_no, page_type, meta_json,
+         collection_id),
     )
     if cursor.rowcount == 0:
         conn.execute(
@@ -197,12 +209,14 @@ def insert_pdf_page(
     page_no: str | None,
     page_type: str | None,
     meta_json: str,
+    collection_id: int | None = None,
 ) -> int | None:
     cursor = conn.execute(
         "INSERT OR IGNORE INTO pages "
         "(project_id, rel_path, abs_path, source_kind, pdf_page, width, height, "
-        "issue_no, page_no, page_type, meta_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (project_id, rel_path, abs_path, "pdf", pdf_page, width, height, issue_no, page_no, page_type, meta_json),
+        "issue_no, page_no, page_type, meta_json, collection_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (project_id, rel_path, abs_path, "pdf", pdf_page, width, height, issue_no, page_no, page_type, meta_json,
+         collection_id),
     )
     if cursor.rowcount == 0:
         conn.execute(
@@ -300,3 +314,36 @@ def ids_of_project(project_id: int, conn) -> list[int]:
     ).fetchall()
     return [int(row["id"]) for row in rows]
 
+
+
+def in_active_recognition(page_ids: list[int]) -> bool:
+    """Whether a queued or running recognition is working on one of the pages."""
+    if not page_ids:
+        return False
+    marks = ",".join("?" * len(page_ids))
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM recognition_run_items i JOIN recognition_runs r ON r.id=i.run_id "
+            f"WHERE r.state IN ('queued','running') AND i.page_id IN ({marks}) LIMIT 1",
+            tuple(page_ids),
+        ).fetchone()
+    return row is not None
+
+
+def delete_rows(conn, project_id: int, page_ids: list[int]) -> list[dict[str, Any]]:
+    """Delete the pages (blocks, tables and work state cascade); returns the deleted rows."""
+    if not page_ids:
+        return []
+    marks = ",".join("?" * len(page_ids))
+    rows = conn.execute(
+        f"SELECT id, abs_path, source_kind FROM pages WHERE project_id=? AND id IN ({marks})",
+        (project_id, *page_ids),
+    ).fetchall()
+    conn.execute(
+        f"DELETE FROM pages WHERE project_id=? AND id IN ({marks})", (project_id, *page_ids)
+    )
+    return [dict(row) for row in rows]
+
+
+def path_in_use(conn, abs_path: str) -> bool:
+    return conn.execute("SELECT 1 FROM pages WHERE abs_path=? LIMIT 1", (abs_path,)).fetchone() is not None
