@@ -594,7 +594,7 @@ export default function ProjectDetailPage() {
         />
       )}
 
-      <div className={hasCollections && collections ? 'grid gap-3 md:grid-cols-[208px_minmax(0,1fr)]' : ''}>
+      <div className={hasCollections && collections ? 'grid gap-4 md:grid-cols-[236px_minmax(0,1fr)]' : ''}>
       {hasCollections && collections && (
         <CollectionsPanel
           overview={collections}
