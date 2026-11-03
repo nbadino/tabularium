@@ -204,7 +204,11 @@ export const fr: Dict = {
   },
 
   consensus: {
-    editorBar: "Comparaison de modèles : {n} cellules en désaccord",
+    useModel: "Utiliser {name} : « {value} »",
+    emptyValue: "(vide)",
+    resolvedCount: { one: "{count} corrigée", other: "{count} corrigées" },
+    editorRightClick: "Clic droit : utiliser la lecture d’un modèle.",
+    editorBar: { one: "Comparaison de modèles : {count} cellule en désaccord", other: "Comparaison de modèles : {count} cellules en désaccord" },
     editorToggle: "Afficher les désaccords",
     editorHover: "Survolez une cellule colorée pour voir les lectures.",
     mine: "Votre transcription",

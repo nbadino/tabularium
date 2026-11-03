@@ -134,7 +134,9 @@ Notable changes to Tabularium. The format follows
   differently* instead of missing. *Retry the failed ones* sends again only what failed.
   In the table editor (*Open the table*), the cells where the compared models disagree are
   coloured in the sheet itself, and hovering one shows each model's reading next to yours, so the
-  correction happens where you edit; *Show disagreements* turns it off.
+  correction happens where you edit; right click on a disputed cell offers *Use <model>:
+  "<reading>"* for each model, and a disputed cell you have corrected or verified turns violet
+  (the count of the ones left goes down); *Show disagreements* turns it off.
   Metric in `docs/spec/71-evaluation.md`.
 - A cover for each collection: select one of its pages and choose *Use as the cover*; the
   collections column shows it as a thumbnail (migration 22). *Remove the cover* is in the row menu.

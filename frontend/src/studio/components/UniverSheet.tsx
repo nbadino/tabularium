@@ -38,6 +38,7 @@ import UniverFrFR from '@univerjs/preset-sheets-core/locales/fr-FR'
 import type { FUniver } from '@univerjs/core/lib/facade'
 import type { IScale, Univer } from '@univerjs/core'
 import { IContextMenuService } from '@univerjs/ui'
+import { of } from 'rxjs'
 import '@univerjs/preset-sheets-core/lib/index.css'
 
 import type { TableGrid } from '../../lib/types'
@@ -281,6 +282,16 @@ function sheetCanvas(host: HTMLElement): HTMLCanvasElement | null {
   return Array.from(host.querySelectorAll('canvas')).find((c) => c.clientHeight > 60) ?? null
 }
 
+export interface Disagreements {
+  partly: [number, number][]
+  disagree: [number, number][]
+  resolved: [number, number][]
+}
+
+const NO_DISAGREEMENTS: Disagreements = { partly: [], disagree: [], resolved: [] }
+/** Right-click slots for quick values: one per compared model (at most six). */
+const CHOICE_SLOTS = 6
+
 interface UniverSheetProps {
   /** Il modello di partenza: si carica una volta, poi comanda Univer. */
   grid: TableGrid
@@ -304,13 +315,16 @@ interface UniverSheetProps {
   onRedo?: () => void
   /** Mostra lo scheletro soltanto finché la tela del foglio è pronta. */
   intro?: boolean
-  /** Cells where the compared models disagree (consensus), painted under the checks. */
-  disagreements?: { partly: [number, number][]; disagree: [number, number][] }
+  /** Cells where the compared models disagree (consensus), painted under the checks;
+   *  `resolved` are disputed cells the user has since edited or verified. */
+  disagreements?: Disagreements
+  /** Quick values offered on right click for a cell (consensus: each model's reading). */
+  cellChoices?: (row: number, column: number) => { label: string; value: string }[]
   /** What to show when the pointer rests on a cell; null shows nothing. */
   cellHint?: (row: number, column: number) => ReactNode | null
 }
 
-export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp, onSaveHeader, onApplyHeader, suspects, onSelectionChange, onControllerChange, onUndo, onRedo, intro = false, disagreements, cellHint }: UniverSheetProps) {
+export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp, onSaveHeader, onApplyHeader, suspects, onSelectionChange, onControllerChange, onUndo, onRedo, intro = false, disagreements, cellHint, cellChoices }: UniverSheetProps) {
   const { t, locale } = useI18n()
   const host = useRef<HTMLDivElement | null>(null)
   const [failed, setFailed] = useState(false)
@@ -341,9 +355,11 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
   const paintRef = useRef<((cells: [number, number][]) => void) | null>(null)
   const suspectsRef = useRef(suspects ?? [])
   suspectsRef.current = suspects ?? []
-  const disagreementsRef = useRef(disagreements ?? { partly: [], disagree: [] })
-  disagreementsRef.current = disagreements ?? { partly: [], disagree: [] }
-  const paintDisagreementsRef = useRef<((value: { partly: [number, number][]; disagree: [number, number][] }) => void) | null>(null)
+  const disagreementsRef = useRef(disagreements ?? NO_DISAGREEMENTS)
+  disagreementsRef.current = disagreements ?? NO_DISAGREEMENTS
+  const paintDisagreementsRef = useRef<((value: Disagreements) => void) | null>(null)
+  const choicesRef = useRef(cellChoices)
+  choicesRef.current = cellChoices
   // Hovered cell and pointer position (relative to the sheet) for the hint.
   const [hover, setHover] = useState<{ row: number; column: number } | null>(null)
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null)
@@ -593,7 +609,9 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
         // fill and frame for "disagree".
         const paintPartly = painter('tabularium-consensus-partly', 'rgba(232, 161, 0, 0.2)', null, () => disagreementsRef.current.partly)
         const paintDisagree = painter('tabularium-consensus-disagree', 'rgba(163, 0, 14, 0.14)', '#a3000e', () => disagreementsRef.current.disagree)
-        paintDisagreementsRef.current = (value) => { paintPartly(value.partly); paintDisagree(value.disagree) }
+        // Violet: a disputed cell the user has already corrected or verified.
+        const paintResolved = painter('tabularium-consensus-resolved', 'rgba(124, 58, 237, 0.16)', '#7c3aed', () => disagreementsRef.current.resolved)
+        paintDisagreementsRef.current = (value) => { paintPartly(value.partly); paintDisagree(value.disagree); paintResolved(value.resolved) }
         paintDisagreementsRef.current(disagreementsRef.current)
         try {
           hoverListener = api.addEvent(api.Event.CellHover, (params: { row: number; column: number }) => {
@@ -838,6 +856,34 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
           })
         }
 
+        // Consensus quick values: fixed slots whose title and visibility are read
+        // when the menu opens (Univer rebuilds it each time), for the active cell.
+        const choicesHere = () => {
+          const at = selection()
+          return choicesRef.current?.(at.startRow, at.startColumn) ?? []
+        }
+        const choiceIds = Array.from({ length: CHOICE_SLOTS }, (_, i) => `tabularium.consensus.use.${i}`)
+        choiceIds.forEach((id, i) => {
+          commands.registerCommand({
+            id,
+            type: CommandType.COMMAND,
+            handler: () => {
+              const choice = choicesHere()[i]
+              const at = selection()
+              if (!choice) return false
+              void api.getActiveWorkbook()?.getActiveSheet().getRange(at.startRow, at.startColumn).setValue(choice.value)
+              return true
+            },
+          })
+        })
+        const choiceGroup = Object.fromEntries(choiceIds.map((id, i) => [id, {
+          order: -100 + i,
+          menuItemFactory: () => {
+            const choice = choicesHere()[i]
+            return { id, type: MenuItemType.BUTTON, title: choice?.label ?? '', commandId: id, hidden$: of(!choice) }
+          },
+        }]))
+
         const entry = (key: string, title: string, commandId: string, order: number) => ({
           [key]: {
             order,
@@ -853,7 +899,7 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
             // Sul corpo del foglio, sull'intestazione di colonna e su quella di
             // riga: il gesto è «tasto destro su riga/colonna», e le tre strade
             // devono portare allo stesso posto.
-            [ContextMenuPosition.MAIN_AREA]: { [ContextMenuGroup.OTHERS]: group },
+            [ContextMenuPosition.MAIN_AREA]: { [ContextMenuGroup.OTHERS]: { ...choiceGroup, ...group } },
             [ContextMenuPosition.COL_HEADER]: { [ContextMenuGroup.OTHERS]: group },
             [ContextMenuPosition.ROW_HEADER]: { [ContextMenuGroup.OTHERS]: group },
           },
@@ -896,7 +942,7 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
   }, [suspects])
 
   useEffect(() => {
-    paintDisagreementsRef.current?.(disagreements ?? { partly: [], disagree: [] })
+    paintDisagreementsRef.current?.(disagreements ?? NO_DISAGREEMENTS)
   }, [disagreements])
 
   const hint = hover && pointer && cellHint ? cellHint(hover.row, hover.column) : null

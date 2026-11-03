@@ -19,14 +19,17 @@ vi.mock('./UniverSheet', () => ({
     onSelectionChange,
     disagreements,
     cellHint,
+    cellChoices,
   }: {
     suspects?: [number, number][]
     onSelectionChange?: (s: { startRow: number; startColumn: number; endRow: number; endColumn: number }) => void
     disagreements?: { partly: [number, number][]; disagree: [number, number][] }
     cellHint?: (row: number, column: number) => React.ReactNode
+    cellChoices?: (row: number, column: number) => { label: string; value: string }[]
   }) => (
     <div data-testid="univer-sheet" data-suspects={JSON.stringify(suspects ?? [])} data-disagreements={JSON.stringify(disagreements ?? null)}>
       <div data-testid="hint-1-1">{cellHint?.(1, 1)}</div>
+      <ul data-testid="choices-1-1">{(cellChoices?.(1, 1) ?? []).map((choice) => <li key={choice.label}>{choice.label}</li>)}</ul>
       <button type="button" onClick={() => onSelectionChange?.({ startRow: 2, startColumn: 3, endRow: 2, endColumn: 3 })}>
         seleziona D3
       </button>
@@ -184,7 +187,11 @@ describe('ContentPane', () => {
 
   it('confronto modelli: le celle in disaccordo si colorano nel foglio e il passaggio del mouse mostra le letture', async () => {
     const grid = emptyGrid(3, 4)
-    grid.cells = grid.cells.map((cell) => (cell.r === 1 && cell.c === 1 ? { ...cell, text: 'Genva' } : cell))
+    grid.cells = grid.cells.map((cell) =>
+      cell.r === 1 && cell.c === 1 ? { ...cell, text: 'Genva', source: 'ocr' as const }
+        // Already corrected by hand: resolved, painted violet.
+        : cell.r === 2 && cell.c === 2 ? { ...cell, text: '1523', source: 'manual' as const }
+          : { ...cell, source: 'ocr' as const })
     const consensus = {
       run_id: 2,
       models: [{ key: 'p3', name: 'OCRia-1' }, { key: 'p1', name: 'Argon' }],
@@ -219,8 +226,12 @@ describe('ContentPane', () => {
       />,
     )
     await userEvent.click(screen.getByRole('button', { name: 'Apri la tabella' }))
-    await waitFor(() => expect(screen.getByTestId('consensus-bar')).toHaveTextContent('2 celle in disaccordo'))
-    expect(screen.getByTestId('univer-sheet')).toHaveAttribute('data-disagreements', JSON.stringify({ partly: [[1, 1]], disagree: [[2, 2]] }))
+    await waitFor(() => expect(screen.getByTestId('consensus-bar')).toHaveTextContent('1 cella in disaccordo'))
+    expect(screen.getByTestId('consensus-bar')).toHaveTextContent('1 corretta')
+    expect(screen.getByTestId('univer-sheet')).toHaveAttribute('data-disagreements', JSON.stringify({ partly: [[1, 1]], disagree: [], resolved: [[2, 2]] }))
+    // Right click on a disputed cell offers each model's reading.
+    expect(screen.getByTestId('choices-1-1')).toHaveTextContent('Usa OCRia-1: «Genova»')
+    expect(screen.getByTestId('choices-1-1')).toHaveTextContent('Usa Argon: «Genovo»')
     const hint = screen.getByTestId('hint-1-1')
     expect(hint).toHaveTextContent('La tua trascrizione: Genva')
     expect(hint).toHaveTextContent('OCRia-1: Genova')

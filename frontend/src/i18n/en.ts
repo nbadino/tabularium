@@ -204,7 +204,11 @@ export const en: Dict = {
   },
 
   consensus: {
-    editorBar: "Model comparison: {n} cells where they disagree",
+    useModel: "Use {name}: “{value}”",
+    emptyValue: "(empty)",
+    resolvedCount: { one: "{count} corrected", other: "{count} corrected" },
+    editorRightClick: "Right click: use a model's reading.",
+    editorBar: { one: "Model comparison: {count} cell where they disagree", other: "Model comparison: {count} cells where they disagree" },
     editorToggle: "Show disagreements",
     editorHover: "Hover a coloured cell to see the readings.",
     mine: "Your transcription",

@@ -203,7 +203,11 @@ export const it = {
   },
 
   consensus: {
-    editorBar: "Confronto modelli: {n} celle in disaccordo",
+    useModel: "Usa {name}: «{value}»",
+    emptyValue: "(vuota)",
+    resolvedCount: { one: "{count} corretta", other: "{count} corrette" },
+    editorRightClick: "Tasto destro: usa la lettura di un modello.",
+    editorBar: { one: "Confronto modelli: {count} cella in disaccordo", other: "Confronto modelli: {count} celle in disaccordo" },
     editorToggle: "Mostra disaccordi",
     editorHover: "Passa il mouse su una cella colorata per vedere le letture.",
     mine: "La tua trascrizione",

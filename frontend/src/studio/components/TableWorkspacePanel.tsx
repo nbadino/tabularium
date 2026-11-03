@@ -143,7 +143,7 @@ export function TableWorkspacePanel({
    *  salvato: chi chiude la vista (la seconda finestra) la chiama prima. */
   flushRef?: MutableRefObject<(() => Promise<void>) | null>
 }) {
-  const { t } = useI18n()
+  const { t, tn } = useI18n()
   const confirm = useConfirm()
   const [grid, setGrid] = useState<TableGrid | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -232,10 +232,32 @@ export function TableWorkspacePanel({
   }, [grid, serverId])
   const consensusCells = new Map((consensus?.cells ?? []).map((cell) => [`${cell.r}:${cell.c}`, cell]))
   const disputed = (consensus?.cells ?? []).filter((cell) => cell.score != null && scoreBand(cell.score) !== 'agree')
+  // A disputed cell the user has edited (source becomes 'manual') or verified is
+  // resolved: violet instead of amber or red, so the remaining work stays visible.
+  const currentCells = new Map((grid?.cells ?? []).map((cell) => [`${cell.r}:${cell.c}`, cell]))
+  const isResolved = (r: number, c: number) => {
+    const cell = currentCells.get(`${r}:${c}`)
+    return Boolean(cell && (cell.source === 'manual' || cell.verified))
+  }
+  const open = disputed.filter((cell) => !isResolved(cell.r, cell.c))
   const disagreements = consensus && showConsensus
     ? {
-        partly: disputed.filter((cell) => scoreBand(cell.score!) === 'partly').map((cell) => [cell.r, cell.c] as [number, number]),
-        disagree: disputed.filter((cell) => scoreBand(cell.score!) === 'disagree').map((cell) => [cell.r, cell.c] as [number, number]),
+        partly: open.filter((cell) => scoreBand(cell.score!) === 'partly').map((cell) => [cell.r, cell.c] as [number, number]),
+        disagree: open.filter((cell) => scoreBand(cell.score!) === 'disagree').map((cell) => [cell.r, cell.c] as [number, number]),
+        resolved: disputed.filter((cell) => isResolved(cell.r, cell.c)).map((cell) => [cell.r, cell.c] as [number, number]),
+      }
+    : undefined
+  const cellChoices = consensus && showConsensus
+    ? (row: number, column: number) => {
+        const cell = consensusCells.get(`${row}:${column}`)
+        if (!cell || cell.score == null || scoreBand(cell.score) === 'agree') return []
+        const mine = currentCells.get(`${row}:${column}`)?.text ?? ''
+        return consensus.models.flatMap((model) => {
+          const value = cell.values[model.key]
+          return value == null || value === mine
+            ? []
+            : [{ label: t('consensus.useModel', { name: model.name, value: value || t('consensus.emptyValue') }), value }]
+        })
       }
     : undefined
   const cellHint = consensus && showConsensus
@@ -766,11 +788,13 @@ export function TableWorkspacePanel({
 
       {consensus && (
         <div className="flex flex-wrap items-center gap-3 text-[11px] text-[color:var(--color-ink-2)]" data-testid="consensus-bar">
-          <span className="font-semibold text-[color:var(--color-ink)]">{t('consensus.editorBar', { n: disputed.length })}</span>
+          <span className="font-semibold text-[color:var(--color-ink)]">{tn('consensus.editorBar', open.length)}</span>
+          {disputed.length > open.length && <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 border border-[#7c3aed]" style={{ background: 'rgba(124, 58, 237, 0.3)' }} />{tn('consensus.resolvedCount', disputed.length - open.length)}</span>}
           <span>{consensus.models.map((model) => model.name).join(' · ')}</span>
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5" style={{ background: 'rgba(232, 161, 0, 0.45)' }} />{t('consensus.legendPartly')}</span>
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 border border-[#a3000e]" style={{ background: 'rgba(163, 0, 14, 0.25)' }} />{t('consensus.legendDisagree')}</span>
           <span>{t('consensus.editorHover')}</span>
+          <span>{t('consensus.editorRightClick')}</span>
           <label className="ml-auto inline-flex items-center gap-1">
             <input type="checkbox" checked={showConsensus} onChange={(event) => setShowConsensus(event.target.checked)} />
             {t('consensus.editorToggle')}
@@ -810,6 +834,7 @@ export function TableWorkspacePanel({
                 suspects={checks?.suspects}
                 disagreements={disagreements}
                 cellHint={cellHint}
+                cellChoices={cellChoices}
                 onControllerChange={setSheetController}
                 onUndo={undo}
                 onRedo={redo}
