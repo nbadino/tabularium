@@ -205,6 +205,15 @@ export interface CollectionItem extends CollectionCounts {
   updated_at: string
 }
 
+/** Which pages a dataset, a training run or an evaluation used (docs/COLLECTIONS.md). */
+export interface CollectionScope {
+  kind: 'project' | 'collections'
+  /** Names as they were when the dataset was built. */
+  collections: { id: number; name: string }[]
+  include_unassigned: boolean
+  pages?: number
+}
+
 /** `GET /projects/:id/collections`: the collections, the pages without one, the total. */
 export interface CollectionsOverview {
   collections: CollectionItem[]
@@ -538,6 +547,7 @@ export interface TableHintOut {
 export interface DatasetReport {
   project_id: number
   built_at: string
+  collection_scope?: CollectionScope
   split: { ratio: number; seed: number; strategy?: string }
   adapter_id?: string
   pages: { total: number; with_blocks: number; train: number; val: number }
@@ -714,6 +724,7 @@ export interface TrainingRunItem {
   train_type?: string
   summary?: RunSummary
   remote_cleaned_at?: string | null
+  collection_scope?: CollectionScope
 }
 
 export interface TrainingStatus {
@@ -850,6 +861,7 @@ export interface EvalPage {
 export interface EvalReport {
   project_id: number
   evaluated_at: string
+  collection_scope?: CollectionScope
   config: {
     server_url: string
     model: string

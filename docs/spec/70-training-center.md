@@ -25,7 +25,8 @@
 - `services/training_views.py` materialises the run's data view from the immutable dataset
   snapshot. Views reshape containers/prompts, never the target: `ms-swift-jsonl`,
   `paddleformers-messages`, `llamafactory-sharegpt`. Each run writes `dataset/view.json` (families,
-  prompts, counts, empty families) and embeds it in `run.json`; the view also realigns the
+  prompts, counts, empty families) and embeds it in `run.json`, together with the snapshot's
+  `collection_scope` (which pages the model learns from, see §7); the view also realigns the
   prompts to the model being trained, whatever adapter built the snapshot. Recognition-only models
   (GLM-OCR, PaddleOCR-VL) do not get the layout family: their protocol has no bbox.
 - **The environment is per model, not per toolchain.** The recipe declares the pins measured on

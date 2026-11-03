@@ -880,6 +880,18 @@ export const en: Dict = {
   collections: {
     none: 'No collection',
   },
+  scope: {
+    legend: 'Pages to use',
+    wholeProject: 'The whole project',
+    onlyThese: 'Only these collections',
+    verified: { one: '{count} verified', other: '{count} verified' },
+    empty: 'Choose at least one collection.',
+    builtFrom: 'Pages from: {scope}',
+    trainedOn: 'Trained on: {scope}.',
+    measuredOn: 'Measured on the pages of: {scope}',
+    collection: 'Collection',
+    allCollections: 'All collections',
+  },
   zip: {
     title: 'Import {name}',
     uploading: 'Uploading: {sent} of {size} MB',

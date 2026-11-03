@@ -77,3 +77,47 @@ def delete_collection(project_id: int, collection_id: int, *, pages: str, actor:
     for path in orphans:
         Path(path).unlink(missing_ok=True)
     return {"deleted": True, "pages_unassigned": unassigned, "pages_deleted": len(deleted)}
+
+
+class ScopeError(Exception):
+    """A scope the project cannot satisfy: an empty choice or another project's collection."""
+
+    def __init__(self, code: str, status: int) -> None:
+        super().__init__(code)
+        self.code = code
+        self.status = status
+
+
+PROJECT_SCOPE = {"kind": "project", "collections": [], "include_unassigned": True}
+
+
+def resolve_scope(project_id: int, scope: dict | None) -> tuple[dict, set[int] | None]:
+    """The scope as recorded (names at this moment) and its page ids.
+
+    `None` page ids means the whole project. The record keeps the collection
+    names of the build, so a later rename does not rewrite what a model was
+    trained on.
+    """
+    if not scope or scope.get("kind", "project") == "project":
+        return dict(PROJECT_SCOPE), None
+    ids = sorted({int(i) for i in scope.get("collection_ids") or []})
+    include_unassigned = bool(scope.get("include_unassigned"))
+    if not ids and not include_unassigned:
+        raise ScopeError("scope_empty", 400)
+    names = collectionstore.names(project_id)
+    if any(i not in names for i in ids):
+        raise ScopeError("collection_not_found", 404)
+    record = {
+        "kind": "collections",
+        "collections": [{"id": i, "name": names[i]} for i in ids],
+        "include_unassigned": include_unassigned,
+    }
+    return record, collectionstore.pages_in_scope(project_id, ids, include_unassigned)
+
+
+def scope_pages(project_id: int, record: dict | None) -> set[int] | None:
+    """Page ids of a recorded scope, today; `None` for the whole project."""
+    if not record or record.get("kind") != "collections":
+        return None
+    ids = [int(c["id"]) for c in record.get("collections") or []]
+    return collectionstore.pages_in_scope(project_id, ids, bool(record.get("include_unassigned")))

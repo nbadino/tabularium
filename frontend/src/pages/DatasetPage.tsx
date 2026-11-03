@@ -13,6 +13,9 @@ import { IconDataset, IconPlus } from '../app/icons'
 import { useI18n, tn } from '../i18n'
 import { useInference } from '../app/inference'
 import { DEFAULT_MODEL_ID } from '../lib/constants'
+import CollectionScopePicker, { scopeIsEmpty, WHOLE_PROJECT } from '../app/CollectionScopePicker'
+import type { ScopeChoice } from '../app/CollectionScopePicker'
+import { scopeLabel, useCollections } from '../app/collections'
 
 function fmtSize(n: number): string {
   if (n < 1024) return `${n} B`
@@ -30,6 +33,7 @@ export default function DatasetPage() {
   const [approvedOnly, setApprovedOnly] = useState(true)
   const [pilotOnly, setPilotOnly] = useState(false)
   const [adapterId, setAdapterId] = useState(DEFAULT_MODEL_ID)
+  const [scope, setScope] = useState<ScopeChoice>(WHOLE_PROJECT)
   const adapterTouched = useRef(false)
   const [adapters, setAdapters] = useState<Array<{ adapter_id: string; display_name: string; tasks: string[]; training_types: string[]; export_ready?: boolean }>>([])
   const [building, setBuilding] = useState(false)
@@ -112,6 +116,7 @@ export default function DatasetPage() {
         approved_only: approvedOnly,
         pilot_only: pilotOnly,
         adapter_id: adapterId,
+        scope,
       })
       setStatus({ built: true, report: rep })
     } catch (e) {
@@ -137,6 +142,9 @@ export default function DatasetPage() {
   }
 
   const project = projects.find((p) => p.id === projectId) ?? null
+  const { overview: collections } = useCollections(projectId === '' ? null : projectId)
+  const hasCollections = (collections?.collections.length ?? 0) > 0
+  useEffect(() => setScope(WHOLE_PROJECT), [projectId])
   const { workflow, training } = usePipelineState(projectId === '' ? null : projectId, { dataset: false, runs: false })
   useEffect(() => {
     setDraftOnlyPages(null)
@@ -215,6 +223,7 @@ export default function DatasetPage() {
             )}
           </div>
 
+          {hasCollections && collections && <CollectionScopePicker overview={collections} value={scope} onChange={setScope} />}
           {/* The defaults fit most projects: they are stated in one line, and every
               choice (share, split, scope, seed, adapter, pilot) sits under Parameters. */}
           <p className="text-[12px] text-[color:var(--color-ink-2)]">
@@ -286,7 +295,7 @@ export default function DatasetPage() {
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               onClick={() => void build()}
-              disabled={building || projectId === '' || exportWouldBeEmpty}
+              disabled={building || projectId === '' || exportWouldBeEmpty || scopeIsEmpty(scope)}
               title={exportWouldBeEmpty ? t('dataset.buildEmptyTitle') : undefined}
               className="btn btn-primary"
             >
@@ -336,6 +345,9 @@ export default function DatasetPage() {
               <p className="mt-1 text-[12px] text-[color:var(--color-ink-2)]">
                 {t('dataset.trainVal', { train: report.pages.train, val: report.pages.val })}
               </p>
+              {(hasCollections || report.collection_scope?.kind === 'collections') && (
+                <p className="mt-1 text-[12px] text-[color:var(--color-ink-2)]">{t('scope.builtFrom', { scope: scopeLabel(report.collection_scope) })}</p>
+              )}
             </Module>
             <Module tab={t('dataset.cropsGenerated')} quiet>
               <div className="mono text-[26px] font-semibold leading-none">
