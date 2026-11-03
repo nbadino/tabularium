@@ -16,7 +16,7 @@ from contextlib import closing
 
 from . import config
 
-SCHEMA_VERSION = "20"
+SCHEMA_VERSION = "21"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -430,6 +430,24 @@ _MIGRATIONS: list[tuple[str, str]] = [
         CREATE UNIQUE INDEX IF NOT EXISTS idx_compute_active ON compute_profiles(active) WHERE active=1;
         PRAGMA foreign_keys = ON;
     """),
+    ("21", """
+        -- Collections group the pages of one project, typically by document type
+        -- (docs/COLLECTIONS.md). A NULL collection_id is the declared state
+        -- "no collection". SET NULL is only a safety net, the API always asks.
+        -- Applied additively: a restored database can already have the column.
+        CREATE TABLE IF NOT EXISTS collections (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            name        TEXT    NOT NULL,
+            created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_collections_name
+            ON collections(project_id, name COLLATE NOCASE);
+        ALTER TABLE pages ADD COLUMN collection_id INTEGER
+            REFERENCES collections(id) ON DELETE SET NULL;
+        CREATE INDEX IF NOT EXISTS idx_pages_collection ON pages(project_id, collection_id);
+    """),
 ]
 
 
@@ -492,7 +510,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     for version, ddl in sorted(_MIGRATIONS, key=lambda m: int(m[0])):
         if int(version) <= current:
             continue
-        if version in {"16", "17", "18"}:
+        if version in {"16", "17", "18", "21"}:
             _execute_additive_migration(conn, ddl)
             conn.execute("UPDATE meta SET value=? WHERE key='schema_version'", (version,))
             conn.commit()

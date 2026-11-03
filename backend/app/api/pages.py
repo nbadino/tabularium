@@ -46,16 +46,22 @@ def _get_page_or_404(page_id: int):
 @router.get("/api/projects/{project_id}/pages", response_model=PageList)
 def list_pages(
     project_id: int,
+    request: Request,
     page_type: str | None = None,
     status: str | None = None,
+    # A collection id, or `none` for the pages without a collection.
+    collection: str | None = None,
     # Il default era 200 e troncava in silenzio: un corpus di 361 pagine ne
     # mostrava 200 ovunque, e le altre non si potevano né vedere né
     # selezionare. Il tetto è lo stesso di una sessione di riconoscimento.
     limit: int = Query(default=10000, ge=1, le=10000),
     _auth: dict = Depends(require_resource(write=False)),
 ) -> PageList:
+    if collection is not None and collection != "none" and not collection.isdigit():
+        lang = parse_lang(request.headers.get("accept-language"))
+        raise HTTPException(status_code=400, detail=msg("collection_filter_invalid", lang))
     rows, total = pagestore.list_for_project(
-        project_id, page_type=page_type, status=status, limit=limit
+        project_id, page_type=page_type, status=status, collection=collection, limit=limit
     )
     with connect() as conn:
         work_items = worksvc.project_work(conn, project_id, _auth)
@@ -76,6 +82,7 @@ def list_pages(
                 status=r["status"],
                 annotation_revision=r["annotation_revision"],
                 created_at=r["created_at"],
+                collection_id=r["collection_id"],
                 blocks=r["blocks"],
                 drafts=r["drafts"],
                 work=work_items.get(r["id"]),

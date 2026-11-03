@@ -254,6 +254,8 @@ class PageOut(BaseModel):
     status: str
     annotation_revision: int = 0
     created_at: str
+    # `None` is the declared state "no collection" (docs/COLLECTIONS.md).
+    collection_id: int | None = None
     # Quanto contiene la pagina: `status` dice solo che cosa ne ha fatto una
     # persona, e una pagina riconosciuta ma non ancora rivista resta `new`.
     # Senza questi due numeri nessuna lista sapeva dire quali pagine hanno

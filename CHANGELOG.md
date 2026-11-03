@@ -61,6 +61,13 @@ Notable changes to Tabularium. The format follows
   administrator was created elsewhere returns to the login.
 
 ### Added
+- Collections inside a project: named groups of pages, typically one per document type
+  (`collections` table, migration 21; a page belongs to at most one, or to "no collection").
+  API to create, rename and delete them, to move pages between them, per-collection page counts
+  by state, and a `collection` filter on the page list. Deleting a collection requires saying
+  what happens to its pages (`pages=unassign|delete`); deleting them is for the owner only and
+  needs `confirm=true`. The "split by collection" strategy now groups by the real collection.
+  Spec in `docs/COLLECTIONS.md`.
 - Models: the catalog is sorted by public OmniDocBench v1.6 score (overall), shown next to
   each model with who measured it (official leaderboard or the vendor) and a link to the
   source; models without a published score say so and come last.

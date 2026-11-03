@@ -188,6 +188,28 @@ export interface PageItem {
   blocks?: number
   drafts?: number
   work?: PageWork | null
+  /** `null` is the declared state "no collection" (docs/COLLECTIONS.md). */
+  collection_id?: number | null
+}
+
+export interface CollectionCounts {
+  pages: number
+  with_drafts: number
+  by_status: Record<string, number>
+}
+
+export interface CollectionItem extends CollectionCounts {
+  id: number
+  name: string
+  created_at: string
+  updated_at: string
+}
+
+/** `GET /projects/:id/collections`: the collections, the pages without one, the total. */
+export interface CollectionsOverview {
+  collections: CollectionItem[]
+  unassigned: CollectionCounts & { key: 'none' }
+  total: CollectionCounts
 }
 
 export type TransformEngine = 'deskew' | 'monkeyocr' | 'perspective' | 'mesh'
