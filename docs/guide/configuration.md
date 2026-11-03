@@ -18,6 +18,11 @@ file of the data folder.
 | `TABULARIUM_TRAIN_REPO` | unset | your own MonkeyOCRv2 checkout (otherwise cloned automatically) |
 | `TABULARIUM_TRAIN_ENV` | `monkeyocrv2-train` | conda/venv name for training |
 | `TABULARIUM_MODELS_DIR` | `<repo>/models` | local model checkpoints |
+| `TABULARIUM_ZIP_MAX_ARCHIVE_MB` | `2048` | largest ZIP archive accepted for import |
+| `TABULARIUM_ZIP_MAX_ENTRIES` | `5000` | most entries in one ZIP archive |
+| `TABULARIUM_ZIP_MAX_TOTAL_MB` | `4096` | most bytes a ZIP archive may unpack to |
+| `TABULARIUM_ZIP_MAX_FILE_MB` | `200` | largest single file inside a ZIP (larger ones are skipped) |
+| `TABULARIUM_ZIP_MAX_RATIO` | `100` | highest compression ratio of a file over 1 MB (higher ones are skipped as a zip bomb) |
 | `TABULARIUM_PUBLIC_URL` | unset | public URL for the OIDC callback when a proxy hides the real address |
 | `TABULARIUM_SESSION_COOKIE_SECURE` | `0` | `1` behind HTTPS: the session cookie is never sent in clear |
 | `TABULARIUM_FORWARDED_ALLOW_IPS` | `127.0.0.1` | proxies trusted for `X-Forwarded-For`: a comma list of addresses and CIDR ranges (`10.0.0.0/8`), or `*`; the client address keys the login rate limit. Behind a CDN, see [below](#behind-cloudflare-or-another-cdn) |

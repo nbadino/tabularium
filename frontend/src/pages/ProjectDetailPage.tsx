@@ -20,6 +20,8 @@ import { writeActiveProject } from '../app/activeProject'
 import { accessLabel, projectAccess } from '../app/projectAccess'
 import { pageLabel } from '../lib/pageLabel'
 import { API_BASE } from '../lib/endpoints'
+import ZipImportDialog from '../app/ZipImportDialog'
+import { isZip } from '../lib/zipImport'
 
 /** Il referto di scansione sopravvive alla navigazione: è un risultato, non un lampo. */
 const reportKey = (id: number) => `tabularium.scanReport.${id}`
@@ -65,6 +67,8 @@ export default function ProjectDetailPage() {
   const [engines, setEngines] = useState<PrefillEngines | null>(null)
   const [recognizing, setRecognizing] = useState(false)
   const [dragging, setDragging] = useState(false)
+  // ZIP archives go through their own dialog, one at a time.
+  const [zipQueue, setZipQueue] = useState<File[]>([])
   const inference = useInference()
   const canAdminister = useCanAdminister()
   const auth = useAuth()
@@ -124,13 +128,21 @@ export default function ProjectDetailPage() {
     }
   }
 
-  const uploadFolder = async (files: FileList | File[] | null) => {
-    if (!files || files.length === 0) return
+  const uploadFolder = async (input: FileList | File[] | null) => {
+    if (!input || input.length === 0) return
+    const all = Array.from(input)
+    const zips = all.filter(isZip)
+    if (zips.length) setZipQueue((cur) => [...cur, ...zips])
+    const files = all.filter((file) => !isZip(file))
+    if (files.length === 0) {
+      if (filesInputRef.current) filesInputRef.current.value = ''
+      return
+    }
     setUploading(true)
     setError(null)
     try {
       const form = new FormData()
-      Array.from(files).forEach((file) => form.append('files', file, file.name))
+      files.forEach((file) => form.append('files', file, file.name))
       const response = await fetch(`${API_BASE}/projects/${projectId}/import-upload`, { method: 'POST', body: form })
       if (!response.ok) throw new Error(t('project.importFailed', { status: response.status, detail: await response.text() }))
       const rep = await response.json() as ScanReport
@@ -271,9 +283,29 @@ export default function ProjectDetailPage() {
 
   if (!project && error == null) return <div className="p-3"><Loading label={t('common.loading')} /></div>
 
+  const dropAnywhere = canEdit && pages.length > 0
   return (
-    <div className="p-3">
-      <input ref={filesInputRef} type="file" multiple accept=".jpg,.jpeg,.png,.bmp,.webp,.tif,.tiff,.pdf" className="hidden" onChange={(e) => void uploadFolder(e.target.files)} />
+    <div
+      className="p-3 data-[dragging]:outline-2 data-[dragging]:outline-dashed data-[dragging]:outline-[color:var(--color-sig)]"
+      data-dragging={(dropAnywhere && dragging) || undefined}
+      onDragOver={dropAnywhere ? (e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true) } } : undefined}
+      onDragLeave={dropAnywhere ? (e) => { if (e.currentTarget === e.target) setDragging(false) } : undefined}
+      onDrop={dropAnywhere ? (e) => { e.preventDefault(); setDragging(false); void uploadFolder(e.dataTransfer.files) } : undefined}
+    >
+      {zipQueue.length > 0 && (
+        <ZipImportDialog
+          key={`${zipQueue[0].name}-${zipQueue.length}`}
+          projectId={projectId}
+          file={zipQueue[0]}
+          collectionId={null}
+          onClose={() => setZipQueue((cur) => cur.slice(1))}
+          onImported={() => {
+            void refreshPages()
+            apiGet<Project>(`/projects/${projectId}`).then(setProject).catch(() => undefined)
+          }}
+        />
+      )}
+      <input ref={filesInputRef} type="file" multiple accept=".jpg,.jpeg,.png,.bmp,.webp,.tif,.tiff,.pdf,.zip" className="hidden" onChange={(e) => void uploadFolder(e.target.files)} />
       <input
         ref={folderInputRef}
         type="file"

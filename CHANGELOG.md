@@ -68,6 +68,13 @@ Notable changes to Tabularium. The format follows
   what happens to its pages (`pages=unassign|delete`); deleting them is for the owner only and
   needs `confirm=true`. The "split by collection" strategy now groups by the real collection.
   Spec in `docs/COLLECTIONS.md`.
+- ZIP import on the Pages tab (drop zone and *Add pages*): the archive goes up in 16 MB pieces
+  with real progress, is inspected before anything is written, and is extracted safely — paths
+  that could leave the folder, links, encrypted and nested archives are refused, size, entry
+  count and compression ratio are capped (`TABULARIUM_ZIP_*`), and non-images are skipped and
+  reported. A single wrapping folder is opened; with two or more folders the user chooses one
+  collection per folder or everything together. The summary lists pages per collection,
+  duplicates and every skipped file with its reason.
 - Models: the catalog is sorted by public OmniDocBench v1.6 score (overall), shown next to
   each model with who measured it (official leaderboard or the vendor) and a link to the
   source; models without a published score say so and come last.
