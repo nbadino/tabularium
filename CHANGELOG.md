@@ -80,6 +80,12 @@ Notable changes to Tabularium. The format follows
   training run and the evaluation record the scope with the collection names, and the run list
   and the evaluation show it. Recognitions can select pages by collection, and a recognition's
   export can be limited to one collection (`collection=<id>|none`).
+- Collections on the Pages tab: a column beside the pages lists *All*, each collection and *No
+  collection* with their counts by state, and filters the wall and the table (kept in the URL).
+  Create, rename and delete from the column; deleting asks whether the pages move to *No
+  collection* or are deleted too (owner only, with the name typed). Thumbnails can be selected
+  and moved with *Move to…* or dragged onto a collection; files dropped while viewing a collection
+  go into it.
 - Models: the catalog is sorted by public OmniDocBench v1.6 score (overall), shown next to
   each model with who measured it (official leaderboard or the vendor) and a link to the
   source; models without a published score say so and come last.

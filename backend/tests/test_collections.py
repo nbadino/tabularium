@@ -219,3 +219,16 @@ def test_permissions(monkeypatch):
         r = c.delete(f"/api/projects/{pid}/collections/{cid}", params={"pages": "delete", "confirm": "true"})
         assert r.status_code == 403
         assert c.delete(f"/api/projects/{pid}/collections/{cid}", params={"pages": "unassign"}).status_code == 200
+
+
+def test_upload_into_a_collection(client, tmp_path):
+    pid, _ = _project(client, tmp_path, 1)
+    cid = client.post(f"/api/projects/{pid}/collections", json={"name": "Nuove"}).json()["id"]
+    Image.new("RGB", (40, 60), "white").save(tmp_path / "x.png")
+    files = [("files", ("x.png", (tmp_path / "x.png").read_bytes(), "image/png"))]
+    r = client.post(f"/api/projects/{pid}/import-upload", params={"collection_id": cid}, files=files)
+    assert r.status_code == 200 and r.json()["registered"] == 1
+    inside = client.get(f"/api/projects/{pid}/pages", params={"collection": cid}).json()["items"]
+    assert [p["rel_path"] for p in inside] == ["000000_x.png"]
+    r = client.post(f"/api/projects/{pid}/import-upload", params={"collection_id": 99999}, files=files)
+    assert r.status_code == 404

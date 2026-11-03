@@ -296,11 +296,12 @@ def run_scan(
 
 
 def register_uploads(
-    project_id: int, session_dir: str | Path, report: ScanReport, *, lang: str = "it"
+    project_id: int, session_dir: str | Path, report: ScanReport, *, lang: str = "it",
+    collection_id: int | None = None,
 ) -> None:
     """Register a folder of uploaded files, in one transaction."""
     root = Path(session_dir)
     with connect() as conn:
         for candidate in scan_archive(root):
-            register_candidate(conn, project_id, candidate, root, report, lang=lang)
+            register_candidate(conn, project_id, candidate, root, report, lang=lang, collection_id=collection_id)
 

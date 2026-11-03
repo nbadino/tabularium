@@ -146,20 +146,24 @@ evaluation read:
 
 ## Collection manager (UI)
 
-On the Pages tab, consistent with `docs/UX_SIMPLIFICATION.md` (one main action, plain language):
+On the Pages tab, consistent with `docs/UX_SIMPLIFICATION.md` (one main action, plain language).
+Of the two mockups shown on 3 November 2026 (tabs above the wall, or a column beside it) the
+owner chose **the column**:
 
-- A collection bar above the wall: *All · Registri 120 · Lettere 45 · Senza collezione 12*, with
-  per-state counts on hover/expansion. Selecting one filters the wall and the table; the choice is
-  in the URL (`?collezione=<id>|none`).
-- *Manage collections* (secondary): create, rename, delete. Deleting asks what to do with the
-  pages: **move them to "Senza collezione"** (default choice in the dialog) or **delete them too**
-  (typed confirmation of the collection name, owner only).
-- Multi-select on the wall and in the table, then *Move to…* with the collection list (and
-  "Senza collezione"). Dragging selected thumbnails onto a collection in the bar does the same.
-- With no collections, the bar is a single *Create a collection* link: a project that does not
-  use collections looks as it does today.
-
-Two mockups are shown to the user before the UI is built.
+- A *Collections* column left of the pages: *All*, each collection, *No collection*, each row
+  with its page count and a line of states (*120 new · 12 drafts · 8 verified*), then
+  *+ New collection*. Selecting a row filters the wall and the table; the choice is in the URL
+  (`?collezione=<id>|none`) next to the view. The main action (recognize, review) follows the
+  collection being viewed.
+- Each collection row has a ⋯ menu: *Rename*, *Delete…*. Deleting asks what to do with the pages:
+  **move them to "No collection"** (the default) or **delete them too**, which is offered only to
+  the owner (or an admin) and needs the collection's name typed.
+- Thumbnails have a checkbox (never shown on hover only) and the table keeps its own; with a
+  selection, a bar offers *Move to…* (the collections, *No collection*, *New collection with these
+  pages*). Dragging a thumbnail onto a row moves it, or the whole selection if it is selected.
+- Files and ZIPs dropped while a collection is being viewed go into that collection.
+- With no collections the column is not shown: a project that does not use them looks as before,
+  with one quiet *Create a collection* link next to the view switch.
 
 ## Delivery
 

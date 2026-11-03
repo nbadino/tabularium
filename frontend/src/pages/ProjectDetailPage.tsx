@@ -22,6 +22,12 @@ import { pageLabel } from '../lib/pageLabel'
 import { API_BASE } from '../lib/endpoints'
 import ZipImportDialog from '../app/ZipImportDialog'
 import { isZip } from '../lib/zipImport'
+import CollectionsPanel from '../app/CollectionsPanel'
+import { CollectionNameDialog, DeleteCollectionDialog } from '../app/CollectionDialogs'
+import { matchesCollection, parseCollectionFilter, useCollections } from '../app/collections'
+import type { CollectionFilter } from '../app/collections'
+import type { CollectionItem } from '../lib/types'
+import { describeError } from '../lib/errors'
 
 /** Il referto di scansione sopravvive alla navigazione: è un risultato, non un lampo. */
 const reportKey = (id: number) => `tabularium.scanReport.${id}`
@@ -64,6 +70,21 @@ export default function ProjectDetailPage() {
   const [shareOpen, setShareOpen] = useState(false)
   const [params, setParams] = useSearchParams()
   const view = params.get('vista') === 'tabella' ? 'table' : 'thumbs'
+  // The collection being looked at lives in the URL, next to the view.
+  const collectionFilter = parseCollectionFilter(params.get('collezione'))
+  const { overview: collections, refresh: refreshCollections } = useCollections(projectId)
+  const hasCollections = (collections?.collections.length ?? 0) > 0
+  const [nameDialog, setNameDialog] = useState<{ collection: CollectionItem | null } | null>(null)
+  const [deleteDialog, setDeleteDialog] = useState<CollectionItem | null>(null)
+  const [dialogBusy, setDialogBusy] = useState(false)
+  const [dialogError, setDialogError] = useState<string | null>(null)
+  const [moveNotice, setMoveNotice] = useState<string | null>(null)
+  const setParam = (key: string, value: string | null) => {
+    const next = new URLSearchParams(params)
+    if (value == null) next.delete(key)
+    else next.set(key, value)
+    setParams(next, { replace: true })
+  }
   const [engines, setEngines] = useState<PrefillEngines | null>(null)
   const [recognizing, setRecognizing] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -143,12 +164,14 @@ export default function ProjectDetailPage() {
     try {
       const form = new FormData()
       files.forEach((file) => form.append('files', file, file.name))
-      const response = await fetch(`${API_BASE}/projects/${projectId}/import-upload`, { method: 'POST', body: form })
+      const into = typeof collectionFilter === 'number' ? `?collection_id=${collectionFilter}` : ''
+      const response = await fetch(`${API_BASE}/projects/${projectId}/import-upload${into}`, { method: 'POST', body: form })
       if (!response.ok) throw new Error(t('project.importFailed', { status: response.status, detail: await response.text() }))
       const rep = await response.json() as ScanReport
       setReport(rep)
       sessionStorage.setItem(reportKey(projectId), JSON.stringify(rep))
       setPages((await apiGet<{ items: PageItem[] }>(`/projects/${projectId}/pages`)).items)
+      void refreshCollections()
     } catch (e) { setError(e) } finally {
       setUploading(false)
       if (folderInputRef.current) folderInputRef.current.value = ''
@@ -261,13 +284,75 @@ export default function ProjectDetailPage() {
     }
   }
 
+  // The pages of the collection being looked at (all of them without a filter).
+  const scopedPages = useMemo(() => pages.filter((page) => matchesCollection(page, collectionFilter)), [pages, collectionFilter])
   const filteredPages = useMemo(() => {
     const query = pageQuery.trim().toLocaleLowerCase()
-    return query ? pages.filter((page) => pageLabel(page).toLocaleLowerCase().includes(query)) : pages
-  }, [pages, pageQuery])
+    return query ? scopedPages.filter((page) => pageLabel(page).toLocaleLowerCase().includes(query)) : scopedPages
+  }, [scopedPages, pageQuery])
 
-  const allSelected = pages.length > 0 && selected.size === pages.length
-  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(pages.map((p) => p.id)))
+  const selectCollection = (filter: CollectionFilter) => {
+    setSelected(new Set())
+    setMoveNotice(null)
+    setParam('collezione', filter === 'all' ? null : String(filter))
+  }
+
+  const movePages = async (pageIds: number[], target: number | null) => {
+    if (!pageIds.length) return
+    setError(null)
+    try {
+      await apiPost(`/projects/${projectId}/pages/collection`, { page_ids: pageIds, collection_id: target })
+      const ids = new Set(pageIds)
+      setPages((cur) => cur.map((p) => (ids.has(p.id) ? { ...p, collection_id: target } : p)))
+      setSelected(new Set())
+      const name = target == null ? t('collections.none') : collections?.collections.find((c) => c.id === target)?.name ?? ''
+      setMoveNotice(tn('collections.moved', pageIds.length, { name }))
+      await refreshCollections()
+    } catch (e) {
+      setError(e)
+    }
+  }
+
+  const saveName = async (name: string) => {
+    if (!nameDialog) return
+    setDialogBusy(true)
+    setDialogError(null)
+    try {
+      if (nameDialog.collection) {
+        await apiPatch(`/projects/${projectId}/collections/${nameDialog.collection.id}`, { name })
+      } else {
+        const created = await apiPost<CollectionItem>(`/projects/${projectId}/collections`, { name })
+        // Pages picked before creating the collection go into it.
+        if (selected.size) await movePages([...selected], created.id)
+      }
+      await refreshCollections()
+      setNameDialog(null)
+    } catch (e) {
+      setDialogError(describeError(e).messaggio)
+    } finally {
+      setDialogBusy(false)
+    }
+  }
+
+  const deleteCollection = async (mode: 'unassign' | 'delete') => {
+    if (!deleteDialog) return
+    setDialogBusy(true)
+    try {
+      await apiDelete(`/projects/${projectId}/collections/${deleteDialog.id}?pages=${mode}${mode === 'delete' ? '&confirm=true' : ''}`)
+      if (collectionFilter === deleteDialog.id) selectCollection('all')
+      await refreshPages()
+      await refreshCollections()
+      setDeleteDialog(null)
+    } catch (e) {
+      setError(e)
+      setDeleteDialog(null)
+    } finally {
+      setDialogBusy(false)
+    }
+  }
+
+  const allSelected = scopedPages.length > 0 && scopedPages.every((p) => selected.has(p.id))
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(scopedPages.map((p) => p.id)))
   const toggleOne = (pid: number) =>
     setSelected((cur) => {
       const next = new Set(cur)
@@ -297,10 +382,11 @@ export default function ProjectDetailPage() {
           key={`${zipQueue[0].name}-${zipQueue.length}`}
           projectId={projectId}
           file={zipQueue[0]}
-          collectionId={null}
+          collectionId={typeof collectionFilter === 'number' ? collectionFilter : null}
           onClose={() => setZipQueue((cur) => cur.slice(1))}
           onImported={() => {
             void refreshPages()
+            void refreshCollections()
             apiGet<Project>(`/projects/${projectId}`).then(setProject).catch(() => undefined)
           }}
         />
@@ -361,7 +447,7 @@ export default function ProjectDetailPage() {
       )}
 
       {canEdit && !pagesLoading && (() => {
-        const action = primaryAction(pages)
+        const action = pages.length === 0 || scopedPages.length === 0 ? primaryAction(pages) : primaryAction(scopedPages)
         if (action.kind === 'import') return (
           <div
             onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
@@ -488,23 +574,82 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
+      {nameDialog && (
+        <CollectionNameDialog
+          collection={nameDialog.collection}
+          busy={dialogBusy}
+          error={dialogError}
+          onSubmit={(name) => void saveName(name)}
+          onClose={() => { setNameDialog(null); setDialogError(null) }}
+        />
+      )}
+      {deleteDialog && (
+        <DeleteCollectionDialog
+          collection={deleteDialog}
+          canDeletePages={canManage}
+          busy={dialogBusy}
+          onConfirm={(mode) => void deleteCollection(mode)}
+          onClose={() => setDeleteDialog(null)}
+        />
+      )}
+
+      <div className={hasCollections && collections ? 'grid gap-3 md:grid-cols-[208px_minmax(0,1fr)]' : ''}>
+      {hasCollections && collections && (
+        <CollectionsPanel
+          overview={collections}
+          active={collectionFilter}
+          canEdit={canEdit}
+          onSelect={selectCollection}
+          onCreate={() => setNameDialog({ collection: null })}
+          onRename={(collection) => setNameDialog({ collection })}
+          onDelete={setDeleteDialog}
+          onDropPages={(ids, target) => void movePages(ids, target)}
+        />
+      )}
+      <div className="min-w-0">
       {pages.length > 0 && (
-        <div className="mb-3 flex items-center gap-1" role="group" aria-label={t('project.viewLabel')}>
+        <div className="mb-3 flex flex-wrap items-center gap-1" role="group" aria-label={t('project.viewLabel')}>
           {(['thumbs', 'table'] as const).map((v) => (
             <button
               key={v}
               type="button"
               aria-pressed={view === v}
-              onClick={() => setParams(v === 'table' ? { vista: 'tabella' } : {}, { replace: true })}
+              onClick={() => setParam('vista', v === 'table' ? 'tabella' : null)}
               className={`btn btn-sm ${view === v ? '!border-[color:var(--color-ink)] !bg-[color:var(--color-ink)] !text-white' : ''}`}
             >
               {t(v === 'thumbs' ? 'project.viewThumbs' : 'project.viewTable')}
             </button>
           ))}
+          {/* A project that does not use collections looks as before: one quiet link. */}
+          {canEdit && collections && !hasCollections && (
+            <button type="button" className="ml-auto text-[12px] text-[color:var(--color-sig-text)] underline-offset-2 hover:underline" onClick={() => setNameDialog({ collection: null })}>
+              + {t('collections.createFirst')}
+            </button>
+          )}
         </div>
       )}
 
-      {view === 'thumbs' && pages.length > 0 && <PageWall pages={pages} loading={false} />}
+      {canEdit && pages.length > 0 && selected.size > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-[var(--radius-lg)] border border-[color:var(--color-ink)] px-3 py-2 text-[13px]">
+          <b className="font-semibold">{tn('collections.selected', selected.size)}</b>
+          <Menu label={t('collections.moveTo')} align="left">
+            {collections?.collections.map((c) => (
+              <button key={c.id} type="button" className="menu-item" onClick={() => void movePages([...selected], c.id)}>{c.name}</button>
+            ))}
+            <button type="button" className="menu-item italic" onClick={() => void movePages([...selected], null)}>{t('collections.none')}</button>
+            <button type="button" className="menu-item text-[color:var(--color-sig-text)]" onClick={() => setNameDialog({ collection: null })}>+ {t('collections.createWithSelection')}</button>
+          </Menu>
+          {hasCollections && view === 'thumbs' && <span className="text-[12px] text-[color:var(--color-ink-2)]">{t('collections.dragHint')}</span>}
+          <button type="button" className="btn btn-sm ml-auto" onClick={() => setSelected(new Set())}>{t('project.deselect')}</button>
+        </div>
+      )}
+      {moveNotice && selected.size === 0 && <p role="status" className="mb-3 text-[12px] text-[color:var(--color-ok)]">{moveNotice}</p>}
+
+      {view === 'thumbs' && pages.length > 0 && (
+        scopedPages.length > 0
+          ? <PageWall pages={scopedPages} loading={false} selection={canEdit ? { selected, onToggle: toggleOne } : undefined} />
+          : <p className="py-6 text-[13px] text-[color:var(--color-ink-2)]">{t('collections.emptyCollection')}</p>
+      )}
 
       {view === 'table' && pages.length > 0 && (<>
       {selected.size > 0 && (
@@ -745,6 +890,8 @@ export default function ProjectDetailPage() {
 
       </fieldset>
       </>)}
+      </div>
+      </div>
 
       {shareOpen && project && (
         <ShareDialog
