@@ -318,10 +318,16 @@ def run_import(
     *,
     layout: str,
     collection_id: int | None,
+    collection_name: str | None = None,
     lang: str = "it",
     on_progress=None,
 ) -> dict:
-    """Extract and register the pages; returns the summary."""
+    """Extract and register the pages; returns the summary.
+
+    A flat import goes into `collection_id`, or into the collection called
+    `collection_name` (created if the project has none by that name), or into
+    "no collection" when both are absent.
+    """
     folder = upload_dir(project_id, upload_id)
     files_dir = folder / "files"
     files_dir.mkdir(exist_ok=True)
@@ -361,7 +367,12 @@ def run_import(
     report = scanmod.ScanReport(found_files=len(extracted))
     collections: dict[str, dict] = {}
     unassigned = 0
+    flat_created = False
     with connect() as conn:
+        if layout == "flat" and collection_name:
+            collection_id, _name, flat_created = collectionstore.ensure(
+                conn, project_id, _collection_name(collection_name),
+            )
         for index, (entry, target) in enumerate(extracted, 1):
             target_collection = collection_id
             if layout == "collections":
@@ -388,7 +399,7 @@ def run_import(
     if layout == "flat" and collection_id is not None:
         names = collectionstore.names(project_id)
         collections[names.get(collection_id, "")] = {
-            "id": collection_id, "name": names.get(collection_id, ""), "created": False,
+            "id": collection_id, "name": names.get(collection_id, ""), "created": flat_created,
             "pages": report.registered,
         }
     summary = plan.to_dict()

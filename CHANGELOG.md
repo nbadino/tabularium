@@ -6,6 +6,11 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Changed
+- ZIP import always asks which collection the pages go into: a new one named after the archive
+  (editable), an existing one, or none, with the collection being viewed preselected. Before, an
+  archive without several folders was imported straight into "No collection".
+
 ## [0.6.0] - 2026-11-03
 
 ### Changed

@@ -47,6 +47,18 @@ export interface ZipJob {
 
 export type ZipLayout = 'collections' | 'flat'
 
+/** Where a flat import goes: a new collection, an existing one, or none. */
+export type ZipDestination =
+  | { kind: 'new'; name: string }
+  | { kind: 'existing'; id: number }
+  | { kind: 'none' }
+
+/** A collection name from the archive: its wrapping folder, or the file name. */
+export function defaultCollectionName(plan: ZipPlan, fileName: string): string {
+  const folder = plan.root.split('/').filter(Boolean).pop()
+  return (folder || fileName.replace(/\.zip$/i, '')).slice(0, 120)
+}
+
 export function isZip(file: File): boolean {
   return file.name.toLowerCase().endsWith('.zip')
 }
@@ -94,13 +106,18 @@ export async function importZip(
   projectId: number,
   uploadId: string,
   layout: ZipLayout,
-  collectionId: number | null,
+  destination: ZipDestination,
   onProgress: (job: ZipJob) => void,
   pollMs = 500,
 ): Promise<ZipReport> {
+  const target = layout === 'collections'
+    ? {}
+    : destination.kind === 'new'
+      ? { collection_name: destination.name }
+      : { collection_id: destination.kind === 'existing' ? destination.id : null }
   const { job_id } = await apiPost<{ job_id: string }>(
     `/projects/${projectId}/zip-uploads/${uploadId}/import`,
-    { layout, collection_id: collectionId },
+    { layout, ...target },
   )
   for (;;) {
     const job = await apiGet<ZipJob>(`/projects/${projectId}/zip-jobs/${job_id}`)

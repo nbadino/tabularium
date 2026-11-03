@@ -78,7 +78,8 @@ therefore uploaded **in chunks** of 16 MB:
 3. `POST /api/projects/{id}/zip-uploads/{upload_id}/inspect` → the plan (below), without
    extracting anything;
 4. `POST /api/projects/{id}/zip-uploads/{upload_id}/import {layout: "collections" | "flat",
-   collection_id?: int | null}` → a background job, polled like the folder scan, with
+   collection_id?: int | null, collection_name?: str}` (a flat import goes into
+   `collection_id`, or into the collection named `collection_name`, created if needed) → a background job, polled like the folder scan, with
    *n of N files* progress, then the final summary.
 
 The same drop zone on the Pages tab accepts images, PDFs and ZIPs. Plain images and PDFs keep the
@@ -106,13 +107,18 @@ The archive is first **unwrapped**: while the top level holds exactly one folder
 supported files, that folder is treated as the root (zipping the folder *Lloyds* produces
 `Lloyds/…`; the user means what is inside it). Then:
 
-| What the root contains | What happens |
-|---|---|
-| Only files, or files in exactly one folder | Imported directly, no question. Into the collection being viewed if the page wall is filtered on one, otherwise "Senza collezione". |
-| Two or more folders with supported files | The user chooses: **one collection per folder** (named after the folder) or **everything together**. The dialog lists the folders with their file counts. |
-| Deeper nesting | A collection is a **first-level** folder; everything below it goes into that collection, and the full path stays in the page name (`rel_path`), so nothing is lost. |
-| Files next to the folders | Go to "Senza collezione" in the per-folder layout; the dialog says so. |
+The import always asks where the pages go before anything is extracted (owner's request, 3
+November 2026: one archive per collection, now or later):
 
+| What the root contains | What the dialog asks |
+|---|---|
+| Only files, or files in exactly one folder | **Which collection**: a new one, named after the wrapping folder or the archive (editable), an existing one, or "No collection". The collection being viewed is preselected. |
+| Two or more folders with supported files | **One collection per folder** (named after the folder) or **all together**; *all together* then asks which collection, as above. |
+| Deeper nesting | A collection is a **first-level** folder; everything below it goes into that collection, and the full path stays in the page name (`rel_path`), so nothing is lost. |
+| Files next to the folders | Go to "No collection" in the per-folder layout; the dialog says so. |
+
+A new collection whose name already exists in the project (in any case) is reused, so a second
+archive can go into the same collection by typing its name or choosing it from the list.
 If a collection with the folder's name already exists in the project, the pages are added to
 it (re-importing a type adds to it, it does not create *Registri (2)*). The summary says which
 collections were created and which already existed.
