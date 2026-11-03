@@ -55,7 +55,7 @@ describe('ZipImportDialog', () => {
       '/api/projects/5/zip-uploads/u1?offset=4',
       '/api/projects/5/zip-uploads/u1?offset=8',
     ])
-    expect(seen.at(-1)).toBe(10)
+    expect(seen[seen.length - 1]).toBe(10)
   })
 
   it('imports without asking when there is nothing to choose', async () => {
