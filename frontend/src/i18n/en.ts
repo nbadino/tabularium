@@ -914,6 +914,8 @@ export const en: Dict = {
     clearCover: 'Remove the cover',
     coverSet: 'Cover of “{name}” updated.',
     coverCleared: '“{name}” no longer has a cover.',
+    selectAll: 'Select all ({n})',
+    selectNone: 'Select none',
     moveTo: 'Move to…',
     moved: { one: '{count} page moved to “{name}”.', other: '{count} pages moved to “{name}”.' },
     dragHint: 'or drag them onto a collection',

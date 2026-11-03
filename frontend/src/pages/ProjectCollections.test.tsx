@@ -124,6 +124,22 @@ describe('Collections on the Pages tab', () => {
     await waitFor(() => expect(state.put).toContainEqual({ path: '/projects/5/collections/1/cover', body: { page_id: null } }))
   })
 
+  it('selects every page shown and moves them together', async () => {
+    renderPage('/progetti/5?collezione=1')
+    fireEvent.click(await screen.findByRole('button', { name: 'Seleziona tutte (2)' }))
+    expect(screen.getByText('2 pagine selezionate')).toBeInTheDocument()
+    const menu = screen.getByText('Sposta in…').closest('details') as HTMLElement
+    fireEvent.click(within(menu).getByRole('button', { name: 'Lettere' }))
+    await waitFor(() => expect(state.posted).toContainEqual({ path: '/projects/5/pages/collection', body: { page_ids: [1, 2], collection_id: 2 } }))
+  })
+
+  it('select all turns into select none', async () => {
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Seleziona tutte (4)' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Deseleziona tutte' }))
+    expect(screen.queryByText(/pagine selezionate/)).not.toBeInTheDocument()
+  })
+
   it('asks what happens to the pages before deleting a collection', async () => {
     renderPage()
     const column = await screen.findByRole('navigation', { name: 'Collezioni' })

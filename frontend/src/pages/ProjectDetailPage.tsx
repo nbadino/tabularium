@@ -670,7 +670,7 @@ export default function ProjectDetailPage() {
 
       {view === 'thumbs' && pages.length > 0 && (
         scopedPages.length > 0
-          ? <PageWall pages={scopedPages} loading={false} selection={canEdit ? { selected, onToggle: toggleOne } : undefined} />
+          ? <PageWall pages={scopedPages} loading={false} selection={canEdit ? { selected, onToggle: toggleOne, onSelect: (ids) => setSelected(new Set(ids)) } : undefined} />
           : <p className="py-6 text-[13px] text-[color:var(--color-ink-2)]">{t('collections.emptyCollection')}</p>
       )}
 

@@ -9,6 +9,8 @@ Notable changes to Tabularium. The format follows
 ### Added
 - A cover for each collection: select one of its pages and choose *Use as the cover*; the
   collections column shows it as a thumbnail (migration 22). *Remove the cover* is in the row menu.
+- *Select all* on the page wall selects every page shown (after the collection, state and search
+  filters), so a whole collection can be moved at once; it turns into *Select none*.
 
 ### Changed
 - ZIP import always asks which collection the pages go into: a new one named after the archive
