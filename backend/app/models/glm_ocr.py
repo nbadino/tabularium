@@ -39,7 +39,7 @@ SPEC = ModelSpec(
         native_remote_port=8890,
         pip_extra=("glmocr[selfhosted]", "fastapi", "uvicorn"),
         serve_args=(
-            "--speculative-config", '{"method": "mtp", "num_speculative_tokens": 1}',
+            "--speculative-config", '{"method": "mtp", "num_speculative_tokens": 3}',
         ),
         source="README GLM-OCR: vLLM MTP ufficiale + SDK self-hosted PP-DocLayout/OCR",
     )),
@@ -101,7 +101,7 @@ SPEC = ModelSpec(
         image={"min_pixels": None, "max_pixels": 71_372_800},
         image_fields=("max_pixels",),
         workflow=(
-            WorkflowField("speculative_tokens", "int", default=1, minimum=1, maximum=16,
+            WorkflowField("speculative_tokens", "int", default=3, minimum=1, maximum=16,
                           label="settings.glmSpeculativeTokens"),
         ),
         workflow_intro="settings.glmWorkflowIntro",

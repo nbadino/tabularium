@@ -102,7 +102,7 @@ def serve():
         "--port", str(PORT),
         "--speculative-config", (
             '{"method": "mtp", "num_speculative_tokens": '
-            + os.environ.get("TABULARIUM_GLM_SPECULATIVE_TOKENS", "1")
+            + os.environ.get("TABULARIUM_GLM_SPECULATIVE_TOKENS", "3")
             + "}"
         ),
         "--served-model-name", "glm-ocr",

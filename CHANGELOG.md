@@ -82,6 +82,16 @@ Notable changes to Tabularium. The format follows
 - The separate Archive page: its thumbnail wall is now the project's Pages tab.
 
 ### Fixed
+- Models, the audit's remaining items: PaddleOCR-VL runs the 1.6 pipeline on a runtime that
+  has it and asks for its official 8192 tokens; dots.mocr boxes are rescaled from the
+  server's resize; GLM-OCR uses three MTP tokens and reads its tables as HTML; MinerU2.5
+  keeps inverted boxes and uses mineru-vl-utils 2.0.8; DeepSeek-OCR-2 keeps every box of a
+  block on the vendor's 0-999 grid; LightOnOCR-3 parses like the vendor and knows section
+  headers; TeleOCR prompts match the vendor's; Xiaomi-OCR-0 can retry looping regions (off
+  by default, as upstream); the LlamaIndex panel says when a job no longer uses OCRia-1;
+  long Modal requests follow the 303 to their result; Vast training instances start with
+  a script inside Vast's 4048-character limit and list every page of instances; Gemini 4
+  waits up to 15 minutes and reads a saved old model id; mlx-vlm is pinned to 0.7.1.
 - Models now run with their vendors' official settings (audit in `docs/MODELS_AUDIT.md`):
   MonkeyOCRv2, PaddleOCR-VL, MinerU2.5 and Unlimited-OCR decode greedily instead of
   sampling; DeepSeek-OCR-2 pins a vLLM that contains it (0.16.0) and asks for its official

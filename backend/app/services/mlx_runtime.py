@@ -28,8 +28,10 @@ from pathlib import Path
 from .. import config
 
 # `mlx-vlm` è l'unico pacchetto necessario: porta con sé `mlx`, `mlx-lm`,
-# `transformers` e il server FastAPI.
-PACKAGES = ["mlx-vlm"]
+# `transformers` e il server FastAPI. Pinned to the release the MLX paths were measured
+# on (Unlimited-OCR, Qwen3-VL, PaddleOCR-VL: mlx_vlm 0.7.1); mineru-vl-utils' [mlx]
+# extra accepts 0.7.x too.
+PACKAGES = ["mlx-vlm==0.7.1"]
 
 
 def _dir() -> Path:

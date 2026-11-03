@@ -55,6 +55,7 @@ SPEC = ModelSpec(
         {
             "text": "Text",
             "title": "Title",
+            "section": "Section-header",
             "list": "List-item",
             "header": "Page-header",
             "footer": "Page-footer",

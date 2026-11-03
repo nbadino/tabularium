@@ -198,9 +198,9 @@ def test_teleocr_crop_prompts_and_vllm_recipe_are_explicitly_scoped():
     from app.services.serve_recipes import RECIPES
 
     adapter = model_adapters.get_adapter("teleocr")
-    assert adapter.prompt_for("layout") == "Analyze the image layout."
-    assert adapter.prompt_for("text") == "Please output the text content from the image."
-    assert adapter.prompt_for("table") == "This is the image of a table. Please output the table in OTSL format."
+    assert adapter.prompt_for("layout") == "\nAnalyze the image layout."
+    assert adapter.prompt_for("text") == "\nPlease output the text content from the image."
+    assert adapter.prompt_for("table") == "\nThis is the image of a table. Please output the table in OTSL format."
     assert adapter.prompt_for("formula").endswith("LaTeX format.")
     with pytest.raises(NotImplementedError):
         adapter.prompt_for("end2end")

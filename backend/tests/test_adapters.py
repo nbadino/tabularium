@@ -92,9 +92,11 @@ def test_deepseek_native_workflow_parses_vendor_grounded_markdown():
         "<|ref|>title<|/ref|><|det|>[[330, 198, 558, 230]]<|/det|>\n# Register\n"
         "<|ref|>table<|/ref|><|det|>[[25, 240, 980, 950]]<|/det|>\n| Ship | Port |"
     )
+    # The vendor grid is 0-999 (`x / 999 * W`); the pipeline speaks 0-1000.
+    scale = lambda box: pytest.approx([v * 1000 / 999 for v in box])  # noqa: E731
     assert items == [
-        {"bbox": [330.0, 198.0, 558.0, 230.0], "label": "Title", "content": "# Register"},
-        {"bbox": [25.0, 240.0, 980.0, 950.0], "label": "Table", "content": "| Ship | Port |"},
+        {"bbox": scale((330, 198, 558, 230)), "label": "Title", "content": "# Register"},
+        {"bbox": scale((25, 240, 980, 950)), "label": "Table", "content": "| Ship | Port |"},
     ]
 
 

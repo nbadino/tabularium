@@ -36,6 +36,7 @@ pipeline = PaddleOCRVL(
     vl_rec_server_url=url,
     vl_rec_api_model_name=model,
     use_layout_detection=True,
+    pipeline_version="v1.6",
     **constructor_options,
 )
 result = next(iter(pipeline.predict(image, **predict_options)))

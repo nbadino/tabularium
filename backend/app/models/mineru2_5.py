@@ -50,13 +50,12 @@ SPEC = ModelSpec(
         # asynchronous OCR fan-out, and post-processing. vLLM remains the
         # model server; a small sidecar invokes that upstream client.
         runtime="mineru-native",
-        # MinerU 2.0.x è la linea upstream corrente; il suo extra [vllm]
-        # dichiara vLLM >=0.19.1,<0.29.0. Manteniamo il pin 0.21.0 già
-        # verificato con questo checkpoint, evitando l'installazione del
-        # vecchio client 1.x che non include gli aggiornamenti del pipeline.
+        # mineru-vl-utils 2.0.8 (2026-10-29) is the current client; its [vllm]
+        # extra declares vLLM >=0.19.1,<0.31.0. The 0.21.0 pin measured with this
+        # checkpoint stays inside that range.
         vllm_version="0.21.0",
         native_remote_port=8891,
-        pip_extra=("mineru-vl-utils[vllm]==2.0.5",),
+        pip_extra=("mineru-vl-utils[vllm]==2.0.8",),
         serve_args=(
             "--logits-processors", "mineru_vl_utils:MinerULogitsProcessor",
         ),

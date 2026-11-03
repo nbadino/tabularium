@@ -21,6 +21,9 @@ from pathlib import Path
 # dove si trova, così la UI può precompilare l'endpoint senza indovinare.
 DEFAULT_BASE_URL = "https://opencode.ai/inference/go/google/v1beta"
 DEFAULT_MODEL = "gemini-4-argon"
+# Ids that left OpenCode's Go catalog, mapped to the current one. A configuration saved
+# with the old id keeps working instead of failing at the gateway.
+LEGACY_MODELS = {"gemini-4-argon-contributor": DEFAULT_MODEL}
 
 _AUTH_PATH = Path.home() / ".local" / "share" / "opencode" / "auth.json"
 # Provider in ordine di preferenza: la sottoscrizione Go e

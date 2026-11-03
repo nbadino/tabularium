@@ -68,6 +68,13 @@ SPEC = ModelSpec(
         workflow=(
             WorkflowField("layout_threshold", "float", default=0.25, minimum=0.0, maximum=1.0,
                           step=0.05, label="settings.xiaomiLayoutThreshold"),
+            # `evaluation_pipeline/twostage_img2md.py`: `--retry-repetitive` (off by
+            # default) reruns a region whose output looks like a loop with
+            # `--retry-presence-penalty` 1.5.
+            WorkflowField("retry_repetitive", "bool", default=False,
+                          label="settings.xiaomiRetryRepetitive"),
+            WorkflowField("retry_presence_penalty", "float", default=1.5, minimum=-2.0, maximum=2.0,
+                          step=0.1, label="settings.xiaomiRetryPresencePenalty"),
         ),
         workflow_intro="settings.xiaomiWorkflowIntro",
     )),

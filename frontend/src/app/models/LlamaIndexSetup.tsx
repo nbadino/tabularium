@@ -39,6 +39,19 @@ const TIER_KEYS: Record<string, 'costEffective' | 'agentic' | 'agenticPlus'> = {
 }
 const COST_OPTIMIZER_TIERS = new Set(['agentic', 'agentic_plus'])
 
+/** What makes a LlamaParse job leave OCRia-1. LlamaParse tiers guide: OCRia-1 powers
+ *  `cost_effective` and `agentic` on version `latest`; a custom prompt switches the job to
+ *  a general-purpose model. */
+export function ocriaBlockers(workflow: Record<string, unknown>): ('tier' | 'version' | 'prompt')[] {
+  const blockers: ('tier' | 'version' | 'prompt')[] = []
+  const tier = typeof workflow.tier === 'string' ? workflow.tier : 'agentic'
+  if (!['cost_effective', 'agentic'].includes(tier)) blockers.push('tier')
+  const version = typeof workflow.version === 'string' && workflow.version ? workflow.version : 'latest'
+  if (version !== 'latest') blockers.push('version')
+  if (typeof workflow.custom_prompt === 'string' && workflow.custom_prompt.trim()) blockers.push('prompt')
+  return blockers
+}
+
 // LlamaParse `ParsingLanguages` (API reference, parsing/methods/create).
 const LANGS = [
    'abq', 'ady', 'af', 'ang', 'ar', 'as', 'ava', 'az', 'be', 'bg', 'bgc', 'bh', 'bho',
@@ -169,6 +182,7 @@ export function LlamaIndexSetup({ model, onClose }: LlamaIndexSetupProps) {
     ? workflow.crop_box as Record<string, number>
     : { top: 0, bottom: 0, left: 0, right: 0 }
   const customPrompt = str(workflow.custom_prompt)
+  const blockers = ocriaBlockers(workflow)
 
   const versionChoices = useMemo(
     () => Array.from(new Set(['latest', ...versions, str(workflow.version, 'latest')])),
@@ -336,6 +350,15 @@ export function LlamaIndexSetup({ model, onClose }: LlamaIndexSetupProps) {
             </div>
           </div>
         </div>
+        {blockers.length > 0 && (
+          <div className="mt-3">
+            <Notice tone="warn">
+              {t('modelsHub.llamaIndex.notOcria', {
+                reasons: blockers.map((b) => t(`modelsHub.llamaIndex.notOcriaReason.${b}`)).join(', '),
+              })}
+            </Notice>
+          </div>
+        )}
         <SectionNav label={t('modelsHub.llamaIndex.navLabel')} items={sectionItems} />
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button type="button" className="btn btn-primary" disabled={loading || saving || activating} onClick={() => void activate()}>
