@@ -81,7 +81,7 @@ export default function CollectionsPanel({
           type="button"
           aria-pressed={isActive}
           onClick={() => onSelect(filter)}
-          className="block w-full px-2.5 py-1.5 text-left text-[13px] text-[color:var(--color-ink)]"
+          className={`block w-full py-1.5 pl-2.5 text-left text-[13px] text-[color:var(--color-ink)] ${menu ? 'pr-16' : 'pr-2.5'}`}
         >
           <span className="flex items-baseline gap-2">
             <span className={`min-w-0 flex-1 truncate ${isActive ? 'font-semibold' : ''} ${filter === UNASSIGNED ? 'italic text-[color:var(--color-ink-2)]' : ''}`}>{label}</span>

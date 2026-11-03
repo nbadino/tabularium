@@ -33,7 +33,7 @@ export function CollectionNameDialog({
         </>
       }
     >
-      <form id="collection-name" onSubmit={(e) => { e.preventDefault(); if (trimmed) onSubmit(trimmed) }}>
+      <form id="collection-name" className="p-3" onSubmit={(e) => { e.preventDefault(); if (trimmed) onSubmit(trimmed) }}>
         <Field label={t('collections.name')} hint={collection ? undefined : t('collections.nameHint')}>
           <input className="fld" autoFocus maxLength={120} value={name} onChange={(e) => setName(e.target.value)} placeholder={t('collections.namePlaceholder')} />
         </Field>
@@ -78,7 +78,7 @@ export function DeleteCollectionDialog({
         </>
       }
     >
-      <fieldset className="space-y-3 text-[13px]">
+      <fieldset className="space-y-3 p-3 text-[13px]">
         <legend className="mb-2">{tn('collections.deleteQuestion', collection.pages)}</legend>
         <label className="flex items-start gap-2">
           <input type="radio" name="collection-delete" checked={mode === 'unassign'} onChange={() => setMode('unassign')} />

@@ -37,6 +37,7 @@ vi.mock('../lib/api', () => ({
   }),
   apiPost: vi.fn(async (path: string, body: unknown) => {
     state.posted.push({ path, body })
+    if (path === '/projects/5/collections') return { id: 9, name: 'Liste', pages: 0, with_drafts: 0, by_status: {}, created_at: '', updated_at: '' }
     return { moved: 1 }
   }),
   apiPatch: vi.fn(),
@@ -91,6 +92,18 @@ describe('Collections on the Pages tab', () => {
     fireEvent.click(within(menu).getByRole('button', { name: 'Lettere' }))
     await waitFor(() => expect(state.posted).toContainEqual({ path: '/projects/5/pages/collection', body: { page_ids: [1, 4], collection_id: 2 } }))
     expect(await screen.findByText('2 pagine spostate in «Lettere».')).toBeInTheDocument()
+  })
+
+  it('creates a collection with the selected pages and names it in the notice', async () => {
+    renderPage()
+    fireEvent.click(await screen.findByLabelText('Seleziona p4.png'))
+    const menu = screen.getByText('Sposta in…').closest('details') as HTMLElement
+    fireEvent.click(within(menu).getByRole('button', { name: '+ Nuova collezione con queste pagine' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'Liste' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Nuova collezione' }))
+    await waitFor(() => expect(state.posted).toContainEqual({ path: '/projects/5/pages/collection', body: { page_ids: [4], collection_id: 9 } }))
+    expect(await screen.findByText('1 pagina spostata in «Liste».')).toBeInTheDocument()
   })
 
   it('asks what happens to the pages before deleting a collection', async () => {

@@ -103,6 +103,7 @@ export default function ZipImportDialog({
 
   return (
     <Modal title={t('zip.title', { name: file.name })} onClose={close} closeOnBackdrop={!busy} footer={footer}>
+      <div className="p-3">
       {step.kind === 'uploading' && (
         <div>
           <p className="text-[13px]">{t('zip.uploading', { sent: mb(step.sent), size: mb(step.size) })}</p>
@@ -155,6 +156,7 @@ export default function ZipImportDialog({
       )}
       {step.kind === 'done' && <ZipSummary report={step.report} />}
       {step.kind === 'failed' && <p role="alert" className="text-[13px] text-[color:var(--color-sig-text)]">{step.message}</p>}
+      </div>
     </Modal>
   )
 }
