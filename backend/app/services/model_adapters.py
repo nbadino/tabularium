@@ -370,8 +370,10 @@ class MinerU2_5Adapter(_StubAdapter):
         for m in self._LAYOUT_RE.finditer(raw or ""):
             x1, y1, x2, y2, category, tail = m.groups()
             x1i, y1i, x2i, y2i = int(x1), int(y1), int(x2), int(y2)
-            # Come il client ufficiale: bbox fuori scala o degeneri scartati,
-            # non troncati — un bbox inventato è peggio di uno mancante.
+            # As the official client's `_convert_bbox`: an inverted pair is swapped;
+            # out-of-range or zero-area boxes are dropped, not clipped.
+            x1i, x2i = min(x1i, x2i), max(x1i, x2i)
+            y1i, y2i = min(y1i, y2i), max(y1i, y2i)
             if not (0 <= x1i < x2i <= 1000 and 0 <= y1i < y2i <= 1000):
                 continue
             label = self._LABEL_MAP.get(category.lower(), category)
@@ -869,6 +871,9 @@ class DotsOcrAdapter(_StubAdapter):
     native_prefill_mode = "end2end"
     image_prompt_prefix = "<|img|><|imgpad|><|endofimg|>"
     stream_response = False
+    # The server resizes with smart_resize (factor 28, 3136 … 11289600 pixels) and the
+    # model answers in that space (`post_process_cells`, dots_mocr/utils/layout_utils.py).
+    end2end_resize_grid = (28, 3136, 11_289_600)
     recommended_generation = {
         "temperature": 0.1,
         "top_p": 1.0,
@@ -985,7 +990,7 @@ class GlmOcrAdapter(_StubAdapter):
         display_name="GLM-OCR",
         tasks=("layout", "text", "table"),
         coordinate_system="unverified",
-        table_format="markdown",
+        table_format="html",
         training_types=("lora", "full"),
         inference_modes=("vllm",),
         hardware=("cuda",),
@@ -1071,7 +1076,7 @@ class GlmOcrAdapter(_StubAdapter):
         return [
             "vllm", "serve", model_path,
             "--port", str(port),
-            "--speculative-config", '{"method": "mtp", "num_speculative_tokens": 1}',
+            "--speculative-config", '{"method": "mtp", "num_speculative_tokens": 3}',
             "--max-model-len", "16384",
             "--gpu-memory-utilization", "0.85",
             "--served-model-name", self.capabilities.served_model_name,
@@ -1152,25 +1157,33 @@ class DeepSeekOcrAdapter(_StubAdapter):
         return prompt
 
     def parse_layout(self, raw: str) -> list[dict]:
-        """Parse the model's native ref/det grounded-markdown protocol."""
+        """Parse the model's native ref/det grounded-markdown protocol.
+
+        As the vendor's `run_dpsk_ocr2_image.py`: the det part is a *list* of boxes
+        (`eval(det)` → `for points in points_list`) on a 0-999 grid (`x / 999 * W`). A
+        ref with several boxes gives one block per box; the text goes to the first, so
+        it is not transcribed twice.
+        """
         marker = re.compile(
-            r"<\|ref\|>(.*?)<\|/ref\|>\s*<\|det\|>\s*"
-            r"\[\[\s*(-?\d+(?:\.\d+)?)[, ]+(-?\d+(?:\.\d+)?)[, ]+"
-            r"(-?\d+(?:\.\d+)?)[, ]+(-?\d+(?:\.\d+)?)\s*\]\]"
-            r"\s*<\|/det\|>(.*?)(?=<\|ref\|>|\Z)",
+            r"<\|ref\|>(.*?)<\|/ref\|>\s*<\|det\|>(.*?)<\|/det\|>(.*?)(?=<\|ref\|>|\Z)",
             re.DOTALL,
         )
+        number = r"-?\d+(?:\.\d+)?"
+        box = re.compile(rf"\[\s*({number})[, ]+({number})[, ]+({number})[, ]+({number})\s*\]")
         items = []
         for match in marker.finditer(raw or ""):
             label_key = re.sub(r"[^a-z0-9]+", "_", match.group(1).strip().lower()).strip("_")
-            bbox = [float(match.group(i)) for i in range(2, 6)]
-            if not (0 <= bbox[0] < bbox[2] <= 1000 and 0 <= bbox[1] < bbox[3] <= 1000):
-                continue
-            items.append({
-                "bbox": bbox,
-                "label": self._LABEL_MAP.get(label_key, "Text"),
-                "content": match.group(6).strip(),
-            })
+            content = match.group(3).strip()
+            for found in box.finditer(match.group(2)):
+                bbox = [float(found.group(i)) * 1000 / 999 for i in range(1, 5)]
+                if not (0 <= bbox[0] < bbox[2] <= 1000.5 and 0 <= bbox[1] < bbox[3] <= 1000.5):
+                    continue
+                items.append({
+                    "bbox": [min(value, 1000.0) for value in bbox],
+                    "label": self._LABEL_MAP.get(label_key, "Text"),
+                    "content": content,
+                })
+                content = ""
         return items
 
     def sampling_for(self, task: str) -> dict:
@@ -1246,6 +1259,9 @@ class PaddleOcrVlAdapter(_StubAdapter):
     una 8GB, da validare empiricamente."""
 
     adapter_id = "paddleocr-vl"
+    # PADDLEOCR_VL_MAX_NEW_TOKENS in the PaddleX vllm-server client; clamped to the
+    # served context by `_output_budget`.
+    text_max_tokens = 8192
     # Which client method runs this model's official pipeline (
     # `VllmClient.<runner>_native_page`). Declared once, here.
     native_runner = "paddle"
@@ -1302,10 +1318,9 @@ class PaddleOcrVlAdapter(_StubAdapter):
         # Greedy, as the PaddleX vllm-server client and the vLLM recipe send it; the
         # checkpoint has no generation_config temperature, so vLLM would use 1.0.
         if task == "table":
-            # Lascia spazio sufficiente per il registro completo; il modello
-            # ha max-model-len=12288 e vLLM riduce comunque il budget effettivo
-            # se il prompt multimodale occupa parte del contesto.
-            return {"temperature": 0.0, "max_tokens": 4096}
+            # PADDLEOCR_VL_MAX_NEW_TOKENS (PaddleX client): 8192. With the served
+            # 12288 context that leaves ~4k tokens for the crop and the prompt.
+            return {"temperature": 0.0, "max_tokens": 8192}
         return {"temperature": 0.0}
 
     def serve_command(self, model_path: str, port: int) -> list[str] | None:
@@ -1580,11 +1595,12 @@ class TeleOcrAdapter(_StubAdapter):
         local_runtimes=("vllm",),
     )
 
+    # TeleOCR_client.py `DEFAULT_PROMPTS` / `LAYOUT_PROMPTS`: every prompt starts with "\n".
     _PROMPTS = {
-        "layout": "Analyze the image layout.",
-        "text": "Please output the text content from the image.",
-        "table": "This is the image of a table. Please output the table in OTSL format.",
-        "formula": "Please write out the expression of the formula in the image using LaTeX format.",
+        "layout": "\nAnalyze the image layout.",
+        "text": "\nPlease output the text content from the image.",
+        "table": "\nThis is the image of a table. Please output the table in OTSL format.",
+        "formula": "\nPlease write out the expression of the formula in the image using LaTeX format.",
     }
     official_layout_size = (1036, 1036)
     system_prompt = "You are a helpful assistant."
@@ -1601,9 +1617,9 @@ class TeleOcrAdapter(_StubAdapter):
             except (ImportError, KeyError, ValueError):
                 mode = "Detection"
             return (
-                "Multi-point Layout Segmentation Analysis."
+                "\nMulti-point Layout Segmentation Analysis."
                 if mode == "Segmentation"
-                else "Analyze the image layout."
+                else "\nAnalyze the image layout."
             )
         prompt = self._PROMPTS.get(task)
         if prompt is None:
@@ -1773,10 +1789,10 @@ class LightOnOcr3Adapter(_StubAdapter):
     )
 
     _LABEL_MAP = LIGHTON_LABELS
+    # The vendor's `MARKER` (lightonocr/grounding.py): any label, anywhere in the text;
+    # each marker owns the text up to the next one (`parse_blocks`).
     _MARKER = re.compile(
-        r"^!\[([a-z_]+)\+?\]\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)[ \t]*\n?"
-        r"(.*?)(?=^!\[[a-z_]+\+?\]\(\s*\d|\Z)",
-        re.DOTALL | re.MULTILINE,
+        r"!\[([A-Za-z_][\w-]*?)(\+?)\]\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)[ \t]*"
     )
 
     def prompt_for(self, task: str, label: str | None = None) -> str | None:
@@ -1788,13 +1804,16 @@ class LightOnOcr3Adapter(_StubAdapter):
 
     def parse_layout(self, raw: str) -> list[dict]:
         items = []
-        for match in self._MARKER.finditer(raw or ""):
-            kind = match.group(1)
-            bbox = [int(match.group(i)) for i in range(2, 6)]
+        raw = raw or ""
+        marks = list(self._MARKER.finditer(raw))
+        for index, match in enumerate(marks):
+            kind = match.group(1).lower()
+            bbox = [int(match.group(i)) for i in range(3, 7)]
             if not (0 <= bbox[0] < bbox[2] <= 1000 and 0 <= bbox[1] < bbox[3] <= 1000):
                 continue
             label = self._LABEL_MAP.get(kind, "Text")
-            content = match.group(6).strip()
+            end = marks[index + 1].start() if index + 1 < len(marks) else len(raw)
+            content = raw[match.end():end].strip()
             if label == "Picture":
                 # Descrizione dell'immagine o dati del grafico: non sono una
                 # trascrizione e non devono diventare il contenuto del blocco.

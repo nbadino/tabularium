@@ -7,7 +7,7 @@ import {
   syncInferenceFromBackend,
   testInferenceConnection,
 } from '../inference'
-import { LlamaIndexSetup } from './LlamaIndexSetup'
+import { LlamaIndexSetup, ocriaBlockers } from './LlamaIndexSetup'
 import type { ModelItem } from './registry'
 
 vi.mock('../../lib/api', () => ({ apiGet: vi.fn(), apiPut: vi.fn() }))
@@ -167,5 +167,13 @@ describe('LlamaIndexSetup', () => {
       '/system/model-settings/llamaindex-ocria-1',
       expect.objectContaining({ workflow: expect.objectContaining({ tier: 'agentic_plus' }) }),
     ))
+  })
+})
+
+describe('ocriaBlockers', () => {
+  it('names what makes a job leave OCRia-1', () => {
+    expect(ocriaBlockers({ tier: 'agentic', version: 'latest', custom_prompt: '' })).toEqual([])
+    expect(ocriaBlockers({ tier: 'agentic_plus', version: '2026-09-01', custom_prompt: 'Dates as ISO' }))
+      .toEqual(['tier', 'version', 'prompt'])
   })
 })

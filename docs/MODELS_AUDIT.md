@@ -36,24 +36,32 @@ that test in the same commit.
 | Gemini 4 Argon | model id | `gemini-4-argon` (only id in the OpenCode Go catalog) | `gemini-4-argon-contributor` | `gemini-4-argon` | `GET https://opencode.ai/inference/go/v1/models` (2026-11-03) |
 | Gemini 4 Argon | `maxOutputTokens` | covers thinking + answer; keep default or ≥ 32,768 | 3072 (crops) / 20480 (page) | floor 32,768 | Google AI Studio Gemini 4 guide |
 
-## 2. Open items (not changed here)
+## 2. Open items, closed in a follow-up
 
-| Model / provider | Item | Why it is open |
-|---|---|---|
-| PaddleOCR-VL-1.6 | `PaddleOCRVL()` built without `pipeline_version="v1.6"`; runtime `paddleocr[doc-parser]` unpinned (recipe: ≥ 3.6.0) | needs the Paddle runtime to test; risk of running v1/v1.5 against the 1.6 server on an old runtime |
-| PaddleOCR-VL-1.6 | direct-path text `max_tokens` (official 8192) | kept at 3072: the served context is 12288 and the page image shares it |
-| dots.mocr | bbox rescale uses the sent size, official divides by the `smart_resize` size (multiples of 28) | up to ~14 px per axis; needs a parser change with a regression page |
-| GLM-OCR | MTP speculative tokens: README now 3, vLLM recipe 1 | kept at 1 (recipe); speed only |
-| GLM-OCR | table output format | **unverified**: the SDK formatter implies HTML, Tabularium declares markdown |
-| MinerU2.5 | direct path drops boxes with inverted coordinates; official swaps them. `mineru-vl-utils` 2.0.8 available (pinned 2.0.5) | low impact; 2.0.5 → 2.0.8 diff **unverified** (source path 404) |
-| DeepSeek-OCR-2 | parser accepts one box per ref, vendor accepts a list; vendor scales by /999 | low impact |
-| LightOnOCR-3-1B | parser anchored to line start, `section` label maps to Text | low impact |
-| LlamaIndex OCRia-1 | OCRia-1 runs only on `cost_effective`/`agentic` without custom prompt; the panel still allows `agentic_plus` and a prompt | needs copy in the setup panel |
-| Modal | requests over 150 s answer with 303; the client posts with `allow_redirects=False` | affects only non-streaming adapters (dots.mocr); following redirects needs a credential-safe design |
-| Vast.ai | training startup script ~10.7k chars, documented limit 4048; list pagination sends `next_token` (API: `after_token`) | training provisioning, outside this audit's scope |
-| Gemini 4 Argon | client timeouts 180–300 s, Google recommends ≥ 15 min | to measure on real pages before raising |
-| Xiaomi-OCR-0 | evaluation-only repetition retry not implemented | not part of the inference contract |
-| mlx-vlm | installed unpinned | pin with the next measured MLX run |
+The first pass left these open; each is now fixed against the source named, and pinned by
+`backend/tests/test_models_audit_open_items.py`.
+
+| Model / provider | Item | Now | Source |
+|---|---|---|---|
+| PaddleOCR-VL-1.6 | pipeline built without `pipeline_version`; runtime unpinned | `pipeline_version="v1.6"`; runtime installs `paddleocr[doc-parser]>=3.6.0`, and readiness checks the version (an older runtime is reinstalled instead of running v1/v1.5) | vLLM recipe; PaddleOCR `paddleocr_vl.py` (`_DEFAULT_PIPELINE_VERSION`) |
+| PaddleOCR-VL-1.6 | direct-path `max_tokens` 3072 / 4096 | 8192 for text and tables, clamped to the served context | PaddleX client `PADDLEOCR_VL_MAX_NEW_TOKENS` |
+| dots.mocr | boxes divided by the sent size | divided by the server's `smart_resize` size (factor 28, 3136 … 11,289,600) | `post_process_cells`, `image_utils.smart_resize` |
+| GLM-OCR | MTP speculative tokens 1 | 3 (local, cloud recipe, Modal template, panel default) | vendor README L130 (the vLLM recipe still says 1) |
+| GLM-OCR | tables declared markdown | HTML (`<table border="1">` in the vendor's test data), converted to OTSL like every HTML table | GLM-OCR `apps/frontend/.../testData.ts`, `result_formatter.py` |
+| MinerU2.5 | inverted boxes dropped; client 2.0.5 | swapped like `_convert_bbox`; `mineru-vl-utils` 2.0.8 for vLLM and MLX (2.0.6/2.0.7 fix duplicate blocks and priorities; vLLM 0.21 stays inside `>=0.19.1,<0.31`) | mineru_client.py; GitHub releases; PyPI metadata |
+| DeepSeek-OCR-2 | one box per ref, 0-1000 | every box of a ref (text on the first), 0-999 grid rescaled to 0-1000 | `run_dpsk_ocr2_image.py` |
+| LightOnOCR-3-1B | marker only at line start, lowercase; `section` → Text | vendor `MARKER` anywhere, any label; `section` → Section-header | `lightonocr/grounding.py` |
+| LlamaIndex OCRia-1 | `agentic_plus`, a pinned version or a custom prompt silently left OCRia-1 | the setup panel says so and why; the custom-prompt warning states the vendor's rule | LlamaParse tiers guide |
+| Modal | 303 after 150 s not followed | followed with GET up to 20 hops, same host only (credentials never leave it) | Modal "web endpoint timeouts" guide |
+| Vast.ai | training `onstart` ~10.7k characters; pagination `next_token` | comments stripped outside heredocs, gzip+base64 (under 4048, `bash -n` checked); `after_token` | Vast create-instance API; vast-cli `api/instances.py` |
+| Gemini 4 Argon | read timeout 180–300 s; legacy id in saved configurations | at least 900 s; `gemini-4-argon-contributor` read as `gemini-4-argon` | Google Gemini 4 guide; OpenCode Go catalog |
+| Xiaomi-OCR-0 | repetition retry missing | optional workflow field, off by default as upstream; retries a looping region with presence penalty 1.5, using the vendor's thresholds | `evaluation_pipeline/twostage_img2md.py`, `postprocess/repetition_guard.py` |
+| TeleOCR | prompts without the leading newline | every prompt starts with `\n` | `TeleOCR_client.py` `DEFAULT_PROMPTS`, `LAYOUT_PROMPTS` |
+| mlx-vlm | unpinned | `mlx-vlm==0.7.1`, the release the MLX paths were measured on | model_adapters measurements; mineru-vl-utils `[mlx]` extra |
+
+One deliberate deviation remains: requests keep `max_tokens` rather than vLLM's newer
+`max_completion_tokens`, because mlx-vlm's chat schema only knows `max_tokens`
+(`mlx_vlm/server/schemas.py`) and vLLM still accepts it.
 
 Everything else matched the official sources: serve flags, prompts, pixel caps and
 coordinate scales of MonkeyOCRv2, MinerU2.5 (native path), Unlimited-OCR-2, Qwen3-VL,

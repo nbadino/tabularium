@@ -83,8 +83,10 @@ def test_dots_ocr_end2end_uses_category_pixel_boxes_without_monkey_retry():
     items = client.end2end(Image.new("RGB", (200, 100), "white"), total_timeout=5)
 
     assert len(calls) == 1
+    # The server resized 200x100 to 196x112 (smart_resize, factor 28): the model's
+    # pixels are in that space (dots.mocr `post_process_cells`).
     assert items == [{
-        "bbox": [50.0, 200.0, 750.0, 900.0],
+        "bbox": pytest.approx([10 / 196 * 1000, 20 / 112 * 1000, 150 / 196 * 1000, 90 / 112 * 1000]),
         "label": "Title",
         "content": "Historic Shipping Index",
     }]
@@ -620,7 +622,11 @@ def test_deepseek_end2end_uses_official_grounded_prompt_and_vllm_sampling(monkey
     )
     items = client.end2end(Image.new("RGB", (16, 16), "white"), total_timeout=5)
     payload = requests_seen[0]
-    assert items == [{"bbox": [330.0, 198.0, 558.0, 230.0], "label": "Title", "content": "# Register"}]
+    # Vendor grid is 0-999 (`x / 999 * W`), rescaled to the pipeline's 0-1000.
+    assert items == [{
+        "bbox": pytest.approx([v * 1000 / 999 for v in (330, 198, 558, 230)]),
+        "label": "Title", "content": "# Register",
+    }]
     assert payload["temperature"] == 0.0
     assert payload["skip_special_tokens"] is False
     assert payload["vllm_xargs"] == {

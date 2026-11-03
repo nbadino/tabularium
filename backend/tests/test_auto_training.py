@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import gzip
 import re
 
 import pytest
@@ -28,9 +29,9 @@ def test_onstart_embeds_the_script_and_the_profile():
     assert "TABULARIUM_TRAIN_PROFILE=glm" in command
     assert "TABULARIUM_TRAIN_ADAPTER=glm-ocr" in command
     assert "setup_train_env.sh" in command
-    match = re.search(r"echo ([A-Za-z0-9+/=]+)", command)
+    match = re.search(r"echo ([A-Za-z0-9+/=]+) \| base64 -d \| gunzip", command)
     assert match, command
-    decoded = base64.b64decode(match.group(1)).decode("utf-8")
+    decoded = gzip.decompress(base64.b64decode(match.group(1))).decode("utf-8")
     assert "TABULARIUM_TRAIN_PROFILE" in decoded
     assert "LLaMA-Factory" in decoded
 

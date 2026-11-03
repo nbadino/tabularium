@@ -119,6 +119,18 @@ def default_paddle_packages(
     ]
 
 
+# PaddleOCR-VL-1.6 needs the 1.6 pipeline, which PaddleOCR makes its default only from
+# 3.6 (vLLM recipe: `paddleocr[doc-parser]>=3.6.0` and `pipeline_version="v1.6"`). An
+# older runtime still imports `PaddleOCRVL` and would run v1/v1.5 against the 1.6 server,
+# so readiness checks the version too.
+PADDLEOCR_REQUIREMENT = "paddleocr[doc-parser]>=3.6.0"
+READY_CHECK = (
+    "from paddleocr import PaddleOCRVL; from importlib.metadata import version; "
+    "parts = tuple(int(p) for p in version('paddleocr').split('.')[:2]); "
+    "raise SystemExit(0 if parts >= (3, 6) else 1)"
+)
+
+
 def ready(*, force: bool = False) -> bool:
     global _ready_cache
     now = time.monotonic()
@@ -126,7 +138,7 @@ def ready(*, force: bool = False) -> bool:
         return _ready_cache[1]
     try:
         check = subprocess.run(
-            [str(python_bin()), "-c", "from paddleocr import PaddleOCRVL"],
+            [str(python_bin()), "-c", READY_CHECK],
             capture_output=True,
             text=True,
             timeout=30,
@@ -216,11 +228,11 @@ def ensure_ready() -> None:
                     check=True, stdout=log, stderr=subprocess.STDOUT,
                 )
                 subprocess.run(
-                    [str(python_bin()), "-m", "pip", "install", "numpy<2.4", "paddleocr[doc-parser]"],
+                    [str(python_bin()), "-m", "pip", "install", "numpy<2.4", PADDLEOCR_REQUIREMENT],
                     check=True, stdout=log, stderr=subprocess.STDOUT,
                 )
             subprocess.run(
-                [str(python_bin()), "-c", "from paddleocr import PaddleOCRVL"],
+                [str(python_bin()), "-c", READY_CHECK],
                 check=True, stdout=log, stderr=subprocess.STDOUT,
             )
         except Exception as exc:  # noqa: BLE001

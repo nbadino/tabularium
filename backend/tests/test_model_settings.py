@@ -270,7 +270,8 @@ def test_glm_mtp_tokens_are_model_specific_and_applied_to_cloud_recipe(tmp_path,
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "glm-mtp.db")
     init_db()
     defaults = model_settings.get_settings("glm-ocr")
-    assert defaults["recommended"]["workflow"]["speculative_tokens"] == 1
+    # Vendor README: num_speculative_tokens 3.
+    assert defaults["recommended"]["workflow"]["speculative_tokens"] == 3
 
     saved = model_settings.save_settings("glm-ocr", {
         "workflow": {"speculative_tokens": 5},
@@ -390,9 +391,9 @@ def test_teleocr_layout_prompt_obeys_saved_official_mode(tmp_path, monkeypatch):
     from app.services.model_adapters import get_adapter
 
     adapter = get_adapter("teleocr")
-    assert adapter.prompt_for("layout") == "Analyze the image layout."
+    assert adapter.prompt_for("layout") == "\nAnalyze the image layout."
     model_settings.save_settings("teleocr", {"workflow": {"layout_mode": "Segmentation"}})
-    assert adapter.prompt_for("layout") == "Multi-point Layout Segmentation Analysis."
+    assert adapter.prompt_for("layout") == "\nMulti-point Layout Segmentation Analysis."
 
 
 def test_paddle_predict_options_reach_the_official_pipeline(tmp_path, monkeypatch):

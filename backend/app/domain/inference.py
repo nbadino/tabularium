@@ -9,6 +9,7 @@ fifteen-hundred-line client.
 from __future__ import annotations
 
 import ast
+import math
 import re
 from typing import Any
 from ..models.types import normalize_llamaindex_languages
@@ -334,3 +335,102 @@ def openai_request(
     payload.update(values)
     return payload
 
+
+
+# --- Server-side image grid (Qwen2-VL family) ----------------------------------------
+
+
+def smart_resize(
+    height: int, width: int, factor: int = 28, min_pixels: int = 3136, max_pixels: int = 11_289_600,
+) -> tuple[int, int]:
+    """The size a Qwen2-VL-style server resizes an image to, as the vendors compute it.
+
+    Same rounding as dots.mocr's `utils/image_utils.py::smart_resize`: both sides become
+    multiples of `factor`, the pixel count is kept within the bounds, the aspect ratio as
+    close as the grid allows. A model that answers in pixels answers in *this* space.
+    """
+    h_bar = max(factor, round(height / factor) * factor)
+    w_bar = max(factor, round(width / factor) * factor)
+    if h_bar * w_bar > max_pixels:
+        beta = math.sqrt((height * width) / max_pixels)
+        h_bar = max(factor, math.floor(height / beta / factor) * factor)
+        w_bar = max(factor, math.floor(width / beta / factor) * factor)
+    elif h_bar * w_bar < min_pixels:
+        beta = math.sqrt(min_pixels / (height * width))
+        h_bar = math.ceil(height * beta / factor) * factor
+        w_bar = math.ceil(width * beta / factor) * factor
+        if h_bar * w_bar > max_pixels:
+            beta = math.sqrt((h_bar * w_bar) / max_pixels)
+            h_bar = max(factor, math.floor(h_bar / beta / factor) * factor)
+            w_bar = max(factor, math.floor(w_bar / beta / factor) * factor)
+    return h_bar, w_bar
+
+
+def pixel_bbox_to_normalized(
+    bbox: list[float], width: int, height: int, grid: tuple[int, int, int] | None = None,
+) -> list[float]:
+    """A pixel box from the model to the 0-1000 convention of the rest of the pipeline.
+
+    `grid` is the server's resize (factor, min_pixels, max_pixels): the model's pixels
+    belong to the resized image, not to the one Tabularium sent (dots.mocr's
+    `post_process_cells`). Without it the sent size is the reference.
+    """
+    if grid:
+        height, width = smart_resize(height, width, *grid)
+    return [
+        bbox[0] / width * 1000,
+        bbox[1] / height * 1000,
+        bbox[2] / width * 1000,
+        bbox[3] / height * 1000,
+    ]
+
+
+# --- Repetition (Xiaomi-OCR-0's optional retry) ------------------------------------
+
+
+def looks_repetitive(
+    text: str,
+    *,
+    finish_reason: str | None = None,
+    same_character_run: int = 128,
+    min_repeats: int = 8,
+    min_repeated_chars: int = 512,
+    min_ratio: float = 0.5,
+) -> bool:
+    """Whether a region's output is a decoding loop rather than a transcription.
+
+    The criteria and thresholds are those of Xiaomi-OCR-0's `postprocess/repetition_guard`
+    (`analyze_repetition` defaults): the generation hit its length limit, one character
+    repeated for a long run, or one line making up most of the text. This is Tabularium's
+    own implementation of those documented rules, not a copy of the vendor's code.
+    """
+    if finish_reason == "length":
+        return True
+    compact = re.sub(r"\s+", "", text or "")
+    if not compact:
+        return False
+    run = best = 0
+    previous = ""
+    for char in compact:
+        run = run + 1 if char == previous else 1
+        previous = char
+        best = max(best, run)
+    if best >= same_character_run and (best >= min_repeated_chars or best / len(compact) >= min_ratio):
+        return True
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    if lines:
+        top = max(set(lines), key=lines.count)
+        count = lines.count(top)
+        repeated = len(re.sub(r"\s+", "", top)) * count
+        if count >= min_repeats and repeated >= min_repeated_chars and repeated / len(compact) >= max(min_ratio, 0.8):
+            return True
+        # A loop at the end: the last line repeated back to back.
+        tail = 0
+        for line in reversed(lines):
+            if line != lines[-1]:
+                break
+            tail += 1
+        tail_chars = len(re.sub(r"\s+", "", lines[-1])) * tail
+        if tail >= min_repeats and tail_chars >= min_repeated_chars and tail_chars / len(compact) >= min_ratio:
+            return True
+    return False

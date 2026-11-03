@@ -61,7 +61,7 @@ def test_glm_modal_deploy_receives_the_configured_mtp_value(monkeypatch):
 
     assert captured["env"]["TABULARIUM_GLM_SPECULATIVE_TOKENS"] == "4"
     script = template.script.read_text(encoding="utf-8")
-    assert 'os.environ.get("TABULARIUM_GLM_SPECULATIVE_TOKENS", "1")' in script
+    assert 'os.environ.get("TABULARIUM_GLM_SPECULATIVE_TOKENS", "3")' in script
 
 
 def test_modal_status_recovers_persisted_task_after_backend_restart(tmp_path, monkeypatch):

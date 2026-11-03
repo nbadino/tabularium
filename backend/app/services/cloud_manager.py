@@ -779,7 +779,9 @@ def _fetch_vast_instances(api_key: str, *, max_pages: int = 10) -> list[dict[str
     for _ in range(max_pages):
         params: dict[str, Any] = {"limit": 25}
         if token:
-            params["next_token"] = token
+            # vast-cli `vastai/api/instances.py`: the response's `next_token` is sent
+            # back as `after_token`.
+            params["after_token"] = token
         try:
             data = _vast_call(api_key, "GET", "/instances/", params=params, timeout=15.0, version="v1")
         except VastDeprecatedEndpoint:

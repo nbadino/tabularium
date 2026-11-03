@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .. import config
 
-PACKAGES = ["fastapi", "uvicorn", "mineru-vl-utils[mlx]==2.0.5"]
+PACKAGES = ["fastapi", "uvicorn", "mineru-vl-utils[mlx]==2.0.8"]
 _GIB = 1024 ** 3
 
 

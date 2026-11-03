@@ -12,8 +12,11 @@ un riavvio del backend non fa perdere il noleggio né lo stato del provisioning.
 """
 from __future__ import annotations
 
+import base64
+import gzip
 import json
 import os
+import re
 import shlex
 import subprocess
 import tempfile
@@ -98,12 +101,43 @@ def expected_paths(profile: str) -> dict:
     return {"python": f"{root}/venv/bin/python", "repo": repo, "root": root}
 
 
+# Vast's create-instance API caps `onstart` at 4048 characters and suggests gzip+base64.
+VAST_ONSTART_LIMIT = 4048
+
+
+def _without_comments(script: str) -> str:
+    """The script without comment-only and blank lines, heredoc bodies left untouched.
+
+    Comments are most of `setup_train_env.sh`'s size; dropping them is what keeps the
+    compressed script inside Vast's limit. Heredoc bodies (the Python block) are kept
+    verbatim, because there a `#` or a blank line belongs to another language.
+    """
+    lines = script.splitlines()
+    kept: list[str] = []
+    terminator: str | None = None
+    for index, line in enumerate(lines):
+        if terminator is not None:
+            kept.append(line)
+            if line.strip() == terminator:
+                terminator = None
+            continue
+        stripped = line.strip()
+        if index > 0 and (not stripped or stripped.startswith("#")):
+            continue
+        kept.append(line)
+        heredoc = re.search(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?", line)
+        if heredoc:
+            terminator = heredoc.group(1)
+    return "\n".join(kept) + "\n"
+
+
 def _onstart(profile: str, adapter_id: str) -> str:
     script = (config.RESOURCE_DIR / "scripts" / "cloud" / "setup_train_env.sh").read_text(encoding="utf-8")
-    encoded = __import__("base64").b64encode(script.encode("utf-8")).decode("ascii")
+    packed = gzip.compress(_without_comments(script).encode("utf-8"), compresslevel=9, mtime=0)
+    encoded = base64.b64encode(packed).decode("ascii")
     return (
         "mkdir -p /root/tabularium-train && "
-        f"echo {shlex.quote(encoded)} | base64 -d > /tmp/setup_train_env.sh && "
+        f"echo {shlex.quote(encoded)} | base64 -d | gunzip > /tmp/setup_train_env.sh && "
         "TABULARIUM_TRAIN_ROOT=/root/tabularium-train "
         f"TABULARIUM_TRAIN_PROFILE={shlex.quote(profile)} "
         f"TABULARIUM_TRAIN_ADAPTER={shlex.quote(adapter_id)} "

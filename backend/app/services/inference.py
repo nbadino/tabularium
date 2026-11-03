@@ -17,6 +17,7 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import Callable
+from urllib.parse import urljoin, urlsplit
 
 import requests
 from PIL import Image
@@ -67,6 +68,10 @@ class OutputTruncated(RuntimeError):
 
 # Floor for `generationConfig.maxOutputTokens` on Gemini 4 (thinking + output).
 GEMINI_MIN_OUTPUT_TOKENS = 32_768
+# Modal: a request over 150 s becomes a 303 chain (browsers follow 20 hops, ~50 min).
+MODAL_MAX_REDIRECTS = 20
+# Read timeout for Gemini 4 (Google: "at least 15 minutes").
+GEMINI_MIN_TIMEOUT_S = 900
 
 
 def _prompt_for(adapter: ModelAdapter, task: str, label: str | None, fallback: str) -> str:
@@ -238,6 +243,10 @@ class VllmClient:
         # Default MonkeyOCRv2: i chiamanti esistenti (test compresi) costruiscono
         # `VllmClient` senza adapter e si aspettano il comportamento storico.
         self.adapter: ModelAdapter = adapter or MonkeyOCRv2ParsingAdapter()
+        # A model id the gateway's catalog has since renamed (saved before the audit).
+        from .opencode_gateway import LEGACY_MODELS
+
+        self.model = LEGACY_MODELS.get(self.model, self.model)
         # Equivalente di `MOCR2_MAX_PIXELS`: vale per ogni chiamata al modello.
         # 0 o negativo = nessun tetto, come non impostare la env ufficiale.
         cap = max_pixels
@@ -684,15 +693,25 @@ class VllmClient:
                 int(x1 / 1000 * page.width), int(y1 / 1000 * page.height),
                 int(x2 / 1000 * page.width), int(y2 / 1000 * page.height),
             ))
-            item["content"] = (self._chat(
-                crop,
-                self.adapter.prompt_for(task),
-                max_tokens=self._output_budget(self.adapter.region_max_tokens),
-                max_pixels=None,
-                sampling=self._sampling_for(task),
-                task=task,
-                cancel_event=cancel_event,
-            ) or "").strip()
+            sampling = self._sampling_for(task)
+
+            def ask(sampling: dict | None) -> str:
+                return (self._chat(
+                    crop,
+                    self.adapter.prompt_for(task),
+                    max_tokens=self._output_budget(self.adapter.region_max_tokens),
+                    max_pixels=None,
+                    sampling=sampling,
+                    task=task,
+                    cancel_event=cancel_event,
+                ) or "").strip()
+
+            item["content"] = ask(sampling)
+            # The vendor's optional retry (`--retry-repetitive`): a region that reads as
+            # a decoding loop is asked again with a presence penalty.
+            if workflow.get("retry_repetitive") and protocol.looks_repetitive(item["content"]):
+                retry = {**(sampling or {}), "presence_penalty": float(workflow.get("retry_presence_penalty", 1.5))}
+                item["content"] = ask(retry)
             return item
 
         with ThreadPoolExecutor(max_workers=min(8, max(1, len(regions)))) as pool:
@@ -843,14 +862,7 @@ class VllmClient:
             scanner = _OuterListScanner()
             logical_done = False
             try:
-                with requests.post(
-                    f"{self.url}/chat/completions",
-                    json=payload,
-                    headers=self._headers(),
-                    timeout=(10, self.timeout),
-                    stream=stream_response,
-                    allow_redirects=False,
-                ) as resp:
+                with self._post_chat(payload, stream_response) as resp:
                     resp.raise_for_status()
                     if not stream_response:
                         event = resp.json()
@@ -1029,7 +1041,9 @@ class VllmClient:
                 endpoint,
                 json=payload,
                 headers=headers,
-                timeout=(10, total_timeout or self.timeout),
+                # Google's Gemini 4 guide: thinking makes slow answers normal; raise
+                # client timeouts to at least 15 minutes.
+                timeout=(10, max(GEMINI_MIN_TIMEOUT_S, total_timeout or self.timeout)),
             )
             response.raise_for_status()
             body = response.json()
@@ -1058,6 +1072,36 @@ class VllmClient:
         di MonkeyOCRv2); altrimenti usa `_tolerant_items` come sempre."""
         parse = getattr(self.adapter, "parse_layout", None)
         return parse(raw) if callable(parse) else _tolerant_items(raw)
+
+    def _post_chat(self, payload: dict, stream: bool):
+        """POST a chat completion, following Modal's long-request redirect.
+
+        A Modal web endpoint answers a request that runs over 150 s with a 303 to the
+        same URL plus a call id; that result URL blocks until the call completes and can
+        be followed again (Modal's guide allows up to 20 hops). The redirect is followed
+        only on the same host: the credentials never go anywhere else, which is why
+        `requests`' own redirect handling stays off.
+        """
+        url = f"{self.url}/chat/completions"
+        headers = self._headers()
+        resp = requests.post(
+            url, json=payload, headers=headers, timeout=(10, self.timeout),
+            stream=stream, allow_redirects=False,
+        )
+        origin = urlsplit(url).netloc
+        for _ in range(MODAL_MAX_REDIRECTS):
+            if getattr(resp, "status_code", 200) != 303:
+                break
+            target = urljoin(url, resp.headers.get("Location", ""))
+            if urlsplit(target).netloc != origin:
+                resp.close()
+                raise RuntimeError(f"redirect to another host refused: {urlsplit(target).netloc}")
+            resp.close()
+            resp = requests.get(
+                target, headers=headers, timeout=(10, self.timeout),
+                stream=stream, allow_redirects=False,
+            )
+        return resp
 
     def _output_budget(self, wanted: int) -> int:
         """`max_tokens` che sta nel contesto con cui l'adapter serve il modello.
@@ -1297,12 +1341,10 @@ class VllmClient:
             except (TypeError, ValueError):
                 continue
             if getattr(self.adapter.capabilities, "coordinate_system", "") == "image-pixels":
-                values = [
-                    values[0] / prepared.width * 1000,
-                    values[1] / prepared.height * 1000,
-                    values[2] / prepared.width * 1000,
-                    values[3] / prepared.height * 1000,
-                ]
+                values = protocol.pixel_bbox_to_normalized(
+                    values, prepared.width, prepared.height,
+                    getattr(self.adapter, "end2end_resize_grid", None),
+                )
             if values[0] >= values[2] or values[1] >= values[3]:
                 continue
             cleaned.append(
