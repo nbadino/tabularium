@@ -31,7 +31,16 @@ vi.mock('../lib/api', () => ({
     if (path.endsWith('/import')) return { job_id: 'j1' }
     return {}
   }),
-  apiGet: vi.fn(async () => ({ status: 'done', phase: 'registering', current: 3, total: 3, report, error: null })),
+  apiGet: vi.fn(async (path: string) => {
+    if (path.endsWith('/collections')) {
+      return {
+        collections: [{ id: 7, name: 'Lettere', pages: 4, with_drafts: 0, by_status: {}, created_at: '', updated_at: '' }],
+        unassigned: { key: 'none', pages: 0, with_drafts: 0, by_status: {} },
+        total: { pages: 4, with_drafts: 0, by_status: {} },
+      }
+    }
+    return { status: 'done', phase: 'registering', current: 3, total: 3, report, error: null }
+  }),
 }))
 
 const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }))
@@ -58,14 +67,30 @@ describe('ZipImportDialog', () => {
     expect(seen[seen.length - 1]).toBe(10)
   })
 
-  it('imports without asking when there is nothing to choose', async () => {
+  it('asks which collection, proposing a new one named after the archive', async () => {
+    state.plan = { ...report, root: 'Archivio/LSI1950', needs_choice: false }
+    const onImported = vi.fn()
+    render(<ZipImportDialog projectId={5} file={file()} collectionId={null} onClose={() => {}} onImported={onImported} />)
+    expect(await screen.findByText('In quale collezione?')).toBeInTheDocument()
+    expect(state.posts.some((p) => p.path.endsWith('/import'))).toBe(false)
+    expect(screen.getByLabelText('Nome')).toHaveValue('LSI1950')
+    fireEvent.click(screen.getByRole('button', { name: 'Importa' }))
+    await waitFor(() => expect(onImported).toHaveBeenCalled())
+    expect(state.posts.find((p) => p.path.endsWith('/import'))?.body).toEqual({ layout: 'flat', collection_name: 'LSI1950' })
+    expect(screen.getByText('3 pagine importate')).toBeInTheDocument()
+    expect(screen.getAllByText(/non è un’immagine né un PDF/).length).toBeGreaterThan(0)
+  })
+
+  it('preselects the collection being viewed, and can send none', async () => {
     state.plan = { ...report, needs_choice: false }
     const onImported = vi.fn()
     render(<ZipImportDialog projectId={5} file={file()} collectionId={7} onClose={() => {}} onImported={onImported} />)
+    await screen.findByText('In quale collezione?')
+    await waitFor(() => expect(screen.getByLabelText('Collezione esistente', { selector: 'select' })).toHaveValue('7'))
+    fireEvent.click(screen.getByLabelText('Senza collezione'))
+    fireEvent.click(screen.getByRole('button', { name: 'Importa' }))
     await waitFor(() => expect(onImported).toHaveBeenCalled())
-    expect(state.posts.find((p) => p.path.endsWith('/import'))?.body).toEqual({ layout: 'flat', collection_id: 7 })
-    expect(screen.getByText('3 pagine importate')).toBeInTheDocument()
-    expect(screen.getAllByText(/non è un’immagine né un PDF/).length).toBeGreaterThan(0)
+    expect(state.posts.find((p) => p.path.endsWith('/import'))?.body).toEqual({ layout: 'flat', collection_id: null })
   })
 
   it('asks between one collection per folder and all together', async () => {
@@ -76,6 +101,6 @@ describe('ZipImportDialog', () => {
     expect(state.posts.some((p) => p.path.endsWith('/import'))).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: 'Importa' }))
     await waitFor(() => expect(onImported).toHaveBeenCalled())
-    expect(state.posts.find((p) => p.path.endsWith('/import'))?.body).toEqual({ layout: 'collections', collection_id: null })
+    expect(state.posts.find((p) => p.path.endsWith('/import'))?.body).toEqual({ layout: 'collections' })
   })
 })

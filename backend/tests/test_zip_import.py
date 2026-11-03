@@ -264,3 +264,23 @@ def test_pdfs_follow_the_pdf_handling(client):
     report = _import(client, pid, uid, layout="collections")
     assert report["registered"] == 3
     assert {c["name"]: c["pages"] for c in report["collections"]} == {"A": 2, "B": 1}
+
+
+def test_flat_into_a_new_named_collection(client):
+    pid = _project(client)
+    uid = _upload(client, pid, _zip({"LSI1950/a.png": _png(), "LSI1950/b.png": _png()}))
+    report = _import(client, pid, uid, layout="flat", collection_name="  LSI1950 ")
+    assert report["collections"] == [{"id": report["collections"][0]["id"], "name": "LSI1950", "created": True, "pages": 2}]
+    assert report["unassigned_pages"] == 0
+    cid = report["collections"][0]["id"]
+    assert len(client.get(f"/api/projects/{pid}/pages", params={"collection": cid}).json()["items"]) == 2
+
+    # a second archive with the same name goes into the same collection
+    uid = _upload(client, pid, _zip({"c.png": _png()}))
+    report = _import(client, pid, uid, layout="flat", collection_name="lsi1950")
+    assert report["collections"][0]["id"] == cid and report["collections"][0]["created"] is False
+    assert len(client.get(f"/api/projects/{pid}/pages", params={"collection": cid}).json()["items"]) == 3
+
+    uid = _upload(client, pid, _zip({"d.png": _png()}))
+    r = client.post(f"/api/projects/{pid}/zip-uploads/{uid}/import", json={"layout": "flat", "collection_id": cid, "collection_name": "X"})
+    assert r.status_code == 422

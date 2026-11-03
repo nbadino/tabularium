@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import threading
 import uuid
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from ..adapters import collections as collectionstore
 from ..services import auth as authsvc
@@ -33,6 +33,9 @@ class ZipImportIn(BaseModel):
     # into `collection_id` (`null` is "no collection").
     layout: Literal["collections", "flat"]
     collection_id: int | None = None
+    # A flat import into a new collection with this name (an existing one with
+    # the same name, in any case, is reused). Exclusive with `collection_id`.
+    collection_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)] | None = None
 
 
 def _lang(request: Request) -> str:
@@ -109,7 +112,7 @@ def _run_job(job_id: str, project_id: int, upload_id: str, payload: ZipImportIn,
     try:
         report = zip_import.run_import(
             project_id, upload_id, layout=payload.layout, collection_id=payload.collection_id,
-            lang=lang, on_progress=progress,
+            collection_name=payload.collection_name, lang=lang, on_progress=progress,
         )
     except zip_import.UploadError as exc:
         with _jobs_lock:
@@ -129,6 +132,8 @@ def import_upload(
     _auth: dict = Depends(require_resource(write=True)),
 ) -> dict:
     lang = _lang(request)
+    if payload.collection_id is not None and payload.collection_name:
+        raise HTTPException(status_code=422, detail=msg("zip_target_ambiguous", lang))
     if payload.collection_id is not None and collectionstore.get(project_id, payload.collection_id) is None:
         raise HTTPException(status_code=404, detail=msg("collection_not_found", lang))
     try:
