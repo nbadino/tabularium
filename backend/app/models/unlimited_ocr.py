@@ -99,7 +99,7 @@ SPEC = ModelSpec(
                           label="settings.unlimitedNgramSize"),
             WorkflowField("window_size", "int", default=128, minimum=1, maximum=2048,
                           label="settings.unlimitedWindowSize"),
-            WorkflowField("image_mode", "enum", default="gundam", values=("base", "gundam"),
+            WorkflowField("image_mode", "enum", default="gundam", values=("base", "gundam"), essential=True,
                           label="settings.unlimitedImageMode",
                           hints=(("gundam", "settings.unlimitedGundamHint"),
                                  ("base", "settings.unlimitedBaseHint"))),

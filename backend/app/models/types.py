@@ -311,6 +311,9 @@ class WorkflowField:
     # Cross-field rule: this value may only be enabled when `requires` holds, e.g.
     # cost_optimizer requires tier in (agentic, agentic_plus).
     requires: tuple[str, tuple[str, ...]] | None = None
+    # Shown at the panel's first level ("Essentials", docs/MODELS_UX.md): the vendor
+    # knobs that change the result or the time per page.
+    essential: bool = False
 
 
 def paddle_workflow_fields() -> tuple[WorkflowField, ...]:
@@ -370,6 +373,7 @@ def llamaindex_workflow_fields() -> tuple[WorkflowField, ...]:
         replace(field, requires=("tier", ("agentic", "agentic_plus"))) if field.key == "cost_optimizer" else field
         for field in fields
     ]
+    fields = [replace(field, essential=True) if field.key in {"tier", "languages"} else field for field in fields]
     return tuple(fields)
 
 

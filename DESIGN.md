@@ -187,6 +187,13 @@ può fare questa macchina**: piattaforma, memoria, runtime ospitabili. «Locale�
 un'opzione sempre vera — dipende dall'hardware e dal modello — e quando non lo è la scheda
 scrive la causa invece di lasciare al click il compito di scoprirla.
 
+I **parametri del modello**, sotto la lista di controllo, sono linguette per scopo
+(Essenziali, Immagine, Testo, Pipeline del modello, Server · destinazione), con la stessa
+grammatica delle linguette di Impostazioni. Ogni valore porta accanto quello ufficiale; ciò
+che ne differisce ha il fondo `--color-sig-wash`, la parola «Ripristina» e il conteggio sulla
+sua linguetta, e una striscia sotto le linguette li elenca tutti: una differenza non resta
+mai nascosta in una linguetta chiusa (`docs/MODELS_UX.md`).
+
 Il passo «Configura» è una **lista di controllo**: voci numerate, ciascuna con il suo stato
 scritto e un gesto solo, attenuate finché la precedente non è compiuta (`app/models/Checklist.tsx`).
 In locale: pesi, server, verifica. Su Vast.ai: account, GPU, server, collegamento. Lo stato

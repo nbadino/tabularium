@@ -90,7 +90,7 @@ SPEC = ModelSpec(
         image={"min_pixels": None, "max_pixels": PARSE_MAX_PIXELS},
         image_fields=("max_pixels",),
         workflow=(
-            WorkflowField("dflash_enabled", "bool", default=True,
+            WorkflowField("dflash_enabled", "bool", default=True, essential=True,
                           label="settings.monkeyDFlashEnabled"),
             WorkflowField("dflash_num_speculative_tokens", "int", default=None,
                           minimum=1, maximum=16, nullable=True,

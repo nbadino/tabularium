@@ -342,7 +342,12 @@ export default function ModelsHubPage() {
 
         {step === 'configure' && model && (
           <Collapsible tab={t('modelsHub.modelParams')} quiet>
-            <ModelSettingsSection isAdmin={isAdmin} />
+            <ModelSettingsSection
+              isAdmin={isAdmin}
+              adapterId={model.adapter_id}
+              destination={dest}
+              localRuntime={model.local?.runtime ?? null}
+            />
           </Collapsible>
         )}
 
