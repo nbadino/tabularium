@@ -152,7 +152,10 @@ def test_ocria_native_job_uploads_polls_and_sends_native_settings(tmp_path, monk
         provider="llamaindex",
     )
 
-    items = client.llamaindex_native_page(Image.new("RGB", (200, 100), "white"))
+    # The official prefill path always passes `on_delta`: go through it, not the bare method.
+    items = prefill.native_page_items(
+        client, Image.new("RGB", (200, 100), "white"), on_delta=lambda delta: None, cancel_event=None,
+    )
 
     assert items == [{
         "bbox": [50, 100, 950, 900],
@@ -307,3 +310,14 @@ def test_ocria_effective_workflow_drops_keys_the_vendor_renamed(tmp_path, monkey
     assert "allowed_failure_ratio" not in effective
     # The panel posts the effective workflow back: it must still validate.
     model_settings.save_settings("llamaindex-ocria-1", {"workflow": effective})
+
+
+def test_every_native_runner_takes_the_prefill_callbacks():
+    """`native_page_items` passes `on_delta` and `cancel_event` to every runner."""
+    import inspect
+
+    runners = [name for name in dir(infmod.VllmClient) if name.endswith("_native_page")]
+    assert "llamaindex_native_page" in runners
+    for name in runners:
+        params = inspect.signature(getattr(infmod.VllmClient, name)).parameters
+        assert {"on_delta", "cancel_event"} <= params.keys(), name

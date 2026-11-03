@@ -318,9 +318,14 @@ class VllmClient:
         self,
         image: Image.Image,
         *,
+        on_delta: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
     ) -> list[dict]:
-        """Upload one page, run a native LlamaParse job and poll its result."""
+        """Upload one page, run a native LlamaParse job and poll its result.
+
+        `on_delta` keeps the signature shared by every `*_native_page` runner;
+        a LlamaParse job is polled, not streamed, so there is no output to relay.
+        """
         if self.adapter.adapter_id != "llamaindex-ocria-1":
             raise RuntimeError("il parser nativo LlamaIndex richiede l'adapter OCRia-1")
         if not self.api_key:
