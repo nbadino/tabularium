@@ -937,6 +937,7 @@ export const en: Dict = {
     title: 'Import {name}',
     uploading: 'Uploading: {sent} of {size} MB',
     uploadingLabel: 'Uploading the archive',
+    retrying: 'The connection dropped: trying again from where the upload got to…',
     inspecting: 'Reading what the archive contains…',
     starting: 'Starting the import…',
     extracting: 'Extracting files: {current} of {total}',

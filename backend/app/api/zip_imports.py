@@ -6,6 +6,7 @@ import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from starlette.requests import ClientDisconnect
 from pydantic import BaseModel, Field, StringConstraints
 
 from ..adapters import collections as collectionstore
@@ -74,11 +75,28 @@ async def upload_chunk(
     declared = int(request.headers.get("content-length") or 0)
     if declared > zip_import.config.ZIP_CHUNK_BYTES:
         raise HTTPException(status_code=413, detail=msg("zip_chunk_too_large", lang))
-    data = await request.body()
+    try:
+        data = await request.body()
+    except ClientDisconnect as exc:
+        # The connection dropped mid-piece: nothing was written, the browser asks
+        # where the upload stands and sends the piece again.
+        raise HTTPException(status_code=400, detail=msg("zip_chunk_interrupted", lang)) from exc
     try:
         return zip_import.append_chunk(project_id, upload_id, offset, data)
     except zip_import.UploadError as exc:
         raise _refusal(exc, lang) from exc
+
+
+@router.get("/api/projects/{project_id}/zip-uploads/{upload_id}")
+def upload_status(
+    project_id: int, upload_id: str, request: Request,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> dict:
+    """How many bytes arrived: where an interrupted upload resumes."""
+    try:
+        return zip_import.status(project_id, upload_id)
+    except zip_import.UploadError as exc:
+        raise _refusal(exc, _lang(request)) from exc
 
 
 @router.delete("/api/projects/{project_id}/zip-uploads/{upload_id}")
