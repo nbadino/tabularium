@@ -10,6 +10,7 @@ import { t, useI18n, tn } from '../i18n'
 import { Menu } from './ui'
 import { PAGES_MIME } from './PageWall'
 import { UNASSIGNED, verifiedCount } from './collections'
+import { API_BASE } from '../lib/endpoints'
 import type { CollectionFilter } from './collections'
 
 /** "12 drafts · 8 verified": only the states the collection has, in plain words. */
@@ -35,6 +36,7 @@ export default function CollectionsPanel({
   onCreate,
   onRename,
   onDelete,
+  onClearCover,
   onDropPages,
 }: {
   overview: CollectionsOverview
@@ -44,6 +46,7 @@ export default function CollectionsPanel({
   onCreate: () => void
   onRename: (collection: CollectionItem) => void
   onDelete: (collection: CollectionItem) => void
+  onClearCover: (collection: CollectionItem) => void
   onDropPages: (pageIds: number[], target: number | null) => void
 }) {
   const { t } = useI18n()
@@ -70,7 +73,7 @@ export default function CollectionsPanel({
     },
   } : {}
 
-  const row = (key: string, filter: CollectionFilter, label: string, count: number, detail: string | null, menu?: ReactNode, target?: number | null) => {
+  const row = (key: string, filter: CollectionFilter, label: string, count: number, detail: string | null, menu?: ReactNode, target?: number | null, cover?: ReactNode) => {
     const isActive = active === filter
     return (
       <li
@@ -84,13 +87,16 @@ export default function CollectionsPanel({
           type="button"
           aria-pressed={isActive}
           onClick={() => onSelect(filter)}
-          className="block min-w-0 flex-1 px-3 py-2 text-left text-[13px] text-[color:var(--color-ink)]"
+          className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left text-[13px] text-[color:var(--color-ink)]"
         >
+          {cover}
+          <span className="block min-w-0 flex-1">
           <span className="flex items-baseline gap-2">
             <span className={`min-w-0 flex-1 truncate ${isActive ? 'font-semibold' : ''} ${filter === UNASSIGNED ? 'italic text-[color:var(--color-ink-2)]' : ''}`}>{label}</span>
             <span className="mono text-[12px] font-semibold tabular-nums">{count}</span>
           </span>
           {detail && <span className="mt-0.5 block truncate text-[11px] leading-snug text-[color:var(--color-ink-2)]">{over === key ? t('collections.dropHere') : detail}</span>}
+          </span>
         </button>
         {menu && <div className="shrink-0 py-1.5 pr-1.5">{menu}</div>}
       </li>
@@ -107,10 +113,17 @@ export default function CollectionsPanel({
           canEdit ? (
             <Menu label={<><span aria-hidden="true">⋯</span><span className="sr-only">{t('collections.actions', { name: c.name })}</span></>}>
               <button type="button" className="menu-item" onClick={() => onRename(c)}>{t('collections.rename')}</button>
+              {c.cover_page_id != null && <button type="button" className="menu-item" onClick={() => onClearCover(c)}>{t('collections.clearCover')}</button>}
               <button type="button" className="menu-item text-[color:var(--color-sig-text)]" onClick={() => onDelete(c)}>{t('collections.delete')}</button>
             </Menu>
           ) : undefined,
           c.id,
+          // The cover, or a quiet block with the initial: no cover is a state, not a gap.
+          c.cover_page_id != null ? (
+            <img src={`${API_BASE}/pages/${c.cover_page_id}/thumbnail`} alt="" loading="lazy" className="h-11 w-8 shrink-0 border border-[color:var(--color-rule)] bg-white object-cover object-top" />
+          ) : (
+            <span aria-hidden="true" className="flex h-11 w-8 shrink-0 items-center justify-center border border-dashed border-[color:var(--color-rule-strong)] text-[12px] font-semibold uppercase text-[color:var(--color-ink-3)]">{c.name.slice(0, 1)}</span>
+          ),
         ))}
         {row(UNASSIGNED, UNASSIGNED, t('collections.none'), overview.unassigned.pages, overview.unassigned.pages ? stateLine(overview.unassigned) : null, undefined, null)}
       </ul>

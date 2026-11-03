@@ -232,3 +232,21 @@ def test_upload_into_a_collection(client, tmp_path):
     assert [p["rel_path"] for p in inside] == ["000000_x.png"]
     r = client.post(f"/api/projects/{pid}/import-upload", params={"collection_id": 99999}, files=files)
     assert r.status_code == 404
+
+
+def test_cover_is_a_page_of_the_collection(client, tmp_path):
+    pid, ids = _project(client, tmp_path, 3)
+    cid = client.post(f"/api/projects/{pid}/collections", json={"name": "Copertine"}).json()["id"]
+    client.post(f"/api/projects/{pid}/pages/collection", json={"page_ids": ids[:2], "collection_id": cid})
+    cover = f"/api/projects/{pid}/collections/{cid}/cover"
+    assert client.put(cover, json={"page_id": ids[2]}).status_code == 422  # not in the collection
+    r = client.put(cover, json={"page_id": ids[1]})
+    assert r.status_code == 200 and r.json()["cover_page_id"] == ids[1]
+    row = next(c for c in client.get(f"/api/projects/{pid}/collections").json()["collections"] if c["id"] == cid)
+    assert row["cover_page_id"] == ids[1]
+    # moving the cover page out clears the cover
+    client.post(f"/api/projects/{pid}/pages/collection", json={"page_ids": [ids[1]], "collection_id": None})
+    row = next(c for c in client.get(f"/api/projects/{pid}/collections").json()["collections"] if c["id"] == cid)
+    assert row["cover_page_id"] is None
+    client.put(cover, json={"page_id": ids[0]})
+    assert client.put(cover, json={"page_id": None}).json()["cover_page_id"] is None

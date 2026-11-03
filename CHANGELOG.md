@@ -6,6 +6,10 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Added
+- A cover for each collection: select one of its pages and choose *Use as the cover*; the
+  collections column shows it as a thumbnail (migration 22). *Remove the cover* is in the row menu.
+
 ### Changed
 - ZIP import always asks which collection the pages go into: a new one named after the archive
   (editable), an existing one, or none, with the collection being viewed preselected. Before, an

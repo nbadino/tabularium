@@ -11,6 +11,7 @@ import ProjectDetailPage from './ProjectDetailPage'
 
 const state = vi.hoisted(() => ({
   posted: [] as Array<{ path: string; body: unknown }>,
+  put: [] as Array<{ path: string; body: unknown }>,
   deleted: [] as string[],
 }))
 
@@ -20,8 +21,8 @@ const page = (id: number, collection_id: number | null, status = 'new') => ({
 const pages = [page(1, 1), page(2, 1, 'approved'), page(3, 2), page(4, null)]
 const overview = {
   collections: [
-    { id: 1, name: 'Registri', created_at: '', updated_at: '', pages: 2, with_drafts: 0, by_status: { new: 1, approved: 1 } },
-    { id: 2, name: 'Lettere', created_at: '', updated_at: '', pages: 1, with_drafts: 0, by_status: { new: 1 } },
+    { id: 1, name: 'Registri', cover_page_id: 2, created_at: '', updated_at: '', pages: 2, with_drafts: 0, by_status: { new: 1, approved: 1 } },
+    { id: 2, name: 'Lettere', cover_page_id: null, created_at: '', updated_at: '', pages: 1, with_drafts: 0, by_status: { new: 1 } },
   ],
   unassigned: { key: 'none', pages: 1, with_drafts: 0, by_status: { new: 1 } },
   total: { pages: 4, with_drafts: 0, by_status: { new: 3, approved: 1 } },
@@ -41,7 +42,7 @@ vi.mock('../lib/api', () => ({
     return { moved: 1 }
   }),
   apiPatch: vi.fn(),
-  apiPut: vi.fn(),
+  apiPut: vi.fn(async (path: string, body: unknown) => { state.put.push({ path, body }); return {} }),
   apiDelete: vi.fn(async (path: string) => { state.deleted.push(path); return {} }),
 }))
 vi.mock('../app/auth', () => ({ useAuth: () => ({ enabled: false, user: null }), useCanAdminister: () => true }))
@@ -65,6 +66,7 @@ function renderPage(entry = '/progetti/5') {
 afterEach(() => {
   cleanup()
   state.posted = []
+  state.put = []
   state.deleted = []
 })
 
@@ -104,6 +106,22 @@ describe('Collections on the Pages tab', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Nuova collezione' }))
     await waitFor(() => expect(state.posted).toContainEqual({ path: '/projects/5/pages/collection', body: { page_ids: [4], collection_id: 9 } }))
     expect(await screen.findByText('1 pagina spostata in «Liste».')).toBeInTheDocument()
+  })
+
+  it('shows the cover, sets one from a selected page and removes it', async () => {
+    const { container } = renderPage()
+    const column = await screen.findByRole('navigation', { name: 'Collezioni' })
+    expect(container.querySelector('nav img[src$="/pages/2/thumbnail"]')).not.toBeNull()
+    fireEvent.click(screen.getByLabelText('Seleziona p3.png'))
+    fireEvent.click(screen.getByRole('button', { name: 'Usa come copertina di «Lettere»' }))
+    await waitFor(() => expect(state.put).toEqual([{ path: '/projects/5/collections/2/cover', body: { page_id: 3 } }]))
+    expect(await screen.findByText('Copertina di «Lettere» aggiornata.')).toBeInTheDocument()
+    // a page without a collection cannot be a cover
+    fireEvent.click(screen.getByLabelText('Seleziona p4.png'))
+    expect(screen.queryByRole('button', { name: /Usa come copertina/ })).not.toBeInTheDocument()
+    const rowMenu = within(column).getByText('Azioni per Registri').closest('details') as HTMLElement
+    fireEvent.click(within(rowMenu).getByRole('button', { name: 'Togli la copertina' }))
+    await waitFor(() => expect(state.put).toContainEqual({ path: '/projects/5/collections/1/cover', body: { page_id: null } }))
   })
 
   it('asks what happens to the pages before deleting a collection', async () => {
