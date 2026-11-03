@@ -7,6 +7,13 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Changed
+- Models: the parameter panel is organised by what you want to change — Essentials, Image,
+  Text, Model pipeline, Server — and follows the model and destination chosen in the hub.
+  Every value shows the official one next to it (per task for sampling, instead of
+  "automatic"), differences are counted on each tab and listed in one strip, and each
+  can be reset on its own. Labels are in plain language with the technical name beside
+  them; only the server options of the chosen destination appear. Spec in
+  `docs/MODELS_UX.md`.
 - Models: a fresh install opens on choosing a model, not on a "local" destination this machine
   cannot run. Destinations that can host the model come first, the others greyed at the end with
   their reason, in plain language. "In use now" offers **Try on a page** and **Choose another

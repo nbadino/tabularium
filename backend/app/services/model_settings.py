@@ -149,6 +149,47 @@ def _defaults(adapter_id: str) -> dict[str, Any]:
     }
 
 
+# The sampling knobs a user can see and override. Transport fields an adapter also puts
+# in its per-task sampling (`vllm_xargs`, `skip_special_tokens`) are not settings.
+_TASKS = ("layout", "text", "table", "formula", "end2end")
+_TASK_SAMPLING_ACTIVE: set[str] = set()
+
+
+def _task_sampling(adapter_id: str) -> dict[str, dict[str, Any]]:
+    """What the adapter sends per task before any user override.
+
+    The panel shows it next to each generation field ("official: 0 (text) · 0.1 (table)"):
+    "automatic" used to hide that the adapter does send a value, and a different one per
+    task. A task the model has no prompt for is left out.
+    """
+    # Some adapters read their own settings to build a prompt (TeleOCR's layout mode):
+    # the nested `get_settings` does not need the per-task view, and must not recurse.
+    if adapter_id in _TASK_SAMPLING_ACTIVE:
+        return {}
+    adapter = get_adapter(adapter_id)
+    recommended = dict(getattr(adapter, "recommended_generation", {}) or {})
+    sampling_for = getattr(adapter, "sampling_for", None)
+    result: dict[str, dict[str, Any]] = {}
+    _TASK_SAMPLING_ACTIVE.add(adapter_id)
+    try:
+        _collect_task_sampling(adapter, sampling_for, recommended, result)
+    finally:
+        _TASK_SAMPLING_ACTIVE.discard(adapter_id)
+    return result
+
+
+def _collect_task_sampling(adapter, sampling_for, recommended: dict, result: dict) -> None:
+    for task in _TASKS:
+        try:
+            if adapter.prompt_for(task) is None and task != "layout":
+                continue
+        except (NotImplementedError, ValueError, TypeError):
+            continue
+        values = dict(sampling_for(task) or {}) if callable(sampling_for) else {}
+        values.update(recommended)
+        result[task] = {key: value for key, value in values.items() if key in _GENERATION_LIMITS}
+
+
 def _load_overrides(adapter_id: str) -> dict[str, Any]:
     # During bootstrap (and in utility contexts that construct a client before the
     # lifespan initializes SQLite) there is no meta table yet: `get_or` treats that
@@ -194,6 +235,9 @@ def get_settings(adapter_id: str) -> dict[str, Any]:
         # instead of keeping a JSX block per model (program.md, P2c).
         "workflow_fields": [asdict(field) for field in _settings_spec(adapter_id).workflow],
         "workflow_intro": _settings_spec(adapter_id).workflow_intro,
+        # Which image caps this model honours, so the panel never names a model.
+        "image_fields": list(_settings_spec(adapter_id).image_fields),
+        "task_sampling": _task_sampling(adapter_id),
         "sections": list(_settings_spec(adapter_id).sections),
         "generation_unsupported": sorted(_settings_spec(adapter_id).generation_unsupported),
         "recommended": recommended,

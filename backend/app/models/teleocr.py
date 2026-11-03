@@ -82,7 +82,7 @@ SPEC = ModelSpec(
         image_fields=("max_pixels",),
         image_cap=64_000_000,
         workflow=(
-            WorkflowField("layout_mode", "enum", default="Detection",
+            WorkflowField("layout_mode", "enum", default="Detection", essential=True,
                           values=("Detection", "Segmentation"),
                           label="settings.teleocrLayoutMode",
                           hints=(("Detection", "settings.teleocrDetectionHint"),

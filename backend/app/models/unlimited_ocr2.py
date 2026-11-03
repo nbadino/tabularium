@@ -129,7 +129,7 @@ SPEC = ModelSpec(
         # vLLM's serving knobs and the MLX section do not apply to an SGLang server.
         sections=("generation", "workflow"),
         workflow=(
-            WorkflowField("image_mode", "enum", default="gundam", values=("base", "gundam"),
+            WorkflowField("image_mode", "enum", default="gundam", values=("base", "gundam"), essential=True,
                           label="settings.unlimitedImageMode",
                           hints=(("gundam", "settings.unlimitedGundamHint"),
                                  ("base", "settings.unlimitedBaseHint"))),

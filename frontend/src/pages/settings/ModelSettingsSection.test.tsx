@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import '@testing-library/jest-dom/vitest'
 import { readFileSync } from 'node:fs'
 import { apiGet, apiPut } from '../../lib/api'
-import ModelSettingsSection from './ModelSettingsSection'
+import ModelSettingsSection, { type ModelSettingsItem } from './ModelSettingsSection'
 import type { WorkflowFieldSpec } from './WorkflowFields'
 
 const wf = (
@@ -13,188 +13,200 @@ const wf = (
   extra: Partial<WorkflowFieldSpec> = {},
 ): WorkflowFieldSpec => ({ key, kind, default: null, ...extra })
 
-const MONKEY_WORKFLOW: WorkflowFieldSpec[] = [
-  wf('dflash_enabled', 'bool', { default: true, label: 'settings.monkeyDFlashEnabled' }),
-  wf('dflash_num_speculative_tokens', 'int', { minimum: 1, maximum: 16, nullable: true, label: 'settings.monkeyDFlashTokens' }),
-]
+const SERVING = { dtype: null, gpu_memory_utilization: null, max_model_len: null, max_num_seqs: null, max_num_batched_tokens: null }
+
+function item(over: Partial<ModelSettingsItem> & { adapter_id: string }): ModelSettingsItem {
+  const recommended = over.recommended ?? { serving: SERVING, generation: {}, image: { max_pixels: null }, workflow: {} }
+  return {
+    display_name: over.adapter_id,
+    recommended,
+    overrides: {},
+    effective: JSON.parse(JSON.stringify(recommended)),
+    restart_required: false,
+    image_fields: ['max_pixels'],
+    task_sampling: {},
+    ...over,
+  }
+}
+
+const MONKEY = item({
+  adapter_id: 'monkeyocrv2-parsing',
+  display_name: 'MonkeyOCRv2-Parsing',
+  recommended: {
+    serving: SERVING,
+    generation: { temperature: 0 },
+    image: { max_pixels: 1003520 },
+    workflow: { dflash_enabled: true, dflash_num_speculative_tokens: null },
+  },
+  workflow_fields: [
+    wf('dflash_enabled', 'bool', { default: true, label: 'settings.monkeyDFlashEnabled', essential: true }),
+    wf('dflash_num_speculative_tokens', 'int', { minimum: 1, maximum: 16, nullable: true, label: 'settings.monkeyDFlashTokens' }),
+  ],
+  workflow_intro: 'settings.monkeyDFlashIntro',
+  serving_dtype: false,
+})
 
 vi.mock('../../lib/api', () => ({
-  apiGet: vi.fn(async () => ({ items: [{
-    adapter_id: 'monkeyocrv2-parsing', display_name: 'MonkeyOCRv2-Parsing',
-    recommended: { serving: { gpu_memory_utilization: null, max_model_len: null, max_num_seqs: null, max_num_batched_tokens: null }, generation: {}, image: { max_pixels: null }, workflow: { dflash_enabled: true, dflash_num_speculative_tokens: null } },
-    overrides: {},
-    effective: { serving: { gpu_memory_utilization: null, max_model_len: null, max_num_seqs: null, max_num_batched_tokens: null }, generation: {}, image: { max_pixels: null }, workflow: { dflash_enabled: true, dflash_num_speculative_tokens: null } },
-    restart_required: false,
-    workflow_fields: MONKEY_WORKFLOW,
-    workflow_intro: 'settings.monkeyDFlashIntro',
-  }] })),
-  apiPut: vi.fn(async (_path: string, payload: Record<string, unknown>) => ({
-    adapter_id: 'monkeyocrv2-parsing', display_name: 'MonkeyOCRv2-Parsing',
-    recommended: { serving: { gpu_memory_utilization: null, max_model_len: null, max_num_seqs: null, max_num_batched_tokens: null }, generation: {}, image: { max_pixels: null }, workflow: { dflash_enabled: true, dflash_num_speculative_tokens: null } },
-    overrides: payload, effective: payload, restart_required: Boolean(payload.serving || payload.workflow),
-    workflow_fields: MONKEY_WORKFLOW,
+  apiGet: vi.fn(),
+  apiPut: vi.fn(async (path: string, payload: Record<string, unknown>) => ({
+    adapter_id: path.split('/').pop(), overrides: payload, effective: payload, restart_required: false,
   })),
 }))
 
+const respond = (...items: ModelSettingsItem[]) => vi.mocked(apiGet).mockResolvedValue({ items } as never)
+const openTab = async (name: RegExp) => fireEvent.click(await screen.findByRole('tab', { name }))
+const save = () => fireEvent.click(screen.getByRole('button', { name: 'Salva' }))
+
 describe('ModelSettingsSection', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    respond(MONKEY)
+  })
   afterEach(cleanup)
 
-  it('carica valori consigliati e salva override distinti per il modello', async () => {
-    render(<ModelSettingsSection isAdmin />)
-    expect(await screen.findByLabelText('DFlash ufficiale')).toHaveValue('true')
-    const temperature = screen.getByLabelText(/Temperature/i)
-    fireEvent.change(temperature, { target: { value: '0.2' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Salva override' }))
-    await waitFor(() => expect(apiPut).toHaveBeenCalledWith(
-      '/system/model-settings/monkeyocrv2-parsing',
-      { generation: { temperature: 0.2 } },
-    ))
-    expect(apiGet).toHaveBeenCalledWith('/system/model-settings')
+  it('opens on the essentials of the model chosen in the hub, with the official values', async () => {
+    respond(item({ adapter_id: 'glm-ocr', display_name: 'GLM-OCR' }), MONKEY)
+    render(<ModelSettingsSection isAdmin adapterId="monkeyocrv2-parsing" destination="vast" />)
+    expect(await screen.findByRole('tab', { name: /Essenziali/, selected: true })).toBeInTheDocument()
+    expect(screen.getByLabelText('Dettaglio dell’immagine')).toHaveValue(1003520)
+    expect(screen.getByLabelText('DFlash ufficiale')).toHaveValue('true')
+    // No second model picker: the hub already chose.
+    expect(screen.queryByLabelText('Modello supportato')).not.toBeInTheDocument()
+    expect(screen.getByText('Tutto ufficiale')).toBeInTheDocument()
   })
 
-  it('permette di disattivare DFlash dalle impostazioni MonkeyOCRv2', async () => {
-    render(<ModelSettingsSection isAdmin />)
-    const dflash = await screen.findByLabelText('DFlash ufficiale')
-    fireEvent.change(dflash, { target: { value: 'false' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Salva override' }))
-    await waitFor(() => expect(apiPut).toHaveBeenCalledWith(
-      '/system/model-settings/monkeyocrv2-parsing',
-      { workflow: { dflash_enabled: false } },
-    ))
+  it('marks a value that differs from the official one and resets it on its own', async () => {
+    render(<ModelSettingsSection isAdmin adapterId="monkeyocrv2-parsing" destination="vast" />)
+    const detail = await screen.findByLabelText('Dettaglio dell’immagine')
+    fireEvent.change(detail, { target: { value: '2000000' } })
+    expect(screen.getByText('1 diverso dall’ufficiale')).toBeInTheDocument()
+    expect(within(screen.getByRole('tab', { name: /Essenziali/ })).getByText('1')).toBeInTheDocument()
+    expect(screen.getByText('Diverso dall’ufficiale:')).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: 'Ripristina il valore ufficiale di Dettaglio dell’immagine' })[0])
+    expect(detail).toHaveValue(1003520)
+    expect(screen.getByText('Tutto ufficiale')).toBeInTheDocument()
   })
 
-  it('permette di regolare i token speculativi DFlash', async () => {
-    render(<ModelSettingsSection isAdmin />)
-    await screen.findByLabelText('DFlash ufficiale')
-    const tokenControls = screen.getAllByRole('spinbutton')
-    fireEvent.change(tokenControls[tokenControls.length - 1], { target: { value: '4' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Salva override' }))
-    await waitFor(() => expect(apiPut).toHaveBeenCalledWith(
-      '/system/model-settings/monkeyocrv2-parsing',
-      { workflow: { dflash_num_speculative_tokens: 4 } },
-    ))
+  it('saves only what differs, from any tab', async () => {
+    render(<ModelSettingsSection isAdmin adapterId="monkeyocrv2-parsing" destination="vast" />)
+    fireEvent.change(await screen.findByLabelText('DFlash ufficiale'), { target: { value: 'false' } })
+    await openTab(/Pipeline del modello/)
+    fireEvent.change(screen.getByLabelText('Token speculativi DFlash'), { target: { value: '4' } })
+    await openTab(/Testo/)
+    fireEvent.change(screen.getByLabelText('Casualità'), { target: { value: '0.2' } })
+    save()
+    await waitFor(() => expect(apiPut).toHaveBeenCalledWith('/system/model-settings/monkeyocrv2-parsing', {
+      generation: { temperature: 0.2 },
+      workflow: { dflash_enabled: false, dflash_num_speculative_tokens: 4 },
+    }))
   })
 
-  it('rende i controlli di sola lettura se l’utente non è admin', async () => {
-    render(<ModelSettingsSection isAdmin={false} />)
-    expect(await screen.findByText(/regolazione dei preset è riservata agli amministratori/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Salva override' })).toBeDisabled()
+  it('shows the sampling each task really sends instead of "automatic"', async () => {
+    respond(item({
+      adapter_id: 'mineru2.5', display_name: 'MinerU2.5', image_fields: [],
+      task_sampling: {
+        layout: { temperature: 0, top_k: 1 },
+        text: { temperature: 0, top_k: 1, presence_penalty: 1 },
+        table: { temperature: 0, top_k: 1, presence_penalty: 1, frequency_penalty: 0.005 },
+      },
+    }))
+    render(<ModelSettingsSection isAdmin adapterId="mineru2.5" destination="vast" />)
+    await openTab(/Testo/)
+    expect(screen.getAllByText('ufficiale: 0').length).toBeGreaterThan(0)
+    expect(screen.getByText('ufficiale: 1 (testo, tabelle)')).toBeInTheDocument()
+    expect(screen.getByText('ufficiale: 0,005 (tabelle)')).toBeInTheDocument()
   })
 
-  it('salva la modalità layout ufficiale di TeleOCR', async () => {
-    vi.mocked(apiGet).mockResolvedValueOnce({ items: [{
+  it('offers the server group of the destination: vLLM remotely, mlx-vlm on a Mac', async () => {
+    respond(item({
+      adapter_id: 'qwen3-vl-8b', display_name: 'Qwen3-VL-8B', mlx_available: true,
+      recommended: { serving: SERVING, generation: {}, image: { max_pixels: null }, workflow: {}, mlx: { kv_bits: null, repetition_penalty: 1.1, repetition_context_size: 128, presence_context_size: 256 } },
+    }))
+    const { unmount } = render(<ModelSettingsSection isAdmin adapterId="qwen3-vl-8b" destination="vast" />)
+    await openTab(/Server · Vast\.ai/)
+    expect(screen.getByLabelText('Quota di memoria GPU')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Bit della cache')).not.toBeInTheDocument()
+    unmount()
+
+    render(<ModelSettingsSection isAdmin adapterId="qwen3-vl-8b" destination="local" localRuntime="mlx-vlm" />)
+    await openTab(/Server · Locale/)
+    expect(screen.getByLabelText('Bit della cache')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Quota di memoria GPU')).not.toBeInTheDocument()
+    await openTab(/Testo/)
+    // The MLX anti-loop guard and its presence window are reachable.
+    expect(screen.getByLabelText('Finestra della penalità di presenza (MLX)')).toHaveValue(256)
+  })
+
+  it('saves the TeleOCR layout mode and a serving precision', async () => {
+    respond(item({
       adapter_id: 'teleocr', display_name: 'TeleOCR',
+      recommended: { serving: { ...SERVING, max_model_len: 16384 }, generation: {}, image: { max_pixels: 64000000 }, workflow: { layout_mode: 'Detection' } },
       workflow_fields: [wf('layout_mode', 'enum', {
-        default: 'Detection', values: ['Detection', 'Segmentation'],
-        label: 'settings.teleocrLayoutMode',
+        default: 'Detection', values: ['Detection', 'Segmentation'], label: 'settings.teleocrLayoutMode', essential: true,
         hints: [['Detection', 'settings.teleocrDetectionHint'], ['Segmentation', 'settings.teleocrSegmentationHint']],
       })],
-      recommended: { serving: { max_model_len: 16384, gpu_memory_utilization: 0.95 }, generation: {}, image: { max_pixels: 64000000 }, workflow: { layout_mode: 'Detection' } },
-      overrides: {},
-      effective: { serving: { max_model_len: 16384, gpu_memory_utilization: 0.95 }, generation: {}, image: { max_pixels: 64000000 }, workflow: { layout_mode: 'Detection' } },
-      restart_required: false,
-    }] } as never)
-    render(<ModelSettingsSection isAdmin />)
-    const mode = await screen.findByLabelText('Modalità layout')
-    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'half' } })
-    fireEvent.change(mode, { target: { value: 'Segmentation' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Salva override' }))
-    await waitFor(() => expect(apiPut).toHaveBeenCalledWith(
-      '/system/model-settings/teleocr',
-      { serving: { dtype: 'half' }, workflow: { layout_mode: 'Segmentation' } },
-    ))
+    }))
+    render(<ModelSettingsSection isAdmin adapterId="teleocr" destination="vast" />)
+    fireEvent.change(await screen.findByLabelText('Modalità layout'), { target: { value: 'Segmentation' } })
+    await openTab(/Server/)
+    fireEvent.change(screen.getByLabelText('Precisione numerica'), { target: { value: 'half' } })
+    save()
+    await waitFor(() => expect(apiPut).toHaveBeenCalledWith('/system/model-settings/teleocr', {
+      serving: { dtype: 'half' }, workflow: { layout_mode: 'Segmentation' },
+    }))
   })
 
-  it('nasconde a GLM-OCR le penalità non accettate dal suo SDK ufficiale', async () => {
-    vi.mocked(apiGet).mockResolvedValueOnce({ items: [{
-      adapter_id: 'glm-ocr', display_name: 'GLM-OCR',
-      generation_unsupported: ['presence_penalty', 'frequency_penalty'],
-      recommended: { serving: {}, generation: {}, image: { max_pixels: null }, workflow: { speculative_tokens: 1 } },
-      overrides: {},
-      effective: { serving: {}, generation: {}, image: { max_pixels: null }, workflow: { speculative_tokens: 1 } },
-      restart_required: false,
-    }] } as never)
-    render(<ModelSettingsSection isAdmin />)
-    expect(await screen.findByLabelText(/Temperature/i)).toBeInTheDocument()
-    expect(screen.queryByLabelText(/Presence penalty/i)).not.toBeInTheDocument()
-    expect(screen.queryByLabelText(/Frequency penalty/i)).not.toBeInTheDocument()
+  it('hides the sampling fields the vendor rejects', async () => {
+    respond(item({ adapter_id: 'glm-ocr', display_name: 'GLM-OCR', generation_unsupported: ['presence_penalty', 'frequency_penalty'] }))
+    render(<ModelSettingsSection isAdmin adapterId="glm-ocr" destination="vast" />)
+    await openTab(/Testo/)
+    expect(screen.getByLabelText('Casualità')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Penalità di presenza')).not.toBeInTheDocument()
   })
 
-  it('inoltra i controlli del workflow ufficiale PaddleOCR-VL', async () => {
-    const workflow = Object.fromEntries([
-      'use_layout_detection', 'use_doc_orientation_classify', 'use_doc_unwarping',
-      'use_chart_recognition', 'use_seal_recognition', 'use_ocr_for_image_block',
-      'format_block_content', 'merge_layout_blocks', 'use_queues',
-    ].map((key) => [key, null]))
-    workflow.layout_threshold = null
-    workflow.layout_unclip_ratio = null
-    workflow.layout_merge_bboxes_mode = null
-    workflow.layout_shape_mode = null
-    workflow.vl_rec_max_concurrency = null
-    const paddleFields: WorkflowFieldSpec[] = [
-      ...['use_layout_detection', 'use_doc_orientation_classify', 'use_doc_unwarping',
-        'use_chart_recognition', 'use_seal_recognition', 'use_ocr_for_image_block',
-        'format_block_content', 'merge_layout_blocks', 'use_queues',
-      ].map((key) => wf(key, 'bool', { nullable: true, label: `settings.paddleWorkflow.${key}` })),
-      wf('layout_threshold', 'float', { minimum: 0, maximum: 1, nullable: true }),
-      wf('layout_unclip_ratio', 'float', { minimum: 0.01, maximum: 10, nullable: true }),
-      wf('vl_rec_max_concurrency', 'int', { minimum: 1, maximum: 128, nullable: true }),
-      wf('layout_merge_bboxes_mode', 'enum', { nullable: true, values: ['large', 'small', 'union'], label: 'settings.paddleWorkflow.layout_merge_bboxes_mode' }),
-      wf('layout_shape_mode', 'enum', { nullable: true, values: ['auto', 'poly', 'quad', 'rect'], label: 'settings.paddleWorkflow.layout_shape_mode' }),
-    ]
-    vi.mocked(apiGet).mockResolvedValueOnce({ items: [{
+  it('forwards the PaddleOCR-VL pipeline controls', async () => {
+    const keys = ['use_layout_detection', 'use_doc_orientation_classify']
+    respond(item({
       adapter_id: 'paddleocr-vl', display_name: 'PaddleOCR-VL-1.6',
-      workflow_fields: paddleFields,
-      recommended: { serving: { max_model_len: null }, generation: {}, image: { max_pixels: null }, workflow },
-      overrides: {},
-      effective: { serving: { max_model_len: null }, generation: {}, image: { max_pixels: null }, workflow },
-      restart_required: false,
-    }] } as never)
-    render(<ModelSettingsSection isAdmin />)
-    const layout = await screen.findByLabelText('Rilevamento layout')
-    fireEvent.change(layout, { target: { value: 'true' } })
-    fireEvent.change(screen.getByLabelText(/layout_threshold/), { target: { value: '0.4' } })
-    fireEvent.change(screen.getByLabelText(/layout_merge_bboxes_mode/), { target: { value: 'union' } })
+      recommended: { serving: SERVING, generation: {}, image: { max_pixels: null, min_pixels: null }, workflow: Object.fromEntries([...keys, 'layout_threshold', 'layout_shape_mode'].map((k) => [k, null])) },
+      image_fields: ['min_pixels', 'max_pixels'],
+      workflow_fields: [
+        ...keys.map((key) => wf(key, 'bool', { nullable: true, label: `settings.paddleWorkflow.${key}` })),
+        wf('layout_threshold', 'float', { minimum: 0, maximum: 1, nullable: true }),
+        wf('layout_shape_mode', 'enum', { nullable: true, values: ['auto', 'poly', 'quad', 'rect'], label: 'settings.paddleWorkflow.layout_shape_mode' }),
+      ],
+    }))
+    render(<ModelSettingsSection isAdmin adapterId="paddleocr-vl" destination="vast" />)
+    await openTab(/Pipeline del modello/)
+    fireEvent.change(screen.getByLabelText('Rilevamento layout'), { target: { value: 'true' } })
+    fireEvent.change(screen.getByLabelText('layout_threshold'), { target: { value: '0.4' } })
     fireEvent.change(screen.getByLabelText('Forma dei riquadri layout'), { target: { value: 'quad' } })
-    const numberFields = screen.getAllByRole('spinbutton')
-    fireEvent.change(numberFields[numberFields.length - 1], { target: { value: '8' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Salva override' }))
-    await waitFor(() => expect(apiPut).toHaveBeenCalledWith(
-      '/system/model-settings/paddleocr-vl',
-      { workflow: {
-        use_layout_detection: true,
-        layout_threshold: 0.4,
-        layout_merge_bboxes_mode: 'union',
-        layout_shape_mode: 'quad',
-        vl_rec_max_concurrency: 8,
-      } },
-    ))
+    await openTab(/Immagine/)
+    fireEvent.change(screen.getByLabelText('Ingrandimento minimo'), { target: { value: '100000' } })
+    save()
+    await waitFor(() => expect(apiPut).toHaveBeenCalledWith('/system/model-settings/paddleocr-vl', {
+      image: { min_pixels: 100000 },
+      workflow: { use_layout_detection: true, layout_threshold: 0.4, layout_shape_mode: 'quad' },
+    }))
   })
 
-  it('espone i limiti pixel minimi e massimi per Qwen3-VL', async () => {
-    vi.mocked(apiGet).mockResolvedValueOnce({ items: [{
-      adapter_id: 'qwen3-vl-8b', display_name: 'Qwen3-VL-8B',
-      recommended: { serving: {}, generation: {}, image: { min_pixels: null, max_pixels: null }, workflow: {} },
-      overrides: {},
-      effective: { serving: {}, generation: {}, image: { min_pixels: null, max_pixels: null }, workflow: {} },
-      restart_required: false,
-    }] } as never)
+  it('is read-only for non-admins', async () => {
+    render(<ModelSettingsSection isAdmin={false} adapterId="monkeyocrv2-parsing" destination="vast" />)
+    expect(await screen.findByText(/regolazione dei preset è riservata agli amministratori/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Salva' })).toBeDisabled()
+    expect(await screen.findByLabelText('Dettaglio dell’immagine')).toBeDisabled()
+  })
+
+  it('without a hub choice, offers its own model choice', async () => {
     render(<ModelSettingsSection isAdmin />)
-    fireEvent.change(await screen.findByLabelText(/Pixel minimi/i), { target: { value: '100000' } })
-    fireEvent.change(screen.getByLabelText(/Pixel massimi/i), { target: { value: '2000000' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Salva override' }))
-    await waitFor(() => expect(apiPut).toHaveBeenCalledWith(
-      '/system/model-settings/qwen3-vl-8b',
-      { image: { min_pixels: 100000, max_pixels: 2000000 } },
-    ))
+    expect(await screen.findByLabelText('Modello supportato')).toBeInTheDocument()
   })
 
-
-  it('genera il workflow dallo schema, senza regole per modello', () => {
-    // The acceptance criterion of program.md P2c: adding a model must not require
-    // touching this component. Comparing the id with a literal is the smell.
+  it('builds the panel from the schema, without rules per model', () => {
+    // Adding a model must not require touching this component: comparing the id with
+    // a literal is the smell.
     const source = readFileSync('src/pages/settings/ModelSettingsSection.tsx', 'utf8')
     expect(source).not.toMatch(/adapter_id === '/)
+    expect(source).not.toMatch(/'(qwen3-vl-8b|paddleocr-vl|mineru2\.5|monkeyocrv2-parsing)'/)
   })
 })
