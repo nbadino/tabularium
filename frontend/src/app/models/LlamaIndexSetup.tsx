@@ -39,26 +39,22 @@ const TIER_KEYS: Record<string, 'costEffective' | 'agentic' | 'agenticPlus'> = {
 }
 const COST_OPTIMIZER_TIERS = new Set(['agentic', 'agentic_plus'])
 
+// LlamaParse `ParsingLanguages` (API reference, parsing/methods/create).
 const LANGS = [
-  'abq', 'ach', 'afr', 'aka', 'amh', 'ara', 'asm', 'ava', 'aym', 'aze', 'bak', 'bam',
-  'bel', 'bem', 'ben', 'bod', 'bos', 'bre', 'bul', 'cat', 'ceu', 'ces', 'cha', 'che',
-  'chi_sim', 'chi_tra', 'chr', 'cos', 'cym', 'dan', 'deu', 'div', 'dzo', 'ell', 'eng',
-  'enm', 'epo', 'est', 'eus', 'fao', 'fas', 'fij', 'fin', 'fra', 'frk', 'frm', 'fry',
-  'gla', 'gle', 'glg', 'grc', 'grn', 'guj', 'hat', 'hau', 'heb', 'hin', 'hrv', 'hun',
-  'hye', 'ibo', 'ido', 'iku', 'ile', 'ina', 'ind', 'isl', 'ita', 'jav', 'jpn', 'kan',
-  'kat', 'kaz', 'khm', 'kir', 'kmr', 'kor', 'lao', 'lat', 'lav', 'lit', 'ltz', 'mal',
-  'mar', 'mkd', 'mlt', 'mon', 'mri', 'msa', 'mya', 'nep', 'nld', 'nor', 'oci', 'ori',
-  'orm', 'pan', 'pol', 'por', 'pus', 'que', 'ron', 'rus', 'san', 'sin', 'slk', 'slv',
-  'snd', 'spa', 'sqi', 'srp', 'sun', 'swa', 'swe', 'syr', 'tam', 'tat', 'tel', 'tgk',
-  'tha', 'tir', 'ton', 'tur', 'uig', 'ukr', 'urd', 'uzb', 'vie', 'yid', 'yor',
+   'abq', 'ady', 'af', 'ang', 'ar', 'as', 'ava', 'az', 'be', 'bg', 'bgc', 'bh', 'bho',
+   'bn', 'bs', 'ch_sim', 'ch_tra', 'che', 'cs', 'cy', 'da', 'dar', 'de', 'en', 'es', 'et',
+   'fa', 'fr', 'ga', 'gom', 'hi', 'hr', 'hu', 'id', 'inh', 'is', 'it', 'ja', 'kbd', 'kn',
+   'ko', 'ku', 'la', 'lbe', 'lez', 'lt', 'lv', 'mah', 'mai', 'mi', 'mn', 'mni', 'mr', 'ms',
+   'mt', 'ne', 'new', 'nl', 'no', 'oc', 'pi', 'pl', 'pt', 'ro', 'rs_cyrillic', 'rs_latin',
+   'ru', 'sa', 'sck', 'sk', 'sl', 'sq', 'sv', 'sw', 'ta', 'tab', 'te', 'th', 'tjk', 'tl',
+   'tr', 'ug', 'uk', 'ur', 'uz', 'vi',
 ] as const
 
 const LANGUAGE_LABELS: Record<string, string> = {
-  ara: 'Arabic', chi_sim: 'Chinese simplified', chi_tra: 'Chinese traditional',
-  deu: 'German', ell: 'Greek', eng: 'English', fas: 'Persian', fra: 'French',
-  grc: 'Ancient Greek', heb: 'Hebrew', hin: 'Hindi', ita: 'Italian', jpn: 'Japanese',
-  kor: 'Korean', lat: 'Latin', nld: 'Dutch', pol: 'Polish', por: 'Portuguese',
-  ron: 'Romanian', rus: 'Russian', spa: 'Spanish', swe: 'Swedish', tur: 'Turkish',
+  ar: 'Arabic', ch_sim: 'Chinese simplified', ch_tra: 'Chinese traditional',
+  de: 'German', en: 'English', fa: 'Persian', fr: 'French', hi: 'Hindi', it: 'Italian',
+  ja: 'Japanese', ko: 'Korean', la: 'Latin', nl: 'Dutch', pl: 'Polish', pt: 'Portuguese',
+  ro: 'Romanian', ru: 'Russian', es: 'Spanish', sv: 'Swedish', tr: 'Turkish',
 }
 
 function str(value: WorkflowValue | undefined, fallback = ''): string {
@@ -138,7 +134,7 @@ export function LlamaIndexSetup({ model, onClose }: LlamaIndexSetupProps) {
   const [apiKey, setApiKey] = useState('')
   const [revealKey, setRevealKey] = useState(false)
   const [useSavedKey, setUseSavedKey] = useState(hasStoredLlamaKey)
-  const [languageToAdd, setLanguageToAdd] = useState('eng')
+  const [languageToAdd, setLanguageToAdd] = useState('en')
   const [versions, setVersions] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -168,7 +164,7 @@ export function LlamaIndexSetup({ model, onClose }: LlamaIndexSetupProps) {
   const tier = str(workflow.tier, 'agentic')
   const tierKey = TIER_KEYS[tier] ?? 'agentic'
   const effort = str(workflow.confidence_score_effort, 'standard')
-  const languages = Array.isArray(workflow.languages) ? workflow.languages : ['eng']
+  const languages = Array.isArray(workflow.languages) ? workflow.languages : ['en']
   const cropBox = (workflow.crop_box && !Array.isArray(workflow.crop_box) && typeof workflow.crop_box === 'object')
     ? workflow.crop_box as Record<string, number>
     : { top: 0, bottom: 0, left: 0, right: 0 }
@@ -600,10 +596,10 @@ export function LlamaIndexSetup({ model, onClose }: LlamaIndexSetupProps) {
             <Module tab={t('modelsHub.llamaIndex.controlsTitle')}>
               <div className="grid gap-3 md:grid-cols-3">
                 <Field label={t('modelsHub.llamaIndex.jobTimeout')} hint={t('modelsHub.llamaIndex.jobTimeoutHint')}>
-                  <input type="number" min={30} max={86400} className="fld mt-1 w-full" value={num(workflow.job_timeout_in_seconds, 300)} onChange={(event) => update('job_timeout_in_seconds', Number(event.target.value))} />
+                  <input type="number" min={30} max={7200} className="fld mt-1 w-full" value={num(workflow.job_timeout_in_seconds, 300)} onChange={(event) => update('job_timeout_in_seconds', Number(event.target.value))} />
                 </Field>
                 <Field label={t('modelsHub.llamaIndex.extraPageTimeout')} hint={t('modelsHub.llamaIndex.extraPageTimeoutHint')}>
-                  <input type="number" min={0} max={3600} className="fld mt-1 w-full" value={num(workflow.job_timeout_extra_time_per_page_in_seconds, 30)} onChange={(event) => update('job_timeout_extra_time_per_page_in_seconds', Number(event.target.value))} />
+                  <input type="number" min={0} max={300} className="fld mt-1 w-full" value={num(workflow.job_timeout_extra_time_per_page_in_seconds, 30)} onChange={(event) => update('job_timeout_extra_time_per_page_in_seconds', Number(event.target.value))} />
                 </Field>
                 <Field label={t('modelsHub.llamaIndex.failureRatio')} hint={t('modelsHub.llamaIndex.failureRatioHint')}>
                   <input type="number" min={0} max={1} step={0.01} className="fld mt-1 w-full" value={num(workflow.allowed_page_failure_ratio, 0)} onChange={(event) => update('allowed_page_failure_ratio', Number(event.target.value))} />

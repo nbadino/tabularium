@@ -144,6 +144,7 @@ def test_unlimited_ocr_uses_official_vllm_recipe_and_parses_grounding():
     assert adapter.request_overrides("end2end") == {
         "skip_special_tokens": False,
         "images_config": {"image_mode": "gundam"},
+        "mm_processor_kwargs": {"crop_mode": True},
         "vllm_xargs": {"ngram_size": 35, "window_size": 128},
     }
     parsed = adapter.parse_layout(
@@ -167,6 +168,7 @@ def test_unlimited_ocr_settings_reach_the_official_request_overrides(tmp_path, m
     assert adapter.request_overrides("end2end") == {
         "skip_special_tokens": False,
         "images_config": {"image_mode": "base"},
+        "mm_processor_kwargs": {"crop_mode": False},
         "vllm_xargs": {"ngram_size": 42, "window_size": 1024},
     }
 
@@ -207,7 +209,7 @@ def test_mineru_ngram_override_reaches_vllm_xargs(tmp_path, monkeypatch):
     assert "extra_args" not in captured
 
 
-def test_adapter_without_sampling_keeps_native_vllm_generation_defaults(monkeypatch, tmp_path):
+def test_paddle_direct_path_sends_the_official_greedy_temperature(monkeypatch, tmp_path):
     from app import config
     from app.db import init_db
 
@@ -235,7 +237,8 @@ def test_adapter_without_sampling_keeps_native_vllm_generation_defaults(monkeypa
         Image.new("RGB", (12, 12), "white"), adapter.prompt_for("text"),
         sampling=client._sampling_for("text"), task="text",
     ) == "ok"
-    assert "temperature" not in captured
+    # PaddleX vllm-server client: temperature 0. Without it vLLM samples at 1.0.
+    assert captured["temperature"] == 0.0
 
 
 def test_trace_reports_effective_adapter_max_tokens(monkeypatch):
@@ -623,7 +626,8 @@ def test_deepseek_end2end_uses_official_grounded_prompt_and_vllm_sampling(monkey
     assert payload["vllm_xargs"] == {
         "ngram_size": 30, "window_size": 90, "whitelist_token_ids": [128821, 128822]
     }
-    assert payload["max_tokens"] == 4096
+    # Official 8192, clamped to the 8192-token context minus room for the image.
+    assert payload["max_tokens"] == 6144
     assert payload["messages"][0]["content"][1]["text"] == "<|grounding|>Convert the document to markdown."
 
 

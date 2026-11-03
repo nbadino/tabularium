@@ -96,7 +96,7 @@ def test_llamaindex_configuration_keeps_tables_html() -> None:
     assert tables["output_tables_as_markdown"] is False
     assert payload["client_name"] == "tabularium"
     assert payload["tier"] == "agentic"
-    assert payload["processing_options"]["ocr_parameters"]["languages"] == ["eng"]
+    assert payload["processing_options"]["ocr_parameters"]["languages"] == ["en"]
 
 
 def test_llamaindex_configuration_derives_the_job_timeout() -> None:
@@ -160,11 +160,12 @@ def test_openai_request_puts_the_system_prompt_first() -> None:
 
 
 def test_openai_request_routes_the_ngram_knob_where_the_vendor_expects_it() -> None:
-    # vLLM takes it as an extra argument; MinerU2.5's logits processor reads vllm_xargs.
+    # vLLM passes only `vllm_xargs` to logits processors (SamplingParams.extra_args).
     generic = protocol.openai_request(
         "m", [], max_tokens=1, stream=False, sampling={"no_repeat_ngram_size": 30},
     )
-    assert generic["extra_args"] == {"no_repeat_ngram_size": 30}
+    assert generic["vllm_xargs"] == {"no_repeat_ngram_size": 30}
+    assert "extra_args" not in generic
     assert "no_repeat_ngram_size" not in generic
 
     mineru = protocol.openai_request(

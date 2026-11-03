@@ -65,6 +65,17 @@ Notable changes to Tabularium. The format follows
 - The separate Archive page: its thumbnail wall is now the project's Pages tab.
 
 ### Fixed
+- Models now run with their vendors' official settings (audit in `docs/MODELS_AUDIT.md`):
+  MonkeyOCRv2, PaddleOCR-VL, MinerU2.5 and Unlimited-OCR decode greedily instead of
+  sampling; DeepSeek-OCR-2 pins a vLLM that contains it (0.16.0) and asks for its official
+  8192 tokens; GLM-OCR uses its three official prompts and keeps titles and section headers
+  from its layout; dots.mocr gets its prompt byte for byte; Unlimited-OCR's gundam/base
+  mode reaches vLLM; TeleOCR loads its n-gram guard locally and on Vast.ai, and the
+  no-repeat n-gram setting reaches vLLM's logits processors; LightOnOCR-3 pins the
+  transformers its vLLM needs; Qwen3-VL applies its official minimum resolution;
+  LlamaParse gets its own language codes (`en`, `it`, `la`…; saved codes are translated)
+  and its timeout limits; Gemini 4 Argon uses the catalog id `gemini-4-argon` and an output
+  budget large enough for thinking.
 - An unsupported Python is no longer silent: `tabularium doctor` fails outside 3.11–3.13 and
   startup prints a warning, both with the reinstall command. The install and upgrade commands
   pin `--python 3.13`, because `uv tool install` otherwise uses a system Python 3.14 (#32).

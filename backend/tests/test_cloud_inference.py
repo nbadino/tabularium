@@ -77,7 +77,8 @@ def test_teleocr_sampling_reaches_vllm_openai_request(monkeypatch):
     assert captured["top_k"] == 1
     assert captured["presence_penalty"] == 1.0
     assert captured["frequency_penalty"] == 0.005
-    assert captured["extra_args"]["no_repeat_ngram_size"] == 100
+    assert captured["vllm_xargs"]["no_repeat_ngram_size"] == 100
+    assert "extra_args" not in captured
 
 
 def _stub_public_dns(monkeypatch):
@@ -1486,7 +1487,7 @@ def test_provision_recipe_carries_the_official_flags():
     from app.services import cloud_manager as cm
 
     recipe = cm.build_provision_recipe("deepseek-ocr")
-    assert recipe["vllm_version"] == "0.12.0"
+    assert recipe["vllm_version"] == "0.16.0"
     assert "--logits-processors" in recipe["argv"]
     assert "--no-enable-prefix-caching" in recipe["argv"]
     assert recipe["argv"][:3] == ["-m", "vllm.entrypoints.cli.main", "serve"]

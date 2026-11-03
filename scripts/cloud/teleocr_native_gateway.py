@@ -21,6 +21,25 @@ _lock = asyncio.Lock()
 _client = None
 
 
+def _engine_args(settings: dict, logits_processor) -> dict:
+    """vLLM engine arguments, as the vendor's `TeleOCR_model.py` builds them.
+
+    The vendor adds `logits_processors=[TeleOCRLogitsProcessor]` to the
+    vllm-async-engine: without it the no-repeat n-gram guard is off.
+    """
+    serving = settings.get("serving") or {}
+    engine_args = {
+        "dtype": serving.get("dtype", "bfloat16"),
+        "gpu_memory_utilization": serving.get("gpu_memory_utilization", 0.95),
+        "max_model_len": serving.get("max_model_len", 16384),
+        "logits_processors": [logits_processor],
+    }
+    for key in ("max_num_seqs", "max_num_batched_tokens"):
+        if serving.get(key) is not None:
+            engine_args[key] = serving[key]
+    return engine_args
+
+
 async def _startup() -> None:
     global _client
     import json
@@ -35,14 +54,9 @@ async def _startup() -> None:
         raise RuntimeError("invalid TeleOCR runner settings") from exc
     serving = settings.get("serving") or {}
     image = settings.get("image") or {}
-    engine_args = {
-        "dtype": serving.get("dtype", "bfloat16"),
-        "gpu_memory_utilization": serving.get("gpu_memory_utilization", 0.95),
-        "max_model_len": serving.get("max_model_len", 16384),
-    }
-    for key in ("max_num_seqs", "max_num_batched_tokens"):
-        if serving.get(key) is not None:
-            engine_args[key] = serving[key]
+    from TeleOCR.vlm_utils import TeleOCRLogitsProcessor
+
+    engine_args = _engine_args(settings, TeleOCRLogitsProcessor)
     model_path = os.environ.get("TABULARIUM_TELEOCR_MODEL_PATH")
     if not model_path:
         raise RuntimeError("TABULARIUM_TELEOCR_MODEL_PATH is required")

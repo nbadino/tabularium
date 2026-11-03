@@ -55,14 +55,14 @@ def test_ocria_workflow_defaults_validate_and_reset(tmp_path, monkeypatch):
     defaults = model_settings.get_settings("llamaindex-ocria-1")
     assert defaults["recommended"]["workflow"]["tier"] == "agentic"
     assert defaults["recommended"]["workflow"]["aggressive_table_extraction"] is True
-    assert defaults["recommended"]["workflow"]["languages"] == ["eng"]
+    assert defaults["recommended"]["workflow"]["languages"] == ["en"]
     assert defaults["recommended"]["serving"]["max_model_len"] is None
 
     saved = model_settings.save_settings("llamaindex-ocria-1", {
         "workflow": {
             "tier": "agentic",
             "confidence_score_effort": "high",
-            "languages": ["eng", "ita"],
+            "languages": ["en", "it"],
             "cost_optimizer": True,
             "crop_enabled": True,
             "crop_box": {"top": 0.05, "bottom": 0.1, "left": 0.0, "right": 0.0},
@@ -71,7 +71,7 @@ def test_ocria_workflow_defaults_validate_and_reset(tmp_path, monkeypatch):
     })
     effective = saved["effective"]["workflow"]
     assert effective["confidence_score_effort"] == "high"
-    assert effective["languages"] == ["eng", "ita"]
+    assert effective["languages"] == ["en", "it"]
     assert effective["cost_optimizer"] is True
     assert effective["crop_box"]["top"] == 0.05
 
@@ -99,7 +99,7 @@ def test_ocria_native_job_uploads_polls_and_sends_native_settings(tmp_path, monk
         "workflow": {
             "tier": "agentic",
             "confidence_score_effort": "high",
-            "languages": ["eng", "ita"],
+            "languages": ["en", "it"],
             "cost_optimizer": True,
             "specialized_chart_parsing": "efficient",
             "job_timeout_in_seconds": 120,
@@ -168,7 +168,7 @@ def test_ocria_native_job_uploads_polls_and_sends_native_settings(tmp_path, monk
     assert payload["tier"] == "agentic"
     assert payload["version"] == "latest"
     assert payload["processing_options"]["confidence_score_effort"] == "high"
-    assert payload["processing_options"]["ocr_parameters"]["languages"] == ["eng", "ita"]
+    assert payload["processing_options"]["ocr_parameters"]["languages"] == ["en", "it"]
     assert payload["processing_options"]["cost_optimizer"] == {"enable": True}
     assert payload["processing_options"]["specialized_chart_parsing"] == "efficient"
     assert payload["output_options"]["markdown"]["tables"]["output_tables_as_markdown"] is False

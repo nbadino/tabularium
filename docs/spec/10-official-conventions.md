@@ -51,6 +51,13 @@ subtitle of a sample page compared with the two-stage path, but it produces very
 (~9k tokens) and its behaviour on a full OTSL register is still to be measured. The UI exposes
 both: neither becomes the default on the strength of one page.
 
+### 2.3.1b Decoding
+`core_runner._chat_completion` sends `"temperature": 0` on every call; only the repeat
+retry raises it (0.2·n, top_p 0.95). The checkpoint's `generation_config.json` samples
+(0.6 / top-k 20 / top-p 0.95), so the client must send the temperature explicitly. Block
+recognition asks for 5000 tokens, layout for 4096. Every other model's audited values are
+in [`docs/MODELS_AUDIT.md`](../MODELS_AUDIT.md).
+
 ### 2.3.2 Image resolution (`min_pixels` ≠ `max_pixels`)
 In the official `load_image()`, `min_pixels` **upscales** small images and never downscales;
 `get_layout()` passes `1003520`. The upper bound is the `MOCR2_MAX_PIXELS` env var, which the

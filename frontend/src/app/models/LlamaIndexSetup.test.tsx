@@ -36,7 +36,7 @@ const settings = {
       tier: 'agentic',
       version: 'latest',
       confidence_score_effort: 'standard',
-      languages: ['eng'],
+      languages: ['en'],
       aggressive_table_extraction: true,
       disable_heuristics: false,
       specialized_chart_parsing: 'off',
@@ -145,7 +145,7 @@ describe('LlamaIndexSetup', () => {
     expect(apiPut).toHaveBeenCalledWith(
       '/system/model-settings/llamaindex-ocria-1',
       expect.objectContaining({
-        workflow: expect.objectContaining({ tier: 'agentic', languages: ['eng'] }),
+        workflow: expect.objectContaining({ tier: 'agentic', languages: ['en'] }),
       }),
     )
     expect(onClose).toHaveBeenCalled()

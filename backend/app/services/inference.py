@@ -65,6 +65,10 @@ class OutputTruncated(RuntimeError):
     """La generazione ha esaurito i token prima di chiudere l'output."""
 
 
+# Floor for `generationConfig.maxOutputTokens` on Gemini 4 (thinking + output).
+GEMINI_MIN_OUTPUT_TOKENS = 32_768
+
+
 def _prompt_for(adapter: ModelAdapter, task: str, label: str | None, fallback: str) -> str:
     """`adapter.prompt_for` con ripiego sulla costante storica SOLO quando è
     lo stesso adapter a scegliere di non prompare per quel task+label (torna
@@ -256,7 +260,11 @@ class VllmClient:
                 if recommended_cap is not None:
                     cap = recommended_cap
             if self.adapter.adapter_id == "qwen3-vl-8b":
-                self.min_pixels = image_override.get("min_pixels")
+                # The cookbook's `qwenvl html` preset sets min_pixels too: the
+                # recommended value applies until the user overrides it.
+                self.min_pixels = image_override.get(
+                    "min_pixels", settings["recommended"]["image"].get("min_pixels"),
+                )
             else:
                 self.min_pixels = None
         except (ImportError, ValueError, KeyError, TypeError):
@@ -945,7 +953,7 @@ class VllmClient:
         """Base del protocollo Google, tollerante alla forma dell'URL salvato.
 
         L'utente può incollare l'endpoint del modello per intero (come nella
-        documentazione OpenCode: `.../models/gemini-4-argon-contributor`) o la
+        documentazione OpenCode: `.../models/gemini-4-argon`) o la
         sola base `.../v1beta`. Entrambi devono produrre la stessa richiesta:
         tutto ciò che è `/models/<id>` o `:generateContent` viene tolto e il
         modello lo si prende da `self.model`.
@@ -983,7 +991,10 @@ class VllmClient:
         prepared.save(buf, format="PNG")
         data = base64.b64encode(buf.getvalue()).decode("ascii")
 
-        generation: dict = {"maxOutputTokens": max(1, int(max_tokens))}
+        # Gemini counts thinking and answer against the same cap; Google's guide
+        # says keep the default or set at least 32,768, otherwise a page can stop
+        # at MAX_TOKENS before any answer text.
+        generation: dict = {"maxOutputTokens": max(GEMINI_MIN_OUTPUT_TOKENS, int(max_tokens))}
         for key in ("temperature", "topP", "topK"):
             source = {"temperature": "temperature", "topP": "top_p", "topK": "top_k"}[key]
             if sampling and sampling.get(source) is not None:
@@ -1204,7 +1215,10 @@ class VllmClient:
         if getattr(self.adapter, "end2end_output_format", "list") == "grounded-markdown":
             native_budget = getattr(self.adapter, "end2end_max_tokens", None)
             if native_budget is not None:
-                end2end_tokens = min(end2end_tokens, int(native_budget))
+                # The vendor budget (DeepSeek-OCR-2: 8192) can equal the served
+                # context, and vLLM rejects a request that cannot fit: keep room for
+                # the image and the prompt.
+                end2end_tokens = min(end2end_tokens, self._output_budget(int(native_budget)))
         sampling = self._sampling_for("end2end")
         raw = self._chat(
             prepared,
@@ -1325,7 +1339,9 @@ class VllmClient:
             image,
             prompt,
             task=task,
-            max_tokens=self._output_budget(TABLE_MAX_TOKENS) if task == "table" else 3072,
+            max_tokens=self._output_budget(
+                TABLE_MAX_TOKENS if task == "table" else int(getattr(self.adapter, "text_max_tokens", 3072))
+            ),
             total_timeout=total_timeout,
             sampling=self._sampling_for(task),
             on_delta=on_delta,

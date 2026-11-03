@@ -16,14 +16,14 @@ import json
 import os
 from pathlib import Path
 
-# Percorso della variante `gemini-4-argon-contributor` sul gateway Go. Il
+# Percorso della variante `gemini-4-argon` sul gateway Go. Il
 # modello vive nel campo `served_model_name` dell'adapter; qui si dichiara solo
 # dove si trova, così la UI può precompilare l'endpoint senza indovinare.
 DEFAULT_BASE_URL = "https://opencode.ai/inference/go/google/v1beta"
-DEFAULT_MODEL = "gemini-4-argon-contributor"
+DEFAULT_MODEL = "gemini-4-argon"
 
 _AUTH_PATH = Path.home() / ".local" / "share" / "opencode" / "auth.json"
-# Provider in ordine di preferenza: la sottoscrizione Go (argon-contributor) e
+# Provider in ordine di preferenza: la sottoscrizione Go e
 # il pay-as-you-go Zen (argon). Entrambi espongono la chiave come `key`.
 _PROVIDER_ORDER = ("opencode-go", "opencode")
 

@@ -30,6 +30,7 @@ from ..models.types import (
     UNLIMITED_WORKFLOW_LIMITS,
     SettingsSpec,
     llamaindex_workflow_defaults,
+    normalize_llamaindex_languages,
 )
 from .model_adapters import get_adapter
 from . import serve_recipes
@@ -168,6 +169,11 @@ def get_settings(adapter_id: str) -> dict[str, Any]:
             # in the stored overrides but must not reach the request or the panel.
             if section == "workflow":
                 values = {key: value for key, value in values.items() if key in declared}
+                if "languages" in values:
+                    # LlamaParse codes saved before the vendor enum was adopted.
+                    values["languages"] = normalize_llamaindex_languages(values["languages"]) or None
+                    if values["languages"] is None:
+                        del values["languages"]
             effective[section].update(values)
     return {
         "adapter_id": adapter_id,

@@ -17,6 +17,8 @@ listed as verified only after it has been run on real pages.
 remote GPU). Every model also runs remotely. The measured matrix, and the
 reason behind each cell, is in
 [local inference guide](guide/local-inference.md); training
-support per model is in the [training guide](guide/training.md).
+support per model is in the [training guide](guide/training.md); the official
+prompts, sampling and serving flags each model runs with are audited in
+[MODELS_AUDIT.md](MODELS_AUDIT.md).
 Missing a model? [Open an issue](https://github.com/nbadino/tabularium/issues/new?template=feature_request.yml).
 

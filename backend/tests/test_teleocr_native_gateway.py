@@ -109,6 +109,7 @@ def test_startup_uses_official_async_engine_and_effective_serving_settings(monke
     config.MAX_PIXELS = 0
     subpackage = types.ModuleType("TeleOCR.vlm_utils")
     subpackage.__path__ = []
+    subpackage.TeleOCRLogitsProcessor = "vendor-ngram-processor"
     client_module = types.ModuleType("TeleOCR.vlm_utils.TeleOCR_client")
 
     class FakeTeleOCRClient:
@@ -172,6 +173,7 @@ def test_startup_uses_official_async_engine_and_effective_serving_settings(monke
             "dtype": "bfloat16",
             "gpu_memory_utilization": 0.9,
             "max_model_len": 8192,
+            "logits_processors": ["vendor-ngram-processor"],
             "max_num_seqs": 2,
             "max_num_batched_tokens": 4096,
         },
@@ -181,3 +183,14 @@ def test_startup_uses_official_async_engine_and_effective_serving_settings(monke
     assert calls["client"]["vllm_async_llm"] == "vendor-async-engine"
     assert calls["client"]["model_path"] == "/root/models/TeleOCR"
     assert calls["client"]["max_concurrency"] == 2
+
+
+def test_gateway_engine_carries_the_vendor_logits_processor():
+    # Official `TeleOCR_model.py` adds `logits_processors=[TeleOCRLogitsProcessor]`
+    # to the vllm-async-engine args: it is the no-repeat n-gram guard (size 100).
+    gateway = _load_gateway()
+    sentinel = object()
+    args = gateway._engine_args({"serving": {"max_num_seqs": 8}}, sentinel)
+    assert args["logits_processors"] == [sentinel]
+    assert args["max_model_len"] == 16384
+    assert args["max_num_seqs"] == 8
