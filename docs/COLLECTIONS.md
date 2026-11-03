@@ -164,7 +164,8 @@ owner chose **the column**:
 - Each collection row has a ⋯ menu: *Rename*, *Delete…*. Deleting asks what to do with the pages:
   **move them to "No collection"** (the default) or **delete them too**, which is offered only to
   the owner (or an admin) and needs the collection's name typed.
-- Thumbnails have a checkbox (never shown on hover only) and the table keeps its own; with a
+- Thumbnails have a checkbox (never shown on hover only), and *Select all (N)* above the wall
+  selects every page shown after the collection, state and search filters; the table keeps its own; with a
   selection, a bar offers *Move to…* (the collections, *No collection*, *New collection with these
   pages*). Dragging a thumbnail onto a row moves it, or the whole selection if it is selected.
 - Files and ZIPs dropped while a collection is being viewed go into that collection.

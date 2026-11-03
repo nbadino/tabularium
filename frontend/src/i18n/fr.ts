@@ -914,6 +914,8 @@ export const fr: Dict = {
     clearCover: 'Retirer la couverture',
     coverSet: 'Couverture de « {name} » mise à jour.',
     coverCleared: '« {name} » n’a plus de couverture.',
+    selectAll: 'Tout sélectionner ({n})',
+    selectNone: 'Tout désélectionner',
     moveTo: 'Déplacer vers…',
     moved: { one: '{count} page déplacée vers « {name} ».', other: '{count} pages déplacées vers « {name} ».' },
     dragHint: 'ou faites-les glisser sur une collection',

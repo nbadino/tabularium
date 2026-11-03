@@ -24,6 +24,8 @@ export const PAGES_MIME = 'application/x-tabularium-pages'
 export interface WallSelection {
   selected: Set<number>
   onToggle: (pageId: number) => void
+  /** Select exactly these pages (the ones shown), or none with an empty list. */
+  onSelect: (pageIds: number[]) => void
 }
 
 function PageCell({ page, selection }: { page: PageItem; selection?: WallSelection }) {
@@ -90,6 +92,9 @@ export function PageWall({ pages, loading, selection }: { pages: PageItem[]; loa
     .filter((p) => (filter === DRAFTS_FILTER ? (p.drafts ?? 0) > 0 : filter ? p.status === filter : true))
     .filter((p) => !q || pageLabel(p).toLocaleLowerCase().includes(q))
 
+  const shownIds = shown.map((p) => p.id)
+  const allShownSelected = selection != null && shownIds.length > 0 && shownIds.every((id) => selection.selected.has(id))
+
   const chip = (active: boolean) => `btn btn-sm ${active ? '!border-[color:var(--color-ink)] !bg-[color:var(--color-ink)] !text-white' : ''}`
 
   if (loading) return <Loading label={t('common.loading')} />
@@ -113,6 +118,15 @@ export function PageWall({ pages, loading, selection }: { pages: PageItem[]; loa
               </button>
             ))}
           </div>
+        )}
+        {selection && shown.length > 0 && (
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => selection.onSelect(allShownSelected ? [] : shownIds)}
+          >
+            {allShownSelected ? t('collections.selectNone') : t('collections.selectAll', { n: shown.length })}
+          </button>
         )}
         {pages.length > SEARCH_FROM && (
           <div className="ml-auto w-full max-w-xs">

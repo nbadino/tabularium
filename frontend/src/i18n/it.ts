@@ -913,6 +913,8 @@ export const it = {
     clearCover: 'Togli la copertina',
     coverSet: 'Copertina di «{name}» aggiornata.',
     coverCleared: '«{name}» non ha più una copertina.',
+    selectAll: 'Seleziona tutte ({n})',
+    selectNone: 'Deseleziona tutte',
     moveTo: 'Sposta in…',
     moved: { one: '{count} pagina spostata in «{name}».', other: '{count} pagine spostate in «{name}».' },
     dragHint: 'oppure trascinale su una collezione',
