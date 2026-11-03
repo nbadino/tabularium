@@ -72,7 +72,7 @@ describe('Collections on the Pages tab', () => {
   it('lists collections with counts by state and filters the wall', async () => {
     renderPage()
     const column = await screen.findByRole('navigation', { name: 'Collezioni' })
-    expect(within(column).getByText('1 nuove · 1 verificate')).toBeInTheDocument()
+    expect(within(column).getByText('1 nuova · 1 verificata')).toBeInTheDocument()
     expect(screen.getAllByRole('link', { name: /p\d\.png/ })).toHaveLength(4)
     fireEvent.click(within(column).getByRole('button', { name: /Lettere/ }))
     await waitFor(() => expect(screen.getByTestId('search')).toHaveTextContent('collezione=2'))
