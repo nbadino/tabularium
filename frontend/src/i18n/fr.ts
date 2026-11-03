@@ -204,6 +204,13 @@ export const fr: Dict = {
   },
 
   consensus: {
+    editorBar: "Comparaison de modèles : {n} cellules en désaccord",
+    editorToggle: "Afficher les désaccords",
+    editorHover: "Survolez une cellule colorée pour voir les lectures.",
+    mine: "Votre transcription",
+    splitTag: "découpé autrement",
+    splitNote: "Même zone, découpée autrement : le texte est comparé en joignant les morceaux dans l’ordre de lecture.",
+    retry: "Relancer les échecs",
     canvasHint: "Cliquez sur un cadre pour comparer les lectures · Espace déplace la page",
     disputedCells: "{n} cellules à vérifier",
     nextCell: "Cellule suivante",

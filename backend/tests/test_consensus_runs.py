@@ -275,3 +275,98 @@ def test_one_model_failing_does_not_stop_the_others(tmp_path, monkeypatch):
         assert "gateway down" in states[argon["id"]]["error"]
         # With one model the page cannot be compared: say so instead of inventing agreement.
         assert page["comparison"] is None
+
+
+def test_retrying_a_run_reruns_only_the_failed_outputs(tmp_path, monkeypatch):
+    from app.services import consensus
+
+    _fake_clients(monkeypatch)
+    calls = {"argon": 0}
+
+    class FlakyArgon(FakeArgon):
+        def end2end(self, image, **kwargs):
+            calls["argon"] += 1
+            if calls["argon"] == 1:
+                raise RuntimeError("gateway down")
+            return super().end2end(image, **kwargs)
+
+    ocria_calls = {"n": 0}
+
+    class CountingOcria(FakeOcria):
+        def llamaindex_native_page(self, image, **kwargs):
+            ocria_calls["n"] += 1
+            return super().llamaindex_native_page(image, **kwargs)
+
+    flaky = FlakyArgon()
+    monkeypatch.setattr(
+        consensus.inference,
+        "client_for_profile",
+        lambda profile, **_k: CountingOcria() if profile["model_adapter_id"] == "llamaindex-ocria-1" else flaky,
+    )
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        ocria = _save_profile(client, OCRIA, "OCRia-1 (retry)")
+        argon = _save_profile(client, ARGON, "Argon (retry)")
+        created = client.post(
+            f"/api/projects/{project_id}/consensus-runs",
+            json={"page_ids": page_ids[:1], "profile_ids": [ocria["id"], argon["id"]]},
+        )
+        run = _wait(client, project_id, created.json()["id"])
+        assert run["state"] == "finished_with_errors"
+
+        retried = client.post(f"/api/projects/{project_id}/consensus-runs/{run['id']}/retry")
+        assert retried.status_code == 202, retried.text
+        run = _wait(client, project_id, run["id"])
+        assert run["state"] == "finished" and run["failed"] == 0 and run["succeeded"] == 2
+        assert ocria_calls["n"] == 1  # the finished output was not sent again
+        page = client.get(f"/api/pages/{page_ids[0]}/consensus").json()
+        assert page["comparison"] is not None
+
+        again = client.post(f"/api/projects/{project_id}/consensus-runs/{run['id']}/retry")
+        assert again.status_code == 409
+
+
+def test_the_table_editor_gets_the_models_readings_for_my_grid(tmp_path, monkeypatch):
+    from app.adapters import blocks as blockstore
+
+    _fake_clients(monkeypatch)
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        with blockstore.writing() as writer:
+            table = writer.insert_block(
+                page_ids[0], label="Table", points=[[10, 30], [190, 270]],
+                content="", order_idx=1, prefill_source=None,
+            )
+            other = writer.insert_block(
+                page_ids[1], label="Table", points=[[10, 30], [190, 270]],
+                content="", order_idx=1, prefill_source=None,
+            )
+            writer.commit()
+        mine = {"rows": 2, "cols": 2, "cells": [
+            {"r": 0, "c": 0, "rowspan": 1, "colspan": 1, "text": "Nave"},
+            {"r": 0, "c": 1, "rowspan": 1, "colspan": 1, "text": "Da"},
+            {"r": 1, "c": 0, "rowspan": 1, "colspan": 1, "text": "Aurora"},
+            {"r": 1, "c": 1, "rowspan": 1, "colspan": 1, "text": "Genoa"},
+        ]}
+        empty = client.post(f"/api/blocks/{table}/consensus", json=mine).json()
+        assert empty["run_id"] is None and empty["cells"] == []
+
+        ocria = _save_profile(client, OCRIA, "OCRia-1 (editor)")
+        argon = _save_profile(client, ARGON, "Argon (editor)")
+        created = client.post(
+            f"/api/projects/{project_id}/consensus-runs",
+            json={"page_ids": page_ids[:1], "profile_ids": [ocria["id"], argon["id"]]},
+        )
+        run = _wait(client, project_id, created.json()["id"])
+
+        out = client.post(f"/api/blocks/{table}/consensus", json=mine).json()
+        assert out["run_id"] == run["id"]
+        assert [m["name"] for m in out["models"]] == ["OCRia-1 (editor)", "Argon (editor)"]
+        keys = [m["key"] for m in out["models"]]
+        cells = {(c["r"], c["c"]): c for c in out["cells"]}
+        assert cells[(1, 1)]["values"] == {keys[0]: "Genova", keys[1]: "Genovo"}
+        assert cells[(1, 1)]["score"] > 0
+        assert cells[(0, 0)]["score"] == 0.0
+
+        # A page the run did not cover has nothing to show.
+        assert client.post(f"/api/blocks/{other}/consensus", json=mine).json()["cells"] == []

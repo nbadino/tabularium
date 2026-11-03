@@ -129,7 +129,13 @@ Notable changes to Tabularium. The format follows
   In the Studio, *Model comparison* paints every block by how much the models disagree (text,
   position and class; dashed when only one model found it), lists the most disputed blocks, shows
   tables cell by cell as a heatmap and puts each model's reading side by side with a character
-  diff. A model can be shown on its own. Metric in `docs/spec/71-evaluation.md`.
+  diff. A model can be shown on its own. When the models segment an area differently (one
+  block against several pieces) the pieces are compared together and marked *segmented
+  differently* instead of missing. *Retry the failed ones* sends again only what failed.
+  In the table editor (*Open the table*), the cells where the compared models disagree are
+  coloured in the sheet itself, and hovering one shows each model's reading next to yours, so the
+  correction happens where you edit; *Show disagreements* turns it off.
+  Metric in `docs/spec/71-evaluation.md`.
 - A cover for each collection: select one of its pages and choose *Use as the cover*; the
   collections column shows it as a thumbnail (migration 22). *Remove the cover* is in the row menu.
 - *Select all* on the page wall selects every page shown (after the collection, state and search

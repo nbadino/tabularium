@@ -117,6 +117,15 @@ export default function ConsensusPanel({
     }
   }
 
+  const retry = async () => {
+    if (!run) return
+    try {
+      setRun(await apiPost<ConsensusRun>(`/projects/${run.project_id}/consensus-runs/${run.id}/retry`))
+    } catch (e) {
+      setError(e)
+    }
+  }
+
   const cancel = async () => {
     if (!run) return
     try {
@@ -193,6 +202,7 @@ export default function ConsensusPanel({
           {run.error && <p className="text-[11px] text-[color:var(--color-sig-text)]">{run.error}</p>}
           <div className="mt-1 flex gap-3">
             {ACTIVE.has(run.state) && <button type="button" className="text-[11px] underline" onClick={() => void cancel()}>{t('consensus.cancel')}</button>}
+            {!ACTIVE.has(run.state) && run.failed > 0 && <button type="button" className="text-[11px] font-semibold underline" onClick={() => void retry()}>{t('consensus.retry')}</button>}
             <Link to={projectPath(run.project_id, 'studio', { consensus: 1, page: pageIds[0] })} className="text-[11px] font-semibold">{t('consensus.openStudio')}</Link>
           </div>
         </div>

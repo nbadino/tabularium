@@ -117,6 +117,24 @@ def mark_output(output_id: int, state: str, **values: Any) -> None:
         conn.commit()
 
 
+def requeue_failed(run_id: int) -> int:
+    """Put the failed and cancelled outputs back in the queue; how many there were."""
+    with connect() as conn:
+        cursor = conn.execute(
+            "UPDATE consensus_outputs SET state='queued', error=NULL, started_at=NULL, "
+            "ended_at=NULL WHERE run_id=? AND state IN ('failed','cancelled')",
+            (run_id,),
+        )
+        count = int(cursor.rowcount or 0)
+        if count:
+            conn.execute(
+                "UPDATE consensus_runs SET state='queued', error=NULL, ended_at=NULL WHERE id=?",
+                (run_id,),
+            )
+        conn.commit()
+    return count
+
+
 def latest_run_for_page(page_id: int) -> int | None:
     """The most recent run that has at least one finished output for the page."""
     with connect() as conn:
@@ -141,6 +159,15 @@ def page_outputs(run_id: int, page_id: int) -> list[dict[str, Any]]:
         item["blocks"] = json.loads(item.pop("blocks_json") or "[]")
         out.append(item)
     return out
+
+
+def block_geometry(block_id: int) -> dict[str, Any] | None:
+    """Page and rectangle of an annotation block (read only)."""
+    with connect() as conn:
+        row = conn.execute("SELECT page_id, points FROM blocks WHERE id=?", (block_id,)).fetchone()
+    if row is None:
+        return None
+    return {"page_id": int(row["page_id"]), "points": json.loads(row["points"] or "[]")}
 
 
 def reconcile(active_ids: set[int], *, message: str, ended: str) -> None:

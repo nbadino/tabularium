@@ -4,6 +4,8 @@ import { byDisagreement, charDiff, overlayRects, scoreBand, BAND_COLOR, type Con
 function cluster(id: number, score: number, members: Record<string, number | null>, bbox: [number, number, number, number]): ConsensusCluster {
   return {
     id, members, label: 'Text', labels: {}, bbox, text: score, layout: 0, label_agree: true,
+    parts: Object.fromEntries(Object.entries(members).filter(([, v]) => v !== null).map(([k, v]) => [k, [v as number]])),
+    split: false,
     missing: Object.entries(members).filter(([, v]) => v === null).map(([k]) => k), score, table: null,
   }
 }
@@ -49,6 +51,14 @@ describe('consensus helpers', () => {
     expect(rects.map((r) => r.cluster)).toEqual([0, 1])
     expect(rects[0].points[0]).toEqual({ x: 12, y: 10 })
     expect(overlayRects(page, 'p1', 1)).toHaveLength(1)
+  })
+
+  it("links every piece of a split block to its cluster in a model's view", () => {
+    const split: PageConsensus = {
+      ...page,
+      comparison: { ...page.comparison!, clusters: [{ ...page.comparison!.clusters[0], parts: { p1: [0], p2: [0, 1] }, split: true }] },
+    }
+    expect(overlayRects(split, 'p2', 1).map((r) => r.cluster)).toEqual([0, 0])
   })
 
   it('lists the most disputed block first', () => {

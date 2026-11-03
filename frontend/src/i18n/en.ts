@@ -204,6 +204,13 @@ export const en: Dict = {
   },
 
   consensus: {
+    editorBar: "Model comparison: {n} cells where they disagree",
+    editorToggle: "Show disagreements",
+    editorHover: "Hover a coloured cell to see the readings.",
+    mine: "Your transcription",
+    splitTag: "segmented differently",
+    splitNote: "Same area, segmented differently: the text is compared with the pieces joined in reading order.",
+    retry: "Retry the failed ones",
     canvasHint: "Click a box to compare the readings · Space drags the page",
     disputedCells: "{n} cells to check",
     nextCell: "Next cell",

@@ -92,6 +92,15 @@ def cancel_run(
     return consensussvc.cancel_run(run_id)
 
 
+@router.post("/api/projects/{project_id}/consensus-runs/{run_id}/retry", status_code=202)
+def retry_run(
+    project_id: int, run_id: int, request: Request,
+    _user: dict = Depends(require_resource(write=True)),
+) -> dict:
+    _run_of_project(project_id, run_id, request)
+    return consensussvc.retry_failed(run_id, _lang(request))
+
+
 @router.get("/api/pages/{page_id}/consensus")
 def page_consensus(
     page_id: int,
@@ -108,3 +117,15 @@ def page_consensus(
         if int(run["project_id"]) != pagestore.project_of_page(page_id):
             raise HTTPException(status_code=404, detail=msg("consensus_run_not_found", lang))
     return consensussvc.page_comparison(page_id, run_id, lang)
+
+
+@router.post("/api/blocks/{block_id}/consensus")
+def block_consensus(
+    block_id: int,
+    grid: dict,
+    request: Request,
+    _user: dict = Depends(require_resource(write=False)),
+) -> dict:
+    """The models' readings for the table being edited; `grid` is the editor's current one."""
+    return consensussvc.block_comparison(block_id, grid, _lang(request))
+

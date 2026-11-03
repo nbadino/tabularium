@@ -6,10 +6,15 @@ optional `grid`); the output says, for every group of blocks the models agree is
 same block", how much they disagree and why.
 
 - Blocks are matched across models by IoU (>= `MATCH_IOU`), one block per model per
-  cluster, best overlaps first.
-- A cluster has three channels: `text` (normalised character edit distance), `layout`
-  (1 - IoU) and `label_agree`. Its `score` is the worst of them, with a label mismatch
-  counting `LABEL_MISMATCH`; a block that some model did not find scores 1.
+  cluster, best overlaps first. A block left alone that lies mostly inside another
+  model's block (>= `CONTAINMENT`) joins that block's cluster as one of its `parts`:
+  the models read the area but segmented it differently (`split`).
+- A cluster has three channels: `text` (normalised character edit distance, parts
+  joined in reading order), `layout` (1 - IoU of each model's union of parts) and
+  `label_agree`. Its `score` is the worst of them, with a label mismatch counting
+  `LABEL_MISMATCH` and a different segmentation `SPLIT_MISMATCH` (labels are not
+  compared then: an advert read as Title + Text is the same area); a block that some
+  model did not find scores 1.
 - Tables are compared on their grids, not on their raw content (one model returns
   HTML, another OTSL): rows are aligned by sequence alignment on the row text, then
   columns on the aligned cells, so one extra row does not shift every later cell.
@@ -24,6 +29,11 @@ from itertools import combinations
 from rapidfuzz.distance import Levenshtein
 
 MATCH_IOU = 0.5
+# Share of a block's own area that must lie inside another model's block for it to
+# count as a piece of that block rather than a block the other model missed.
+CONTAINMENT = 0.7
+# Same area, different segmentation: worth a look ("partly"), not a misreading.
+SPLIT_MISMATCH = 0.3
 # Title vs Section-header is a disagreement worth seeing, but not one as strong as two
 # different readings of the text: it paints a block "partly", not "disagree".
 LABEL_MISMATCH = 0.5
@@ -105,10 +115,63 @@ def match_blocks(outputs: dict[str, list[dict]]) -> list[dict]:
             cluster_of[(key, index)] = a
         clusters[b] = {}
 
+    # Second pass: a block still alone that lies mostly inside another model's block
+    # is a piece of it. Pieces never join a cluster where their model already has a
+    # block matched one-to-one: that would hide a block the other model missed.
+    parts: list[dict[str, list[int]]] = [
+        {key: [index] for key, index in members.items()} for members in clusters
+    ]
+    joined: set[tuple[int, str]] = set()
+
+    def containment(inner: list[float], outer: list[float]) -> float:
+        area = _area(inner)
+        inter = _area([max(inner[0], outer[0]), max(inner[1], outer[1]),
+                       min(inner[2], outer[2]), min(inner[3], outer[3])])
+        return inter / area if area else 0.0
+
+    for c, members in enumerate(clusters):
+        # A block that already received pieces stays where it is.
+        if len(members) != 1 or sum(len(v) for v in parts[c].values()) != 1:
+            continue
+        ((key, index),) = members.items()
+        best, best_value = None, CONTAINMENT
+        for other in keys:
+            if other == key:
+                continue
+            for j, box in enumerate(boxes[other]):
+                target = cluster_of[(other, j)]
+                if target == c or len(parts[target].get(other, [])) != 1:
+                    continue
+                if key in parts[target] and (target, key) not in joined and not all(
+                    # The block matched one-to-one is itself a piece of the target.
+                    containment(boxes[key][i], box) >= CONTAINMENT
+                    and _area(boxes[key][i]) < 0.9 * _area(box)
+                    for i in parts[target][key]
+                ):
+                    continue
+                value = containment(boxes[key][index], box)
+                if value >= best_value:
+                    best, best_value = target, value
+        if best is not None:
+            parts[best].setdefault(key, []).append(index)
+            joined.add((best, key))
+            cluster_of[(key, index)] = best
+            parts[c] = {}
+            clusters[c] = {}
+
     out = []
-    for members in clusters:
-        if members:
-            out.append({"members": {key: members.get(key) for key in keys}})
+    for c, members in enumerate(parts):
+        if not members:
+            continue
+        ordered = {
+            key: sorted(members.get(key, []), key=lambda i: (boxes[key][i][1], boxes[key][i][0]))
+            for key in keys
+        }
+        out.append({
+            "members": {key: (ordered[key][0] if ordered[key] else None) for key in keys},
+            "parts": {key: ordered[key] for key in keys if ordered[key]},
+            "split": any(len(indices) > 1 for indices in ordered.values()),
+        })
     return out
 
 
@@ -242,6 +305,50 @@ def compare_tables(grids: dict[str, dict]) -> dict:
     }
 
 
+def _pair_distance(a: str | None, b: str | None) -> float:
+    if a is None and b is None:
+        return 0.0
+    if a is None or b is None:
+        return 1.0
+    return text_distance(a, b)
+
+
+def annotate_grid(reference: dict, grids: dict[str, dict]) -> dict:
+    """The models' readings laid on the user's own grid, for the table editor.
+
+    The user's grid is the reference (it is the one being edited); each model's
+    grid is aligned onto it like in `compare_tables`. A cell's `score` is how much
+    the models disagree *with each other* (mean pairwise distance, 1 between a
+    reading and no reading), not with the user: two models that agree point at
+    nothing, whatever the user typed. A cell no model has scores None.
+    """
+    ref = _dense(reference)
+    others = {key: _dense(grid) for key, grid in grids.items()}
+    alignments = {key: _align_grids(ref, matrix) for key, matrix in others.items()}
+    cells = []
+    for cell in reference.get("cells") or []:
+        r, c = int(cell.get("r", 0)), int(cell.get("c", 0))
+        if not (0 <= r < len(ref) and ref and 0 <= c < len(ref[0])):
+            continue
+        values: dict[str, str | None] = {}
+        for key, matrix in others.items():
+            row_map, col_map, _rows, _cols = alignments[key]
+            j, b = row_map.get(r), col_map.get(c)
+            values[key] = None if j is None or b is None else matrix[j][b]
+        readings = list(values.values())
+        if all(value is None for value in readings):
+            score = None
+        else:
+            score = _mean_pairwise(readings, _pair_distance)
+        cells.append({"r": r, "c": c, "values": values, "score": score})
+    extra_rows = [
+        {"model": key, "index": j, "texts": list(others[key][j])}
+        for key, (_rm, _cm, rows, _cols) in alignments.items()
+        for j in rows
+    ]
+    return {"cells": cells, "extra_rows": extra_rows}
+
+
 # --- page ---------------------------------------------------------------------
 
 
@@ -257,34 +364,49 @@ def compare_page(outputs: dict[str, list[dict]]) -> dict:
     keys = list(outputs)
     clusters = []
     for index, cluster in enumerate(match_blocks(outputs)):
-        present = {key: outputs[key][i] for key, i in cluster["members"].items() if i is not None}
-        missing = [key for key in keys if cluster["members"][key] is None]
-        boxes = [_box(block) for block in present.values()]
-        union = [
-            min(box[0] for box in boxes), min(box[1] for box in boxes),
-            max(box[2] for box in boxes), max(box[3] for box in boxes),
-        ]
-        labels = [str(block.get("label") or "") for block in present.values()]
+        pieces = {key: [outputs[key][i] for i in indices] for key, indices in cluster["parts"].items()}
+        missing = [key for key in keys if key not in pieces]
+        split = cluster["split"]
+
+        def union_of(found: list[list[float]]) -> list[float]:
+            return [
+                min(box[0] for box in found), min(box[1] for box in found),
+                max(box[2] for box in found), max(box[3] for box in found),
+            ]
+
+        model_boxes = {key: union_of([_box(block) for block in blocks]) for key, blocks in pieces.items()}
+        union = union_of(list(model_boxes.values()))
+        model_labels = {
+            key: " + ".join(dict.fromkeys(str(block.get("label") or "") for block in blocks))
+            for key, blocks in pieces.items()
+        }
+        labels = list(model_labels.values())
         label_agree = len(set(labels)) <= 1
+        singles = {key: blocks[0] for key, blocks in pieces.items() if len(blocks) == 1}
         grids = {
-            key: block["grid"] for key, block in present.items()
+            key: block["grid"] for key, block in singles.items()
             if block.get("grid") and block["grid"].get("rows")
         }
-        table = compare_tables(grids) if len(grids) >= 2 and len(grids) == len(present) else None
+        table = compare_tables(grids) if len(grids) >= 2 and len(grids) == len(pieces) else None
         if table is not None:
             text = table["score"]
         else:
-            text = _mean_pairwise([block.get("content") for block in present.values()], text_distance)
-        layout = _mean_pairwise(boxes, layout_distance)
+            texts = [" ".join(str(block.get("content") or "") for block in blocks) for blocks in pieces.values()]
+            text = _mean_pairwise(texts, text_distance)
+        layout = _mean_pairwise(list(model_boxes.values()), layout_distance)
         if missing:
             score = 1.0
+        elif split:
+            score = max(text, layout, SPLIT_MISMATCH)
         else:
             score = max(text, layout, 0.0 if label_agree else LABEL_MISMATCH)
         clusters.append({
             "id": index,
             "members": cluster["members"],
+            "parts": cluster["parts"],
+            "split": split,
             "label": max(set(labels), key=labels.count) if labels else "",
-            "labels": {key: str(block.get("label") or "") for key, block in present.items()},
+            "labels": model_labels,
             "bbox": union,
             "text": text,
             "layout": layout,

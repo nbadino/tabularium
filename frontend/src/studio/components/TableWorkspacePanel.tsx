@@ -14,6 +14,7 @@ import TablePageImage from './TablePageImage'
 import Splitter from './Splitter'
 import KnownHeaderDialog from './KnownHeaderDialog'
 import { API_BASE } from '../../lib/endpoints'
+import { charDiff, scoreBand, type GridConsensus } from '../consensus'
 const UniverSheet = lazy(() => import('./UniverSheet'))
 
 function sumErrorMessage(check: TableCheck, t: (key: string, vars?: Record<string, string | number>) => string) {
@@ -214,6 +215,56 @@ export function TableWorkspacePanel({
     }, 400)
     return () => { stale = true; clearTimeout(timer) }
   }, [grid])
+  // Model comparison (consensus): the models' readings aligned onto this grid,
+  // asked again after each change so inserted rows keep the colours in place.
+  // Without a comparison for the page the answer is empty and nothing shows.
+  const [consensus, setConsensus] = useState<GridConsensus | null>(null)
+  const [showConsensus, setShowConsensus] = useState(true)
+  useEffect(() => {
+    if (!grid) return
+    let stale = false
+    const timer = setTimeout(() => {
+      apiPost<GridConsensus>(`/blocks/${serverId}/consensus`, grid)
+        .then((out) => { if (!stale) setConsensus(out?.cells?.length ? out : null) })
+        .catch(() => { if (!stale) setConsensus(null) })
+    }, 600)
+    return () => { stale = true; clearTimeout(timer) }
+  }, [grid, serverId])
+  const consensusCells = new Map((consensus?.cells ?? []).map((cell) => [`${cell.r}:${cell.c}`, cell]))
+  const disputed = (consensus?.cells ?? []).filter((cell) => cell.score != null && scoreBand(cell.score) !== 'agree')
+  const disagreements = consensus && showConsensus
+    ? {
+        partly: disputed.filter((cell) => scoreBand(cell.score!) === 'partly').map((cell) => [cell.r, cell.c] as [number, number]),
+        disagree: disputed.filter((cell) => scoreBand(cell.score!) === 'disagree').map((cell) => [cell.r, cell.c] as [number, number]),
+      }
+    : undefined
+  const cellHint = consensus && showConsensus
+    ? (row: number, column: number) => {
+        const cell = consensusCells.get(`${row}:${column}`)
+        if (!cell || cell.score == null) return null
+        const mine = (gridRef.current ?? grid)?.cells.find((item) => item.r === row && item.c === column)?.text ?? ''
+        return (
+          <div className="space-y-1" data-testid="consensus-hint">
+            <div className="text-[11px] text-[color:var(--color-ink-3)]">{t('consensus.mine')}: <span className="mono text-[color:var(--color-ink)]">{mine || '—'}</span></div>
+            {consensus.models.map((model) => {
+              const value = cell.values[model.key]
+              return (
+                <div key={model.key}>
+                  <span className="font-semibold">{model.name}: </span>
+                  {value == null
+                    ? <span className="italic text-[color:var(--color-ink-3)]">{t('consensus.noValue')}</span>
+                    // The model's reading as it is, with what differs from mine marked.
+                    : <span className="mono">{charDiff(mine, value).filter((part) => part.kind !== 'del').map((part, index) =>
+                        part.kind === 'same' ? <span key={index}>{part.text}</span>
+                          : <mark key={index} className="bg-[color:var(--color-sig-wash)] text-[color:var(--color-sig-text)]">{part.text}</mark>)}</span>}
+                </div>
+              )
+            })}
+          </div>
+        )
+      }
+    : undefined
+
   const activeProblems = active
     ? (checks?.checks ?? []).filter(
         (k) => !k.ok && [...k.cells, k.total].some(([r, c]) => r === active.r && c === active.c),
@@ -713,6 +764,20 @@ export function TableWorkspacePanel({
         </p>
       )}
 
+      {consensus && (
+        <div className="flex flex-wrap items-center gap-3 text-[11px] text-[color:var(--color-ink-2)]" data-testid="consensus-bar">
+          <span className="font-semibold text-[color:var(--color-ink)]">{t('consensus.editorBar', { n: disputed.length })}</span>
+          <span>{consensus.models.map((model) => model.name).join(' · ')}</span>
+          <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5" style={{ background: 'rgba(232, 161, 0, 0.45)' }} />{t('consensus.legendPartly')}</span>
+          <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 border border-[#a3000e]" style={{ background: 'rgba(163, 0, 14, 0.25)' }} />{t('consensus.legendDisagree')}</span>
+          <span>{t('consensus.editorHover')}</span>
+          <label className="ml-auto inline-flex items-center gap-1">
+            <input type="checkbox" checked={showConsensus} onChange={(event) => setShowConsensus(event.target.checked)} />
+            {t('consensus.editorToggle')}
+          </label>
+        </div>
+      )}
+
       {notice && (
         <WarnNotice title={t('table.notice')}>
           <span className="flex flex-wrap items-center gap-2">{notice}</span>
@@ -743,6 +808,8 @@ export function TableWorkspacePanel({
                 onSaveHeader={projectId != null ? openSaveHeader : undefined}
                 onApplyHeader={projectId != null ? openApplyHeader : undefined}
                 suspects={checks?.suspects}
+                disagreements={disagreements}
+                cellHint={cellHint}
                 onControllerChange={setSheetController}
                 onUndo={undo}
                 onRedo={redo}

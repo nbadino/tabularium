@@ -196,3 +196,76 @@ def test_table_cluster_uses_the_cell_comparison_for_its_text_channel():
     assert cluster["table"] is not None
     assert cluster["text"] == pytest.approx(cluster["table"]["score"])
     assert 0.0 < cluster["text"] < 0.2
+
+
+# --- different segmentation -------------------------------------------------
+
+
+def test_pieces_inside_another_models_block_join_its_cluster():
+    """One model reads an advert as one block, the other as three pieces.
+
+    Both read that area: the pieces are not "missing", they are a different
+    segmentation, scored as a layout disagreement with the text compared joined.
+    """
+    page = cs.compare_page({
+        "A": [
+            _block("Title", (0, 0, 100, 20), "JAMES POWER"),
+            _block("Text", (0, 22, 100, 40), "Chartering agents"),
+            _block("Text", (0, 42, 100, 60), "London"),
+        ],
+        "B": [_block("Advertisement", (0, 0, 100, 60), "JAMES POWER Chartering agents London")],
+    })
+    (cluster,) = page["clusters"]
+    assert cluster["missing"] == []
+    assert cluster["parts"] == {"A": [0, 1, 2], "B": [0]}
+    assert cluster["split"] is True
+    assert cluster["text"] == 0.0
+    assert cluster["score"] == pytest.approx(cs.SPLIT_MISMATCH)
+
+
+def test_a_block_barely_touching_another_is_still_missing():
+    page = cs.compare_page({
+        "A": [_block("Text", (0, 0, 100, 100), "a"), _block("Note", (90, 90, 200, 200), "n")],
+        "B": [_block("Text", (0, 0, 100, 100), "a")],
+    })
+    note = next(c for c in page["clusters"] if c["label"] == "Note")
+    assert note["missing"] == ["B"] and note["score"] == 1.0
+
+
+def test_a_block_that_received_pieces_keeps_them():
+    # B's header contains A's two pieces, and is itself inside A's large frame:
+    # it must not wander into the frame's cluster and drop the pieces.
+    page = cs.compare_page({
+        "A": [_block("Text", (0, 0, 50, 10), "x"), _block("Text", (50, 0, 100, 10), "y")],
+        "B": [_block("Page-header", (0, 0, 100, 10), "x y")],
+    })
+    (cluster,) = page["clusters"]
+    assert cluster["parts"] == {"A": [0, 1], "B": [0]}
+
+
+# --- the user's own table as reference --------------------------------------
+
+
+def test_models_are_aligned_onto_the_users_grid_and_scored_among_themselves():
+    mine = _grid([["Nave", "Da"], ["Aurora", "Genva"], ["Etna", "Catania"], ["(nota mia)", ""]])
+    a = _grid([["Nave", "Da"], ["Aurora", "Genova"], ["Etna", "Catania"]])
+    b = _grid([["Nave", "Da"], ["Aurora", "Genova"], ["Etna", "Catanzaro"]])
+    out = cs.annotate_grid(mine, {"A": a, "B": b})
+    by_pos = {(c["r"], c["c"]): c for c in out["cells"]}
+    # The models agree with each other: no colour, even though my reading differs.
+    assert by_pos[(1, 1)]["values"] == {"A": "Genova", "B": "Genova"}
+    assert by_pos[(1, 1)]["score"] == 0.0
+    # The models disagree: that is the cell to look at.
+    assert by_pos[(2, 1)]["score"] > 0.3
+    # A row only I have: no model reading, nothing to score.
+    assert by_pos[(3, 0)]["values"] == {"A": None, "B": None}
+    assert by_pos[(3, 0)]["score"] is None
+
+
+def test_a_cell_only_one_model_has_scores_one():
+    mine = _grid([["Nave", "Da", "Note"]])
+    a = _grid([["Nave", "Da", "Note"]])
+    b = _grid([["Nave", "Da"]])
+    by_pos = {(c["r"], c["c"]): c for c in cs.annotate_grid(mine, {"A": a, "B": b})["cells"]}
+    assert by_pos[(0, 2)]["values"] == {"A": "Note", "B": None}
+    assert by_pos[(0, 2)]["score"] == 1.0

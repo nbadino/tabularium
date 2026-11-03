@@ -203,6 +203,13 @@ export const it = {
   },
 
   consensus: {
+    editorBar: "Confronto modelli: {n} celle in disaccordo",
+    editorToggle: "Mostra disaccordi",
+    editorHover: "Passa il mouse su una cella colorata per vedere le letture.",
+    mine: "La tua trascrizione",
+    splitTag: "divisa diversamente",
+    splitNote: "Stessa area, segmentata in modo diverso: il testo è confrontato unendo i pezzi in ordine di lettura.",
+    retry: "Riprova i non riusciti",
     canvasHint: "Clicca un riquadro per confrontare le letture · Space trascina la pagina",
     disputedCells: "{n} celle da controllare",
     nextCell: "Cella successiva",

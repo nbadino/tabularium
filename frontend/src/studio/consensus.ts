@@ -47,6 +47,10 @@ export interface ConsensusTable {
 export interface ConsensusCluster {
   id: number
   members: Record<string, number | null>
+  /** Every block of each model in the cluster, in reading order (several = split). */
+  parts: Record<string, number[]>
+  /** The models read this area but segmented it differently. */
+  split: boolean
   label: string
   labels: Record<string, string>
   bbox: [number, number, number, number]
@@ -63,6 +67,14 @@ export interface PageConsensus {
   models: ConsensusModel[]
   outputs: Record<string, ConsensusBlock[]>
   comparison: { models: string[]; agreement: number; clusters: ConsensusCluster[] } | null
+}
+
+/** The models' readings laid on the user's own table (`POST /blocks/{id}/consensus`). */
+export interface GridConsensus {
+  run_id: number | null
+  models: { key: string; name: string }[]
+  cells: { r: number; c: number; values: Record<string, string | null>; score: number | null }[]
+  extra_rows: { model: string; index: number; texts: string[] }[]
 }
 
 export type ScoreBand = 'agree' | 'partly' | 'disagree'
@@ -121,7 +133,7 @@ export function overlayRects(page: PageConsensus, view: ConsensusView, ratio: nu
   }
   const blocks = page.outputs[view] ?? []
   return blocks.flatMap((block, index) => {
-    const cluster = clusters.find((c) => c.members[view] === index)
+    const cluster = clusters.find((c) => (c.parts?.[view] ?? []).includes(index))
     if (!cluster) return []
     const [[x1, y1], [x2, y2]] = [block.points[0], block.points[block.points.length - 1]]
     return [{

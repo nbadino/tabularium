@@ -336,6 +336,8 @@ _IT: dict[str, str] = {
     "consensus_pages_missing": "una o più pagine non appartengono al progetto",
     "consensus_pages_range": "seleziona da 1 a {max} pagine",
     "consensus_models_range": "seleziona da {min} a {max} modelli diversi",
+    "consensus_run_active": "il confronto è ancora in corso: attendi che finisca",
+    "consensus_nothing_to_retry": "in questo confronto non c'è niente da riprovare",
 }
 
 _EN: dict[str, str] = {
@@ -639,6 +641,8 @@ _EN: dict[str, str] = {
     "consensus_pages_missing": "one or more pages are not in the project",
     "consensus_pages_range": "select 1 to {max} pages",
     "consensus_models_range": "select {min} to {max} different models",
+    "consensus_run_active": "the comparison is still running: wait for it to finish",
+    "consensus_nothing_to_retry": "nothing in this comparison to try again",
 }
 
 _FR: dict[str, str] = {
@@ -942,6 +946,8 @@ _FR: dict[str, str] = {
     "consensus_pages_missing": "une ou plusieurs pages n’appartiennent pas au projet",
     "consensus_pages_range": "sélectionnez de 1 à {max} pages",
     "consensus_models_range": "sélectionnez de {min} à {max} modèles différents",
+    "consensus_run_active": "la comparaison est encore en cours : attendez qu’elle se termine",
+    "consensus_nothing_to_retry": "rien à relancer dans cette comparaison",
 }
 
 CATALOG: dict[str, dict[str, str]] = {"it": _IT, "en": _EN, "fr": _FR}

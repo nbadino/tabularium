@@ -214,6 +214,9 @@ export default function ConsensusPane({
                   >
                     <span className="inline-block h-2.5 w-2.5 shrink-0" style={{ background: BAND_COLOR[scoreBand(cluster.score)] }} />
                     <span className="min-w-0 flex-1 truncate">{labelName(cluster.label)}</span>
+                    {cluster.split && cluster.missing.length === 0 && (
+                      <span className="text-[11px] text-[color:var(--color-warn)]">{t('consensus.splitTag')}</span>
+                    )}
                     {cluster.missing.length > 0 && (
                       <span className="text-[11px] text-[color:var(--color-sig-text)]">
                         {t('consensus.missingIn', { names: cluster.missing.map(nameOf).join(', ') })}
@@ -233,11 +236,14 @@ export default function ConsensusPane({
                 <div><dt className="lbl">{t('consensus.layout')}</dt><dd className="mono">{pct(current.layout)}%</dd></div>
                 <div>
                   <dt className="lbl">{t('consensus.label')}</dt>
-                  <dd>{current.label_agree
+                  <dd>{current.label_agree && !current.split
                     ? t('consensus.labelSame')
                     : Object.entries(current.labels).map(([key, label]) => `${nameOf(key)}: ${labelName(label)}`).join(' · ')}</dd>
                 </div>
               </dl>
+              {current.split && current.missing.length === 0 && (
+                <p className="text-[color:var(--color-warn)]">{t('consensus.splitNote')}</p>
+              )}
               {current.missing.length > 0 && (
                 <p className="text-[color:var(--color-sig-text)]">
                   {t('consensus.onlyIn', {
@@ -250,8 +256,8 @@ export default function ConsensusPane({
               ) : (
                 <Readings
                   values={Object.fromEntries(models.filter((m) => m.key in current.members).map((m) => {
-                    const index = current.members[m.key]
-                    return [m.key, index == null ? null : page.outputs[m.key]?.[index]?.content ?? '']
+                    const indices = current.parts?.[m.key] ?? []
+                    return [m.key, indices.length === 0 ? null : indices.map((i) => page.outputs[m.key]?.[i]?.content ?? '').join('\n')]
                   }))}
                   models={models}
                 />

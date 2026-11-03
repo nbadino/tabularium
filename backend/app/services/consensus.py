@@ -266,6 +266,8 @@ def _recognize(project_id: int, page_id: int, client, cancel: threading.Event):
 def _run_model(run: dict[str, Any], model: dict[str, Any], cancel: threading.Event) -> None:
     run_id, project_id = int(run["id"]), int(run["project_id"])
     outputs = runstore.outputs_for_model(run_id, model["key"])
+    if not any(output["state"] == "queued" for output in outputs):
+        return
     try:
         profile = profilestore.get(int(model["profile_id"]))
         if profile is None:
@@ -273,9 +275,12 @@ def _run_model(run: dict[str, Any], model: dict[str, Any], cancel: threading.Eve
         client = inference.client_for_profile(profile)
     except Exception as exc:  # noqa: BLE001
         for output in outputs:
-            runstore.mark_output(output["id"], "failed", error=str(exc), ended_at=_now())
+            if output["state"] == "queued":
+                runstore.mark_output(output["id"], "failed", error=str(exc), ended_at=_now())
         return
     for output in outputs:
+        if output["state"] != "queued":
+            continue  # finished in an earlier attempt of this run
         if cancel.is_set():
             runstore.mark_output(output["id"], "cancelled", ended_at=_now())
             continue
@@ -298,6 +303,19 @@ def cancel_run(run_id: int) -> dict[str, Any]:
     if event is not None:
         event.set()
     return get_run(run_id)
+
+
+def retry_failed(run_id: int, lang: str | None = None) -> dict[str, Any]:
+    """Send again only what failed or was cancelled; finished outputs are kept."""
+    run = get_run(run_id, lang)
+    with _LOCK:
+        active = run_id in _ACTIVE
+    if active or run["state"] in {"queued", "running"}:
+        raise HTTPException(status_code=409, detail=msg("consensus_run_active", lang))
+    if not runstore.requeue_failed(run_id):
+        raise HTTPException(status_code=409, detail=msg("consensus_nothing_to_retry", lang))
+    _start(run_id)
+    return get_run(run_id, lang)
 
 
 def reconcile_runs() -> None:
@@ -339,3 +357,52 @@ def page_comparison(
             outputs[model["key"]] = row["blocks"]
     comparison = metric.compare_page(outputs) if len(outputs) >= MIN_MODELS else None
     return {"run_id": chosen, "models": models, "outputs": outputs, "comparison": comparison}
+
+
+# Overlap a model's table needs with the user's table block to be "the same table".
+TABLE_MATCH_IOU = 0.3
+
+
+def _box(points: list) -> list[float]:
+    xs = [float(point[0]) for point in points]
+    ys = [float(point[1]) for point in points]
+    return [min(xs), min(ys), max(xs), max(ys)]
+
+
+def block_comparison(block_id: int, grid: dict, lang: str | None = None) -> dict[str, Any]:
+    """The models' readings of the table the user is editing, cell by cell.
+
+    `grid` is the editor's current grid (it may hold unsaved edits), so the
+    alignment follows inserted rows and columns. Each finished model of the page's
+    latest run contributes the Table block that overlaps the user's block best.
+    """
+    empty = {"run_id": None, "models": [], "cells": [], "extra_rows": []}
+    geometry = runstore.block_geometry(block_id)
+    if geometry is None or len(geometry["points"]) < 2:
+        return empty
+    run_id = runstore.latest_run_for_page(geometry["page_id"])
+    run = runstore.get(run_id) if run_id is not None else None
+    if run is None:
+        return empty
+    mine = _box(geometry["points"])
+    by_key = {row["model_key"]: row for row in runstore.page_outputs(run_id, geometry["page_id"])}
+    models, grids = [], {}
+    for model in run["models"]:
+        row = by_key.get(model["key"])
+        if not row or row["state"] != "finished":
+            continue
+        best, best_iou = None, TABLE_MATCH_IOU
+        for block in row["blocks"]:
+            candidate = block.get("grid")
+            if not candidate or not candidate.get("rows") or len(block.get("points") or []) < 2:
+                continue
+            value = metric.iou(mine, _box(block["points"]))
+            if value >= best_iou:
+                best, best_iou = candidate, value
+        if best is not None:
+            models.append({"key": model["key"], "name": model["name"]})
+            grids[model["key"]] = best
+    if len(grids) < MIN_MODELS:
+        return {**empty, "run_id": run_id, "models": models}
+    return {"run_id": run_id, "models": models, **metric.annotate_grid(grid, grids)}
+

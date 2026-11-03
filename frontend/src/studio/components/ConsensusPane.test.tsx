@@ -35,9 +35,9 @@ const page: PageConsensus = {
     models: ['p1', 'p2'],
     agreement: 0.81,
     clusters: [
-      { id: 0, members: { p1: 0, p2: 0 }, label: 'Title', labels: { p1: 'Title', p2: 'Title' }, bbox: [0, 0, 100, 20], text: 0, layout: 0, label_agree: true, missing: [], score: 0, table: null },
+      { id: 0, members: { p1: 0, p2: 0 }, parts: { p1: [0], p2: [0] }, split: false, label: 'Title', labels: { p1: 'Title', p2: 'Title' }, bbox: [0, 0, 100, 20], text: 0, layout: 0, label_agree: true, missing: [], score: 0, table: null },
       {
-        id: 1, members: { p1: 1, p2: 1 }, label: 'Table', labels: { p1: 'Table', p2: 'Table' }, bbox: [0, 30, 100, 90], text: 0.1, layout: 0, label_agree: true, missing: [], score: 0.1,
+        id: 1, members: { p1: 1, p2: 1 }, parts: { p1: [1], p2: [1] }, split: false, label: 'Table', labels: { p1: 'Table', p2: 'Table' }, bbox: [0, 30, 100, 90], text: 0.1, layout: 0, label_agree: true, missing: [], score: 0.1,
         table: {
           reference: 'p1', rows: 2, cols: 2, score: 0.1,
           cells: [
@@ -50,7 +50,7 @@ const page: PageConsensus = {
           extra_cols: [],
         },
       },
-      { id: 2, members: { p1: null, p2: 2 }, label: 'Note', labels: { p2: 'Note' }, bbox: [0, 95, 50, 99], text: 0, layout: 0, label_agree: true, missing: ['p1'], score: 1, table: null },
+      { id: 2, members: { p1: null, p2: 2 }, parts: { p2: [2] }, split: false, label: 'Note', labels: { p2: 'Note' }, bbox: [0, 95, 50, 99], text: 0, layout: 0, label_agree: true, missing: ['p1'], score: 1, table: null },
     ],
   },
 }
@@ -102,6 +102,26 @@ describe('ConsensusPane', () => {
     expect(screen.getByTestId('view')).toHaveTextContent('p2')
     await userEvent.click(screen.getByRole('button', { name: 'Disagreement' }))
     expect(screen.getByTestId('view')).toHaveTextContent('disagreement')
+  })
+
+  it('joins the pieces of a block one model split, and says so', async () => {
+    setLocale('en')
+    const split: PageConsensus = {
+      ...page,
+      outputs: { ...page.outputs, p1: [...page.outputs.p1, { label: 'Text', points: [[0, 96], [50, 99]], content: 'capitaneria' }] },
+      comparison: {
+        ...page.comparison!,
+        clusters: [{
+          ...page.comparison!.clusters[2], members: { p1: 0, p2: 2 }, parts: { p1: [0, 2], p2: [2] }, split: true, missing: [], score: 0.3,
+          labels: { p1: 'Title + Text', p2: 'Note' }, label_agree: false,
+        }],
+      },
+    }
+    render(<Harness data={split} />)
+    await userEvent.click(screen.getByRole('button', { name: /segmented differently/ }))
+    expect(screen.getByText(/Same area, segmented differently/)).toBeInTheDocument()
+    expect(screen.getByTestId('reading-p1').textContent).toContain('Arrivi')
+    expect(screen.getByTestId('reading-p1').textContent).toContain('capitaneria')
   })
 
   it('says when there is nothing to compare, and closes', async () => {
