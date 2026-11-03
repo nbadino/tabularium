@@ -328,6 +328,14 @@ _IT: dict[str, str] = {
     "collection_delete_confirm": "eliminare anche le pagine è irreversibile: passa ?confirm=true",
     "collection_delete_owner": "solo il proprietario del progetto può eliminare le pagine",
     "collection_pages_busy": "un riconoscimento sta ancora lavorando su queste pagine: attendi che finisca",
+    "consensus_profile_name": "il nome del profilo deve avere da 1 a 80 caratteri",
+    "consensus_profile_exists": "esiste già un profilo con questo nome",
+    "consensus_profile_not_found": "profilo non trovato",
+    "consensus_profile_active": "il profilo attivo non si può eliminare",
+    "consensus_run_not_found": "confronto non trovato",
+    "consensus_pages_missing": "una o più pagine non appartengono al progetto",
+    "consensus_pages_range": "seleziona da 1 a {max} pagine",
+    "consensus_models_range": "seleziona da {min} a {max} modelli diversi",
 }
 
 _EN: dict[str, str] = {
@@ -623,6 +631,14 @@ _EN: dict[str, str] = {
     "collection_delete_confirm": "deleting the pages too cannot be undone: pass ?confirm=true",
     "collection_delete_owner": "only the project owner can delete pages",
     "collection_pages_busy": "a recognition is still working on these pages: wait for it to finish",
+    "consensus_profile_name": "the profile name must be 1 to 80 characters",
+    "consensus_profile_exists": "a profile with this name already exists",
+    "consensus_profile_not_found": "profile not found",
+    "consensus_profile_active": "the active profile cannot be deleted",
+    "consensus_run_not_found": "comparison not found",
+    "consensus_pages_missing": "one or more pages are not in the project",
+    "consensus_pages_range": "select 1 to {max} pages",
+    "consensus_models_range": "select {min} to {max} different models",
 }
 
 _FR: dict[str, str] = {
@@ -918,6 +934,14 @@ _FR: dict[str, str] = {
     "collection_delete_confirm": "supprimer aussi les pages est irréversible : passez ?confirm=true",
     "collection_delete_owner": "seul le propriétaire du projet peut supprimer des pages",
     "collection_pages_busy": "une reconnaissance traite encore ces pages : attendez qu’elle se termine",
+    "consensus_profile_name": "le nom du profil doit compter de 1 à 80 caractères",
+    "consensus_profile_exists": "un profil portant ce nom existe déjà",
+    "consensus_profile_not_found": "profil introuvable",
+    "consensus_profile_active": "le profil actif ne peut pas être supprimé",
+    "consensus_run_not_found": "comparaison introuvable",
+    "consensus_pages_missing": "une ou plusieurs pages n’appartiennent pas au projet",
+    "consensus_pages_range": "sélectionnez de 1 à {max} pages",
+    "consensus_models_range": "sélectionnez de {min} à {max} modèles différents",
 }
 
 CATALOG: dict[str, dict[str, str]] = {"it": _IT, "en": _EN, "fr": _FR}

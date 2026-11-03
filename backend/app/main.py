@@ -50,7 +50,7 @@ async def lifespan(_app: FastAPI):
     from .services import live as livesvc
     livesvc.hub.bind_loop(asyncio.get_running_loop())
     from .services import backup as backupsvc
-    from .services import cloud_manager, recognition, serve_manager, trainer
+    from .services import cloud_manager, consensus, recognition, serve_manager, trainer
     from .services import benchmark as benchsvc
     db_check = backupsvc.integrity()
     if not db_check["ok"]:
@@ -70,6 +70,7 @@ async def lifespan(_app: FastAPI):
     trainer.reconcile_jobs()
     serve_manager.reconcile_jobs()
     recognition.reconcile_runs()
+    consensus.reconcile_runs()
     benchsvc.reconcile_benchmarks()
     cloud_manager.reconcile_tunnel()
     from .services import auto_training

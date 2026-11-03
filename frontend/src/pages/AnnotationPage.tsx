@@ -17,6 +17,8 @@ import { useDraftEdits } from '../studio/useDraftEdits'
 import { useAnnotationState } from '../studio/useAnnotationState'
 import { runPrelabelStream } from '../studio/prefillStream'
 import PrefillDialog from '../studio/components/PrefillDialog'
+import ConsensusPane from '../studio/components/ConsensusPane'
+import { overlayRects, type ConsensusView, type PageConsensus } from '../studio/consensus'
 import {
   summarizePage,
   type PrefillMode,
@@ -165,6 +167,13 @@ export default function AnnotationPage() {
   const [prefillDrafts, setPrefillDrafts] = useState<PrefillDraft[]>([])
   const [liveOutput, setLiveOutput] = useState<LivePrefillOutput | null>(null)
   const [showFlow, setShowFlow] = useState(false)
+  // Model comparison (consensus): read-only, it replaces the content rail and
+  // paints the disagreement over the page while it is open.
+  const [consensusOn, setConsensusOn] = useState(() => new URLSearchParams(window.location.search).get('consensus') === '1')
+  const [consensus, setConsensus] = useState<PageConsensus | null>(null)
+  const [consensusLoading, setConsensusLoading] = useState(false)
+  const [consensusView, setConsensusView] = useState<ConsensusView>('disagreement')
+  const [consensusSelected, setConsensusSelected] = useState<number | null>(null)
   const prefillAbortRef = useRef<AbortController | null>(null)
 
   /** Modifica al testo di una bozza: aggiorna il pannello subito e il
@@ -287,6 +296,30 @@ export default function AnnotationPage() {
       : 1
 
   const ann = useAnnotationState(page, ratio, labels, !navBusy && !prefillBusy)
+
+  useEffect(() => {
+    setConsensus(null)
+    setConsensusSelected(null)
+    if (!consensusOn || !page) return
+    let alive = true
+    let timer: number | undefined
+    const load = async () => {
+      setConsensusLoading(true)
+      try {
+        const out = await apiGet<PageConsensus>(`/pages/${page.id}/consensus`)
+        if (!alive) return
+        setConsensus(out)
+        // Keep following while a model is still working on this page.
+        if (out.models.some((m) => m.state === 'queued' || m.state === 'running')) timer = window.setTimeout(() => void load(), 3000)
+      } catch (e) {
+        if (alive) setError(e)
+      } finally {
+        if (alive) setConsensusLoading(false)
+      }
+    }
+    void load()
+    return () => { alive = false; window.clearTimeout(timer) }
+  }, [consensusOn, page?.id])
   const draftEdits = useDraftEdits((id, content) => ann.runExternal(() => apiPatch<BlockOut>(`/blocks/${id}?expected_revision=${ann.getRevision()}`, { content })), (e) => setError(e))
   const flushEdits = async () => { await draftEdits.flush(); await ann.flush() }
 
@@ -1338,6 +1371,15 @@ export default function AnnotationPage() {
               </button>
             )}
             <button type="button" className="btn" disabled={!page || navBusy || prefillBusy} onClick={onPrefillClick}><IconPrefill size={12} />{t('work.recognize')}</button>
+            <button
+              type="button"
+              className={`btn ${consensusOn ? 'btn-primary' : ''}`}
+              aria-pressed={consensusOn}
+              disabled={!page || prefillBusy}
+              onClick={() => setConsensusOn((on) => !on)}
+            >
+              {t('consensus.toggle')}
+            </button>
             <Menu label={t('annotate.more')}>
               <span className="lbl px-2 pt-1">{t('studio.viewMode')}</span>
               {(['all', 'canvas', 'transcription'] as const).map((mode) => (
@@ -1503,12 +1545,12 @@ export default function AnnotationPage() {
             previewUrl && (
               <div className={`h-full ${prefillBusy ? 'pointer-events-none' : ''}`}>
               <StudioCanvas
-                interactive={!navBusy && !prefillBusy && studioMode !== 'transcription'}
+                interactive={!navBusy && !prefillBusy && studioMode !== 'transcription' && !consensusOn}
                 imageUrl={previewUrl}
                 imageNatural={previewSize}
-                blocks={ann.blocks}
+                blocks={consensusOn ? [] : ann.blocks}
                 selectedId={ann.selectedId}
-                tool={ann.tool}
+                tool={consensusOn ? 'select' : ann.tool}
                 activeLabel={ann.activeLabel}
                 showFlow={showFlow}
                 colorFor={ann.colorFor}
@@ -1516,6 +1558,11 @@ export default function AnnotationPage() {
                 onAddBlock={ann.addBlock}
                 onUpdateBlock={updateBlockPoints}
                 onDeleteBlock={handleDeleteBlock}
+                overlay={consensusOn && consensus ? {
+                  rects: overlayRects(consensus, consensusView, ratio),
+                  selected: consensusSelected,
+                  onSelect: setConsensusSelected,
+                } : undefined}
               />
               </div>
             )
@@ -1542,6 +1589,17 @@ export default function AnnotationPage() {
         className={`${studioMode === 'canvas' ? 'hidden' : 'flex'} min-w-0 flex-col overflow-y-auto bg-[color:var(--color-sheet)] p-3 ${studioMode === 'all' ? 'shrink-0' : 'flex-1'}`}
         style={studioMode === 'all' ? { width: contentWidth } : undefined}
       >
+        {consensusOn ? (
+          <ConsensusPane
+            page={consensus}
+            loading={consensusLoading}
+            view={consensusView}
+            onView={setConsensusView}
+            selected={consensusSelected}
+            onSelect={setConsensusSelected}
+            onClose={() => setConsensusOn(false)}
+          />
+        ) : (
         <fieldset disabled={prefillBusy || navBusy} className="min-w-0 border-0 p-0">
         <ContentPane
           blocks={ann.blocks}
@@ -1590,6 +1648,7 @@ export default function AnnotationPage() {
           }
         />
         </fieldset>
+        )}
       </section>
 
       </div>

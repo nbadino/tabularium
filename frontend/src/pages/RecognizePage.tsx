@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { projectPath } from '../app/projectPaths'
 import { Link, useSearchParams } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
+import ConsensusPanel from './ConsensusPanel'
 import { ApiError } from '../lib/api'
 import type { PageItem, PrefillEngines, RecognitionRun, SystemInfo } from '../lib/types'
 import { defaultEngine } from '../lib/defaultEngine'
@@ -551,6 +552,13 @@ export default function RecognizePage() {
               <IconPlayground size={13} />{busy ? t('recognition.starting') : t('recognition.start')}
             </button>
           </Module>
+
+          <ConsensusPanel
+            projectId={projectId}
+            pageIds={[...selected]}
+            canManage={canManageInference}
+            currentModel={nameOf(inference.adapterId) ?? inference.model ?? ''}
+          />
 
           <Collapsible tab={t('recognition.recent')} quiet flush>
             {runs.length === 0 ? <p className="p-3 text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.noRuns')}</p> : (

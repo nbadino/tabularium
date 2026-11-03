@@ -27,4 +27,30 @@ layout reward rule of LightOnOCR-3), with overall and per-label precision/recall
 evaluated on their native generation, and text and tables are the content of the predicted block
 matched at IoU 0.5 (missed blocks stay out of CER and are counted by recall).
 
+## Consensus between models
+
+A consensus run (`services/consensus.py`) sends the same pages to two to six saved models
+(inactive `compute_profiles`) through the normal prefill pipeline with a read-only writer
+(`adapters/blocks.py::ReadOnlyPageWriter`): no block, grid or revision is written and the page
+master is never rotated. Each model's blocks go to `consensus_outputs`. One model failing does
+not stop the others; the run ends `finished_with_errors`.
+
+The metric is pure (`domain/consensus.py`), pinned by `tests/test_consensus.py`:
+
+- **Matching**: blocks of different models pair at IoU ≥ 0.5, best overlaps first, one block per
+  model per cluster.
+- **Channels** per cluster: `text` = mean pairwise normalised character edit distance (NFC,
+  whitespace collapsed, markdown `#`/`*`/`_`/`` ` `` decoration removed); `layout` = mean pairwise
+  1 − IoU; `label_agree`.
+- **Score** = max(text, layout, 0.5 if the labels differ); 1 when some model has no block there.
+- **Tables** are compared on their grids, not their raw content: rows are aligned by
+  Needleman–Wunsch on row text (gap cost 0.5), then columns on the aligned cells; each reference
+  cell scores the mean distance to the other models' aligned cell (1 if unaligned); rows or
+  columns only another model has count as disagreeing cells. The table score is the cluster's
+  `text` channel.
+- **Page agreement** = 1 − the area-weighted mean cluster score. With fewer than two finished
+  models there is no comparison (`comparison: null`), not an invented agreement.
+
+The Studio colours a score below 0.1 as agreement, below 0.35 as partial, above as disagreement.
+
 ---

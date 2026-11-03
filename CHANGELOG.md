@@ -123,6 +123,13 @@ Notable changes to Tabularium. The format follows
   97 % on a single dropped connection.
 
 ### Added
+- **Model comparison (consensus).** On the Recognition page, save the model chosen in Models as
+  a saved model (with its own key), save another one, pick two or more and compare the selected
+  pages. Each model's output is stored apart (migration 23): your annotations are never touched.
+  In the Studio, *Model comparison* paints every block by how much the models disagree (text,
+  position and class; dashed when only one model found it), lists the most disputed blocks, shows
+  tables cell by cell as a heatmap and puts each model's reading side by side with a character
+  diff. A model can be shown on its own. Metric in `docs/spec/71-evaluation.md`.
 - A cover for each collection: select one of its pages and choose *Use as the cover*; the
   collections column shows it as a thumbnail (migration 22). *Remove the cover* is in the row menu.
 - *Select all* on the page wall selects every page shown (after the collection, state and search

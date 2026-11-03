@@ -39,8 +39,10 @@
     `projects.owner_id` is the other side (only the owner deletes);
   - instance settings (`instance_name`, `allow_registration`, `default_new_user_role`) are a JSON
     value in `meta` (`services/settings.py`).
-- Other tables: `compute_profiles` (active model/provider, v10+), `recognition_runs` /
-  `recognition_run_items`, `jobs`, `page_reviews`, `custom_models`, `secrets` (vault),
+- Other tables: `compute_profiles` (active model/provider, v10+; inactive rows are the saved
+  models of a consensus run, each with its own `vault:consensus_profile_*` key), `recognition_runs` /
+  `recognition_run_items`, `consensus_runs` / `consensus_outputs` (v23: each model's blocks for a
+  page, never written to `blocks`/`tables`), `jobs`, `page_reviews`, `custom_models`, `secrets` (vault),
   `audit_events`, `rate_limits`, `meta`.
 - **Migrations**: up to **baseline 6** they are additive by column presence
   (`db.py::_ensure_columns`); from then on every schema change is a **versioned, ordered**
@@ -59,7 +61,7 @@
   database last ran from; when it differs from `config.ROOT_DIR`, paths under the old root are
   rewritten after a `pre-relocation` backup. Paths outside the root (server folders) are left
   alone, and so are paths inside `jobs.command_json`.
-  Current `SCHEMA_VERSION`: **22**. Upgrade tests in `tests/test_db_migrations.py`. The historical
+  Current `SCHEMA_VERSION`: **23**. Upgrade tests in `tests/test_db_migrations.py`. The historical
   test suite runs with `TABULARIUM_AUTH=off`; `test_auth.py` turns it `on` with a fixture.
 
 ---

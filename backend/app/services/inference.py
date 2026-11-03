@@ -1948,19 +1948,7 @@ def get_inference_config() -> dict:
 
             api_key = opencode_gateway.read_api_key()
 
-    native_url = None
-    if adapter_id in {"teleocr", "glm-ocr", "mineru2.5"} and provider == "vast":
-        try:
-            from . import cloud_manager
-            tunnel = cloud_manager.get_tunnel_status()
-            if tunnel.running and getattr(tunnel, "native_local_port", None):
-                native_url = f"http://127.0.0.1:{tunnel.native_local_port}"
-        except Exception:  # noqa: BLE001 - legacy/non-Vast profiles have no sidecar
-            native_url = None
-    elif adapter_id == "mineru2.5" and provider == "local":
-        # Local Apple Silicon uses MinerUClient's native mlx-engine gateway on
-        # the same port as the server's /v1/models readiness endpoint.
-        native_url = url[:-3].rstrip("/") if url.rstrip("/").endswith("/v1") else url.rstrip("/")
+    native_url = _native_url(adapter_id, provider, url)
 
     if adapter_id == "llamaindex-ocria-1":
         url = _llamaindex_base_url(url)
@@ -1981,6 +1969,24 @@ def get_inference_config() -> dict:
         "source_profile_id": source_profile_id,
         "native_url": native_url,
     }
+
+
+def _native_url(adapter_id: str, provider: str | None, url: str) -> str | None:
+    """The sidecar URL of the adapters whose official pipeline is not on `/v1`."""
+    if adapter_id in {"teleocr", "glm-ocr", "mineru2.5"} and provider == "vast":
+        try:
+            from . import cloud_manager
+            tunnel = cloud_manager.get_tunnel_status()
+            if tunnel.running and getattr(tunnel, "native_local_port", None):
+                return f"http://127.0.0.1:{tunnel.native_local_port}"
+        except Exception:  # noqa: BLE001 - legacy/non-Vast profiles have no sidecar
+            return None
+        return None
+    if adapter_id == "mineru2.5" and provider == "local":
+        # Local Apple Silicon uses MinerUClient's native mlx-engine gateway on
+        # the same port as the server's /v1/models readiness endpoint.
+        return url[:-3].rstrip("/") if url.rstrip("/").endswith("/v1") else url.rstrip("/")
+    return None
 
 
 def _provider_for_endpoint(url: str) -> str:
@@ -2173,3 +2179,50 @@ def get_vllm_client(
             return VllmClient(url=url or cfg["url"], model=model or cfg["model"], adapter=adapter)
         except TypeError:
             return VllmClient()
+
+
+def profile_credential(ref: str | None) -> str:
+    """The secret a compute profile's `credential_ref` points to ("" if none)."""
+    if not ref:
+        return ""
+    if ref.startswith("env:"):
+        return os.environ.get(ref[4:], "")
+    if ref.startswith("vault:"):
+        from . import vault
+        return vault.get(ref)
+    # Secret values never belong in a profile row. A missing/unknown ref is
+    # deliberately treated as no credential instead of being echoed.
+    return ""
+
+
+def client_for_profile(profile: dict, *, timeout: int | None = None) -> VllmClient:
+    """A client for a saved compute profile, without activating it.
+
+    The global configuration keeps describing the one active model; a consensus run
+    reaches several models at once, each through its own profile. Key resolution,
+    the OpenCode gateway fallback, the LlamaIndex base URL and the native sidecar
+    follow the same rules as `get_inference_config`.
+    """
+    adapter_id = str(profile["model_adapter_id"])
+    adapter = get_adapter(adapter_id)
+    provider = str(profile.get("provider") or "") or None
+    url = str(profile["endpoint"])
+    if adapter_id == "llamaindex-ocria-1":
+        url = _llamaindex_base_url(url)
+    api_key = profile_credential(profile.get("credential_ref"))
+    if not api_key and (
+        provider == "opencode"
+        or getattr(adapter.capabilities, "serve_backend", "") == "opencode-gateway"
+    ):
+        from . import opencode_gateway
+
+        api_key = opencode_gateway.read_api_key()
+    return VllmClient(
+        url=url,
+        model=str(profile["served_model_name"]),
+        api_key=api_key,
+        timeout=timeout if timeout is not None else config.VLLM_TIMEOUT,
+        adapter=adapter,
+        provider=provider,
+        native_url=_native_url(adapter_id, provider, url),
+    )

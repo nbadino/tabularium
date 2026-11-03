@@ -38,17 +38,15 @@ def _out(row) -> dict:
     return d
 
 
+def describe(row) -> dict:
+    """A profile as the API shows it: the credential reference becomes a yes/no."""
+    return _out(row)
+
+
 def _credential(ref: str | None) -> str:
-    if not ref:
-        return ""
-    if ref.startswith("env:"):
-        return os.environ.get(ref[4:], "")
-    if ref.startswith("vault:"):
-        from . import vault
-        return vault.get(ref)
-    # Secret values never belong in a profile row. A missing/unknown ref is
-    # deliberately treated as no credential instead of being echoed.
-    return ""
+    from .inference import profile_credential
+
+    return profile_credential(ref)
 
 
 def ensure_legacy_profile() -> None:

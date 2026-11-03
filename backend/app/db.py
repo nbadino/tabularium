@@ -16,7 +16,7 @@ from contextlib import closing
 
 from . import config
 
-SCHEMA_VERSION = "23"
+SCHEMA_VERSION = "24"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -461,6 +461,51 @@ _MIGRATIONS: list[tuple[str, str]] = [
         -- (1): marking them 0 would lock every current user out of SSO at upgrade.
         ALTER TABLE users ADD COLUMN email_confirmed INTEGER NOT NULL DEFAULT 1;
     """),
+    ("24", """
+        -- A database that ran the pre-release consensus build recorded that
+        -- table set as version 23 and so never received the users column of
+        -- the real migration 23 above. Adding it here (skipped when present)
+        -- brings such a database level with every other one.
+        ALTER TABLE users ADD COLUMN email_confirmed INTEGER NOT NULL DEFAULT 1;
+
+        -- Consensus: the same pages sent to several models (saved compute
+        -- profiles) to see where they disagree. Each model's blocks are kept
+        -- here, never in `blocks`/`tables`: a comparison must not touch the
+        -- annotations. The profile name and model are copied so a run still
+        -- reads after its profile is deleted.
+        CREATE TABLE IF NOT EXISTS consensus_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            state TEXT NOT NULL CHECK(state IN (
+                'queued','running','finished','finished_with_errors','failed','cancelled'
+            )),
+            models_json TEXT NOT NULL DEFAULT '[]',
+            error TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            started_at TEXT,
+            ended_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_consensus_runs_project
+            ON consensus_runs(project_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS consensus_outputs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL REFERENCES consensus_runs(id) ON DELETE CASCADE,
+            page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+            model_key TEXT NOT NULL,
+            state TEXT NOT NULL CHECK(state IN (
+                'queued','running','finished','failed','cancelled'
+            )),
+            blocks_json TEXT NOT NULL DEFAULT '[]',
+            error TEXT,
+            started_at TEXT,
+            ended_at TEXT,
+            UNIQUE(run_id, page_id, model_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_consensus_outputs_page
+            ON consensus_outputs(page_id, run_id);
+    """),
 ]
 
 
@@ -523,7 +568,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     for version, ddl in sorted(_MIGRATIONS, key=lambda m: int(m[0])):
         if int(version) <= current:
             continue
-        if version in {"16", "17", "18", "21", "22", "23"}:
+        if version in {"16", "17", "18", "21", "22", "23", "24"}:
             _execute_additive_migration(conn, ddl)
             conn.execute("UPDATE meta SET value=? WHERE key='schema_version'", (version,))
             conn.commit()
