@@ -62,6 +62,12 @@ training set.
 
 ## Features
 
+**Projects and pages**
+- Import images, PDFs or a whole ZIP archive, uploaded in pieces with progress
+  and unpacked safely; its folders can become collections.
+- Collections inside a project, typically one per document type, with page
+  counts by state, filters, and moving pages by selection or drag-and-drop.
+
 **Inference**
 - Bulk recognition of scans and multi-page PDFs in persistent sessions that
   keep running if you close the browser.
@@ -86,7 +92,8 @@ training set.
 
 **Fine-tuning and evaluation**
 - One-click datasets in the exact format each model's official trainer
-  expects, split by page.
+  expects, split by page, from the whole project or from chosen collections;
+  every run records which ones it learned from.
 - Training with each model's official defaults (LoRA or full), a separate view for new
   runs and run history, loss charts and logs on demand. A VRAM check blocks configurations
   that cannot fit the selected GPU.
