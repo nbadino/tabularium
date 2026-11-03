@@ -4,13 +4,16 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from ..db import connect
 from ..services import dataset_builder as builder
+from ..services import collections as collectionsvc
 from ..services import export_formats
 from ..services import paddle_dataset
-from ..services.i18n import parse_lang
+from ..services.i18n import msg, parse_lang
 from ..services import auth as authsvc
 from .deps import require_resource
 
@@ -18,6 +21,14 @@ router = APIRouter(
     tags=["datasets"],
     dependencies=[Depends(authsvc.get_current_user)],
 )
+
+
+class DatasetScope(BaseModel):
+    """The whole project, or chosen collections (and/or the pages without one)."""
+
+    kind: Literal["project", "collections"] = "project"
+    collection_ids: list[int] = Field(default_factory=list, max_length=1000)
+    include_unassigned: bool = False
 
 
 class BuildRequest(BaseModel):
@@ -30,6 +41,7 @@ class BuildRequest(BaseModel):
     table_band_rows: int = Field(default=15, ge=4, le=100)
     table_band_overlap: int = Field(default=2, ge=0, le=20)
     include_full_tables: bool = True
+    scope: DatasetScope = Field(default_factory=DatasetScope)
 
 
 class PaddleBuildRequest(BaseModel):
@@ -67,7 +79,10 @@ def build_dataset(
             payload.table_band_overlap,
             payload.include_full_tables,
             lang=lang,
+            scope=payload.scope.model_dump(),
         )
+    except collectionsvc.ScopeError as exc:
+        raise HTTPException(status_code=exc.status, detail=msg(exc.code, lang)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

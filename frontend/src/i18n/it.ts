@@ -877,6 +877,18 @@ export const it = {
   collections: {
     none: 'Senza collezione',
   },
+  scope: {
+    legend: 'Pagine da usare',
+    wholeProject: 'Tutto il progetto',
+    onlyThese: 'Solo queste collezioni',
+    verified: { one: '{count} verificata', other: '{count} verificate' },
+    empty: 'Scegli almeno una collezione.',
+    builtFrom: 'Pagine da: {scope}',
+    trainedOn: 'Addestrato su: {scope}.',
+    measuredOn: 'Misurato sulle pagine di: {scope}',
+    collection: 'Collezione',
+    allCollections: 'Tutte le collezioni',
+  },
   zip: {
     title: 'Importa {name}',
     uploading: 'Caricamento: {sent} di {size} MB',

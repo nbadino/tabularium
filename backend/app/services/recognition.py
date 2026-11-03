@@ -450,12 +450,28 @@ def reconcile_runs() -> None:
 
 
 
-def export_run(run_id: int, scope: str) -> dict[str, Any]:
+def export_run(run_id: int, scope: str, collection: int | str | None = None) -> dict[str, Any]:
+    """The run's pages and blocks; `collection` limits them to one collection
+    (an id, or `"none"` for the pages without one)."""
     run = get_run(run_id)
     if scope not in {"raw", "reviewed"}:
         raise HTTPException(status_code=422, detail="export non valido")
+    items = run["items"]
+    collection_out = None
+    if collection is not None:
+        from ..adapters import collections as collectionstore  # noqa: PLC0415
+
+        project_id = int(run["project_id"])
+        of_page = collectionstore.page_collections(project_id)
+        if collection == "none":
+            wanted = None
+            collection_out = {"id": None, "name": None}
+        else:
+            wanted = int(collection)
+            collection_out = {"id": wanted, "name": collectionstore.names(project_id).get(wanted)}
+        items = [item for item in items if of_page.get(item["page_id"]) == wanted]
     pages: list[dict[str, Any]] = []
-    for item in run["items"]:
+    for item in items:
         if scope == "raw":
             blocks = item.get("result", {}).get("blocks", [])
         else:
@@ -480,13 +496,14 @@ def export_run(run_id: int, scope: str) -> dict[str, Any]:
             "id", "project_id", "model_name", "adapter_id", "provider", "endpoint",
             "created_at", "ended_at",
         )},
+        "collection": collection_out,
         "pages": pages,
     }
 
 
-def export_run_text(run_id: int, scope: str) -> str:
+def export_run_text(run_id: int, scope: str, collection: int | str | None = None) -> str:
     """Versione leggibile dell'export, ordinata per pagina e blocco."""
-    exported = export_run(run_id, scope)
+    exported = export_run(run_id, scope, collection)
     sections: list[str] = []
     for page in exported["pages"]:
         content = [
@@ -498,9 +515,9 @@ def export_run_text(run_id: int, scope: str) -> str:
     return "\n\n".join(sections).rstrip() + "\n"
 
 
-def export_run_csv(run_id: int, scope: str) -> str:
+def export_run_csv(run_id: int, scope: str, collection: int | str | None = None) -> str:
     """CSV tabellare UTF-8: una riga per blocco, pronto per fogli di calcolo."""
-    exported = export_run(run_id, scope)
+    exported = export_run(run_id, scope, collection)
     output = io.StringIO(newline="")
     writer = csv.writer(output)
     writer.writerow((

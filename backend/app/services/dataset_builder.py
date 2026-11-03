@@ -378,8 +378,17 @@ def build_datasets(
     table_band_overlap: int = 2,
     include_full_tables: bool = True,
     lang: str = "it",
+    scope: dict | None = None,
 ) -> dict:
-    """Costruisce e scrive su disco il dataset del progetto. Ritorna il report."""
+    """Costruisce e scrive su disco il dataset del progetto. Ritorna il report.
+
+    `scope` limits the pages to chosen collections (docs/COLLECTIONS.md); it is
+    resolved first, so an invalid scope fails before anything is written, and the
+    report records it as `collection_scope`.
+    """
+    from . import collections as collectionsvc  # noqa: PLC0415
+
+    collection_scope, scope_ids = collectionsvc.resolve_scope(project_id, scope)
     warnings: list[str] = []
     try:
         adapter = get_adapter(adapter_id)
@@ -410,13 +419,19 @@ def build_datasets(
             for pid, data in page_data.items()
             if data["page"]["status"] in {"approved", "exported"}
         }
+    if scope_ids is not None:
+        page_data = {pid: data for pid, data in page_data.items() if pid in scope_ids}
+    collection_scope["pages"] = len(page_data)
     pages = [d["page"] for d in page_data.values()]
     total_pages = exportstore.page_count(project_id)
 
     # --- split per pagina ----------------------------------------------------
+    page_filter = pilot_ids if pilot_only else None
+    if scope_ids is not None:
+        page_filter = scope_ids if page_filter is None else page_filter & scope_ids
     train_ids, val_ids = compute_split(
         project_id, split_ratio, seed, split_strategy, approved_only=approved_only,
-        page_filter=pilot_ids if pilot_only else None,
+        page_filter=page_filter,
     )
     page_ids = sorted(page_data)
 
@@ -647,6 +662,7 @@ def build_datasets(
         table_band_rows=table_band_rows,
         table_band_overlap=table_band_overlap,
         include_full_tables=include_full_tables,
+        collection_scope=collection_scope,
     )
     report_staging = staging_dir / "report.json"
     report_staging.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -697,9 +713,13 @@ def _report(
     table_band_rows: int = 15,
     table_band_overlap: int = 2,
     include_full_tables: bool = True,
+    collection_scope: dict | None = None,
 ) -> dict:
     return {
         "project_id": project_id,
+        # Which pages the dataset was built from: the whole project or chosen
+        # collections, with their names at build time.
+        "collection_scope": collection_scope or {"kind": "project", "collections": [], "include_unassigned": True},
         "built_at": datetime.now(timezone.utc).isoformat(),
         "split": {"ratio": split_ratio, "seed": seed, "strategy": split_strategy},
         "pages": {

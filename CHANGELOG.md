@@ -75,6 +75,11 @@ Notable changes to Tabularium. The format follows
   reported. A single wrapping folder is opened; with two or more folders the user chooses one
   collection per folder or everything together. The summary lists pages per collection,
   duplicates and every skipped file with its reason.
+- Fine-tuning on chosen collections: *Prepare the data* trains on the whole project or on the
+  collections you tick (and/or the pages without one). The dataset report, the snapshot, each
+  training run and the evaluation record the scope with the collection names, and the run list
+  and the evaluation show it. Recognitions can select pages by collection, and a recognition's
+  export can be limited to one collection (`collection=<id>|none`).
 - Models: the catalog is sorted by public OmniDocBench v1.6 score (overall), shown next to
   each model with who measured it (official leaderboard or the vendor) and a link to the
   source; models without a published score say so and come last.

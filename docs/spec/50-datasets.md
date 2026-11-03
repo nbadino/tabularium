@@ -7,6 +7,15 @@
 
 Atomic per-project export; train/val split **by page** (default 90/10, fixed seed).
 
+**Scope.** `POST /datasets/build` takes `scope: {kind: "project"} | {kind: "collections",
+collection_ids, include_unassigned}` (default: the whole project). Only pages in scope are
+exported and split (the scope is the split's `page_filter`, intersected with the pilot sample).
+`report.json` and its snapshot record it as `collection_scope` with the collection **names at build
+time** and the page count; training copies it into `run.json`, the run list shows it, and
+evaluation measures only pages in the recorded scope (the collections' pages today). Paddle views
+(`build-paddle`) always cover the whole project. The `collection` split strategy groups by
+`pages.collection_id`.
+
 1. **`layout_train.jsonl` / `_val`** — full page image + LAYOUT prompt. CONTENT = list of dicts in
    reading order: `[{'bbox': [x1,y1,x2,y2], 'label': '...'}, ...]` with 0–1000 coordinates.
 2. **`text_rec.jsonl`** — one sample per text/headline/etc. block: block crop (PNG/JPEG saved in

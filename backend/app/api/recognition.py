@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field
 
 from ..services import auth as authsvc
 from ..services import recognition as recognitionsvc
-from ..services.i18n import parse_lang
+from ..adapters import collections as collectionstore
+from ..services.i18n import msg, parse_lang
 from .deps import require_resource
 
 router = APIRouter(
@@ -110,26 +111,35 @@ def retry_recognition_run(
 def export_recognition_run(
     project_id: int,
     run_id: int,
+    request: Request,
     scope: Literal["raw", "reviewed"] = "reviewed",
     format: Literal["json", "text", "csv"] = "json",
+    # Only the pages of one collection: its id, or `none` for the pages without one.
+    collection: str | None = None,
     _user: dict = Depends(require_resource(write=False)),
 ):
     run = recognitionsvc.get_run(run_id)
     if int(run["project_id"]) != project_id:
         raise HTTPException(status_code=404, detail="sessione di riconoscimento non trovata")
+    if collection is not None and collection != "none":
+        lang = parse_lang(request.headers.get("accept-language"))
+        if not collection.isdigit():
+            raise HTTPException(status_code=400, detail=msg("collection_filter_invalid", lang))
+        if collectionstore.get(project_id, int(collection)) is None:
+            raise HTTPException(status_code=404, detail=msg("collection_not_found", lang))
     if format == "text":
         return PlainTextResponse(
-            recognitionsvc.export_run_text(run_id, scope),
+            recognitionsvc.export_run_text(run_id, scope, collection),
             headers={
                 "Content-Disposition": f'attachment; filename="tabularium-run-{run_id}-{scope}.txt"'
             },
         )
     if format == "csv":
         return Response(
-            "\ufeff" + recognitionsvc.export_run_csv(run_id, scope),
+            "\ufeff" + recognitionsvc.export_run_csv(run_id, scope, collection),
             media_type="text/csv; charset=utf-8",
             headers={
                 "Content-Disposition": f'attachment; filename="tabularium-run-{run_id}-{scope}.csv"'
             },
         )
-    return recognitionsvc.export_run(run_id, scope)
+    return recognitionsvc.export_run(run_id, scope, collection)

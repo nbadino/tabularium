@@ -11,6 +11,7 @@ import { Link } from 'react-router'
 import { apiGet, apiPost } from '../../lib/api'
 import { Badge, Module, Notice, WarnNotice } from '../../app/ui'
 import { useI18n } from '../../i18n'
+import { scopeLabel } from '../../app/collections'
 
 interface TrainingStatusPanelProps {
   hideRunSelector?: boolean
@@ -168,6 +169,7 @@ export default function TrainingStatusPanel({
                   <option key={item.run_id} value={item.run_id}>
                     {formatShortDate(item.started_at, locale) || item.run_id} ·{' '}
                     {item.adapter_id ?? item.run_id} · {runStateLabel(item.state)}
+                    {item.collection_scope?.kind === 'collections' ? ` · ${scopeLabel(item.collection_scope)}` : ''}
                   </option>
                 ))}
               </select>
@@ -182,7 +184,8 @@ export default function TrainingStatusPanel({
                 {t('training.runHistoryHint', {
                   adapter: selected.adapter_id,
                   state: runStateLabel(selected.state),
-                })}
+                })}{' '}
+                {t('scope.trainedOn', { scope: scopeLabel(selected.collection_scope) })}
               </p>
             )}
           </div>

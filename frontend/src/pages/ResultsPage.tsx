@@ -7,6 +7,7 @@ import { Badge, ErrorNotice, Field, Loading, Module, Notice, Progress, PageHeade
 import { useProjects, useRouteProjectId, writeActiveProject } from '../app/activeProject'
 import { syncInferenceFromBackend, toggleInferenceEnabled, useInference } from '../app/inference'
 import { useI18n } from '../i18n'
+import { UNASSIGNED, useCollections } from '../app/collections'
 import { IconAlert, IconCheck, IconNext, IconWarn } from '../app/icons'
 import { useCanAdminister } from '../app/auth'
 import { pageLabel } from '../lib/pageLabel'
@@ -56,6 +57,7 @@ export default function ResultsPage() {
   const [openingRun, setOpeningRun] = useState(false)
   const [requestedRunId, setRequestedRunId] = useState<number | null>(null)
   const [exportFormat, setExportFormat] = useState<'json' | 'text' | 'csv'>('text')
+  const [exportCollection, setExportCollection] = useState<string>('all')
   const [error, setError] = useState<unknown>(null)
 
   // Inside a project the run is part of the path; the old query form stays for
@@ -98,6 +100,7 @@ export default function ResultsPage() {
   }
 
   const routeProjectId = useRouteProjectId()
+  const { overview: exportCollections } = useCollections(run?.project_id ?? null)
 
   const projects = useProjects((fallback) => void onProject(projectId === '' ? fallback : projectId), setError)
 
@@ -124,7 +127,7 @@ export default function ResultsPage() {
   const download = async (scope: 'raw' | 'reviewed') => {
     if (!run) return
     try {
-      const blob = await apiDownload(`/projects/${run.project_id}/recognition-runs/${run.id}/export?scope=${scope}&format=${exportFormat}`)
+      const blob = await apiDownload(`/projects/${run.project_id}/recognition-runs/${run.id}/export?scope=${scope}&format=${exportFormat}${exportCollection === 'all' ? '' : `&collection=${exportCollection}`}`)
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
@@ -222,6 +225,13 @@ export default function ResultsPage() {
                     <Link to={projectPath(run.project_id, 'studio', { page: nextReview.page_id, run: run.id })} className="btn btn-primary no-underline">
                       {isActive(run) ? t('recognition.openStudio') : t('recognition.startReview')}
                     </Link>
+                  )}
+                  {exportCollections && exportCollections.collections.length > 0 && (
+                    <select value={exportCollection} onChange={(e) => setExportCollection(e.target.value)} className="fld !w-auto" aria-label={t('scope.collection')}>
+                      <option value="all">{t('scope.allCollections')}</option>
+                      {exportCollections.collections.map((c) => <option key={c.id} value={String(c.id)}>{c.name}</option>)}
+                      <option value={UNASSIGNED}>{t('collections.none')}</option>
+                    </select>
                   )}
                   <select value={exportFormat} onChange={(e) => setExportFormat(e.target.value as 'json' | 'text' | 'csv')} className="fld !w-auto" aria-label={t('recognition.exportFormat')}>
                     <option value="text">{t('recognition.formatText')}</option>

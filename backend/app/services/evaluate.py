@@ -447,6 +447,7 @@ def evaluate_project(
         raise ValueError(msg("no_pages_annotated", lang))
     # parametri split coerenti con l'ultima build del dataset (se presente)
     ratio, seed, split_strategy, approved_only = 0.9, 42, "page", False
+    collection_scope: dict = {"kind": "project", "collections": [], "include_unassigned": True}
     report_path = builder._project_dir(project_id) / "dataset" / "report.json"  # noqa: SLF001
     if report_path.exists():
         try:
@@ -455,8 +456,17 @@ def evaluate_project(
             seed = rep.get("split", {}).get("seed", seed)
             split_strategy = rep.get("split", {}).get("strategy", split_strategy)
             approved_only = rep.get("approved_only", approved_only)
+            if isinstance(rep.get("collection_scope"), dict):
+                collection_scope = rep["collection_scope"]
         except (TypeError, ValueError):
             pass
+    # The model is measured on the pages it was meant for: the dataset's scope,
+    # with the same page filter the build used, so the val split matches.
+    from . import collections as collectionsvc  # noqa: PLC0415
+
+    scope_ids = collectionsvc.scope_pages(project_id, collection_scope)
+    if scope_ids is not None:
+        page_data = {pid: data for pid, data in page_data.items() if pid in scope_ids}
     # La verità di una valutazione è solo ciò che una persona ha approvato,
     # qualunque cosa dica l'ultima build del dataset: una pagina con bozze mai
     # verificate conterebbe l'output del modello come risposta giusta, e il
@@ -472,7 +482,9 @@ def evaluate_project(
     # misura su tutte le pagine approvate, non su un decimo di esse.
     scope = "val" if _has_finished_training(project_id) else "all_approved"
     if scope == "val":
-        _train, val_ids = builder.compute_split(project_id, ratio, seed, split_strategy, approved_only=approved_only)
+        _train, val_ids = builder.compute_split(
+            project_id, ratio, seed, split_strategy, approved_only=approved_only, page_filter=scope_ids,
+        )
         val_ids &= set(page_data)
     else:
         val_ids = set(page_data)
@@ -508,6 +520,7 @@ def evaluate_project(
         "pages_evaluated": len(ok_pages),
         "val_pages": len(val_ids),
         "scope": scope,
+        "collection_scope": collection_scope,
         "aggregates": {
             "layout": _agg_layout(ok_pages),
             "layout_strict": _agg_layout(ok_pages, key="layout_strict"),

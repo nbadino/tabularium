@@ -12,6 +12,7 @@ import { useProjects, useRouteProjectId, writeActiveProject } from '../app/activ
 import { setInference, testInferenceConnection, useInference } from '../app/inference'
 import { IconEvaluate, IconPlayground } from '../app/icons'
 import { useI18n, tn } from '../i18n'
+import { scopeLabel } from '../app/collections'
 import { pageLabel } from '../lib/pageLabel'
 import { useModelNames } from '../app/models/names'
 import { API_BASE } from '../lib/endpoints'
@@ -301,6 +302,9 @@ export default function EvaluationPage() {
               </div>
             ))}
           </section>
+          {report.collection_scope?.kind === 'collections' && (
+            <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('scope.measuredOn', { scope: scopeLabel(report.collection_scope) })}</p>
+          )}
           <p className="text-[12px] text-[color:var(--color-ink-2)]">
             {t('evaluate.compareHint')}{' '}
             <Link to={projectPath(Number(projectId), 'fine-tuning/confronta')} className="font-semibold underline underline-offset-2">{t('evaluate.compareLink')}</Link>

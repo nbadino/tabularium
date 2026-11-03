@@ -568,6 +568,8 @@ def start_run(
         "data_view": recipe.data_view,
         "data_view_manifest": view_manifest,
         "dataset_snapshot_id": snapshot_id,
+        # Which pages the model learns from: the scope of the dataset snapshot.
+        "collection_scope": dataset_collection_scope(project_id),
     }
     if resume_run_id:
         meta["resumed_from"] = resume_run_id
@@ -820,6 +822,21 @@ def _load_run(project_id: int, run_id: str) -> tuple[Path, dict]:
     return run_dir, meta
 
 
+def dataset_collection_scope(project_id: int) -> dict:
+    """The collection scope of the dataset snapshot a new run trains on.
+
+    Snapshots built before collections existed covered the whole project.
+    """
+    whole = {"kind": "project", "collections": [], "include_unassigned": True}
+    try:
+        source, _snapshot = _dataset_source(project_id)
+        report = json.loads((source / "report.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return whole
+    scope = report.get("collection_scope")
+    return scope if isinstance(scope, dict) else whole
+
+
 def list_runs(project_id: int, *, limit: int = 50) -> list[dict]:
     """Le run del progetto, dalla più recente: servono allo storico e al resume."""
     root = runs_dir(project_id)
@@ -847,6 +864,9 @@ def list_runs(project_id: int, *, limit: int = 50) -> list[dict]:
                     ended_at=meta.get("ended_at"),
                 ),
                 "remote_cleaned_at": meta.get("remote_cleaned_at"),
+                # Runs from before collections trained on the whole project.
+                "collection_scope": meta.get("collection_scope")
+                or {"kind": "project", "collections": [], "include_unassigned": True},
             }
         )
     items.sort(key=lambda item: (item.get("started_at") or "", item["run_id"]), reverse=True)

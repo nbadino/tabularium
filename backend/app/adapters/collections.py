@@ -159,3 +159,28 @@ def names(project_id: int) -> dict[int, str]:
     with connect() as conn:
         rows = conn.execute("SELECT id, name FROM collections WHERE project_id=?", (project_id,)).fetchall()
     return {int(r["id"]): str(r["name"]) for r in rows}
+
+
+def pages_in_scope(project_id: int, collection_ids: list[int], include_unassigned: bool) -> set[int]:
+    """Ids of the pages in the chosen collections, plus those without one if asked."""
+    clauses: list[str] = []
+    params: list = [project_id]
+    if collection_ids:
+        clauses.append(f"collection_id IN ({','.join('?' * len(collection_ids))})")
+        params.extend(collection_ids)
+    if include_unassigned:
+        clauses.append("collection_id IS NULL")
+    if not clauses:
+        return set()
+    with connect() as conn:
+        rows = conn.execute(
+            f"SELECT id FROM pages WHERE project_id=? AND ({' OR '.join(clauses)})", params
+        ).fetchall()
+    return {int(r["id"]) for r in rows}
+
+
+def page_collections(project_id: int) -> dict[int, int | None]:
+    """`{page_id: collection_id}` for every page of the project."""
+    with connect() as conn:
+        rows = conn.execute("SELECT id, collection_id FROM pages WHERE project_id=?", (project_id,)).fetchall()
+    return {int(r["id"]): r["collection_id"] for r in rows}

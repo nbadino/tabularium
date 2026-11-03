@@ -11,6 +11,8 @@ import { syncInferenceFromBackend, useInference } from '../app/inference'
 import { useCanAdminister } from '../app/auth'
 import { IconArchive, IconPlayground } from '../app/icons'
 import { useI18n } from '../i18n'
+import { matchesCollection, UNASSIGNED, useCollections } from '../app/collections'
+import type { CollectionFilter } from '../app/collections'
 import { pageLabel, pageShortLabel } from '../lib/pageLabel'
 import { runTitle, useModelNames } from '../app/models/names'
 import { API_BASE } from '../lib/endpoints'
@@ -220,13 +222,18 @@ export default function RecognizePage() {
     }
   }, [current?.id, current?.state])
 
+  const { overview: collections } = useCollections(projectId === '' ? null : projectId)
+  const [collectionFilter, setCollectionFilter] = useState<CollectionFilter>('all')
+  useEffect(() => setCollectionFilter('all'), [projectId])
+  // The collection narrows what the buttons below select, as the text filter does.
+  const scopedPages = useMemo(() => pages.filter((page) => matchesCollection(page, collectionFilter)), [pages, collectionFilter])
   const visiblePages = useMemo(() => {
     const query = pageQuery.trim().toLocaleLowerCase()
-    if (!query) return pages
-    return pages.filter((page) => pageLabel(page).toLocaleLowerCase().includes(query))
-  }, [pages, pageQuery])
+    if (!query) return scopedPages
+    return scopedPages.filter((page) => pageLabel(page).toLocaleLowerCase().includes(query))
+  }, [scopedPages, pageQuery])
   const renderedPages = visiblePages.slice(0, pageLimit)
-  const unrecognized = useMemo(() => pages.filter((page) => (page.blocks ?? 0) === 0), [pages])
+  const unrecognized = useMemo(() => scopedPages.filter((page) => (page.blocks ?? 0) === 0), [scopedPages])
   const runtimeWarning = modelRuntime.find((item) => item.adapter_id === inference.adapterId)
   // «Pronto» = raggiungibile davvero (ping del backend), non solo attivato:
   // un endpoint configurato ma giù non deve sembrare operativo.
@@ -357,6 +364,21 @@ export default function RecognizePage() {
               </Field>
             </div>
             )}
+            {collections && collections.collections.length > 0 && (
+              <div className="min-w-44">
+                <Field label={t('scope.collection')}>
+                  <select
+                    className="fld"
+                    value={String(collectionFilter)}
+                    onChange={(e) => setCollectionFilter(e.target.value === 'all' ? 'all' : e.target.value === UNASSIGNED ? UNASSIGNED : Number(e.target.value))}
+                  >
+                    <option value="all">{t('scope.allCollections')}</option>
+                    {collections.collections.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    <option value={UNASSIGNED}>{t('collections.none')}</option>
+                  </select>
+                </Field>
+              </div>
+            )}
             <div className="min-w-56 flex-1">
               <Field label={t('recognition.filterPages')}>
                 <input
@@ -370,7 +392,7 @@ export default function RecognizePage() {
             <button type="button" className="btn" disabled={visiblePages.length === 0} onClick={() => setSelected((before) => new Set([...before, ...visiblePages.map((page) => page.id)]))}>{t('recognition.selectAll')}</button>
             {/* La scelta più frequente su un corpus già in parte riconosciuto:
                 le pagine che non hanno ancora nessun blocco. */}
-            {unrecognized.length > 0 && unrecognized.length < pages.length && (
+            {unrecognized.length > 0 && unrecognized.length < scopedPages.length && (
               <button type="button" className="btn" onClick={() => setSelected(new Set(unrecognized.map((page) => page.id)))}>
                 {t('recognition.selectUnrecognized', { n: unrecognized.length })}
               </button>
