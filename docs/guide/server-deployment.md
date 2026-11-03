@@ -85,6 +85,8 @@ Do not start the service yet: read step 4 first.
 
 The proxy terminates TLS, allows large uploads (whole PDFs, image folders) and passes
 WebSockets through: the live channel (`/api/live/...`) shows who is on a page.
+ZIP archives are uploaded in 16 MB pieces, so they also pass a CDN that caps request
+bodies (Cloudflare's free plan refuses bodies over 100 MB).
 
 ### Caddy
 

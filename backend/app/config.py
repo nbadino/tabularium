@@ -171,6 +171,17 @@ SSH_KNOWN_HOSTS = Path(os.environ.get("TABULARIUM_SSH_KNOWN_HOSTS", "").strip() 
 BACKUP_RETENTION = max(1, int(os.environ.get("TABULARIUM_BACKUP_RETENTION", "10")))
 VAULT_KEY = os.environ.get("TABULARIUM_VAULT_KEY", "").strip()
 
+# ZIP import limits (docs/COLLECTIONS.md). An archive over a global limit is refused
+# whole; a file over the per-file limits is skipped and reported.
+_MB = 1024 * 1024
+ZIP_MAX_ARCHIVE_BYTES = int(os.environ.get("TABULARIUM_ZIP_MAX_ARCHIVE_MB", "2048")) * _MB
+ZIP_MAX_ENTRIES = int(os.environ.get("TABULARIUM_ZIP_MAX_ENTRIES", "5000"))
+ZIP_MAX_TOTAL_BYTES = int(os.environ.get("TABULARIUM_ZIP_MAX_TOTAL_MB", "4096")) * _MB
+ZIP_MAX_FILE_BYTES = int(os.environ.get("TABULARIUM_ZIP_MAX_FILE_MB", "200")) * _MB
+ZIP_MAX_RATIO = int(os.environ.get("TABULARIUM_ZIP_MAX_RATIO", "100"))
+# Below Cloudflare's 100 MB request cap, so a large archive goes up in pieces.
+ZIP_CHUNK_BYTES = 16 * _MB
+
 
 def ensure_vault_key() -> None:
     """Installato, nessuno lancia `setup_backend.sh`: la chiave del vault la

@@ -62,7 +62,7 @@ afterEach(() => {
 describe('ProjectDetailPage — Pages tab', () => {
   it('an empty project is a place to drop pages', async () => {
     renderPage()
-    expect(await screen.findByText('Trascina qui immagini o PDF')).toBeInTheDocument()
+    expect(await screen.findByText('Trascina qui immagini, PDF o uno ZIP')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Scegli i file' })).toBeInTheDocument()
   })
 

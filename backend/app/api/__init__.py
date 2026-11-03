@@ -27,6 +27,7 @@ from . import (
     system,
     training,
     users,
+    zip_imports,
 )
 
 
@@ -40,6 +41,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(projects.router)
     app.include_router(pages.router)
     app.include_router(collections.router)
+    app.include_router(zip_imports.router)
     app.include_router(page_work.router)
     app.include_router(blocks.router)
     # WebSocket (presenza/notifiche): autenticazione ed accesso gestiti al suo

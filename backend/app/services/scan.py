@@ -168,6 +168,7 @@ def register_candidate(
     archive_dir: Path,
     report: ScanReport,
     lang: str = "it",
+    collection_id: int | None = None,
 ) -> None:
     """Registra un candidato (immagine o PDF) come pagine del progetto.
 
@@ -208,6 +209,7 @@ def register_candidate(
             page_no=meta.page_no,
             page_type=meta.page_type,
             meta_json=json.dumps(extra),
+            collection_id=collection_id,
         )
         if page_id is None:
             report.duplicates += 1
@@ -247,6 +249,7 @@ def register_candidate(
             page_no=meta.page_no if page_count == 1 else str(page_idx + 1),
             page_type=meta.page_type,
             meta_json=json.dumps(extra),
+            collection_id=collection_id,
         )
         if page_id is None:
             report.duplicates += 1
