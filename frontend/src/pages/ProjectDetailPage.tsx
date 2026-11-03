@@ -297,7 +297,7 @@ export default function ProjectDetailPage() {
     setParam('collezione', filter === 'all' ? null : String(filter))
   }
 
-  const movePages = async (pageIds: number[], target: number | null) => {
+  const movePages = async (pageIds: number[], target: number | null, targetName?: string) => {
     if (!pageIds.length) return
     setError(null)
     try {
@@ -305,7 +305,8 @@ export default function ProjectDetailPage() {
       const ids = new Set(pageIds)
       setPages((cur) => cur.map((p) => (ids.has(p.id) ? { ...p, collection_id: target } : p)))
       setSelected(new Set())
-      const name = target == null ? t('collections.none') : collections?.collections.find((c) => c.id === target)?.name ?? ''
+      // A collection created a moment ago is not in `collections` yet: its name comes with the call.
+      const name = target == null ? t('collections.none') : targetName ?? collections?.collections.find((c) => c.id === target)?.name ?? ''
       setMoveNotice(tn('collections.moved', pageIds.length, { name }))
       await refreshCollections()
     } catch (e) {
@@ -323,7 +324,7 @@ export default function ProjectDetailPage() {
       } else {
         const created = await apiPost<CollectionItem>(`/projects/${projectId}/collections`, { name })
         // Pages picked before creating the collection go into it.
-        if (selected.size) await movePages([...selected], created.id)
+        if (selected.size) await movePages([...selected], created.id, created.name)
       }
       await refreshCollections()
       setNameDialog(null)
