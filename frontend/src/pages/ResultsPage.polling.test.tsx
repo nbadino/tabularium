@@ -19,6 +19,7 @@ vi.mock('../lib/api', () => ({
       items: [{ id: 1, page_id: 6, rel_path: 'page.png', page_status: 'new', state: 'running', detected: 0, inserted: 0, blocks: 0, drafts: 0 }],
     }
     if (path.startsWith('/recognition-runs?')) return { items: [running] }
+    if (path.endsWith('/collections')) return { collections: [], unassigned: { key: 'none', pages: 1, with_drafts: 0, by_status: {} }, total: { pages: 1, with_drafts: 0, by_status: {} } }
     calls.detail += 1
     return calls.detail === 1 ? running : { ...running, state: 'finished', completed_pages: 1, items: [{ ...running.items[0], state: 'finished' }] }
   }),
