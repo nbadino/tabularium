@@ -936,6 +936,7 @@ export const it = {
     title: 'Importa {name}',
     uploading: 'Caricamento: {sent} di {size} MB',
     uploadingLabel: 'Caricamento dell’archivio',
+    retrying: 'La connessione si è interrotta: riprovo da dove era arrivato il caricamento…',
     inspecting: 'Leggo il contenuto dell’archivio…',
     starting: 'Avvio dell’importazione…',
     extracting: 'Estraggo i file: {current} di {total}',

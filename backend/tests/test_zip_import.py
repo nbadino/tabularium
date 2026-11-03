@@ -284,3 +284,19 @@ def test_flat_into_a_new_named_collection(client):
     uid = _upload(client, pid, _zip({"d.png": _png()}))
     r = client.post(f"/api/projects/{pid}/zip-uploads/{uid}/import", json={"layout": "flat", "collection_id": cid, "collection_name": "X"})
     assert r.status_code == 422
+
+
+def test_status_says_where_an_interrupted_upload_resumes(client):
+    pid = _project(client)
+    data = _zip({"a.png": _png(), "b.png": _png()})
+    r = client.post(f"/api/projects/{pid}/zip-uploads", json={"filename": "a.zip", "size": len(data)})
+    uid = r.json()["upload_id"]
+    base = f"/api/projects/{pid}/zip-uploads/{uid}"
+    assert client.get(base).json() == {"received": 0, "size": len(data), "imported": False}
+    client.put(base, params={"offset": 0}, content=data[:100])
+    # a piece whose answer was lost and is sent again is refused; the status says where to go on
+    assert client.put(base, params={"offset": 0}, content=data[:100]).status_code == 409
+    assert client.get(base).json()["received"] == 100
+    client.put(base, params={"offset": 100}, content=data[100:])
+    assert client.post(f"{base}/inspect").json()["files"] == 2
+    assert client.get(f"/api/projects/{pid}/zip-uploads/{'0' * 32}").status_code == 404

@@ -6,6 +6,12 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- A large ZIP upload no longer fails on one network hiccup: a piece that does not arrive is sent
+  again after a pause (about two minutes of attempts), from the byte the server says it holds
+  (`GET …/zip-uploads/{id}`); the dialog says it is retrying. An 800 MB archive had failed at
+  97 % on a single dropped connection.
+
 ### Added
 - A cover for each collection: select one of its pages and choose *Use as the cover*; the
   collections column shows it as a thumbnail (migration 22). *Remove the cover* is in the row menu.

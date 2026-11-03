@@ -63,15 +63,32 @@ export function isZip(file: File): boolean {
   return file.name.toLowerCase().endsWith('.zip')
 }
 
+/** Waits before each new attempt at a piece that failed: about two minutes in all. */
+export const RETRY_DELAYS_MS = [1000, 2000, 5000, 10000, 20000, 30000, 60000]
+
+/** Statuses another attempt can fix: an interrupted piece, a piece out of order
+ *  (its answer was lost), a timeout, a rate limit, or the server or proxy failing. */
+const RETRYABLE = (status: number) => status === 400 || status === 408 || status === 409 || status === 429 || status >= 500
+
+const sleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(resolve, ms)
+    signal?.addEventListener('abort', () => { window.clearTimeout(timer); reject(new DOMException('aborted', 'AbortError')) }, { once: true })
+  })
+
 /**
  * Upload the archive in pieces: the live instance sits behind a proxy that refuses
- * bodies over 100 MB. `onProgress` gets the bytes sent so far.
+ * bodies over 100 MB. A piece that fails (the connection drops, the proxy times out)
+ * is sent again after a pause, from the byte the server says it has, so a network
+ * hiccup near the end of a large archive does not throw the upload away.
+ * `onProgress` gets the bytes the server holds and whether it is retrying.
  */
 export async function uploadZip(
   projectId: number,
   file: File,
-  onProgress: (sent: number, size: number) => void,
+  onProgress: (sent: number, size: number, retrying?: boolean) => void,
   signal?: AbortSignal,
+  delays: number[] = RETRY_DELAYS_MS,
 ): Promise<string> {
   const base = `/projects/${projectId}/zip-uploads`
   const { upload_id, chunk_size } = await apiPost<{ upload_id: string; chunk_size: number }>(base, {
@@ -79,9 +96,12 @@ export async function uploadZip(
     size: file.size,
   })
   onProgress(0, file.size)
-  for (let offset = 0; offset < file.size; offset += chunk_size) {
+  let offset = 0
+  let failures = 0
+  while (offset < file.size) {
     const path = `${base}/${upload_id}?offset=${offset}`
-    let res: Response
+    let error: ApiError
+    let res: Response | null = null
     try {
       res = await fetch(apiUrl(path), {
         method: 'PUT',
@@ -90,10 +110,30 @@ export async function uploadZip(
         signal,
       })
     } catch (e) {
-      throw new ApiError('PUT', path, null, e instanceof Error ? e.message : String(e))
+      if (signal?.aborted) throw e
+      error = new ApiError('PUT', path, null, e instanceof Error ? e.message : String(e))
     }
-    if (!res.ok) throw new ApiError('PUT', path, res.status, await res.text())
-    onProgress(Math.min(file.size, offset + chunk_size), file.size)
+    if (res?.ok) {
+      offset = Math.min(file.size, offset + chunk_size)
+      failures = 0
+      onProgress(offset, file.size)
+      continue
+    }
+    if (res) {
+      error = new ApiError('PUT', path, res.status, await res.text())
+      if (!RETRYABLE(res.status)) throw error
+    }
+    if (failures >= delays.length) throw error!
+    onProgress(offset, file.size, true)
+    await sleep(delays[failures], signal)
+    failures += 1
+    // Ask where the upload stands: the piece may have arrived with its answer lost.
+    try {
+      const status = await apiGet<{ received: number }>(`${base}/${upload_id}`)
+      offset = status.received
+    } catch {
+      /* the server is still unreachable: the next attempt tries the same piece */
+    }
   }
   return upload_id
 }

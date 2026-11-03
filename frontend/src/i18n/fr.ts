@@ -937,6 +937,7 @@ export const fr: Dict = {
     title: 'Importer {name}',
     uploading: 'Téléversement : {sent} sur {size} Mo',
     uploadingLabel: 'Téléversement de l’archive',
+    retrying: 'La connexion a été interrompue : nouvel essai à partir de là où le téléversement était arrivé…',
     inspecting: 'Lecture du contenu de l’archive…',
     starting: 'Démarrage de l’importation…',
     extracting: 'Extraction des fichiers : {current} sur {total}',

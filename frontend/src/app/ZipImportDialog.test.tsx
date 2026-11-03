@@ -12,6 +12,7 @@ import { uploadZip } from '../lib/zipImport'
 
 const state = vi.hoisted(() => ({
   plan: {} as Record<string, unknown>,
+  received: 0,
   posts: [] as Array<{ path: string; body: unknown }>,
 }))
 
@@ -32,6 +33,7 @@ vi.mock('../lib/api', () => ({
     return {}
   }),
   apiGet: vi.fn(async (path: string) => {
+    if (path.endsWith('/zip-uploads/u1')) return { received: state.received, size: 10, imported: false }
     if (path.endsWith('/collections')) {
       return {
         collections: [{ id: 7, name: 'Lettere', pages: 4, with_drafts: 0, by_status: {}, created_at: '', updated_at: '' }],
@@ -53,6 +55,41 @@ afterEach(() => {
 })
 
 const file = () => new File(['0123456789'], 'Lloyds.zip', { type: 'application/zip' })
+
+describe('uploadZip retries', () => {
+  it('sends a piece again after the connection drops', async () => {
+    fetchMock.mockImplementationOnce(async () => { throw new TypeError('network') })
+    state.received = 0
+    const seen: Array<[number, boolean | undefined]> = []
+    await uploadZip(5, file(), (sent, _size, retrying) => seen.push([sent, retrying]), undefined, [0, 0])
+    const offsets = fetchMock.mock.calls.map((c) => String((c as unknown[])[0]).split('offset=')[1])
+    expect(offsets).toEqual(['0', '0', '4', '8'])
+    expect(seen).toContainEqual([0, true])
+    expect(seen[seen.length - 1]).toEqual([10, undefined])
+  })
+
+  it('resumes from what the server holds when an answer was lost', async () => {
+    // the piece at 4 arrived but its answer did not: the server holds 8 bytes
+    fetchMock
+      .mockImplementationOnce(async () => new Response('{}', { status: 200 }))
+      .mockImplementationOnce(async () => new Response('{"detail":"bad gateway"}', { status: 502 }))
+    state.received = 8
+    await uploadZip(5, file(), () => {}, undefined, [0])
+    const offsets = fetchMock.mock.calls.map((c) => String((c as unknown[])[0]).split('offset=')[1])
+    expect(offsets).toEqual(['0', '4', '8'])
+  })
+
+  it('gives up on a refusal that a new attempt cannot fix, and after the last attempt', async () => {
+    fetchMock.mockImplementationOnce(async () => new Response('{"detail":"too large"}', { status: 413 }))
+    await expect(uploadZip(5, file(), () => {}, undefined, [0])).rejects.toThrow()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    fetchMock.mockClear()
+    fetchMock.mockImplementation(async () => { throw new TypeError('network') })
+    await expect(uploadZip(5, file(), () => {}, undefined, [0, 0])).rejects.toThrow()
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    fetchMock.mockImplementation(async () => new Response('{}', { status: 200 }))
+  })
+})
 
 describe('ZipImportDialog', () => {
   it('uploads in chunks of the size the server asks for', async () => {

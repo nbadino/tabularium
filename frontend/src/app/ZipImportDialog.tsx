@@ -7,7 +7,7 @@ import { describeError } from '../lib/errors'
 import { useCollections } from './collections'
 
 type Step =
-  | { kind: 'uploading'; sent: number; size: number }
+  | { kind: 'uploading'; sent: number; size: number; retrying?: boolean }
   | { kind: 'inspecting' }
   | { kind: 'choosing'; plan: ZipPlan }
   | { kind: 'importing'; job: ZipJob | null }
@@ -74,7 +74,7 @@ export default function ZipImportDialog({
     abort.current = controller
     void (async () => {
       try {
-        const id = await uploadZip(projectId, file, (sent, size) => setStep({ kind: 'uploading', sent, size }), controller.signal)
+        const id = await uploadZip(projectId, file, (sent, size, retrying) => setStep({ kind: 'uploading', sent, size, retrying }), controller.signal)
         uploadId.current = id
         setStep({ kind: 'inspecting' })
         const plan = await inspectZip(projectId, id)
@@ -121,6 +121,7 @@ export default function ZipImportDialog({
         <div>
           <p className="text-[13px]">{t('zip.uploading', { sent: mb(step.sent), size: mb(step.size) })}</p>
           <Bar value={step.size ? step.sent / step.size : 0} label={t('zip.uploadingLabel')} />
+          {step.retrying && <p role="status" className="mt-2 text-[12px] text-[color:var(--color-warn)]">{t('zip.retrying')}</p>}
         </div>
       )}
       {step.kind === 'inspecting' && <p className="text-[13px]">{t('zip.inspecting')}</p>}

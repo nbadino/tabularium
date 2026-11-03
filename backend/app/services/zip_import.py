@@ -175,6 +175,12 @@ def append_chunk(project_id: int, upload_id: str, offset: int, data: bytes) -> d
     return {"received": state["received"], "size": state["size"]}
 
 
+def status(project_id: int, upload_id: str) -> dict:
+    """Bytes received so far, so an interrupted upload resumes where it stopped."""
+    state = _state(project_id, upload_id)
+    return {"received": state["received"], "size": state["size"], "imported": state["imported"]}
+
+
 def cancel(project_id: int, upload_id: str) -> None:
     state = _state(project_id, upload_id)
     if state["imported"]:

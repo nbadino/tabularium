@@ -74,7 +74,9 @@ therefore uploaded **in chunks** of 16 MB:
 1. `POST /api/projects/{id}/zip-uploads {filename, size}` → `{upload_id}` (size checked
    against the limit before a byte is sent);
 2. `PUT /api/projects/{id}/zip-uploads/{upload_id}?offset=N` with the raw chunk, in order;
-   the browser shows real upload progress;
+   the browser shows real upload progress. A chunk that fails (dropped connection, proxy
+   timeout, 5xx, or 409 when its answer was lost) is retried with growing pauses, from the
+   offset `GET …/zip-uploads/{upload_id}` reports;
 3. `POST /api/projects/{id}/zip-uploads/{upload_id}/inspect` → the plan (below), without
    extracting anything;
 4. `POST /api/projects/{id}/zip-uploads/{upload_id}/import {layout: "collections" | "flat",
