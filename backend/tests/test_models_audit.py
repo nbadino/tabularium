@@ -180,3 +180,38 @@ def test_llamaparse_timeouts_respect_the_vendor_maximums():
 
     assert LLAMAINDEX_WORKFLOW_LIMITS["job_timeout_in_seconds"][1] == 7_200
     assert LLAMAINDEX_WORKFLOW_LIMITS["job_timeout_extra_time_per_page_in_seconds"][1] == 300
+
+
+def test_every_model_declares_its_public_benchmark_or_why_not():
+    from app.models import SPECS
+    from app.models.benchmarks import PUBLIC_SCORES
+
+    assert set(PUBLIC_SCORES) == set(SPECS)
+
+
+def test_public_scores_match_the_omnidocbench_v16_leaderboard():
+    # github.com/opendatalab/OmniDocBench README, table "v1.6_full", Overall,
+    # read on 2026-11-03; vendor rows are labelled as such.
+    from app.models.benchmarks import public_benchmark
+
+    leaderboard = {
+        "teleocr": 96.91, "paddleocr-vl": 96.34, "mineru2.5": 95.75, "glm-ocr": 95.22,
+        "unlimited-ocr": 94.00, "monkeyocrv2-parsing": 91.80, "deepseek-ocr": 90.25,
+    }
+    for adapter_id, value in leaderboard.items():
+        score = public_benchmark(adapter_id)
+        assert (score["value"], score["reported_by"]) == (value, "leaderboard"), adapter_id
+    assert public_benchmark("xiaomi-ocr-0")["reported_by"] == "vendor"
+    assert public_benchmark("unlimited-ocr-2")["value"] == 94.02
+    unpublished = public_benchmark("lightonocr-3")
+    assert unpublished["value"] is None and unpublished["note"]
+    assert public_benchmark("custom-anything")["value"] is None
+
+
+def test_the_catalog_carries_each_models_public_benchmark():
+    from app.services import model_registry
+
+    rows = {item["adapter_id"]: item for item in model_registry.list_models()}
+    assert rows["teleocr"]["benchmark"]["value"] == 96.91
+    assert rows["teleocr"]["benchmark"]["benchmark"] == "OmniDocBench v1.6"
+    assert rows["surya-ocr-2.5"]["benchmark"]["value"] is None

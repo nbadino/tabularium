@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { destinationForProvider, destinationVerdict, isSelectable, orderedDestinations, recommendedDestination, resolveStep, type ModelItem } from './registry'
+import { byPublicScore, destinationForProvider, destinationVerdict, isSelectable, orderedDestinations, recommendedDestination, resolveStep, type ModelItem } from './registry'
 
 function model(over: Partial<ModelItem> = {}): ModelItem {
   return {
@@ -142,5 +142,19 @@ describe('orderedDestinations', () => {
     expect(order.slice(firstImpossible).every((d) => !destinationVerdict(model(), d).ok)).toBe(true)
     expect(order).toContain('local')
     expect(order.indexOf('local')).toBeGreaterThanOrEqual(firstImpossible)
+  })
+})
+
+describe('byPublicScore', () => {
+  const scored = (id: string, value: number | null) =>
+    model({
+      adapter_id: id,
+      display_name: id,
+      benchmark: { benchmark: 'OmniDocBench v1.6', metric: 'Overall', value, reported_by: value == null ? null : 'leaderboard', source: null, note: '' },
+    })
+
+  it('puts the highest public score first and models without one last, in catalog order', () => {
+    const items = [scored('a', null), scored('b', 91.8), scored('c', 96.91), scored('d', null), model({ adapter_id: 'e', benchmark: undefined })]
+    expect([...items].sort(byPublicScore).map((m) => m.adapter_id)).toEqual(['c', 'b', 'a', 'd', 'e'])
   })
 })

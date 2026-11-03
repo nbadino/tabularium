@@ -39,6 +39,9 @@ export interface ModelItem {
     mlx_repo_choices?: { variant: string; repo: string; fits?: boolean }[]
     mlx_repetition_penalty?: number | null
   }
+  /** Public score that orders the catalog (backend `models/benchmarks.py`): one
+   *  benchmark for every model, with its provenance; `value: null` carries the reason. */
+  benchmark?: PublicBenchmark
   cloud_serve_ready: boolean
   /** Template Modal che serve questo modello; `null` = nessuna ricetta. */
   cloud_template: string | null
@@ -85,6 +88,25 @@ export const isDestination = (v: string | null | undefined): v is Destination =>
  * configurazione salvata non riconosceva più la destinazione scelta e mostrava
  * «da scegliere» subito dopo un salvataggio riuscito.
  */
+export interface PublicBenchmark {
+  benchmark: string
+  metric: string
+  value: number | null
+  reported_by: 'leaderboard' | 'vendor' | null
+  source: string | null
+  note: string
+}
+
+/** Catalog order: highest public score first; models without one keep their order, last. */
+export function byPublicScore(a: ModelItem, b: ModelItem): number {
+  const va = a.benchmark?.value ?? null
+  const vb = b.benchmark?.value ?? null
+  if (va == null && vb == null) return 0
+  if (va == null) return 1
+  if (vb == null) return -1
+  return vb - va
+}
+
 export function destinationForProvider(provider: string | null | undefined): Destination | null {
   if (!provider) return null
   if (provider === 'custom') return 'manual'

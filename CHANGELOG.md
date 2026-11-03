@@ -54,6 +54,9 @@ Notable changes to Tabularium. The format follows
   administrator was created elsewhere returns to the login.
 
 ### Added
+- Models: the catalog is sorted by public OmniDocBench v1.6 score (overall), shown next to
+  each model with who measured it (official leaderboard or the vendor) and a link to the
+  source; models without a published score say so and come last.
 - A server deployment guide: install with uv for a service user, a systemd unit, Caddy or
   nginx with TLS and WebSockets, a CDN in front, the first administrator, and `doctor`
   against the service (#34).
