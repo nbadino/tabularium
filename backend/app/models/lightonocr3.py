@@ -20,6 +20,9 @@ SPEC = ModelSpec(
             runtime="vllm",
             # The version the vendor used for its throughput benchmarks.
             vllm_version="0.30.0",
+            # Vendor `benchmarks/docker/lightonocr-1b.Dockerfile`: vLLM 0.30.0's pixtral.py
+            # imports a class transformers 5.17 renamed, so the image pins 5.16.1.
+            transformers_version="5.16.1",
             serve_args=(
                 "--limit-mm-per-prompt", '{"image": 1}',
                 "--mm-processor-cache-gb", "0",

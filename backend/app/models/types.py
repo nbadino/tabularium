@@ -180,25 +180,44 @@ PADDLE_WORKFLOW_FIELDS = (
     | set(PADDLE_WORKFLOW_ENUMS)
 )
 
-# LlamaCloud accepts Tesseract-style ISO 639-3 language codes. Keeping the
-# documented set here gives the UI a bounded native vocabulary and prevents a
-# typo from becoming a paid, failed parse job.
+# LlamaParse's `ParsingLanguages` enum (`processing_options.ocr_parameters.languages`,
+# API reference "parsing/methods/create", November 2026): short codes such as `en`,
+# `it`, `la`, `ch_sim`. Keeping the documented set here gives the UI a bounded native
+# vocabulary and prevents a typo from becoming a paid, failed parse job.
 LLAMAINDEX_OCR_LANGUAGES = frozenset({
-    "abq", "ach", "afr", "aka", "amh", "ara", "asm", "ava", "aym", "aze",
-    "bak", "bam", "bel", "bem", "ben", "bod", "bos", "bre", "bul", "cat",
-    "ceu", "ces", "cha", "che", "chi_sim", "chi_tra", "chr", "cos", "cym",
-    "dan", "deu", "div", "dzo", "ell", "eng", "enm", "epo", "est", "eus",
-    "fao", "fas", "fij", "fin", "fra", "frk", "frm", "fry", "gla", "gle",
-    "glg", "grc", "grn", "guj", "hat", "hau", "heb", "hin", "hrv", "hun",
-    "hye", "ibo", "ido", "iku", "ile", "ina", "ind", "isl", "ita", "jav",
-    "jpn", "kan", "kat", "kaz", "khm", "kir", "kmr", "kor", "lao", "lat",
-    "lav", "lit", "ltz", "mal", "mar", "mkd", "mlt", "mon", "mri", "msa",
-    "mya", "nep", "nld", "nor", "oci", "ori", "orm", "pan", "pol", "por",
-    "pus", "que", "ron", "rus", "san", "sin", "slk", "slv", "snd", "spa",
-    "sqi", "srp", "sun", "swa", "swe", "syr", "tam", "tat", "tel", "tgk",
-    "tha", "tir", "ton", "tur", "uig", "ukr", "urd", "uzb", "vie", "yid",
-    "yor",
+    "abq", "ady", "af", "ang", "ar", "as", "ava", "az", "be", "bg", "bgc", "bh", "bho",
+    "bn", "bs", "ch_sim", "ch_tra", "che", "cs", "cy", "da", "dar", "de", "en", "es",
+    "et", "fa", "fr", "ga", "gom", "hi", "hr", "hu", "id", "inh", "is", "it", "ja",
+    "kbd", "kn", "ko", "ku", "la", "lbe", "lez", "lt", "lv", "mah", "mai", "mi", "mn",
+    "mni", "mr", "ms", "mt", "ne", "new", "nl", "no", "oc", "pi", "pl", "pt", "ro",
+    "rs_cyrillic", "rs_latin", "ru", "sa", "sck", "sk", "sl", "sq", "sv", "sw", "ta",
+    "tab", "te", "th", "tjk", "tl", "tr", "ug", "uk", "ur", "uz", "vi",
 })
+# Tesseract codes Tabularium used to store before November 2026; they are not in the
+# enum, so a saved setting is translated on read (and dropped when there is no match).
+LLAMAINDEX_LEGACY_LANGUAGES = {
+    "eng": "en", "ita": "it", "lat": "la", "fra": "fr", "deu": "de", "spa": "es",
+    "por": "pt", "nld": "nl", "rus": "ru", "ara": "ar", "hin": "hi", "jpn": "ja",
+    "kor": "ko", "chi_sim": "ch_sim", "chi_tra": "ch_tra", "pol": "pl", "ron": "ro",
+    "swe": "sv", "tur": "tr", "ces": "cs", "dan": "da", "afr": "af", "aze": "az",
+    "bel": "be", "bul": "bg", "ben": "bn", "bos": "bs", "cym": "cy", "est": "et",
+    "fas": "fa", "gle": "ga", "hrv": "hr", "hun": "hu", "ind": "id", "isl": "is",
+    "kan": "kn", "kmr": "ku", "lit": "lt", "lav": "lv", "mri": "mi", "mon": "mn",
+    "mar": "mr", "msa": "ms", "mlt": "mt", "nep": "ne", "nor": "no", "oci": "oc",
+    "san": "sa", "slk": "sk", "slv": "sl", "sqi": "sq", "swa": "sw", "tam": "ta",
+    "tel": "te", "tha": "th", "ukr": "uk", "urd": "ur", "uzb": "uz", "vie": "vi",
+    "uig": "ug", "asm": "as",
+}
+
+
+def normalize_llamaindex_languages(codes: Any) -> list[str]:
+    """Saved codes in the vendor's vocabulary, in order, without duplicates."""
+    result: list[str] = []
+    for code in codes if isinstance(codes, list) else []:
+        mapped = LLAMAINDEX_LEGACY_LANGUAGES.get(code, code)
+        if mapped in LLAMAINDEX_OCR_LANGUAGES and mapped not in result:
+            result.append(mapped)
+    return result
 LLAMAINDEX_WORKFLOW_BOOLEANS = {
     "aggressive_table_extraction",
     "disable_heuristics",
@@ -216,8 +235,9 @@ LLAMAINDEX_WORKFLOW_BOOLEANS = {
     "disable_cache",
 }
 LLAMAINDEX_WORKFLOW_LIMITS = {
-    "job_timeout_in_seconds": (30, 86_400),
-    "job_timeout_extra_time_per_page_in_seconds": (0, 3_600),
+    # API reference: base timeout max 7200 s, extra time per page max 300 s.
+    "job_timeout_in_seconds": (30, 7_200),
+    "job_timeout_extra_time_per_page_in_seconds": (0, 300),
     "allowed_page_failure_ratio": (0.0, 1.0),
 }
 LLAMAINDEX_WORKFLOW_ENUMS = {
@@ -241,7 +261,7 @@ def llamaindex_workflow_defaults() -> dict[str, Any]:
         "tier": "agentic",
         "version": "latest",
         "confidence_score_effort": "standard",
-        "languages": ["eng"],
+        "languages": ["en"],
         "aggressive_table_extraction": True,
         "disable_heuristics": False,
         "specialized_chart_parsing": "off",

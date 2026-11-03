@@ -215,7 +215,10 @@ def test_teleocr_crop_prompts_and_vllm_recipe_are_explicitly_scoped():
         "vllm", "serve", "/tmp/teleocr", "--port", "8888",
         "--trust-remote-code", "--dtype", "bfloat16",
         "--gpu-memory-utilization", "0.95", "--max-model-len", "16384",
-        "--max-num-seqs", "4", "--served-model-name", "StarDoc-AI/TeleOCR",
+        "--max-num-seqs", "4",
+        "--logits-processors",
+        "TeleOCR.vlm_utils.vlm_client.vllm_v1_no_repeat_ngram:VllmV1NoRepeatNGramLogitsProcessor",
+        "--served-model-name", "StarDoc-AI/TeleOCR",
     ]
     assert RECIPES["teleocr"].hf_repo == "StarDoc-AI/TeleOCR"
     assert RECIPES["teleocr"].vllm_version == "0.11.0"
@@ -280,6 +283,7 @@ def test_mineru_parse_layout_returns_nothing_for_unrecognizable_output():
 def test_mineru_sampling_matches_official_client_defaults():
     adapter = model_adapters.get_adapter("mineru2.5")
     base = {
+        "temperature": 0.0,
         "top_p": 0.01,
         "top_k": 1,
         "skip_special_tokens": False,

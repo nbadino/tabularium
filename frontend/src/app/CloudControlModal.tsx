@@ -285,7 +285,7 @@ export const MODAL_TEMPLATES = [
  *  una verità — l'endpoint resta modificabile a mano. La chiave la legge il
  *  backend dall'archivio di opencode, quindi qui non si mostra. */
 export const OPENCODE_ARGON_URL = 'https://opencode.ai/inference/go/google/v1beta'
-export const OPENCODE_ARGON_MODEL = 'gemini-4-argon-contributor'
+export const OPENCODE_ARGON_MODEL = 'gemini-4-argon'
 
 function copyToClipboard(text: string, onDone: () => void) {
   navigator.clipboard?.writeText(text).then(onDone).catch(() => {})

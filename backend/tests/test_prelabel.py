@@ -354,7 +354,7 @@ def test_model_end2end_argon_keeps_header_elements_and_table(tmp_path: Path, mon
     from app.services.model_adapters import GeminiArgonAdapter
 
     class FakeModel:
-        model = "gemini-4-argon-contributor"
+        model = "gemini-4-argon"
         adapter = GeminiArgonAdapter()
 
         def ping(self):

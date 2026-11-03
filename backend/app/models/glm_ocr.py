@@ -19,6 +19,12 @@ GLM_LABELS: dict[str, str] = {
     "footer": "Page-footer", "page_number": "Page-footer", "seal": "Picture",
     "reference": "Text", "chart": "Picture", "image": "Picture",
     "display_formula": "Formula", "inline_formula": "Formula",
+    # PP-DocLayoutV3 classes, which the SDK formatter keeps in `native_label`.
+    "doc_title": "Title", "paragraph_title": "Section-header", "figure_title": "Caption",
+    "abstract": "Text", "content": "Text", "reference_content": "Text",
+    "aside_text": "Text", "vertical_text": "Text", "algorithm": "Text",
+    "number": "Page-footer", "footnote": "Footnote", "vision_footnote": "Footnote",
+    "formula_number": "Formula", "header_image": "Picture", "footer_image": "Picture",
 }
 
 SPEC = ModelSpec(

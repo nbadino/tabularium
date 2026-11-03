@@ -23,6 +23,7 @@ from typing import Protocol
 
 from .. import config
 from ..models import monkeyocrv2 as reference
+from ..models.types import FAMILY_FORMULA, FAMILY_TABLE, FAMILY_TEXT, GLM_TRAIN_PROMPTS
 
 from .model_labels import (
     DEEPSEEK_LABELS,
@@ -168,6 +169,12 @@ class MonkeyOCRv2ParsingAdapter:
     # loop sulle coordinate quando riceve gli 11 MP originali.
     end2end_max_pixels = reference.PARSE_MAX_PIXELS
     end2end_max_tokens = 12_288
+    # `core_runner.batch_inference_with_repeat_retry(..., max_tokens=5000)`.
+    text_max_tokens = 5000
+    # `core_runner._chat_completion` sends `"temperature": 0` on every call (only the
+    # repeat retry raises it). Without it vLLM would apply the checkpoint's
+    # generation_config.json, which samples at 0.6.
+    recommended_generation = {"temperature": 0.0}
     capabilities = ModelCapabilities(
         adapter_id=adapter_id,
         display_name="MonkeyOCRv2-Parsing",
@@ -402,6 +409,7 @@ class MinerU2_5Adapter(_StubAdapter):
         # output di solo testo, zero blocchi). Valori di default verificati
         # su `MinerUSamplingParams` in mineru_client.py (agosto 2026).
         base: dict = {
+            "temperature": 0.0,
             "top_p": 0.01,
             "top_k": 1,
             "skip_special_tokens": False,
@@ -525,6 +533,10 @@ class UnlimitedOcrAdapter(_StubAdapter):
     # il prompt contiene il token letterale <image> prima del contenuto.
     multimodal_content_order = "text-image"
     end2end_max_tokens = 8192
+    # Official greedy decoding (vLLM `unlimited_ocr.py` example and recipe):
+    # the checkpoint's generation_config.json has no temperature, so without this
+    # vLLM would sample at 1.0.
+    recommended_generation = {"temperature": 0.0}
     capabilities = ModelCapabilities(
         adapter_id=adapter_id,
         display_name="Unlimited-OCR",
@@ -614,7 +626,10 @@ class UnlimitedOcrAdapter(_StubAdapter):
         workflow = model_settings.get_settings(self.adapter_id)["effective"]["workflow"]
         return {
             "skip_special_tokens": False,
+            # SGLang and the vendor client read `images_config`; vLLM's processor
+            # reads `crop_mode` from the multimodal kwargs (`unlimited_ocr.py`).
             "images_config": {"image_mode": workflow.get("image_mode", "gundam")},
+            "mm_processor_kwargs": {"crop_mode": workflow.get("image_mode", "gundam") == "gundam"},
             "vllm_xargs": {
                 "ngram_size": workflow.get("ngram_size", 35),
                 "window_size": workflow.get("window_size", 128),
@@ -883,23 +898,26 @@ class DotsOcrAdapter(_StubAdapter):
         # percorso no: servono prompt/template adattati, non solo i pesi.
     )
 
+    # Byte for byte `prompt_layout_all_en` from `dots_mocr/utils/prompts.py`.
     _PROMPTS = {
         "end2end": (
-            "Please output the layout information from the PDF image, including each "
-            "layout element's bbox, its category, and the corresponding text content within the bbox.\n\n"
-            "1. Bbox format: [x1, y1, x2, y2]\n\n"
-            "2. Layout Categories: The possible categories are ['Caption', 'Footnote', 'Formula', "
-            "'List-item', 'Page-footer', 'Page-header', 'Picture', 'Section-header', 'Table', "
-            "'Text', 'Title'].\n\n"
-            "3. Text Extraction & Formatting Rules:\n\n"
-            "- Picture: For the 'Picture' category, the text field should be omitted.\n\n"
-            "- Formula: Format its text as LaTeX.\n\n"
-            "- Table: Format its text as HTML.\n\n"
-            "- All Others (Text, Title, etc.): Format their text as Markdown.\n\n"
-            "4. Constraints:\n\n"
-            "- The output text must be the original text from the image, with no translation.\n\n"
-            "- All layout elements must be sorted according to human reading order.\n\n"
-            "5. Final Output: The entire output must be a single JSON object."
+            "Please output the layout information from the PDF image, including each layout element's bbox, its category, and the corresponding text content within the bbox.\n"
+            '\n'
+            '1. Bbox format: [x1, y1, x2, y2]\n'
+            '\n'
+            "2. Layout Categories: The possible categories are ['Caption', 'Footnote', 'Formula', 'List-item', 'Page-footer', 'Page-header', 'Picture', 'Section-header', 'Table', 'Text', 'Title'].\n"
+            '\n'
+            '3. Text Extraction & Formatting Rules:\n'
+            "    - Picture: For the 'Picture' category, the text field should be omitted.\n"
+            '    - Formula: Format its text as LaTeX.\n'
+            '    - Table: Format its text as HTML.\n'
+            '    - All Others (Text, Title, etc.): Format their text as Markdown.\n'
+            '\n'
+            '4. Constraints:\n'
+            '    - The output text must be the original text from the image, with no translation.\n'
+            '    - All layout elements must be sorted according to human reading order.\n'
+            '\n'
+            '5. Final Output: The entire output must be a single JSON object.\n'
         ),
     }
 
@@ -944,6 +962,10 @@ class GlmOcrAdapter(_StubAdapter):
     checkpoint molto piccolo (~2.7 GB) su una GPU da 8 GB."""
 
     adapter_id = "glm-ocr"
+    # The export is built from the training recipe's official prompts
+    # (`GLM_TRAIN_PROMPTS`, recognition families only), not from `prompt_for`,
+    # which has no layout prompt because the vendor has none.
+    supports_dataset_export = True
     # Which client method runs this model's official pipeline (
     # `VllmClient.<runner>_native_page`). Declared once, here.
     native_runner = "glmocr"
@@ -984,16 +1006,21 @@ class GlmOcrAdapter(_StubAdapter):
         # nulla, e su MLX il prompt che gliele chiede non è quello verificato.
     )
 
+    # The model card supports exactly these three prompts; layout comes from the
+    # SDK's PP-DocLayout stage, not from a prompt. Same strings as training.
     _PROMPTS = {
-        "layout": "Return the document layout as a JSON array in reading order. Each item must have bbox [x1,y1,x2,y2] normalized from 0 to 1000 and category.",
-        "text": "Transcribe all text in this image exactly. Return plain text only.",
-        "table": "Extract the table in this image in OTSL format. Preserve every row, column, empty cell, and merged-cell span.",
+        "text": GLM_TRAIN_PROMPTS[FAMILY_TEXT],
+        "table": GLM_TRAIN_PROMPTS[FAMILY_TABLE],
+        "formula": GLM_TRAIN_PROMPTS[FAMILY_FORMULA],
     }
 
     def prompt_for(self, task: str, label: str | None = None) -> str | None:
         prompt = self._PROMPTS.get(task)
         if prompt is None:
-            raise NotImplementedError(f"adapter '{self.adapter_id}': task '{task}' non supportato")
+            raise NotImplementedError(
+                f"adapter '{self.adapter_id}': task '{task}' has no official prompt "
+                "(layout runs in the SDK pipeline)"
+            )
         return prompt
 
     def sampling_for(self, task: str) -> dict:
@@ -1020,11 +1047,20 @@ class GlmOcrAdapter(_StubAdapter):
                 continue
             if not (0 <= coords[0] < coords[2] <= 1000 and 0 <= coords[1] < coords[3] <= 1000):
                 continue
-            kind = str(region.get("label") or "text").strip().lower()
+            # The SDK formatter collapses `label` to text/table/formula/image and
+            # keeps the PP-DocLayoutV3 class in `native_label`.
+            native = str(region.get("native_label") or "").strip().lower()
+            kind = native or str(region.get("label") or "text").strip().lower()
+            content = str(region.get("content") or "")
+            # ... and prefixes titles with Markdown heading marks.
+            if native == "doc_title" and content.startswith("# "):
+                content = content[2:]
+            elif native == "paragraph_title" and content.startswith("## "):
+                content = content[3:]
             result.append({
                 "bbox": coords,
-                "label": labels.get(kind, "Text"),
-                "content": str(region.get("content") or ""),
+                "label": labels.get(kind, labels.get(str(region.get("label") or "").lower(), "Text")),
+                "content": content,
             })
         return result
 
@@ -1050,7 +1086,8 @@ class DeepSeekOcrAdapter(_StubAdapter):
     esposti come workflow d'inferenza a due stadi.
 
     `serve_command` verificato su recipes.vllm.ai/deepseek-ai/DeepSeek-OCR-2
-    (agosto 2026): richiede **vLLM >= 0.12.0** (l'architettura ha una storia
+    (agosto 2026): richiede **vLLM >= 0.16.0**, la prima release con
+    `deepseek_ocr2.py` (l'architettura ha una storia
     di breaking change fra versioni vLLM — verificare con `vllm serve --help`
     prima del deploy) e `--trust-remote-code`. Il logits processor
     dedicato evita loop di generazione su documenti lunghi, sullo stesso
@@ -1064,7 +1101,9 @@ class DeepSeekOcrAdapter(_StubAdapter):
     adapter_id = "deepseek-ocr"
     native_prefill_mode = "end2end"
     end2end_output_format = "grounded-markdown"
-    end2end_max_tokens = 4096
+    # Official: max_tokens=8192 (vendor scripts, vLLM recipe). The client clamps it
+    # to the served context minus the image and prompt (`_output_budget`).
+    end2end_max_tokens = 8192
     capabilities = ModelCapabilities(
         adapter_id=adapter_id,
         display_name="DeepSeek-OCR-2",
@@ -1260,12 +1299,14 @@ class PaddleOcrVlAdapter(_StubAdapter):
         )
 
     def sampling_for(self, task: str) -> dict:
+        # Greedy, as the PaddleX vllm-server client and the vLLM recipe send it; the
+        # checkpoint has no generation_config temperature, so vLLM would use 1.0.
         if task == "table":
             # Lascia spazio sufficiente per il registro completo; il modello
             # ha max-model-len=12288 e vLLM riduce comunque il budget effettivo
             # se il prompt multimodale occupa parte del contesto.
-            return {"max_tokens": 4096}
-        return {}
+            return {"temperature": 0.0, "max_tokens": 4096}
+        return {"temperature": 0.0}
 
     def serve_command(self, model_path: str, port: int) -> list[str] | None:
         return [
@@ -1671,7 +1712,11 @@ class TeleOcrAdapter(_StubAdapter):
             "--dtype", "bfloat16",
             "--gpu-memory-utilization", "0.95",
             "--max-model-len", "16384",
+            # Local-GPU cap (8 GB cards), not in the vendor command.
             "--max-num-seqs", "4",
+            # The vendor's no-repeat n-gram guard, as in the cloud recipe.
+            "--logits-processors",
+            "TeleOCR.vlm_utils.vlm_client.vllm_v1_no_repeat_ngram:VllmV1NoRepeatNGramLogitsProcessor",
             "--served-model-name", self.capabilities.served_model_name,
         ]
 
@@ -2083,7 +2128,7 @@ class GeminiArgonAdapter(_StubAdapter):
         # Endpoint esterno con protocollo Google `generateContent`: né un server
         # vLLM locale né una template Modal/Vast.
         serve_backend="opencode-gateway",
-        served_model_name="gemini-4-argon-contributor",
+        served_model_name="gemini-4-argon",
         max_model_len=1_048_576,
         maturity="experimental",
         # Nessun percorso locale: non ci sono pesi da servire.
@@ -2519,8 +2564,9 @@ def supports_export(adapter: ModelAdapter) -> bool:
     prompt per anche una sola famiglia, es. dots.ocr e PaddleOCR-VL —
     produrrebbe un export che finisce sempre in `NotImplementedError`. La UI
     deve filtrare il selettore dell'export, non offrire opzioni morte."""
-    if getattr(adapter, "supports_dataset_export", None) is False:
-        return False
+    declared = getattr(adapter, "supports_dataset_export", None)
+    if declared is not None:
+        return bool(declared)
     for task in ("layout", "text", "table"):
         try:
             adapter.prompt_for(task)

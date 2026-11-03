@@ -154,7 +154,7 @@ def test_benchmark_target_client_uses_opencode_store_key(monkeypatch):
     client = benchmod._target_client({
         "adapter_id": "gemini-argon",
         "url": "https://opencode.ai/inference/go/google/v1beta",
-        "model": "gemini-4-argon-contributor",
+        "model": "gemini-4-argon",
     })
     assert client.api_key == "store-key"
 

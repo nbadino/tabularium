@@ -367,7 +367,7 @@ def test_playground_reads_headers_and_table_with_end2end_model(tmp_path, monkeyp
 
     class FakeClient:
         adapter = model_adapters.get_adapter("gemini-argon")
-        model = "gemini-4-argon-contributor"
+        model = "gemini-4-argon"
         url = "https://opencode.ai/inference/go/google/v1beta"
         provider = "custom"
 

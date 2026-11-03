@@ -46,7 +46,7 @@ def test_table_prompt_pins_the_canonical_otsl_tokens():
 
 def test_endpoint_guessing_recognizes_argon_and_opencode_provider():
     assert infmod._adapter_for_endpoint(
-        "gemini-4-argon-contributor",
+        "gemini-4-argon",
         "https://opencode.ai/inference/go/google/v1beta",
     ) == "gemini-argon"
     assert infmod._provider_for_endpoint(
@@ -60,7 +60,7 @@ def test_google_base_url_accepts_base_or_full_model_endpoint():
         adapter=model_adapters.get_adapter("gemini-argon"),
     )
     assert client._google_base_url() == "https://opencode.ai/inference/go/google/v1beta"
-    client.url = "https://opencode.ai/inference/go/google/v1beta/models/gemini-4-argon-contributor"
+    client.url = "https://opencode.ai/inference/go/google/v1beta/models/gemini-4-argon"
     assert client._google_base_url() == "https://opencode.ai/inference/go/google/v1beta"
     client.url = "https://generativelanguage.googleapis.com/v1beta/models/x:generateContent"
     assert client._google_base_url() == "https://generativelanguage.googleapis.com/v1beta"
@@ -70,7 +70,7 @@ def test_recognize_table_uses_generate_content_with_session_header(monkeypatch):
     adapter = model_adapters.get_adapter("gemini-argon")
     client = infmod.VllmClient(
         url="https://opencode.ai/inference/go/google/v1beta",
-        model="gemini-4-argon-contributor",
+        model="gemini-4-argon",
         api_key="oc-key",
         adapter=adapter,
         provider="opencode",
@@ -101,7 +101,7 @@ def test_recognize_table_uses_generate_content_with_session_header(monkeypatch):
     text = client.recognize(Image.new("RGB", (64, 48), "white"), "Table")
 
     assert text == "<fcel>Corbank<fcel>Br<nl><fcel>Corbeach<ecel><nl>"
-    assert captured["url"].endswith("/models/gemini-4-argon-contributor:generateContent")
+    assert captured["url"].endswith("/models/gemini-4-argon:generateContent")
     assert captured["headers"]["x-opencode-session"] == client._session_id
     assert captured["headers"]["Authorization"] == "Bearer oc-key"
     body = captured["json"]
@@ -117,7 +117,7 @@ def _client():
 
     return infmod2, infmod2.VllmClient(
         url="https://opencode.ai/inference/go/google/v1beta",
-        model="gemini-4-argon-contributor",
+        model="gemini-4-argon",
         api_key="oc",
         adapter=model_adapters.get_adapter("gemini-argon"),
         provider="opencode",
@@ -176,7 +176,7 @@ def test_save_normalizes_the_gateway_provider_and_clears_the_legacy_cap():
     inf.save_inference_config({
         "enabled": True,
         "url": "https://opencode.ai/inference/go/google/v1beta",
-        "model": "gemini-4-argon-contributor",
+        "model": "gemini-4-argon",
         "adapter_id": "gemini-argon",
     })
     cfg = inf.get_inference_config()
@@ -213,7 +213,7 @@ def test_vllm_client_falls_back_to_the_opencode_store_for_the_gateway(monkeypatc
         "get_inference_config",
         lambda: {
             "url": "https://opencode.ai/inference/go/google/v1beta",
-            "model": "gemini-4-argon-contributor",
+            "model": "gemini-4-argon",
             "api_key": "",
             "adapter_id": "gemini-argon",
             "provider": "opencode",

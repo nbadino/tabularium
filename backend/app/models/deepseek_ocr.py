@@ -29,7 +29,8 @@ SPEC = ModelSpec(
         hf_repo="deepseek-ai/DeepSeek-OCR-2",
         served_model_name="deepseek-ocr-2",
         runtime="vllm",
-        vllm_version="0.12.0",
+        # `deepseek_ocr2.py` first ships in vLLM 0.16.0 (the recipe's min_vllm_version).
+        vllm_version="0.16.0",
         serve_args=(
             "--trust-remote-code",
             "--logits-processors", "vllm.model_executor.models.deepseek_ocr:NGramPerReqLogitsProcessor",

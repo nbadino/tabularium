@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import re
 from typing import Any
+from ..models.types import normalize_llamaindex_languages
 
 # The Google `generationConfig` field for each sampling knob we expose. Names differ
 # between the OpenAI surface and Google's: keeping the mapping here is what stops the
@@ -206,7 +207,9 @@ def llamaindex_configuration(workflow: dict[str, Any]) -> tuple[dict[str, Any], 
     processing: dict = {
         "aggressive_table_extraction": bool(workflow.get("aggressive_table_extraction", True)),
         "disable_heuristics": bool(workflow.get("disable_heuristics", False)),
-        "ocr_parameters": {"languages": list(workflow.get("languages") or ["eng"])},
+        "ocr_parameters": {
+            "languages": normalize_llamaindex_languages(workflow.get("languages")) or ["en"],
+        },
         "ignore": {
             "ignore_diagonal_text": bool(workflow.get("ignore_diagonal_text", False)),
             "ignore_hidden_text": bool(workflow.get("ignore_hidden_text", False)),
@@ -307,8 +310,7 @@ def openai_request(
     """Body of an OpenAI-compatible chat completion.
 
     The `no_repeat_ngram_size` knob is the one that does not travel in the sampling
-    block: vLLM accepts it as an extra argument, and MinerU2.5 expects it inside
-    `vllm_xargs` because its logits processor reads it from there. `sampling` is copied,
+    block: the logits processors (MinerU2.5, TeleOCR) read it from `vllm_xargs`. `sampling` is copied,
     never mutated: the caller may reuse or log it.
     """
     payload: dict[str, Any] = {
@@ -325,13 +327,10 @@ def openai_request(
     values = dict(sampling or {})
     no_repeat = values.pop("no_repeat_ngram_size", None)
     if no_repeat is not None:
-        if adapter_id == "mineru2.5":
-            values["vllm_xargs"] = {**(values.get("vllm_xargs") or {}), "no_repeat_ngram_size": no_repeat}
-        else:
-            payload["extra_args"] = {
-                **(payload.get("extra_args") or {}),
-                "no_repeat_ngram_size": no_repeat,
-            }
+        # vLLM's OpenAI server hands custom logits processors only `vllm_xargs`
+        # (ChatCompletionRequest -> SamplingParams.extra_args); a top-level
+        # `extra_args` is an unknown field and is ignored.
+        values["vllm_xargs"] = {**(values.get("vllm_xargs") or {}), "no_repeat_ngram_size": no_repeat}
     payload.update(values)
     return payload
 
