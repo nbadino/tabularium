@@ -204,6 +204,9 @@ export const en: Dict = {
   },
 
   consensus: {
+    canvasHint: "Click a box to compare the readings · Space drags the page",
+    disputedCells: "{n} cells to check",
+    nextCell: "Next cell",
     title: "Model comparison",
     toggle: "Model comparison",
     agreement: "Agreement {pct}%",

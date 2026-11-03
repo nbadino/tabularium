@@ -466,7 +466,7 @@ export default function StudioCanvas({
       </Stage>
 
       <p className="pointer-events-none absolute bottom-2 left-2 hidden max-w-[calc(100%-260px)] rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] px-2 py-1 text-[11px] text-[color:var(--color-ink-2)] sm:block">
-        {interactionHint}
+        {overlay ? t('consensus.canvasHint') : interactionHint}
         {tool === 'polygon' && polyVerts.length >= 3 && ` — ${tn('canvas.vertices', polyVerts.length)}`}
       </p>
 

@@ -203,6 +203,9 @@ export const it = {
   },
 
   consensus: {
+    canvasHint: "Clicca un riquadro per confrontare le letture · Space trascina la pagina",
+    disputedCells: "{n} celle da controllare",
+    nextCell: "Cella successiva",
     title: "Confronto modelli",
     toggle: "Confronto modelli",
     agreement: "Accordo {pct}%",

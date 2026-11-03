@@ -68,10 +68,23 @@ function TableHeatmap({ cluster, models }: { cluster: ConsensusCluster; models: 
     }
   }
   const selected = cell ? byPos.get(`${cell.r}:${cell.c}`) : undefined
+  // A long register hides its few disagreements: count them and step through them.
+  const disputed = table.cells.filter((item) => scoreBand(item.score) !== 'agree')
+  const next = () => {
+    if (!disputed.length) return
+    const at = cell ? disputed.findIndex((item) => item.r > cell.r || (item.r === cell.r && item.c > cell.c)) : 0
+    const target = disputed[at < 0 ? 0 : at]
+    setCell({ r: target.r, c: target.c })
+    document.querySelector(`[data-testid="cell-${target.r}-${target.c}"]`)?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }
   const nameOf = (key: string) => models.find((m) => m.key === key)?.name ?? key
   return (
     <div className="space-y-2">
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-ink-3)]">{t('consensus.tableCells')}</div>
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-ink-3)]">{t('consensus.tableCells')}</span>
+        <span className="text-[11px] text-[color:var(--color-ink-2)]" data-testid="disputed-count">{t('consensus.disputedCells', { n: disputed.length })}</span>
+        {disputed.length > 0 && <button type="button" className="btn ml-auto" onClick={next}>{t('consensus.nextCell')}</button>}
+      </div>
       <div className="max-h-[360px] overflow-auto border border-[color:var(--color-rule)]">
         <table className="w-full border-collapse text-[11px]">
           <tbody>

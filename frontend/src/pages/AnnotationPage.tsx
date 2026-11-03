@@ -1282,11 +1282,13 @@ export default function AnnotationPage() {
               allinea a destra anche sulla riga successiva. */}
             <div className="flex overflow-hidden rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)]" role="toolbar" aria-label={t('annotate.toolsAria')}>
               {tools.map((tool) => {
-                const on = ann.tool === tool.id
+                // The comparison is read-only: no tool is active while it is open.
+                const on = ann.tool === tool.id && !consensusOn
                 return (
                   <button
                     key={tool.id}
                     type="button"
+                    disabled={consensusOn}
                     onClick={() => ann.setTool(tool.id)}
                     aria-pressed={on}
                     aria-keyshortcuts={tool.key}

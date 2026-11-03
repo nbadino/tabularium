@@ -167,11 +167,9 @@ export default function ConsensusPanel({
         <div className="mt-3 border-t border-[color:var(--color-rule)] pt-2">
           <label className="block">
             <span className="lbl">{t('consensus.saveName')}</span>
-            <div className="flex gap-2">
-              <input className="fld" value={name} placeholder={currentModel} onChange={(e) => setName(e.target.value)} />
-              <button type="button" className="btn" disabled={busy || !(name || currentModel).trim()} onClick={() => void save()}>{t('consensus.saveCurrent')}</button>
-            </div>
+            <input className="fld" value={name} placeholder={currentModel} onChange={(e) => setName(e.target.value)} />
           </label>
+          <button type="button" className="btn mt-2 w-full" disabled={busy || !(name || currentModel).trim()} onClick={() => void save()}>{t('consensus.saveCurrent')}</button>
           <p className="mt-1 text-[11px] text-[color:var(--color-ink-3)]">{t('consensus.saveHint')}</p>
         </div>
       )}
