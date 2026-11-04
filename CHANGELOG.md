@@ -146,6 +146,11 @@ Notable changes to Tabularium. The format follows
   use a model, `X` deletes, `A` keeps, `N` goes to the next; one Ctrl+Z undoes a change. A table
   is sent to the table editor (*Open the table*) instead of being replaced. What is settled is
   kept in the browser, per comparison and page.
+  *Use as the base* turns one model's reading into the drafts of a page (in the Studio) or of
+  every compared page (on the Recognition page), without sending anything to the model again:
+  the comparison doubles as the recognition. Unverified drafts are replaced; a page with blocks
+  you drew or verified is skipped and counted, and in the Studio you are asked whether to replace
+  those too (`POST …/consensus-runs/{id}/adopt`).
   Metric in `docs/spec/71-evaluation.md`.
 - A cover for each collection: select one of its pages and choose *Use as the cover*; the
   collections column shows it as a thumbnail (migration 22). *Remove the cover* is in the row menu.

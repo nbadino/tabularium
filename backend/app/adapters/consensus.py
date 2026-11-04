@@ -161,6 +161,21 @@ def page_outputs(run_id: int, page_id: int) -> list[dict[str, Any]]:
     return out
 
 
+def finished_outputs(run_id: int, model_key: str, page_ids: list[int] | None = None) -> list[dict[str, Any]]:
+    """One model's finished pages of a run (all, or those in `page_ids`), with their blocks."""
+    query = (
+        "SELECT page_id, blocks_json FROM consensus_outputs "
+        "WHERE run_id=? AND model_key=? AND state='finished'"
+    )
+    params: list[Any] = [run_id, model_key]
+    if page_ids is not None:
+        query += f" AND page_id IN ({','.join('?' for _ in page_ids)})"
+        params.extend(page_ids)
+    with connect() as conn:
+        rows = conn.execute(query + " ORDER BY page_id", params).fetchall()
+    return [{"page_id": int(row["page_id"]), "blocks": json.loads(row["blocks_json"] or "[]")} for row in rows]
+
+
 def block_geometry(block_id: int) -> dict[str, Any] | None:
     """Page and rectangle of an annotation block (read only)."""
     with connect() as conn:

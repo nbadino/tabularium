@@ -34,6 +34,14 @@ class PageWriter:
     def has_blocks(self, page_id: int) -> bool:
         return self._conn.execute("SELECT 1 FROM blocks WHERE page_id=? LIMIT 1", (page_id,)).fetchone() is not None
 
+    def human_blocks(self, page_id: int) -> int:
+        """Blocks a person drew or verified: what `replace_drafts` never deletes."""
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM blocks WHERE page_id=? AND (prefill_source IS NULL OR confirmed=1)",
+            (page_id,),
+        ).fetchone()
+        return int(row[0] or 0)
+
     # --- writes --------------------------------------------------------
     def replace_blocks(self, page_id: int, mode: str) -> dict[str, int]:
         """Delete the blocks the chosen mode allows, and say how many went."""

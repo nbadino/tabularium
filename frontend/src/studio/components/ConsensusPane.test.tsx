@@ -143,6 +143,7 @@ describe('ConsensusPane', () => {
       onToggleResolved: vi.fn(),
       onNext: vi.fn(),
       onOpenTable: vi.fn(),
+      onAdopt: vi.fn(),
       ...over,
     })
 
@@ -182,6 +183,14 @@ describe('ConsensusPane', () => {
       expect(detail.queryByRole('button', { name: /Use/ })).toBeNull()
       await userEvent.click(detail.getByRole('button', { name: 'Open the table' }))
       expect(act.onOpenTable).toHaveBeenCalled()
+    })
+
+    it("offers each model's whole reading as the page's base", async () => {
+      setLocale('en')
+      const act = actions()
+      render(<Harness actions={act} />)
+      await userEvent.click(within(screen.getByTestId('adopt')).getByRole('button', { name: 'Argon' }))
+      expect(act.onAdopt).toHaveBeenCalledWith('p2')
     })
 
     it('says when nothing is left to review', () => {

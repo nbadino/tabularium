@@ -68,6 +68,15 @@ model's blocks replace the user's in that area. Canvas changes go through
 `useAnnotationState.applyReading`, one undo step; drafts are patched or rejected on the server.
 Tables are not replaced from the page view: their cells are settled in the table editor.
 
+**Using a model as the base** (`POST …/consensus-runs/{id}/adopt`, `services/consensus.py::adopt_output`)
+writes the model's stored blocks of the run, grids included, as unverified drafts with the
+model's `prefill_source`, as a prefill would: the drafts already on the page are replaced
+(`replace_drafts`). A page with blocks a person drew or verified (`prefill_source IS NULL OR
+confirmed=1`) is skipped as `human_work`, unless `replace_human` asks to replace everything
+(`replace_all`); a page the model has no finished output for is `no_result`. The coordinates are
+those of the current page master: a consensus run never rotates it. The revision advances, so an
+approval lapses and an open Studio reloads (live `annotations_changed`, action `consensus`).
+
 **In the table editor** (`POST /api/blocks/{id}/consensus` with the editor's current grid,
 `domain/consensus.py::annotate_grid`) the user's grid is the reference: each finished model's
 Table block overlapping it best (IoU ≥ 0.3) is aligned onto it, and a cell's score is how much

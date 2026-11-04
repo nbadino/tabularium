@@ -370,3 +370,61 @@ def test_the_table_editor_gets_the_models_readings_for_my_grid(tmp_path, monkeyp
 
         # A page the run did not cover has nothing to show.
         assert client.post(f"/api/blocks/{other}/consensus", json=mine).json()["cells"] == []
+
+
+def test_adopting_a_model_writes_its_reading_as_drafts_and_spares_human_work(tmp_path, monkeypatch):
+    from app.adapters import blocks as blockstore
+    from app.db import connect
+
+    _fake_clients(monkeypatch)
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        with blockstore.writing() as writer:
+            mine = writer.insert_block(
+                page_ids[0], label="Text", points=[[1, 1], [50, 50]],
+                content="my transcription", order_idx=1, prefill_source=None,
+            )
+            writer.insert_block(
+                page_ids[1], label="Text", points=[[1, 1], [50, 50]],
+                content="old draft", order_idx=1, prefill_source="ocr:rapidocr",
+            )
+            writer.commit()
+        ocria = _save_profile(client, OCRIA, "OCRia-1 (adopt)")
+        argon = _save_profile(client, ARGON, "Argon (adopt)")
+        created = client.post(
+            f"/api/projects/{project_id}/consensus-runs",
+            json={"page_ids": page_ids, "profile_ids": [ocria["id"], argon["id"]]},
+        ).json()
+        run = _wait(client, project_id, created["id"])
+        argon_key = next(m["key"] for m in run["models"] if m["profile_id"] == argon["id"])
+        url = f"/api/projects/{project_id}/consensus-runs/{run['id']}/adopt"
+
+        assert client.post(url, json={"model_key": "nobody"}).status_code == 404
+
+        with connect() as conn:
+            before = conn.execute("SELECT annotation_revision FROM pages WHERE id=?", (page_ids[1],)).fetchone()[0]
+        out = client.post(url, json={"model_key": argon_key})
+        assert out.status_code == 200, out.text
+        body = out.json()
+        assert [w["page_id"] for w in body["written"]] == [page_ids[1]]
+        assert body["skipped"] == [{"page_id": page_ids[0], "reason": "human_work", "blocks": 1}]
+
+        # The old draft is gone; Argon's three blocks are drafts, the table with its grid.
+        blocks = client.get(f"/api/pages/{page_ids[1]}/annotations").json()["items"]
+        assert [(b["label"], b["confirmed"]) for b in blocks] == [("Title", False), ("Table", False), ("Note", False)]
+        assert all(b["prefill_source"].startswith("model:gemini-4-argon") for b in blocks)
+        table = client.get(f"/api/blocks/{blocks[1]['id']}/table").json()
+        assert any(cell["text"] == "Genovo" for cell in table["grid"]["cells"])
+        with connect() as conn:
+            after = conn.execute("SELECT annotation_revision FROM pages WHERE id=?", (page_ids[1],)).fetchone()[0]
+        assert after > before
+
+        # The page with human work is untouched until the user says to replace it.
+        assert [b["id"] for b in client.get(f"/api/pages/{page_ids[0]}/annotations").json()["items"]] == [mine]
+        forced = client.post(url, json={"model_key": argon_key, "page_ids": [page_ids[0]], "replace_human": True}).json()
+        assert [w["page_id"] for w in forced["written"]] == [page_ids[0]]
+        contents = [b["content"] for b in client.get(f"/api/pages/{page_ids[0]}/annotations").json()["items"]]
+        assert "my transcription" not in contents and len(contents) == 3
+
+        missing = client.post(url, json={"model_key": argon_key, "page_ids": [999999]}).json()
+        assert missing["written"] == [] and missing["skipped"][0]["reason"] == "no_result"

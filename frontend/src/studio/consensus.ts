@@ -77,6 +77,13 @@ export interface GridConsensus {
   extra_rows: { model: string; index: number; texts: string[] }[]
 }
 
+/** `POST …/consensus-runs/{id}/adopt`: a model's reading written as the pages' drafts. */
+export interface AdoptResult {
+  written: { page_id: number; blocks: number; annotation_revision: number }[]
+  /** `human_work`: the page has blocks a person drew or verified (`blocks` of them). */
+  skipped: { page_id: number; reason: 'human_work' | 'no_result'; blocks: number }[]
+}
+
 export type ScoreBand = 'agree' | 'partly' | 'disagree'
 
 /** Below 0.1 the readings differ by a character or two in ten; above 0.35 they are different readings. */

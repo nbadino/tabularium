@@ -24,6 +24,13 @@ class ProfileCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)
 
 
+class AdoptRequest(BaseModel):
+    model_key: str = Field(min_length=1, max_length=64)
+    # None: every page the model finished in the run.
+    page_ids: list[int] | None = Field(default=None, max_length=consensussvc.MAX_PAGES)
+    replace_human: bool = False
+
+
 class ConsensusRunCreate(BaseModel):
     page_ids: list[int] = Field(min_length=1, max_length=consensussvc.MAX_PAGES)
     profile_ids: list[int] = Field(min_length=1, max_length=consensussvc.MAX_MODELS)
@@ -99,6 +106,35 @@ def retry_run(
 ) -> dict:
     _run_of_project(project_id, run_id, request)
     return consensussvc.retry_failed(run_id, _lang(request))
+
+
+@router.post("/api/projects/{project_id}/consensus-runs/{run_id}/adopt")
+def adopt_output(
+    project_id: int, run_id: int, payload: AdoptRequest, request: Request,
+    user: dict = Depends(require_resource(write=True)),
+) -> dict:
+    """One model's reading of the run becomes the drafts of its pages."""
+    _run_of_project(project_id, run_id, request)
+    out = consensussvc.adopt_output(
+        run_id, payload.model_key, payload.page_ids,
+        replace_human=payload.replace_human, actor=user, lang=_lang(request),
+    )
+    for page in out["written"]:
+        _notify_live(page["page_id"], page["annotation_revision"], user)
+    return out
+
+
+def _notify_live(page_id: int, revision: int, user: dict) -> None:
+    # A Studio open on the page reloads; a lost event must not fail the write.
+    try:
+        from ..services import live  # noqa: PLC0415
+
+        live.hub.publish(page_id, {
+            "type": "annotations_changed", "page_id": page_id, "revision": revision,
+            "action": "consensus", "author": {"id": user.get("id"), "username": user.get("username")},
+        })
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @router.get("/api/pages/{page_id}/consensus")

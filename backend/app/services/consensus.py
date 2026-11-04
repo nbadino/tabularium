@@ -318,6 +318,64 @@ def retry_failed(run_id: int, lang: str | None = None) -> dict[str, Any]:
     return get_run(run_id, lang)
 
 
+def adopt_output(
+    run_id: int,
+    model_key: str,
+    page_ids: list[int] | None = None,
+    *,
+    replace_human: bool = False,
+    actor: dict | None = None,
+    lang: str | None = None,
+) -> dict[str, Any]:
+    """Write one model's saved reading as the drafts of the pages, without asking it again.
+
+    The run already holds what the model returned, so the comparison doubles as the
+    recognition: the blocks (grids included) go in as unverified drafts with the
+    model's `prefill_source`, as a prefill would write them. The drafts already there
+    are replaced. A page with blocks a person drew or verified is skipped and named,
+    unless `replace_human` says to replace those too (the UI asks first). The page
+    revision advances, so an approval lapses and an open Studio reloads.
+    """
+    run = get_run(run_id, lang)
+    model = next((m for m in run["models"] if m["key"] == model_key), None)
+    if model is None:
+        raise HTTPException(status_code=404, detail=msg("consensus_model_not_found", lang))
+    outputs = runstore.finished_outputs(run_id, model_key, page_ids)
+    found = {output["page_id"] for output in outputs}
+    written: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = [
+        {"page_id": pid, "reason": "no_result", "blocks": 0} for pid in (page_ids or []) if pid not in found
+    ]
+    with blockstore.writing() as writer:
+        for output in outputs:
+            page_id = output["page_id"]
+            human = writer.human_blocks(page_id)
+            if human and not replace_human:
+                skipped.append({"page_id": page_id, "reason": "human_work", "blocks": human})
+                continue
+            writer.replace_blocks(page_id, "replace_all" if replace_human else "replace_drafts")
+            for index, block in enumerate(output["blocks"], start=1):
+                block_id = writer.insert_block(
+                    page_id,
+                    label=str(block.get("label") or "Text"),
+                    points=block["points"],
+                    content=str(block.get("content") or ""),
+                    order_idx=int(block.get("order_idx") or index),
+                    prefill_source=str(block.get("prefill_source") or f"model:{model['name']}"),
+                )
+                grid = block.get("grid")
+                if grid and grid.get("rows"):
+                    writer.upsert_grid(block_id, grid)
+            revision = writer.bump_revision(page_id)
+            written.append({"page_id": page_id, "blocks": len(output["blocks"]), "annotation_revision": revision})
+    if written:
+        audit.record_event(
+            "consensus.adopted", actor, resource_type="consensus_run", resource_id=run_id,
+            payload={"model": model["name"], "pages": [w["page_id"] for w in written], "replace_human": replace_human},
+        )
+    return {"run_id": run_id, "model": model, "written": written, "skipped": skipped}
+
+
 def reconcile_runs() -> None:
     """A restart keeps the finished outputs and closes only the interrupted queue."""
     with _LOCK:

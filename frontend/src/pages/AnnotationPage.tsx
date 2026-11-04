@@ -26,6 +26,7 @@ import {
   overlayRects,
   partsOf,
   type ConsensusCluster,
+  type AdoptResult,
   type ConsensusView,
   type MineItem,
   type PageConsensus,
@@ -1161,7 +1162,33 @@ export default function AnnotationPage() {
     settleAndAdvance(cluster.id)
   }
 
+  /** The model's whole reading becomes this page's drafts: the comparison doubles as the recognition. */
+  const adoptModel = async (key: string) => {
+    if (!page || projectId === '' || consensus?.run_id == null) return
+    const name = consensus.models.find((m) => m.key === key)?.name ?? key
+    if (!await confirm({ title: t('consensus.adoptTitle'), message: t('consensus.adoptConfirm', { name }), acceptLabel: t('consensus.adoptAccept') })) return
+    setError(null)
+    try {
+      await flushEdits()
+      const url = `/projects/${projectId}/consensus-runs/${consensus.run_id}/adopt`
+      let out = await apiPost<AdoptResult>(url, { model_key: key, page_ids: [page.id] })
+      const human = out.skipped.find((item) => item.reason === 'human_work')
+      if (human) {
+        if (!await confirm({
+          title: t('consensus.adoptTitle'),
+          message: tn('consensus.adoptHumanConfirm', human.blocks, { name }),
+          acceptLabel: t('consensus.adoptReplace'),
+        })) return
+        out = await apiPost<AdoptResult>(url, { model_key: key, page_ids: [page.id], replace_human: true })
+      }
+      if (out.written.length) await applyBlocks(page, ratio)
+    } catch (e) {
+      setError(e)
+    }
+  }
+
   const consensusActions: ConsensusActions = {
+    onAdopt: (key) => void adoptModel(key),
     mine: (cluster) => mineByCluster.get(cluster.id) ?? [],
     resolved: consensusResolved,
     canEdit: true,

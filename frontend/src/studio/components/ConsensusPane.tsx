@@ -42,6 +42,8 @@ export interface ConsensusActions {
   onNext: () => void
   /** A table: back to the editor with the user's table selected. */
   onOpenTable: (cluster: ConsensusCluster) => void
+  /** The model's whole reading becomes the page's drafts. */
+  onAdopt: (model: string) => void
 }
 
 const MINE = '__mine__'
@@ -296,6 +298,16 @@ export default function ConsensusPane({
               </button>
             ))}
           </div>
+          {actions?.canEdit && (
+            <div className="flex flex-wrap items-center gap-1" data-testid="adopt">
+              <span className="text-[11px] text-[color:var(--color-ink-3)]">{t('consensus.adoptLead')}</span>
+              {page.comparison.models.map((key) => (
+                <button key={key} type="button" className="text-[11px] font-semibold underline" onClick={() => actions.onAdopt(key)}>
+                  {nameOf(key)}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="flex flex-wrap gap-3 text-[11px] text-[color:var(--color-ink-2)]">
             {(['agree', 'partly', 'disagree'] as const).map((band) => (
               <span key={band} className="inline-flex items-center gap-1">

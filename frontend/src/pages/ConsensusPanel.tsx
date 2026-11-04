@@ -2,6 +2,8 @@
  * Model comparison on the Recognition page: the saved models (compute profiles),
  * saving the model chosen in Models as one more, and a comparison run over the
  * selected pages. The run never writes annotations; the Studio shows its result.
+ * Once it has ended, one model's reading can become the drafts of the run's pages
+ * (*Use as the base*), so the comparison doubles as the recognition.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router'
@@ -10,6 +12,7 @@ import { useI18n } from '../i18n'
 import { useConfirm } from '../app/confirm'
 import { Badge, ErrorNotice, Module } from '../app/ui'
 import { projectPath } from '../app/projectPaths'
+import type { AdoptResult } from '../studio/consensus'
 
 export interface SavedModel {
   id: number
@@ -46,13 +49,15 @@ export default function ConsensusPanel({
   /** Display name of the model chosen in Models, proposed as the saved name. */
   currentModel: string
 }) {
-  const { t } = useI18n()
+  const { t, tn } = useI18n()
   const confirm = useConfirm()
   const [profiles, setProfiles] = useState<SavedModel[]>([])
   const [chosen, setChosen] = useState<Set<number>>(new Set())
   const [run, setRun] = useState<ConsensusRun | null>(null)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
+  const [base, setBase] = useState('')
+  const [adopted, setAdopted] = useState<{ written: number; human: number; missing: number } | null>(null)
   const [error, setError] = useState<unknown>(null)
 
   const loadProfiles = useCallback(async () => {
@@ -135,6 +140,26 @@ export default function ConsensusPanel({
     }
   }
 
+  const adopt = async () => {
+    if (!run) return
+    const model = run.models.find((m) => m.key === (base || run.models[0]?.key))
+    if (!model) return
+    if (!await confirm({ title: t('consensus.adoptTitle'), message: t('consensus.adoptRunConfirm', { name: model.name }), acceptLabel: t('consensus.adoptAccept') })) return
+    setBusy(true)
+    try {
+      const out = await apiPost<AdoptResult>(`/projects/${run.project_id}/consensus-runs/${run.id}/adopt`, { model_key: model.key })
+      setAdopted({
+        written: out.written.length,
+        human: out.skipped.filter((item) => item.reason === 'human_work').length,
+        missing: out.skipped.filter((item) => item.reason === 'no_result').length,
+      })
+    } catch (e) {
+      setError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const canStart = chosen.size >= 2 && pageIds.length > 0 && projectId !== '' && !busy && !(run && ACTIVE.has(run.state))
   const tone = run?.state === 'finished' ? 'ok' : run && (run.state === 'failed' || run.state === 'finished_with_errors') ? 'warn' : 'neutral'
 
@@ -205,6 +230,25 @@ export default function ConsensusPanel({
             {!ACTIVE.has(run.state) && run.failed > 0 && <button type="button" className="text-[11px] font-semibold underline" onClick={() => void retry()}>{t('consensus.retry')}</button>}
             <Link to={projectPath(run.project_id, 'studio', { consensus: 1, page: pageIds[0] })} className="text-[11px] font-semibold">{t('consensus.openStudio')}</Link>
           </div>
+          {!ACTIVE.has(run.state) && run.succeeded > 0 && (
+            <div className="mt-2 border-t border-[color:var(--color-rule)] pt-2" data-testid="adopt-run">
+              <label className="block">
+                <span className="lbl">{t('consensus.adoptRunLabel')}</span>
+                <select className="fld" value={base || run.models[0]?.key} onChange={(e) => { setBase(e.target.value); setAdopted(null) }}>
+                  {run.models.map((m) => <option key={m.key} value={m.key}>{m.name}</option>)}
+                </select>
+              </label>
+              <button type="button" className="btn mt-2 w-full" disabled={busy} onClick={() => void adopt()}>{t('consensus.adoptRun')}</button>
+              <p className="mt-1 text-[11px] text-[color:var(--color-ink-3)]">{t('consensus.adoptRunHint')}</p>
+              {adopted && (
+                <p className="mt-1 text-[11px] text-[color:var(--color-ink-2)]" data-testid="adopt-result">
+                  {tn('consensus.adoptWritten', adopted.written)}
+                  {adopted.human > 0 && ` · ${tn('consensus.adoptSkippedHuman', adopted.human)}`}
+                  {adopted.missing > 0 && ` · ${tn('consensus.adoptSkippedMissing', adopted.missing)}`}
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
     </Module>
