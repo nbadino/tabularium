@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { byDisagreement, charDiff, overlayRects, scoreBand, BAND_COLOR, type ConsensusCluster, type PageConsensus } from './consensus'
+import { byDisagreement, charDiff, mineFor, nextOpen, overlayRects, scoreBand, BAND_COLOR, RESOLVED_COLOR, type ConsensusCluster, type MineItem, type PageConsensus } from './consensus'
 
 function cluster(id: number, score: number, members: Record<string, number | null>, bbox: [number, number, number, number]): ConsensusCluster {
   return {
@@ -76,5 +76,39 @@ describe('consensus helpers', () => {
     ])
     expect(charDiff('', 'x')).toEqual([{ text: 'x', kind: 'ins' }])
     expect(charDiff('same', 'same')).toEqual([{ text: 'same', kind: 'same' }])
+  })
+})
+
+describe('settling disagreements', () => {
+  const mine = (id: string, box: MineItem['box']): MineItem => ({ kind: 'block', id, label: 'Text', content: '', box })
+
+  it("finds the user's block for the same area or a piece of it, not a column that holds it", () => {
+    const area = page.comparison!.clusters[0]
+    const found = mineFor(area, [
+      mine('same', [10, 12, 108, 60]),
+      mine('piece', [10, 10, 60, 30]),
+      mine('column', [0, 0, 400, 900]),
+      mine('elsewhere', [0, 300, 50, 320]),
+    ])
+    expect(found.map((item) => item.id)).toEqual(['same', 'piece'])
+  })
+
+  it('steps through the open ones, most disputed first, skipping the settled and the agreed', () => {
+    const clusters = [
+      cluster(0, 0.02, { p1: 0, p2: 0 }, [0, 0, 10, 10]),
+      cluster(1, 0.9, { p1: 1, p2: 1 }, [0, 20, 10, 30]),
+      cluster(2, 0.5, { p1: 2, p2: 2 }, [0, 40, 10, 50]),
+      cluster(3, 0.2, { p1: 3, p2: 3 }, [0, 60, 10, 70]),
+    ]
+    expect(nextOpen(clusters, new Set(), null)).toBe(1)
+    expect(nextOpen(clusters, new Set(), 1)).toBe(2)
+    expect(nextOpen(clusters, new Set([3]), 2)).toBe(1)
+    expect(nextOpen(clusters, new Set([1, 2, 3]), 3)).toBeNull()
+  })
+
+  it('paints a settled block violet and lets clicks through where the user has a block', () => {
+    const rects = overlayRects(page, 'disagreement', 1, { resolved: new Set([1]), covered: new Set([0]) })
+    expect(rects[1].color).toBe(RESOLVED_COLOR)
+    expect(rects.map((r) => r.listening)).toEqual([false, true])
   })
 })

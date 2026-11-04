@@ -8,7 +8,7 @@ import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@testing-library/jest-dom/vitest'
 import { useState } from 'react'
-import ConsensusPane from './ConsensusPane'
+import ConsensusPane, { type ConsensusActions } from './ConsensusPane'
 import { setLocale } from '../../i18n'
 import type { ConsensusView, PageConsensus } from '../consensus'
 
@@ -55,13 +55,13 @@ const page: PageConsensus = {
   },
 }
 
-function Harness({ data = page, onClose = () => {} }: { data?: PageConsensus | null; onClose?: () => void }) {
+function Harness({ data = page, onClose = () => {}, actions }: { data?: PageConsensus | null; onClose?: () => void; actions?: ConsensusActions }) {
   const [view, setView] = useState<ConsensusView>('disagreement')
   const [selected, setSelected] = useState<number | null>(null)
   return (
     <>
       <span data-testid="view">{view}</span>
-      <ConsensusPane page={data} loading={false} view={view} onView={setView} selected={selected} onSelect={setSelected} onClose={onClose} />
+      <ConsensusPane page={data} loading={false} view={view} onView={setView} selected={selected} onSelect={setSelected} onClose={onClose} actions={actions} />
     </>
   )
 }
@@ -131,5 +131,63 @@ describe('ConsensusPane', () => {
     expect(screen.getByText('No comparison for this page.')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Close the comparison' }))
     expect(onClose).toHaveBeenCalled()
+  })
+
+  describe('settling a block', () => {
+    const actions = (over: Partial<ConsensusActions> = {}): ConsensusActions => ({
+      mine: (cluster) => cluster.id === 0 ? [{ kind: 'block', id: 'c1', label: 'Title', content: 'Arivi', box: [0, 0, 100, 20] }] : [],
+      resolved: new Set(),
+      canEdit: true,
+      onUse: vi.fn(),
+      onRemove: vi.fn(),
+      onToggleResolved: vi.fn(),
+      onNext: vi.fn(),
+      onOpenTable: vi.fn(),
+      ...over,
+    })
+
+    it("compares the models with the user's reading and uses one", async () => {
+      setLocale('en')
+      const act = actions()
+      render(<Harness actions={act} />)
+      expect(screen.getByTestId('open-count')).toHaveTextContent('2 blocks to review')
+      await userEvent.click(screen.getByRole('button', { name: /^Title/ }))
+      expect(screen.getByTestId(`reading-__mine__`)).toHaveTextContent('Arivi')
+      expect(screen.getByTestId('reading-p1').querySelector('ins')).toHaveTextContent('r')
+      await userEvent.click(screen.getByRole('button', { name: /Use Argon/ }))
+      expect(act.onUse).toHaveBeenCalledWith(expect.objectContaining({ id: 0 }), 'p2')
+      await userEvent.click(screen.getByRole('button', { name: /Delete mine/ }))
+      expect(act.onRemove).toHaveBeenCalled()
+      await userEvent.click(screen.getByRole('button', { name: /Fine as it is/ }))
+      expect(act.onToggleResolved).toHaveBeenCalled()
+    })
+
+    it('offers only the model that found a block the user lacks', async () => {
+      setLocale('en')
+      render(<Harness actions={actions()} />)
+      await userEvent.click(screen.getByRole('button', { name: /missing in OCRia-1/ }))
+      const detail = within(screen.getByTestId('cluster-actions'))
+      expect(detail.getByRole('button', { name: /Use Argon/ })).toBeInTheDocument()
+      expect(detail.queryByRole('button', { name: /Use OCRia-1/ })).toBeNull()
+      expect(detail.queryByRole('button', { name: /Delete mine/ })).toBeNull()
+      expect(screen.getByText(/using a reading adds the model's block/)).toBeInTheDocument()
+    })
+
+    it('sends a table to the table editor instead of replacing it', async () => {
+      setLocale('en')
+      const act = actions({ mine: () => [{ kind: 'block', id: 't1', label: 'Table', content: '', box: [0, 30, 100, 90] }] })
+      render(<Harness actions={act} />)
+      await userEvent.click(screen.getByRole('button', { name: /Table/ }))
+      const detail = within(screen.getByTestId('cluster-actions'))
+      expect(detail.queryByRole('button', { name: /Use/ })).toBeNull()
+      await userEvent.click(detail.getByRole('button', { name: 'Open the table' }))
+      expect(act.onOpenTable).toHaveBeenCalled()
+    })
+
+    it('says when nothing is left to review', () => {
+      setLocale('en')
+      render(<Harness actions={actions({ resolved: new Set([1, 2]) })} />)
+      expect(screen.getByTestId('open-count')).toHaveTextContent('Nothing left to review')
+    })
   })
 })

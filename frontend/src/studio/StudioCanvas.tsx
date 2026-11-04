@@ -25,7 +25,7 @@ interface StudioCanvasProps {
   onAddBlock: (input: { kind: 'rect' | 'polygon'; points: Pt[]; label: string }) => void
   onUpdateBlock: (id: string, points: Pt[]) => void
   onDeleteBlock: (id: string) => void
-  /** Read-only rectangles drawn above the blocks (consensus heatmap). */
+  /** Rectangles drawn above the blocks (consensus heatmap); the blocks under them stay editable. */
   overlay?: { rects: OverlayRect[]; selected: number | null; onSelect: (cluster: number) => void }
 }
 
@@ -452,10 +452,11 @@ export default function StudioCanvas({
                   y={box.y}
                   width={box.w}
                   height={box.h}
-                  fill={withAlpha(rect.color, selected ? 0.4 : 0.22)}
+                  fill={withAlpha(rect.color, selected ? 0.24 : 0.12)}
                   stroke={rect.color}
                   strokeWidth={(selected ? 3 : 1.5) / viewport.k}
                   dash={rect.dashed ? [6 / viewport.k, 4 / viewport.k] : undefined}
+                  listening={rect.listening}
                   onClick={() => { if (!wasDrag()) overlay.onSelect(rect.cluster) }}
                   onTap={() => overlay.onSelect(rect.cluster)}
                 />

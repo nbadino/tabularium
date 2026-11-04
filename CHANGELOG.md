@@ -137,6 +137,15 @@ Notable changes to Tabularium. The format follows
   correction happens where you edit; right click on a disputed cell offers *Use <model>:
   "<reading>"* for each model, and a disputed cell you have corrected or verified turns violet
   (the count of the ones left goes down); *Show disagreements* turns it off.
+  In the Studio the comparison is no longer read-only: the heatmap lies over your own blocks,
+  which stay editable, and the pane shows *Your transcription* next to the models' readings,
+  diffed against yours. Each disputed block can be settled with *Use <model>* (the model's text
+  and class into your block; when you have no block there, or it is segmented differently, the
+  model's blocks take the place of yours), *Delete mine* or *Fine as it is*; settled blocks turn
+  violet, the count of the ones to review goes down and the next one is selected. Keys: `1`–`6`
+  use a model, `X` deletes, `A` keeps, `N` goes to the next; one Ctrl+Z undoes a change. A table
+  is sent to the table editor (*Open the table*) instead of being replaced. What is settled is
+  kept in the browser, per comparison and page.
   Metric in `docs/spec/71-evaluation.md`.
 - A cover for each collection: select one of its pages and choose *Use as the cover*; the
   collections column shows it as a thumbnail (migration 22). *Remove the cover* is in the row menu.

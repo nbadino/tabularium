@@ -173,3 +173,19 @@ it('le scorciatoie annunciate Poligono e Panoramica funzionano', () => {
   act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h' })))
   expect(result.current.tool).toBe('pan')
 })
+
+it("la lettura di un modello entra in un solo passo di undo: riscrive, toglie e aggiunge", () => {
+  const { result } = renderHook(() => useAnnotationState(page(1), 1, []))
+  act(() => result.current.addBlock({ kind: 'rect', label: 'Text', points: [{ x: 0, y: 0 }, { x: 20, y: 20 }] }))
+  act(() => result.current.addBlock({ kind: 'rect', label: 'Text', points: [{ x: 0, y: 30 }, { x: 20, y: 50 }] }))
+  const [first, second] = result.current.blocks.map((b) => b.id)
+  act(() => result.current.applyReading({
+    patch: [{ id: first, label: 'Title', content: 'Arrivi' }],
+    remove: [second],
+    add: [{ label: 'Note', content: 'Fonte', points: [{ x: 0, y: 60 }, { x: 20, y: 70 }] }],
+  }))
+  expect(result.current.blocks.map((b) => [b.label, b.content])).toEqual([['Title', 'Arrivi'], ['Note', 'Fonte']])
+  expect(result.current.selectedId).toBe(result.current.blocks[1].id)
+  act(() => result.current.undo())
+  expect(result.current.blocks.map((b) => b.id)).toEqual([first, second])
+})

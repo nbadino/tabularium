@@ -36,6 +36,8 @@ export interface PrefillDraft {
   /** Per le Table: la griglia riconosciuta dal backend — si mostra come
    *  tabella formattata nel pannello, non come riquadro sull'immagine. */
   grid?: TableGrid | null
+  /** Punti in pixel pagina: il confronto modelli li usa per capire quale area legge. */
+  points?: number[][]
 }
 
 export interface LivePrefillOutput {

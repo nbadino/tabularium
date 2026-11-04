@@ -1,10 +1,12 @@
 /**
- * The Studio's consensus pane: where the models disagree on this page.
+ * The Studio's consensus pane: where the models disagree on this page, and what to do about it.
  *
- * Read-only. The canvas paints the heatmap (`overlayRects`); this pane lists the
- * blocks from the most disputed down, explains one block (text, position, class),
- * shows a table cell by cell as a heatmap, and puts the models' readings side by
- * side with a character diff against the first model.
+ * The canvas paints the heatmap over the user's own blocks (`overlayRects`); this pane
+ * lists the blocks from the most disputed down, explains one block (text, position,
+ * class), shows a table cell by cell as a heatmap, and puts the user's reading and the
+ * models' side by side with a character diff against the user's (or the first model's).
+ * With `actions` each disputed block can be settled: use a model's reading, delete the
+ * user's block, or keep it as it is; the next open one is selected.
  */
 import { useState } from 'react'
 import { useI18n } from '../../i18n'
@@ -12,25 +14,57 @@ import { labelName } from '../../i18n/labelName'
 import {
   BAND_CLASS,
   BAND_COLOR,
+  RESOLVED_COLOR,
   byDisagreement,
   charDiff,
+  isOpen,
+  isTableCluster,
+  partsOf,
   scoreBand,
   type ConsensusCluster,
   type ConsensusModel,
   type ConsensusView,
+  type MineItem,
   type PageConsensus,
 } from '../consensus'
 
+/** What the user can do with a disputed block; without it the pane only shows. */
+export interface ConsensusActions {
+  /** The user's blocks (and drafts) that read the cluster's area. */
+  mine: (cluster: ConsensusCluster) => MineItem[]
+  resolved: Set<number>
+  /** False for a reader: the actions are not offered. */
+  canEdit: boolean
+  onUse: (cluster: ConsensusCluster, model: string) => void
+  onRemove: (cluster: ConsensusCluster) => void
+  /** Marks the block as fine as it is, or opens it again. */
+  onToggleResolved: (cluster: ConsensusCluster) => void
+  onNext: () => void
+  /** A table: back to the editor with the user's table selected. */
+  onOpenTable: (cluster: ConsensusCluster) => void
+}
+
+const MINE = '__mine__'
+
 const pct = (value: number) => Math.round(value * 100)
 
-function Readings({ values, models }: { values: Record<string, string | null>; models: ConsensusModel[] }) {
+function Readings({ values, models, mine }: {
+  values: Record<string, string | null>
+  models: ConsensusModel[]
+  /** The user's own reading: undefined leaves it out, null means the user has no block there. */
+  mine?: string | null
+}) {
   const { t } = useI18n()
-  const present = models.filter((m) => m.key in values)
-  const reference = present.find((m) => values[m.key] != null)
+  const rows: { key: string; name: string }[] = [
+    ...(mine === undefined ? [] : [{ key: MINE, name: t('consensus.mine') }]),
+    ...models.filter((m) => m.key in values),
+  ]
+  const all: Record<string, string | null> = mine === undefined ? values : { ...values, [MINE]: mine }
+  const reference = rows.find((m) => all[m.key] != null)
   return (
     <div className="space-y-2" aria-label={t('consensus.readings')}>
-      {present.map((model) => {
-        const value = values[model.key]
+      {rows.map((model) => {
+        const value = all[model.key]
         const isReference = model.key === reference?.key
         return (
           <div key={model.key} className="border-l-2 border-[color:var(--color-rule-strong)] pl-2">
@@ -43,7 +77,7 @@ function Readings({ values, models }: { values: Record<string, string | null>; m
               <div className="mono whitespace-pre-wrap break-words text-[12px]" data-testid={`reading-${model.key}`}>
                 {isReference || reference == null
                   ? value
-                  : charDiff(values[reference.key] ?? '', value).map((part, index) =>
+                  : charDiff(all[reference.key] ?? '', value).map((part, index) =>
                       part.kind === 'same' ? <span key={index}>{part.text}</span>
                         : part.kind === 'ins' ? <ins key={index} className="bg-[color:var(--color-ok-wash)] text-[color:var(--color-ok)] no-underline">{part.text}</ins>
                           : <del key={index} className="bg-[color:var(--color-sig-wash)] text-[color:var(--color-sig-text)]">{part.text}</del>)}
@@ -129,6 +163,62 @@ function TableHeatmap({ cluster, models }: { cluster: ConsensusCluster; models: 
   )
 }
 
+/** Settle one block: use a model's reading, delete the user's block, or keep it. */
+function ClusterActions({ cluster, page, mine, resolved, actions, nameOf }: {
+  cluster: ConsensusCluster
+  page: PageConsensus
+  mine: MineItem[]
+  resolved: boolean
+  actions: ConsensusActions
+  nameOf: (key: string) => string
+}) {
+  const { t } = useI18n()
+  const keys = page.comparison?.models ?? []
+  if (isTableCluster(page, cluster, mine)) {
+    return (
+      <div className="space-y-1 border-t border-[color:var(--color-rule)] pt-2" data-testid="cluster-actions">
+        <p className="text-[11px] text-[color:var(--color-ink-2)]">{t('consensus.tableAction')}</p>
+        <div className="flex flex-wrap gap-1">
+          {mine.some((item) => item.kind === 'block') && (
+            <button type="button" className="btn btn-primary" onClick={() => actions.onOpenTable(cluster)}>{t('consensus.openTable')}</button>
+          )}
+          <button type="button" className="btn" aria-pressed={resolved} aria-keyshortcuts="A" onClick={() => actions.onToggleResolved(cluster)}>
+            {resolved ? t('consensus.reopen') : t('consensus.keep')} <kbd className="mono text-[10px] text-[color:var(--color-ink-3)]">A</kbd>
+          </button>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="space-y-1 border-t border-[color:var(--color-rule)] pt-2" data-testid="cluster-actions">
+      <div className="flex flex-wrap gap-1">
+        {keys.map((key, index) => partsOf(page, cluster, key).length > 0 && (
+          <button
+            key={key}
+            type="button"
+            className="btn"
+            aria-keyshortcuts={String(index + 1)}
+            onClick={() => actions.onUse(cluster, key)}
+          >
+            {t('consensus.useReading', { name: nameOf(key) })} <kbd className="mono text-[10px] text-[color:var(--color-ink-3)]">{index + 1}</kbd>
+          </button>
+        ))}
+        {mine.length > 0 && (
+          <button type="button" className="btn" aria-keyshortcuts="X" onClick={() => actions.onRemove(cluster)}>
+            {t('consensus.removeMine', { n: mine.length })} <kbd className="mono text-[10px] text-[color:var(--color-ink-3)]">X</kbd>
+          </button>
+        )}
+        <button type="button" className="btn" aria-pressed={resolved} aria-keyshortcuts="A" onClick={() => actions.onToggleResolved(cluster)}>
+          {resolved ? t('consensus.reopen') : t('consensus.keep')} <kbd className="mono text-[10px] text-[color:var(--color-ink-3)]">A</kbd>
+        </button>
+      </div>
+      <p className="text-[11px] text-[color:var(--color-ink-3)]">
+        {mine.length === 0 ? t('consensus.useAdds') : mine.length === 1 && keys.every((key) => partsOf(page, cluster, key).length <= 1) ? t('consensus.useReplacesText') : t('consensus.useReplacesBlocks')}
+      </p>
+    </div>
+  )
+}
+
 export default function ConsensusPane({
   page,
   loading,
@@ -137,6 +227,7 @@ export default function ConsensusPane({
   selected,
   onSelect,
   onClose,
+  actions,
 }: {
   page: PageConsensus | null
   loading: boolean
@@ -145,12 +236,16 @@ export default function ConsensusPane({
   selected: number | null
   onSelect: (cluster: number | null) => void
   onClose: () => void
+  actions?: ConsensusActions
 }) {
-  const { t } = useI18n()
+  const { t, tn } = useI18n()
   const models = page?.models ?? []
   const nameOf = (key: string) => models.find((m) => m.key === key)?.name ?? key
   const clusters = page?.comparison?.clusters ?? []
   const current = clusters.find((c) => c.id === selected) ?? null
+  const resolved = actions?.resolved ?? new Set<number>()
+  const open = clusters.filter((c) => isOpen(c, resolved)).length
+  const mine = current && actions ? actions.mine(current) : []
 
   return (
     <div className="space-y-3 text-[12px]" aria-label={t('consensus.title')}>
@@ -159,7 +254,7 @@ export default function ConsensusPane({
         {page?.run_id != null && <span className="mono text-[11px] text-[color:var(--color-ink-3)]">{t('consensus.run', { id: page.run_id })}</span>}
         <button type="button" className="btn ml-auto" onClick={onClose}>{t('consensus.close')}</button>
       </div>
-      <p className="text-[11px] text-[color:var(--color-ink-3)]">{t('consensus.readOnly')}</p>
+      <p className="text-[11px] text-[color:var(--color-ink-3)]">{t(actions?.canEdit ? 'consensus.workHint' : 'consensus.readOnly')}</p>
 
       {loading && !page && <p className="text-[color:var(--color-ink-3)]">{t('consensus.loading')}</p>}
       {page && page.run_id == null && (
@@ -177,6 +272,16 @@ export default function ConsensusPane({
         <>
           <div className="flex items-baseline gap-2">
             <span className="text-[20px] font-bold" data-testid="agreement">{t('consensus.agreement', { pct: pct(page.comparison.agreement) })}</span>
+            {actions && (
+              <span className="text-[12px] text-[color:var(--color-ink-2)]" data-testid="open-count">
+                {open > 0 ? tn('consensus.openCount', open) : t('consensus.allSettled')}
+              </span>
+            )}
+            {actions && open > 0 && (
+              <button type="button" className="btn ml-auto" aria-keyshortcuts="N" onClick={actions.onNext}>
+                {t('consensus.nextBlock')} <kbd className="mono text-[10px] text-[color:var(--color-ink-3)]">N</kbd>
+              </button>
+            )}
           </div>
           <div role="group" aria-label={t('consensus.viewHint')} className="flex flex-wrap gap-1">
             {(['disagreement', ...page.comparison.models] as ConsensusView[]).map((key) => (
@@ -198,6 +303,12 @@ export default function ConsensusPane({
                 {t(`consensus.legend${band[0].toUpperCase()}${band.slice(1)}`)}
               </span>
             ))}
+            {actions && (
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block h-2.5 w-2.5" style={{ background: RESOLVED_COLOR }} />
+                {t('consensus.legendResolved')}
+              </span>
+            )}
             <span>{t('consensus.legendDashed')}</span>
           </div>
 
@@ -212,7 +323,7 @@ export default function ConsensusPane({
                     onClick={() => onSelect(cluster.id)}
                     className={`flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-[color:var(--color-fill)] ${cluster.id === selected ? 'bg-[color:var(--color-fill-2)]' : ''}`}
                   >
-                    <span className="inline-block h-2.5 w-2.5 shrink-0" style={{ background: BAND_COLOR[scoreBand(cluster.score)] }} />
+                    <span className="inline-block h-2.5 w-2.5 shrink-0" style={{ background: resolved.has(cluster.id) ? RESOLVED_COLOR : BAND_COLOR[scoreBand(cluster.score)] }} />
                     <span className="min-w-0 flex-1 truncate">{labelName(cluster.label)}</span>
                     {cluster.split && cluster.missing.length === 0 && (
                       <span className="text-[11px] text-[color:var(--color-warn)]">{t('consensus.splitTag')}</span>
@@ -256,10 +367,21 @@ export default function ConsensusPane({
               ) : (
                 <Readings
                   values={Object.fromEntries(models.filter((m) => m.key in current.members).map((m) => {
-                    const indices = current.parts?.[m.key] ?? []
-                    return [m.key, indices.length === 0 ? null : indices.map((i) => page.outputs[m.key]?.[i]?.content ?? '').join('\n')]
+                    const parts = partsOf(page, current, m.key)
+                    return [m.key, parts.length === 0 ? null : parts.map((b) => b.content).join('\n')]
                   }))}
                   models={models}
+                  mine={actions ? (mine.length ? mine.map((item) => item.content).join('\n') : null) : undefined}
+                />
+              )}
+              {actions?.canEdit && (
+                <ClusterActions
+                  cluster={current}
+                  page={page}
+                  mine={mine}
+                  resolved={resolved.has(current.id)}
+                  actions={actions}
+                  nameOf={nameOf}
                 />
               )}
             </div>

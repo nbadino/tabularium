@@ -93,6 +93,9 @@ export const BAND_COLOR: Record<ScoreBand, string> = {
   disagree: '#a3000e',
 }
 
+/** A disagreement the user has settled: the same violet as a corrected table cell. */
+export const RESOLVED_COLOR = '#7c3aed'
+
 /** Utility classes for the same bands in the DOM (table heatmap, list). */
 export const BAND_CLASS: Record<ScoreBand, string> = {
   agree: 'bg-[color:var(--color-ok-wash)] text-[color:var(--color-ok)]',
@@ -112,37 +115,116 @@ export interface OverlayRect {
   points: Pt[]
   color: string
   dashed: boolean
+  /** False over an area the user already has a block in: the click goes to that block. */
+  listening: boolean
 }
 
 /** 'disagreement' paints every cluster by score; a model key draws that model's own boxes. */
 export type ConsensusView = 'disagreement' | string
 
-export function overlayRects(page: PageConsensus, view: ConsensusView, ratio: number): OverlayRect[] {
+export function overlayRects(
+  page: PageConsensus,
+  view: ConsensusView,
+  ratio: number,
+  { resolved = new Set<number>(), covered = new Set<number>() }: { resolved?: Set<number>; covered?: Set<number> } = {},
+): OverlayRect[] {
   const clusters = page.comparison?.clusters ?? []
   const box = (x1: number, y1: number, x2: number, y2: number): Pt[] => [
     { x: x1 * ratio, y: y1 * ratio },
     { x: x2 * ratio, y: y2 * ratio },
   ]
+  const color = (cluster: ConsensusCluster) => resolved.has(cluster.id) ? RESOLVED_COLOR : BAND_COLOR[scoreBand(cluster.score)]
   if (view === 'disagreement') {
     return clusters.map((cluster) => ({
       cluster: cluster.id,
       points: box(...cluster.bbox),
-      color: BAND_COLOR[scoreBand(cluster.score)],
+      color: color(cluster),
       dashed: cluster.missing.length > 0,
+      listening: !covered.has(cluster.id),
     }))
   }
   const blocks = page.outputs[view] ?? []
   return blocks.flatMap((block, index) => {
     const cluster = clusters.find((c) => (c.parts?.[view] ?? []).includes(index))
     if (!cluster) return []
-    const [[x1, y1], [x2, y2]] = [block.points[0], block.points[block.points.length - 1]]
+    const [x1, y1, x2, y2] = boxOf(block.points)
     return [{
       cluster: cluster.id,
-      points: box(Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)),
-      color: BAND_COLOR[scoreBand(cluster.score)],
+      points: box(x1, y1, x2, y2),
+      color: color(cluster),
       dashed: false,
+      listening: !covered.has(cluster.id),
     }]
   })
+}
+
+export type Box = [number, number, number, number]
+
+/** Bounding box of a block's points, in the units of the points. */
+export function boxOf(points: [number, number][] | number[][]): Box {
+  const xs = points.map((p) => p[0])
+  const ys = points.map((p) => p[1])
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]
+}
+
+const area = (b: Box) => Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1])
+
+function overlap(a: Box, b: Box): number {
+  return area([Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])])
+}
+
+/** One of the user's own blocks, or a prefill draft not yet verified, in page pixels. */
+export interface MineItem {
+  kind: 'block' | 'draft'
+  /** Client id of a canvas block; server id of a draft. */
+  id: string
+  label: string
+  content: string
+  box: Box
+}
+
+// The backend's thresholds (domain/consensus.py): the same area at IoU 0.5, a piece
+// of it when 70 % of the user's block lies inside. A large block that merely
+// contains the cluster (a whole Column) is not the user's reading of it.
+const MATCH_IOU = 0.5
+const PART_INSIDE = 0.7
+
+/** The user's blocks that read the same area as the cluster. */
+export function mineFor(cluster: ConsensusCluster, mine: MineItem[]): MineItem[] {
+  return mine.filter((item) => {
+    const shared = overlap(item.box, cluster.bbox)
+    if (shared <= 0) return false
+    const union = area(item.box) + area(cluster.bbox) - shared
+    return shared / union >= MATCH_IOU || (area(item.box) > 0 && shared / area(item.box) >= PART_INSIDE)
+  })
+}
+
+/** A model's blocks in the cluster, in reading order. */
+export function partsOf(page: PageConsensus, cluster: ConsensusCluster, key: string): ConsensusBlock[] {
+  return (cluster.parts?.[key] ?? []).map((index) => page.outputs[key]?.[index]).filter((b): b is ConsensusBlock => b != null)
+}
+
+/** A table, the models' or the user's, is corrected cell by cell in the table editor, not replaced from here. */
+export function isTableCluster(page: PageConsensus, cluster: ConsensusCluster, mine: MineItem[] = []): boolean {
+  return cluster.table != null
+    || mine.some((item) => item.label === 'Table')
+    || Object.keys(cluster.parts ?? {}).some((key) => partsOf(page, cluster, key).some((b) => b.label === 'Table'))
+}
+
+/** Disputed and not yet settled by the user. */
+export function isOpen(cluster: ConsensusCluster, resolved: Set<number>): boolean {
+  return scoreBand(cluster.score) !== 'agree' && !resolved.has(cluster.id)
+}
+
+/** The next open cluster after `current`, most disputed first, wrapping round; null when none is left. */
+export function nextOpen(clusters: ConsensusCluster[], resolved: Set<number>, current: number | null): number | null {
+  const order = byDisagreement(clusters)
+  const at = order.findIndex((c) => c.id === current)
+  for (let step = 1; step <= order.length; step++) {
+    const cluster = order[(at + step + order.length) % order.length]
+    if (cluster.id !== current && isOpen(cluster, resolved)) return cluster.id
+  }
+  return null
 }
 
 /** Most disputed first; ties in reading order. */

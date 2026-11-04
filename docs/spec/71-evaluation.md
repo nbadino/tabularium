@@ -59,6 +59,15 @@ The metric is pure (`domain/consensus.py`), pinned by `tests/test_consensus.py`:
 
 The Studio colours a score below 0.1 as agreement, below 0.35 as partial, above as disagreement.
 
+**Settling a block in the Studio** (`studio/consensus.ts`, `AnnotationPage.tsx`). The user's
+blocks and unverified drafts that read a cluster's area are found with the same thresholds as
+the matching (IoU ≥ 0.5, or ≥ 70 % of the user's block inside the cluster; a block that merely
+contains the cluster, a whole Column, is not the user's reading of it). *Use <model>* with one
+block on each side writes the model's text and class and keeps the user's box; otherwise the
+model's blocks replace the user's in that area. Canvas changes go through
+`useAnnotationState.applyReading`, one undo step; drafts are patched or rejected on the server.
+Tables are not replaced from the page view: their cells are settled in the table editor.
+
 **In the table editor** (`POST /api/blocks/{id}/consensus` with the editor's current grid,
 `domain/consensus.py::annotate_grid`) the user's grid is the reference: each finished model's
 Table block overlapping it best (IoU ≥ 0.3) is aligned onto it, and a cell's score is how much

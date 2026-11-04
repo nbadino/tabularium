@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { labelName } from '../i18n/labelName'
 import { useFitOneRow } from '../lib/fitRow'
 import { Link, useSearchParams } from 'react-router'
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
-import { loadImageSize, PixelSize, scaleRatio } from '../lib/coords'
+import { bboxPoints, loadImageSize, PixelSize, scaleRatio } from '../lib/coords'
 import type { BlockOut, LabelDef, PageItem, PageSums, RecognitionRun } from '../lib/types'
 import StudioCanvas from '../studio/StudioCanvas'
 import PageSidebar from '../studio/components/PageSidebar'
@@ -17,8 +17,19 @@ import { useDraftEdits } from '../studio/useDraftEdits'
 import { useAnnotationState } from '../studio/useAnnotationState'
 import { runPrelabelStream } from '../studio/prefillStream'
 import PrefillDialog from '../studio/components/PrefillDialog'
-import ConsensusPane from '../studio/components/ConsensusPane'
-import { overlayRects, type ConsensusView, type PageConsensus } from '../studio/consensus'
+import ConsensusPane, { type ConsensusActions } from '../studio/components/ConsensusPane'
+import {
+  boxOf,
+  isTableCluster,
+  mineFor,
+  nextOpen,
+  overlayRects,
+  partsOf,
+  type ConsensusCluster,
+  type ConsensusView,
+  type MineItem,
+  type PageConsensus,
+} from '../studio/consensus'
 import {
   summarizePage,
   type PrefillMode,
@@ -107,7 +118,7 @@ function mapCanvasBlocks(items: BlockOut[], r: number): DisplayBlock[] {
 function mapDrafts(items: BlockOut[]): PrefillDraft[] {
   return items
     .filter((b) => isPendingDraft(b) && b.label !== 'Table')
-    .map((b) => ({ serverId: b.id, label: b.label, content: b.content, confirmed: false, grid: null }))
+    .map((b) => ({ serverId: b.id, label: b.label, content: b.content, confirmed: false, grid: null, points: b.points }))
 }
 
 function loadSplit(): { sidebar: number; content: number } {
@@ -167,13 +178,16 @@ export default function AnnotationPage() {
   const [prefillDrafts, setPrefillDrafts] = useState<PrefillDraft[]>([])
   const [liveOutput, setLiveOutput] = useState<LivePrefillOutput | null>(null)
   const [showFlow, setShowFlow] = useState(false)
-  // Model comparison (consensus): read-only, it replaces the content rail and
-  // paints the disagreement over the page while it is open.
+  // Model comparison (consensus): it replaces the content rail and paints the
+  // disagreement over the user's blocks, which stay editable; each disputed block
+  // can be settled from the rail (a model's reading, delete, keep).
   const [consensusOn, setConsensusOn] = useState(() => new URLSearchParams(window.location.search).get('consensus') === '1')
   const [consensus, setConsensus] = useState<PageConsensus | null>(null)
   const [consensusLoading, setConsensusLoading] = useState(false)
   const [consensusView, setConsensusView] = useState<ConsensusView>('disagreement')
   const [consensusSelected, setConsensusSelected] = useState<number | null>(null)
+  // Blocks the user has settled, per comparison run and page; kept in this browser.
+  const [consensusResolved, setConsensusResolved] = useState<Set<number>>(() => new Set())
   const prefillAbortRef = useRef<AbortController | null>(null)
 
   /** Modifica al testo di una bozza: aggiorna il pannello subito e il
@@ -320,6 +334,26 @@ export default function AnnotationPage() {
     void load()
     return () => { alive = false; window.clearTimeout(timer) }
   }, [consensusOn, page?.id])
+
+  const resolvedKey = consensus?.run_id != null && page ? `tabularium.consensus.resolved.${consensus.run_id}.${page.id}` : null
+  useEffect(() => {
+    let ids: number[] = []
+    try {
+      if (resolvedKey) ids = JSON.parse(localStorage.getItem(resolvedKey) ?? '[]') as number[]
+    } catch { /* storage blocked or stale: start from none settled */ }
+    setConsensusResolved(new Set(Array.isArray(ids) ? ids : []))
+  }, [resolvedKey])
+  const settle = (cluster: number, on: boolean) => {
+    setConsensusResolved((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(cluster)
+      else next.delete(cluster)
+      try {
+        if (resolvedKey) localStorage.setItem(resolvedKey, JSON.stringify([...next]))
+      } catch { /* not kept past this page view */ }
+      return next
+    })
+  }
   const draftEdits = useDraftEdits((id, content) => ann.runExternal(() => apiPatch<BlockOut>(`/blocks/${id}?expected_revision=${ann.getRevision()}`, { content })), (e) => setError(e))
   const flushEdits = async () => { await draftEdits.flush(); await ann.flush() }
 
@@ -1050,6 +1084,134 @@ export default function AnnotationPage() {
     toastTimer.current = setTimeout(() => setDeleteToast(null), 6000)
   }
 
+  // --- confronto modelli: i blocchi dell'utente sotto la heatmap -------------
+  const consensusClusters = consensus?.comparison?.clusters ?? []
+  const mineItems = useMemo<MineItem[]>(() => [
+    ...ann.blocks.filter((b) => b.points.length >= 2).map((b) => {
+      const bb = bboxPoints(b.points)
+      return {
+        kind: 'block' as const, id: b.id, label: b.label, content: b.content,
+        box: [bb.x / ratio, bb.y / ratio, (bb.x + bb.w) / ratio, (bb.y + bb.h) / ratio] as MineItem['box'],
+      }
+    }),
+    ...prefillDrafts.filter((d) => (d.points?.length ?? 0) >= 2).map((d) => ({
+      kind: 'draft' as const, id: String(d.serverId), label: d.label, content: d.content, box: boxOf(d.points!),
+    })),
+  ], [ann.blocks, prefillDrafts, ratio])
+  const mineByCluster = useMemo(
+    () => new Map(consensusClusters.map((cluster) => [cluster.id, mineFor(cluster, mineItems)])),
+    [consensusClusters, mineItems],
+  )
+  const coveredClusters = new Set(
+    [...mineByCluster].filter(([, items]) => items.some((item) => item.kind === 'block')).map(([id]) => id),
+  )
+  const clusterOfBlock = (id: string) =>
+    consensusClusters.find((cluster) => mineByCluster.get(cluster.id)?.some((item) => item.kind === 'block' && item.id === id))?.id ?? null
+
+  /** Selects a cluster in the rail and the user's block reading it on the canvas. */
+  const selectCluster = (id: number | null) => {
+    setConsensusSelected(id)
+    const block = id == null ? undefined : mineByCluster.get(id)?.find((item) => item.kind === 'block')
+    ann.setSelectedId(block?.id ?? null)
+  }
+  const settleAndAdvance = (cluster: number) => {
+    settle(cluster, true)
+    selectCluster(nextOpen(consensusClusters, new Set([...consensusResolved, cluster]), cluster))
+  }
+
+  const applyModelReading = (cluster: ConsensusCluster, model: string) => {
+    if (!consensus) return
+    const parts = partsOf(consensus, cluster, model)
+    const mine = mineByCluster.get(cluster.id) ?? []
+    if (parts.length === 0 || isTableCluster(consensus, cluster, mine)) return
+    if (mine.length === 1 && parts.length === 1) {
+      // Same area, one block each: the model's text and class, the user's box.
+      const [item] = mine
+      const [part] = parts
+      if (item.kind === 'block') ann.applyReading({ patch: [{ id: item.id, label: part.label, content: part.content }] })
+      else {
+        onDraftContent(Number(item.id), part.content)
+        if (item.label !== part.label) onDraftLabel(Number(item.id), part.label)
+      }
+    } else {
+      // Missing, or segmented differently: the model's blocks take the place of the user's.
+      for (const item of mine) if (item.kind === 'draft') void onDraftReject(Number(item.id))
+      ann.applyReading({
+        remove: mine.filter((item) => item.kind === 'block').map((item) => item.id),
+        add: parts.map((part) => {
+          const [x1, y1, x2, y2] = boxOf(part.points)
+          return { label: part.label, content: part.content, points: [{ x: x1 * ratio, y: y1 * ratio }, { x: x2 * ratio, y: y2 * ratio }] }
+        }),
+      })
+    }
+    settleAndAdvance(cluster.id)
+  }
+
+  const removeMine = (cluster: ConsensusCluster) => {
+    const mine = mineByCluster.get(cluster.id) ?? []
+    if (mine.length === 0) return
+    for (const item of mine) if (item.kind === 'draft') void onDraftReject(Number(item.id))
+    const blocks = mine.filter((item) => item.kind === 'block')
+    if (blocks.length) {
+      ann.applyReading({ remove: blocks.map((item) => item.id) })
+      if (toastTimer.current) clearTimeout(toastTimer.current)
+      setDeleteToast({ label: blocks.length === 1 ? blocks[0].label : tn('consensus.removedBlocks', blocks.length) })
+      toastTimer.current = setTimeout(() => setDeleteToast(null), 6000)
+    }
+    settleAndAdvance(cluster.id)
+  }
+
+  const consensusActions: ConsensusActions = {
+    mine: (cluster) => mineByCluster.get(cluster.id) ?? [],
+    resolved: consensusResolved,
+    canEdit: true,
+    onUse: applyModelReading,
+    onRemove: removeMine,
+    onToggleResolved: (cluster) => {
+      if (consensusResolved.has(cluster.id)) settle(cluster.id, false)
+      else settleAndAdvance(cluster.id)
+    },
+    onNext: () => selectCluster(nextOpen(consensusClusters, consensusResolved, consensusSelected)),
+    onOpenTable: (cluster) => {
+      const block = mineByCluster.get(cluster.id)?.find((item) => item.kind === 'block')
+      setConsensusOn(false)
+      if (block) ann.setSelectedId(block.id)
+    },
+  }
+
+  // Tastiera del confronto: 1–6 usa il modello, X elimina il proprio, A va bene
+  // così (o riapre), N il prossimo da vedere. Mai mentre si scrive.
+  useEffect(() => {
+    if (!consensusOn || !consensus?.comparison) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      const target = e.target as HTMLElement | null
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+      const key = e.key.toLowerCase()
+      if (key === 'n') {
+        e.preventDefault()
+        consensusActions.onNext()
+        return
+      }
+      const cluster = consensusClusters.find((c) => c.id === consensusSelected)
+      if (!cluster) return
+      const models = consensus.comparison?.models ?? []
+      const index = Number.parseInt(key, 10)
+      if (index >= 1 && index <= models.length) {
+        e.preventDefault()
+        if (!isTableCluster(consensus, cluster, mineByCluster.get(cluster.id))) consensusActions.onUse(cluster, models[index - 1])
+      } else if (key === 'x' && !isTableCluster(consensus, cluster, mineByCluster.get(cluster.id))) {
+        e.preventDefault()
+        consensusActions.onRemove(cluster)
+      } else if (key === 'a') {
+        e.preventDefault()
+        consensusActions.onToggleResolved(cluster)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
   const undoDelete = () => {
     ann.undo()
     if (toastTimer.current) clearTimeout(toastTimer.current)
@@ -1282,13 +1444,11 @@ export default function AnnotationPage() {
               allinea a destra anche sulla riga successiva. */}
             <div className="flex overflow-hidden rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)]" role="toolbar" aria-label={t('annotate.toolsAria')}>
               {tools.map((tool) => {
-                // The comparison is read-only: no tool is active while it is open.
-                const on = ann.tool === tool.id && !consensusOn
+                const on = ann.tool === tool.id
                 return (
                   <button
                     key={tool.id}
                     type="button"
-                    disabled={consensusOn}
                     onClick={() => ann.setTool(tool.id)}
                     aria-pressed={on}
                     aria-keyshortcuts={tool.key}
@@ -1547,23 +1707,30 @@ export default function AnnotationPage() {
             previewUrl && (
               <div className={`h-full ${prefillBusy ? 'pointer-events-none' : ''}`}>
               <StudioCanvas
-                interactive={!navBusy && !prefillBusy && studioMode !== 'transcription' && !consensusOn}
+                interactive={!navBusy && !prefillBusy && studioMode !== 'transcription'}
                 imageUrl={previewUrl}
                 imageNatural={previewSize}
-                blocks={consensusOn ? [] : ann.blocks}
+                blocks={ann.blocks}
                 selectedId={ann.selectedId}
-                tool={consensusOn ? 'select' : ann.tool}
+                tool={ann.tool}
                 activeLabel={ann.activeLabel}
                 showFlow={showFlow}
                 colorFor={ann.colorFor}
-                onSelect={ann.setSelectedId}
+                onSelect={(id) => {
+                  ann.setSelectedId(id)
+                  // On the comparison, a click on one's own block opens its disagreement.
+                  if (consensusOn && id) {
+                    const cluster = clusterOfBlock(id)
+                    if (cluster != null) setConsensusSelected(cluster)
+                  }
+                }}
                 onAddBlock={ann.addBlock}
                 onUpdateBlock={updateBlockPoints}
                 onDeleteBlock={handleDeleteBlock}
                 overlay={consensusOn && consensus ? {
-                  rects: overlayRects(consensus, consensusView, ratio),
+                  rects: overlayRects(consensus, consensusView, ratio, { resolved: consensusResolved, covered: coveredClusters }),
                   selected: consensusSelected,
-                  onSelect: setConsensusSelected,
+                  onSelect: selectCluster,
                 } : undefined}
               />
               </div>
@@ -1598,8 +1765,9 @@ export default function AnnotationPage() {
             view={consensusView}
             onView={setConsensusView}
             selected={consensusSelected}
-            onSelect={setConsensusSelected}
+            onSelect={selectCluster}
             onClose={() => setConsensusOn(false)}
+            actions={consensusActions}
           />
         ) : (
         <fieldset disabled={prefillBusy || navBusy} className="min-w-0 border-0 p-0">
