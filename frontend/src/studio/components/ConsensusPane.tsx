@@ -1,12 +1,14 @@
 /**
- * The Studio's consensus pane: where the models disagree on this page, and what to do about it.
+ * Model comparison inside the page content: where the models disagree, said in words.
  *
- * The canvas paints the heatmap over the user's own blocks (`overlayRects`); this pane
- * lists the blocks from the most disputed down, explains one block (text, position,
- * class), shows a table cell by cell as a heatmap, and puts the user's reading and the
- * models' side by side with a character diff against the user's (or the first model's).
- * With `actions` each disputed block can be settled: use a model's reading, delete the
- * user's block, or keep it as it is; the next open one is selected.
+ * In comparison mode the Studio keeps its content rail; these pieces go into it.
+ * `ConsensusSummary` heads the rail (agreement, what is left by kind, the next one, a
+ * model as the page's base). Each row of the user's own blocks carries a
+ * `ClusterChip` with its verdict and, for the selected area, a `ClusterDetail`: what
+ * differs (text, position, class, segmentation) in words, the models' readings diffed
+ * against the user's, and what each action will do before it is done.
+ * `ModelOnlyClusters` lists the areas the models read and the user has no block for.
+ * The canvas paints the same verdicts on the page (`overlayRects`).
  */
 import { useState } from 'react'
 import { useI18n } from '../../i18n'
@@ -15,12 +17,15 @@ import {
   BAND_CLASS,
   BAND_COLOR,
   RESOLVED_COLOR,
-  byDisagreement,
+  STRUCTURE_COLOR,
   charDiff,
-  isOpen,
   isTableCluster,
+  openCounts,
   partsOf,
+  readingDistance,
   scoreBand,
+  verdictColor,
+  verdictOf,
   type ConsensusCluster,
   type ConsensusModel,
   type ConsensusView,
@@ -40,46 +45,43 @@ export interface ConsensusActions {
   /** Marks the block as fine as it is, or opens it again. */
   onToggleResolved: (cluster: ConsensusCluster) => void
   onNext: () => void
-  /** A table: back to the editor with the user's table selected. */
-  onOpenTable: (cluster: ConsensusCluster) => void
   /** The model's whole reading becomes the page's drafts. */
   onAdopt: (model: string) => void
 }
 
-const MINE = '__mine__'
 
 const pct = (value: number) => Math.round(value * 100)
 
-function Readings({ values, models, mine }: {
+const kbd = (key: string) => <kbd className="mono text-[10px] text-[color:var(--color-ink-3)]">{key}</kbd>
+
+function Readings({ values, models, reference: mine }: {
   values: Record<string, string | null>
   models: ConsensusModel[]
-  /** The user's own reading: undefined leaves it out, null means the user has no block there. */
-  mine?: string | null
+  /** The user's own text, already shown in the row: the models are diffed against it. */
+  reference?: string | null
 }) {
   const { t } = useI18n()
-  const rows: { key: string; name: string }[] = [
-    ...(mine === undefined ? [] : [{ key: MINE, name: t('consensus.mine') }]),
-    ...models.filter((m) => m.key in values),
-  ]
-  const all: Record<string, string | null> = mine === undefined ? values : { ...values, [MINE]: mine }
-  const reference = rows.find((m) => all[m.key] != null)
+  const present = models.filter((m) => m.key in values)
+  const first = present.find((m) => values[m.key] != null)
+  const base = mine != null ? mine : first ? values[first.key] : null
   return (
     <div className="space-y-2" aria-label={t('consensus.readings')}>
-      {rows.map((model) => {
-        const value = all[model.key]
-        const isReference = model.key === reference?.key
+      {mine != null && <p className="text-[11px] text-[color:var(--color-ink-3)]">{t('consensus.diffAgainstMine')}</p>}
+      {present.map((model) => {
+        const value = values[model.key]
+        const isBase = mine == null && model.key === first?.key
         return (
           <div key={model.key} className="border-l-2 border-[color:var(--color-rule-strong)] pl-2">
             <div className="text-[11px] font-semibold text-[color:var(--color-ink-2)]">
-              {model.name}{isReference && <span className="ml-1 font-normal text-[color:var(--color-ink-3)]">· {t('consensus.reference')}</span>}
+              {model.name}{isBase && <span className="ml-1 font-normal text-[color:var(--color-ink-3)]">· {t('consensus.reference')}</span>}
             </div>
             {value == null ? (
               <div className="text-[12px] italic text-[color:var(--color-ink-3)]">{t('consensus.noValue')}</div>
             ) : (
               <div className="mono whitespace-pre-wrap break-words text-[12px]" data-testid={`reading-${model.key}`}>
-                {isReference || reference == null
+                {isBase || base == null
                   ? value
-                  : charDiff(all[reference.key] ?? '', value).map((part, index) =>
+                  : charDiff(base, value).map((part, index) =>
                       part.kind === 'same' ? <span key={index}>{part.text}</span>
                         : part.kind === 'ins' ? <ins key={index} className="bg-[color:var(--color-ok-wash)] text-[color:var(--color-ok)] no-underline">{part.text}</ins>
                           : <del key={index} className="bg-[color:var(--color-sig-wash)] text-[color:var(--color-sig-text)]">{part.text}</del>)}
@@ -165,78 +167,185 @@ function TableHeatmap({ cluster, models }: { cluster: ConsensusCluster; models: 
   )
 }
 
-/** Settle one block: use a model's reading, delete the user's block, or keep it. */
-function ClusterActions({ cluster, page, mine, resolved, actions, nameOf }: {
+/** Joined labels of a model's blocks in the area, in the user's language. */
+function labelsOf(page: PageConsensus, cluster: ConsensusCluster, key: string): string {
+  return [...new Set(partsOf(page, cluster, key).map((b) => b.label))].map(labelName).join(' + ')
+}
+
+/** The verdict in a few words: the chip of a row, and the tag on the canvas. */
+export function verdictTag(cluster: ConsensusCluster, page: PageConsensus, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  const verdict = verdictOf(cluster)
+  const nameOf = (key: string) => page.models.find((m) => m.key === key)?.name ?? key
+  if (verdict.kind === 'missing') {
+    const found = Object.keys(cluster.parts ?? {}).filter((key) => partsOf(page, cluster, key).length > 0)
+    return t('consensus.tagOnlyIn', { names: found.map(nameOf).join(', ') })
+  }
+  if (verdict.kind === 'text') {
+    return cluster.table ? t('consensus.tagCells', { n: cluster.table.cells.filter((c) => scoreBand(c.score) !== 'agree').length }) : t('consensus.tagText', { pct: pct(cluster.text) })
+  }
+  if (verdict.kind === 'structure') {
+    return verdict.split ? t('consensus.tagSplit') : verdict.labelsDiffer ? t('consensus.tagLabel') : t('consensus.tagLayout')
+  }
+  return t('consensus.tagAgree')
+}
+
+const CHIP_CLASS: Record<string, string> = {
+  text: 'border-[color:var(--color-sig)] text-[color:var(--color-sig-text)] bg-[color:var(--color-sig-wash)]',
+  partly: 'border-[color:var(--color-warn-rule)] text-[color:var(--color-warn)] bg-[color:var(--color-warn-wash)]',
+  missing: 'border-dashed border-[color:var(--color-sig)] text-[color:var(--color-sig-text)]',
+  structure: 'border-[color:var(--color-rule-strong)] text-[color:var(--color-ink-2)] bg-[color:var(--color-fill)]',
+  agree: 'border-[color:var(--color-ok-rule)] text-[color:var(--color-ok)]',
+  resolved: 'border-[#7c3aed] text-[#5b21b6] bg-[rgba(124,58,237,0.08)]',
+}
+
+/** The verdict of the area a row reads, as a button that opens its detail. */
+export function ClusterChip({ cluster, page, resolved, selected, onSelect }: {
+  cluster: ConsensusCluster
+  page: PageConsensus
+  resolved: boolean
+  selected: boolean
+  onSelect: () => void
+}) {
+  const { t } = useI18n()
+  const verdict = verdictOf(cluster)
+  const tone = resolved ? 'resolved' : verdict.kind === 'text' && scoreBand(cluster.text) === 'partly' ? 'partly' : verdict.kind
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      data-testid={`chip-${cluster.id}`}
+      className={`inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[11px] font-semibold ${CHIP_CLASS[tone]} ${selected ? 'ring-2 ring-[color:var(--color-ink)]' : ''}`}
+    >
+      {resolved ? `✓ ${t('consensus.legendResolved')} · ` : ''}{verdictTag(cluster, page, t)}
+    </button>
+  )
+}
+
+/** One aspect of the verdict on its own line: a mark, the aspect, what the models did. */
+function Aspect({ ok, name, children }: { ok: boolean; name: string; children: React.ReactNode }) {
+  return (
+    <li className="flex gap-1.5">
+      <span aria-hidden className={ok ? 'text-[color:var(--color-ok)]' : 'text-[color:var(--color-sig-text)]'}>{ok ? '✓' : '≠'}</span>
+      <span className="font-semibold">{`${name}:`}</span>{' '}
+      <span className="min-w-0 flex-1 text-[color:var(--color-ink-2)]">{children}</span>
+    </li>
+  )
+}
+
+/** What differs in the area, the models' readings, and the actions with what each will do. */
+export function ClusterDetail({ cluster, page, mine, resolved, actions }: {
   cluster: ConsensusCluster
   page: PageConsensus
   mine: MineItem[]
   resolved: boolean
-  actions: ConsensusActions
-  nameOf: (key: string) => string
+  actions?: ConsensusActions
 }) {
   const { t } = useI18n()
+  const models = page.models
   const keys = page.comparison?.models ?? []
-  if (isTableCluster(page, cluster, mine)) {
-    return (
-      <div className="space-y-1 border-t border-[color:var(--color-rule)] pt-2" data-testid="cluster-actions">
-        <p className="text-[11px] text-[color:var(--color-ink-2)]">{t('consensus.tableAction')}</p>
-        <div className="flex flex-wrap gap-1">
-          {mine.some((item) => item.kind === 'block') && (
-            <button type="button" className="btn btn-primary" onClick={() => actions.onOpenTable(cluster)}>{t('consensus.openTable')}</button>
-          )}
-          <button type="button" className="btn" aria-pressed={resolved} aria-keyshortcuts="A" onClick={() => actions.onToggleResolved(cluster)}>
-            {resolved ? t('consensus.reopen') : t('consensus.keep')} <kbd className="mono text-[10px] text-[color:var(--color-ink-3)]">A</kbd>
-          </button>
-        </div>
-      </div>
-    )
-  }
+  const nameOf = (key: string) => models.find((m) => m.key === key)?.name ?? key
+  const verdict = verdictOf(cluster)
+  const found = keys.filter((key) => partsOf(page, cluster, key).length > 0)
+  const isTable = isTableCluster(page, cluster, mine)
+  const disputedCells = cluster.table?.cells.filter((c) => scoreBand(c.score) !== 'agree').length ?? 0
+  const headline = verdict.kind === 'missing' ? t('consensus.headMissing', { names: found.map(nameOf).join(', ') })
+    : verdict.kind === 'text' ? t(isTable ? 'consensus.headCells' : 'consensus.headText')
+      : verdict.kind === 'structure' ? t('consensus.headStructure')
+        : t('consensus.headAgree')
+  const perModel = (render: (key: string) => string) => keys.map((key) => `${nameOf(key)}: ${render(key)}`).join(' · ')
+  const readings = Object.fromEntries(keys.map((key) => {
+    const parts = partsOf(page, cluster, key)
+    return [key, parts.length === 0 ? null : parts.map((b) => b.content).join('\n')]
+  })) as Record<string, string | null>
+  const myText = mine.length ? mine.map((item) => item.content).join('\n') : null
+  // The models may agree with each other and not with the user (a correction, or a slip).
+  const mineDiffers = !isTable && myText != null && Object.values(readings).some((value) => value != null && readingDistance(myText, value) >= 0.02)
+
   return (
-    <div className="space-y-1 border-t border-[color:var(--color-rule)] pt-2" data-testid="cluster-actions">
-      <div className="flex flex-wrap gap-1">
-        {keys.map((key, index) => partsOf(page, cluster, key).length > 0 && (
-          <button
-            key={key}
-            type="button"
-            className="btn"
-            aria-keyshortcuts={String(index + 1)}
-            onClick={() => actions.onUse(cluster, key)}
-          >
-            {t('consensus.useReading', { name: nameOf(key) })} <kbd className="mono text-[10px] text-[color:var(--color-ink-3)]">{index + 1}</kbd>
-          </button>
-        ))}
-        {mine.length > 0 && (
-          <button type="button" className="btn" aria-keyshortcuts="X" onClick={() => actions.onRemove(cluster)}>
-            {t('consensus.removeMine', { n: mine.length })} <kbd className="mono text-[10px] text-[color:var(--color-ink-3)]">X</kbd>
-          </button>
-        )}
-        <button type="button" className="btn" aria-pressed={resolved} aria-keyshortcuts="A" onClick={() => actions.onToggleResolved(cluster)}>
-          {resolved ? t('consensus.reopen') : t('consensus.keep')} <kbd className="mono text-[10px] text-[color:var(--color-ink-3)]">A</kbd>
-        </button>
-      </div>
-      <p className="text-[11px] text-[color:var(--color-ink-3)]">
-        {mine.length === 0 ? t('consensus.useAdds') : mine.length === 1 && keys.every((key) => partsOf(page, cluster, key).length <= 1) ? t('consensus.useReplacesText') : t('consensus.useReplacesBlocks')}
-      </p>
+    <div className="mt-2 space-y-2 border-t border-[color:var(--color-rule)] pt-2 text-[12px]" data-testid="cluster-detail">
+      <p className="font-semibold" style={{ color: verdictColor(cluster, resolved) }}>{headline}</p>
+      {verdict.kind !== 'missing' && (
+        <ul className="space-y-0.5 text-[12px]" aria-label={t('consensus.aspects')}>
+          <Aspect ok={verdict.text === 'same' || verdict.text === 'close'} name={t('consensus.text')}>
+            {isTable
+              ? t('consensus.cellsDiffer', { n: disputedCells, total: cluster.table?.cells.length ?? 0 })
+              : t(`consensus.degree.${verdict.text}`, { pct: pct(cluster.text) })}
+            {isTable && cluster.table && cluster.table.extra_rows.length > 0 && ` · ${t('consensus.extraRowsCount', { n: cluster.table.extra_rows.length })}`}
+            {verdict.split && !isTable && ` ${t('consensus.anyOrder')}`}
+          </Aspect>
+          <Aspect ok={verdict.layout !== 'different'} name={t('consensus.layout')}>
+            {t(`consensus.layoutDegree.${verdict.layout}`)}
+          </Aspect>
+          {verdict.split ? (
+            <Aspect ok={false} name={t('consensus.segmentation')}>
+              {perModel((key) => {
+                const n = partsOf(page, cluster, key).length
+                return `${t(n === 1 ? 'consensus.oneBlock' : 'consensus.nBlocks', { n })} (${labelsOf(page, cluster, key)})`
+              })}
+            </Aspect>
+          ) : (
+            <Aspect ok={!verdict.labelsDiffer} name={t('consensus.label')}>
+              {verdict.labelsDiffer ? perModel((key) => labelsOf(page, cluster, key)) : labelName(cluster.label)}
+            </Aspect>
+          )}
+        </ul>
+      )}
+
+      {cluster.table && mine.length === 0 ? (
+        <TableHeatmap key={cluster.id} cluster={cluster} models={models} />
+      ) : isTable ? (
+        <p className="text-[11px] text-[color:var(--color-ink-2)]">{t('consensus.tableAction')}</p>
+      ) : (verdict.kind !== 'agree' || mine.length === 0 || mineDiffers) && (
+        <>
+          {mineDiffers && <p className="text-[12px] font-semibold text-[color:var(--color-warn)]">{t('consensus.mineDiffers')}</p>}
+          <Readings values={readings} models={models} reference={myText} />
+        </>
+      )}
+
+      {actions?.canEdit && (
+        <div className="space-y-1" data-testid="cluster-actions">
+          <div className="flex flex-wrap gap-1">
+            {!isTable && keys.map((key, index) => found.includes(key) && (
+              <button key={key} type="button" className="btn" aria-keyshortcuts={String(index + 1)} onClick={() => actions.onUse(cluster, key)}>
+                {t('consensus.useReading', { name: nameOf(key) })} {kbd(String(index + 1))}
+              </button>
+            ))}
+            {!isTable && mine.length > 0 && (
+              <button type="button" className="btn" aria-keyshortcuts="X" onClick={() => actions.onRemove(cluster)}>
+                {t('consensus.removeMine', { n: mine.length })} {kbd('X')}
+              </button>
+            )}
+            <button type="button" className="btn" aria-pressed={resolved} aria-keyshortcuts="A" onClick={() => actions.onToggleResolved(cluster)}>
+              {resolved ? t('consensus.reopen') : t('consensus.keep')} {kbd('A')}
+            </button>
+          </div>
+          {!isTable && (
+            <ul className="space-y-0.5 text-[11px] text-[color:var(--color-ink-3)]" data-testid="use-preview">
+              {found.map((key) => <li key={key}>{t('consensus.useReading', { name: nameOf(key) })} → {previewOf(page, cluster, key, mine, t)}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
-export default function ConsensusPane({
-  page,
-  loading,
-  view,
-  onView,
-  selected,
-  onSelect,
-  onClose,
-  actions,
-}: {
+/** What *Use <model>* will do here, said before it is done. */
+function previewOf(page: PageConsensus, cluster: ConsensusCluster, key: string, mine: MineItem[], t: (key: string, vars?: Record<string, string | number>) => string): string {
+  const parts = partsOf(page, cluster, key)
+  const labels = parts.map((b) => labelName(b.label)).join(', ')
+  if (mine.length === 1 && parts.length === 1) return t('consensus.previewPatch', { label: labels })
+  if (mine.length === 0) return t(parts.length === 1 ? 'consensus.previewAddOne' : 'consensus.previewAdd', { n: parts.length, labels })
+  return t('consensus.previewReplace', { n: parts.length, labels, mine: mine.length })
+}
+
+/** Head of the content rail in comparison mode. */
+export function ConsensusSummary({ page, loading, view, onView, onClose, actions }: {
   page: PageConsensus | null
   loading: boolean
   view: ConsensusView
   onView: (view: ConsensusView) => void
-  selected: number | null
-  onSelect: (cluster: number | null) => void
   onClose: () => void
   actions?: ConsensusActions
 }) {
@@ -244,19 +353,16 @@ export default function ConsensusPane({
   const models = page?.models ?? []
   const nameOf = (key: string) => models.find((m) => m.key === key)?.name ?? key
   const clusters = page?.comparison?.clusters ?? []
-  const current = clusters.find((c) => c.id === selected) ?? null
   const resolved = actions?.resolved ?? new Set<number>()
-  const open = clusters.filter((c) => isOpen(c, resolved)).length
-  const mine = current && actions ? actions.mine(current) : []
-
+  const counts = openCounts(clusters, resolved)
+  const open = counts.text + counts.missing + counts.structure
   return (
-    <div className="space-y-3 text-[12px]" aria-label={t('consensus.title')}>
+    <section className="mb-3 space-y-2 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)] p-2.5 text-[12px]" aria-label={t('consensus.title')}>
       <div className="flex items-center gap-2">
-        <h2 className="text-[14px] font-semibold">{t('consensus.title')}</h2>
+        <h2 className="text-[13px] font-semibold">{t('consensus.title')}</h2>
         {page?.run_id != null && <span className="mono text-[11px] text-[color:var(--color-ink-3)]">{t('consensus.run', { id: page.run_id })}</span>}
         <button type="button" className="btn ml-auto" onClick={onClose}>{t('consensus.close')}</button>
       </div>
-      <p className="text-[11px] text-[color:var(--color-ink-3)]">{t(actions?.canEdit ? 'consensus.workHint' : 'consensus.readOnly')}</p>
 
       {loading && !page && <p className="text-[color:var(--color-ink-3)]">{t('consensus.loading')}</p>}
       {page && page.run_id == null && (
@@ -272,136 +378,82 @@ export default function ConsensusPane({
 
       {page?.comparison && (
         <>
-          <div className="flex items-baseline gap-2">
-            <span className="text-[20px] font-bold" data-testid="agreement">{t('consensus.agreement', { pct: pct(page.comparison.agreement) })}</span>
-            {actions && (
-              <span className="text-[12px] text-[color:var(--color-ink-2)]" data-testid="open-count">
-                {open > 0 ? tn('consensus.openCount', open) : t('consensus.allSettled')}
-              </span>
+          <p className="text-[12px] text-[color:var(--color-ink-2)]">{page.comparison.models.map(nameOf).join(' · ')}</p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="open-count">
+            {open === 0 ? (
+              <span className="font-semibold text-[color:var(--color-ok)]">{t('consensus.allSettled')}</span>
+            ) : (
+              <>
+                {counts.text > 0 && <span className="font-semibold" style={{ color: BAND_COLOR.disagree }}>{tn('consensus.countText', counts.text)}</span>}
+                {counts.missing > 0 && <span className="font-semibold text-[color:var(--color-sig-text)]">{tn('consensus.countMissing', counts.missing)}</span>}
+                {counts.structure > 0 && <span className="font-semibold" style={{ color: STRUCTURE_COLOR }}>{tn('consensus.countStructure', counts.structure)}</span>}
+              </>
             )}
             {actions && open > 0 && (
-              <button type="button" className="btn ml-auto" aria-keyshortcuts="N" onClick={actions.onNext}>
-                {t('consensus.nextBlock')} <kbd className="mono text-[10px] text-[color:var(--color-ink-3)]">N</kbd>
+              <button type="button" className="btn btn-primary ml-auto" aria-keyshortcuts="N" onClick={actions.onNext}>
+                {t('consensus.nextBlock')} {kbd('N')}
               </button>
             )}
           </div>
-          <div role="group" aria-label={t('consensus.viewHint')} className="flex flex-wrap gap-1">
-            {(['disagreement', ...page.comparison.models] as ConsensusView[]).map((key) => (
-              <button
-                key={key}
-                type="button"
-                aria-pressed={view === key}
-                className={`btn ${view === key ? 'btn-primary' : ''}`}
-                onClick={() => onView(key)}
-              >
-                {key === 'disagreement' ? t('consensus.viewDisagreement') : nameOf(key)}
-              </button>
-            ))}
-          </div>
-          {actions?.canEdit && (
-            <div className="flex flex-wrap items-center gap-1" data-testid="adopt">
-              <span className="text-[11px] text-[color:var(--color-ink-3)]">{t('consensus.adoptLead')}</span>
-              {page.comparison.models.map((key) => (
-                <button key={key} type="button" className="text-[11px] font-semibold underline" onClick={() => actions.onAdopt(key)}>
-                  {nameOf(key)}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="flex flex-wrap gap-3 text-[11px] text-[color:var(--color-ink-2)]">
-            {(['agree', 'partly', 'disagree'] as const).map((band) => (
-              <span key={band} className="inline-flex items-center gap-1">
-                <span className="inline-block h-2.5 w-2.5" style={{ background: BAND_COLOR[band] }} />
-                {t(`consensus.legend${band[0].toUpperCase()}${band.slice(1)}`)}
-              </span>
-            ))}
-            {actions && (
-              <span className="inline-flex items-center gap-1">
-                <span className="inline-block h-2.5 w-2.5" style={{ background: RESOLVED_COLOR }} />
-                {t('consensus.legendResolved')}
-              </span>
-            )}
+          <p className="text-[11px] text-[color:var(--color-ink-3)]">{t(actions?.canEdit ? 'consensus.workHint' : 'consensus.readOnly')}</p>
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[color:var(--color-ink-2)]">
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5" style={{ background: BAND_COLOR.disagree }} />{t('consensus.legendText')}</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5" style={{ background: STRUCTURE_COLOR }} />{t('consensus.legendStructure')}</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5" style={{ background: BAND_COLOR.agree }} />{t('consensus.legendAgree')}</span>
+            {actions && <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5" style={{ background: RESOLVED_COLOR }} />{t('consensus.legendResolved')}</span>}
             <span>{t('consensus.legendDashed')}</span>
           </div>
-
-          <div>
-            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-ink-3)]">{t('consensus.blocks')}</div>
-            <ul className="max-h-[220px] divide-y divide-[color:var(--color-rule)] overflow-y-auto border border-[color:var(--color-rule)]">
-              {byDisagreement(clusters).map((cluster) => (
-                <li key={cluster.id}>
-                  <button
-                    type="button"
-                    aria-pressed={cluster.id === selected}
-                    onClick={() => onSelect(cluster.id)}
-                    className={`flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-[color:var(--color-fill)] ${cluster.id === selected ? 'bg-[color:var(--color-fill-2)]' : ''}`}
-                  >
-                    <span className="inline-block h-2.5 w-2.5 shrink-0" style={{ background: resolved.has(cluster.id) ? RESOLVED_COLOR : BAND_COLOR[scoreBand(cluster.score)] }} />
-                    <span className="min-w-0 flex-1 truncate">{labelName(cluster.label)}</span>
-                    {cluster.split && cluster.missing.length === 0 && (
-                      <span className="text-[11px] text-[color:var(--color-warn)]">{t('consensus.splitTag')}</span>
-                    )}
-                    {cluster.missing.length > 0 && (
-                      <span className="text-[11px] text-[color:var(--color-sig-text)]">
-                        {t('consensus.missingIn', { names: cluster.missing.map(nameOf).join(', ') })}
-                      </span>
-                    )}
-                    <span className="mono w-10 text-right">{pct(cluster.score)}%</span>
+          <details className="text-[11px]">
+            <summary className="cursor-pointer text-[color:var(--color-ink-2)]">{t('consensus.moreOptions', { pct: pct(page.comparison.agreement) })}</summary>
+            <div className="mt-2 space-y-2">
+              <div role="group" aria-label={t('consensus.viewHint')} className="flex flex-wrap gap-1">
+                {(['disagreement', ...page.comparison.models] as ConsensusView[]).map((key) => (
+                  <button key={key} type="button" aria-pressed={view === key} className={`btn ${view === key ? 'btn-primary' : ''}`} onClick={() => onView(key)}>
+                    {key === 'disagreement' ? t('consensus.viewDisagreement') : nameOf(key)}
                   </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {current ? (
-            <div className="space-y-2 border-t border-[color:var(--color-rule)] pt-2" data-testid="cluster-detail">
-              <dl className="grid grid-cols-3 gap-2">
-                <div><dt className="lbl">{t('consensus.text')}</dt><dd className="mono">{pct(current.text)}%</dd></div>
-                <div><dt className="lbl">{t('consensus.layout')}</dt><dd className="mono">{pct(current.layout)}%</dd></div>
-                <div>
-                  <dt className="lbl">{t('consensus.label')}</dt>
-                  <dd>{current.label_agree && !current.split
-                    ? t('consensus.labelSame')
-                    : Object.entries(current.labels).map(([key, label]) => `${nameOf(key)}: ${labelName(label)}`).join(' · ')}</dd>
-                </div>
-              </dl>
-              {current.split && current.missing.length === 0 && (
-                <p className="text-[color:var(--color-warn)]">{t('consensus.splitNote')}</p>
-              )}
-              {current.missing.length > 0 && (
-                <p className="text-[color:var(--color-sig-text)]">
-                  {t('consensus.onlyIn', {
-                    names: Object.entries(current.members).filter(([, v]) => v != null).map(([k]) => nameOf(k)).join(', '),
-                  })}
-                </p>
-              )}
-              {current.table ? (
-                <TableHeatmap key={current.id} cluster={current} models={models} />
-              ) : (
-                <Readings
-                  values={Object.fromEntries(models.filter((m) => m.key in current.members).map((m) => {
-                    const parts = partsOf(page, current, m.key)
-                    return [m.key, parts.length === 0 ? null : parts.map((b) => b.content).join('\n')]
-                  }))}
-                  models={models}
-                  mine={actions ? (mine.length ? mine.map((item) => item.content).join('\n') : null) : undefined}
-                />
-              )}
+                ))}
+              </div>
               {actions?.canEdit && (
-                <ClusterActions
-                  cluster={current}
-                  page={page}
-                  mine={mine}
-                  resolved={resolved.has(current.id)}
-                  actions={actions}
-                  nameOf={nameOf}
-                />
+                <div className="flex flex-wrap items-center gap-1" data-testid="adopt">
+                  <span className="text-[color:var(--color-ink-3)]">{t('consensus.adoptLead')}</span>
+                  {page.comparison.models.map((key) => (
+                    <button key={key} type="button" className="font-semibold underline" onClick={() => actions.onAdopt(key)}>{nameOf(key)}</button>
+                  ))}
+                </div>
               )}
             </div>
-          ) : (
-            <p className="text-[11px] text-[color:var(--color-ink-3)]">{t('consensus.selectHint')}</p>
-          )}
+          </details>
         </>
       )}
-    </div>
+    </section>
+  )
+}
+
+/** The areas the models read where the user has no block, at the foot of the content. */
+export function ModelOnlyClusters({ page, clusters, selected, onSelect, actions }: {
+  page: PageConsensus
+  clusters: ConsensusCluster[]
+  selected: number | null
+  onSelect: (cluster: number) => void
+  actions?: ConsensusActions
+}) {
+  const { t } = useI18n()
+  if (clusters.length === 0) return null
+  const resolved = actions?.resolved ?? new Set<number>()
+  return (
+    <section className="border-t border-dashed border-[color:var(--color-rule-strong)] p-2.5" aria-label={t('consensus.modelOnly')} data-testid="model-only">
+      <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-ink-3)]">{t('consensus.modelOnly')}</h3>
+      <ul className="space-y-2">
+        {clusters.map((cluster) => (
+          <li key={cluster.id} id={`consensus-area-${cluster.id}`} className={`border border-dashed border-[color:var(--color-rule-strong)] p-2 ${cluster.id === selected ? 'bg-[color:var(--color-sig-wash)]' : ''}`}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[12px] font-semibold">{labelName(cluster.label)}</span>
+              <ClusterChip cluster={cluster} page={page} resolved={resolved.has(cluster.id)} selected={cluster.id === selected} onSelect={() => onSelect(cluster.id)} />
+            </div>
+            {cluster.id === selected && <ClusterDetail cluster={cluster} page={page} mine={[]} resolved={resolved.has(cluster.id)} actions={actions} />}
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }

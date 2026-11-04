@@ -17,9 +17,17 @@ import { useDraftEdits } from '../studio/useDraftEdits'
 import { useAnnotationState } from '../studio/useAnnotationState'
 import { runPrelabelStream } from '../studio/prefillStream'
 import PrefillDialog from '../studio/components/PrefillDialog'
-import ConsensusPane, { type ConsensusActions } from '../studio/components/ConsensusPane'
+import {
+  ClusterChip,
+  ClusterDetail,
+  ConsensusSummary,
+  ModelOnlyClusters,
+  verdictTag,
+  type ConsensusActions,
+} from '../studio/components/ConsensusPane'
 import {
   boxOf,
+  isOpen,
   isTableCluster,
   mineFor,
   nextOpen,
@@ -1088,7 +1096,9 @@ export default function AnnotationPage() {
   // --- confronto modelli: i blocchi dell'utente sotto la heatmap -------------
   const consensusClusters = consensus?.comparison?.clusters ?? []
   const mineItems = useMemo<MineItem[]>(() => [
-    ...ann.blocks.filter((b) => b.points.length >= 2).map((b) => {
+    ...[...ann.blocks]
+      .sort((a, b) => (a.orderIdx ?? Number.MAX_SAFE_INTEGER) - (b.orderIdx ?? Number.MAX_SAFE_INTEGER))
+      .filter((b) => b.points.length >= 2).map((b) => {
       const bb = bboxPoints(b.points)
       return {
         kind: 'block' as const, id: b.id, label: b.label, content: b.content,
@@ -1112,8 +1122,14 @@ export default function AnnotationPage() {
   /** Selects a cluster in the rail and the user's block reading it on the canvas. */
   const selectCluster = (id: number | null) => {
     setConsensusSelected(id)
-    const block = id == null ? undefined : mineByCluster.get(id)?.find((item) => item.kind === 'block')
+    const mine = id == null ? [] : mineByCluster.get(id) ?? []
+    const block = mine.find((item) => item.kind === 'block')
     ann.setSelectedId(block?.id ?? null)
+    if (id == null) return
+    // The detail opens under the area's first row: bring it into view once drawn.
+    const first = mine[0]
+    const target = first ? `content-row-${first.kind === 'block' ? first.id : `draft-${first.id}`}` : `consensus-area-${id}`
+    window.requestAnimationFrame(() => document.getElementById(target)?.scrollIntoView?.({ block: 'nearest' }))
   }
   const settleAndAdvance = (cluster: number) => {
     settle(cluster, true)
@@ -1199,12 +1215,52 @@ export default function AnnotationPage() {
       else settleAndAdvance(cluster.id)
     },
     onNext: () => selectCluster(nextOpen(consensusClusters, consensusResolved, consensusSelected)),
-    onOpenTable: (cluster) => {
-      const block = mineByCluster.get(cluster.id)?.find((item) => item.kind === 'block')
-      setConsensusOn(false)
-      if (block) ann.setSelectedId(block.id)
-    },
   }
+
+  // Each of the user's rows shows the verdict of the area it reads; the detail goes
+  // under the first row of the area (several rows: the area was segmented differently).
+  const clusterOfRow = new Map<string, number>()
+  const detailRow = new Map<number, string>()
+  for (const cluster of consensusClusters) {
+    for (const item of mineByCluster.get(cluster.id) ?? []) {
+      const row = item.kind === 'block' ? item.id : `draft-${item.id}`
+      if (!clusterOfRow.has(row)) clusterOfRow.set(row, cluster.id)
+      if (!detailRow.has(cluster.id)) detailRow.set(cluster.id, row)
+    }
+  }
+  const contentConsensus = consensusOn ? {
+    summary: (
+      <ConsensusSummary
+        page={consensus}
+        loading={consensusLoading}
+        view={consensusView}
+        onView={setConsensusView}
+        onClose={() => setConsensusOn(false)}
+        actions={consensusActions}
+      />
+    ),
+    row: (rowId: string) => {
+      const id = clusterOfRow.get(rowId)
+      const cluster = consensusClusters.find((c) => c.id === id)
+      if (!consensus || !cluster) return null
+      const resolved = consensusResolved.has(cluster.id)
+      return {
+        chip: <ClusterChip cluster={cluster} page={consensus} resolved={resolved} selected={consensusSelected === cluster.id} onSelect={() => selectCluster(cluster.id)} />,
+        detail: consensusSelected === cluster.id && detailRow.get(cluster.id) === rowId
+          ? <ClusterDetail cluster={cluster} page={consensus} mine={mineByCluster.get(cluster.id) ?? []} resolved={resolved} actions={consensusActions} />
+          : null,
+      }
+    },
+    footer: consensus && (
+      <ModelOnlyClusters
+        page={consensus}
+        clusters={consensusClusters.filter((c) => (mineByCluster.get(c.id) ?? []).length === 0)}
+        selected={consensusSelected}
+        onSelect={selectCluster}
+        actions={consensusActions}
+      />
+    ),
+  } : undefined
 
   // Tastiera del confronto: 1–6 usa il modello, X elimina il proprio, A va bene
   // così (o riapre), N il prossimo da vedere. Mai mentre si scrive.
@@ -1755,7 +1811,12 @@ export default function AnnotationPage() {
                 onUpdateBlock={updateBlockPoints}
                 onDeleteBlock={handleDeleteBlock}
                 overlay={consensusOn && consensus ? {
-                  rects: overlayRects(consensus, consensusView, ratio, { resolved: consensusResolved, covered: coveredClusters }),
+                  rects: overlayRects(consensus, consensusView, ratio, {
+                    resolved: consensusResolved,
+                    covered: coveredClusters,
+                    tagOf: (cluster) => consensusResolved.has(cluster.id) ? '✓'
+                      : isOpen(cluster, consensusResolved) || cluster.id === consensusSelected ? verdictTag(cluster, consensus, t) : '',
+                  }),
                   selected: consensusSelected,
                   onSelect: selectCluster,
                 } : undefined}
@@ -1785,18 +1846,6 @@ export default function AnnotationPage() {
         className={`${studioMode === 'canvas' ? 'hidden' : 'flex'} min-w-0 flex-col overflow-y-auto bg-[color:var(--color-sheet)] p-3 ${studioMode === 'all' ? 'shrink-0' : 'flex-1'}`}
         style={studioMode === 'all' ? { width: contentWidth } : undefined}
       >
-        {consensusOn ? (
-          <ConsensusPane
-            page={consensus}
-            loading={consensusLoading}
-            view={consensusView}
-            onView={setConsensusView}
-            selected={consensusSelected}
-            onSelect={selectCluster}
-            onClose={() => setConsensusOn(false)}
-            actions={consensusActions}
-          />
-        ) : (
         <fieldset disabled={prefillBusy || navBusy} className="min-w-0 border-0 p-0">
         <ContentPane
           blocks={ann.blocks}
@@ -1843,9 +1892,9 @@ export default function AnnotationPage() {
                 }
               : null
           }
+          consensus={contentConsensus}
         />
         </fieldset>
-        )}
       </section>
 
       </div>

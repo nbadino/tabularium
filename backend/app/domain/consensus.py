@@ -63,6 +63,19 @@ def text_distance(a: str | None, b: str | None) -> float:
     return Levenshtein.distance(left, right) / max(len(left), len(right))
 
 
+def words_distance(a: str | None, b: str | None) -> float:
+    """`text_distance` on the words sorted: the same words in another order are the same text.
+
+    For a block one model split: its pieces joined in reading order can interleave two
+    columns another model read one after the other, and the character distance then
+    counted the order, not the misreadings.
+    """
+    def bag(value: str | None) -> str:
+        return " ".join(sorted(normalize_text(value).split()))
+
+    return text_distance(bag(a), bag(b))
+
+
 def _box(block: dict) -> list[float]:
     (x1, y1), (x2, y2) = block["points"][0], block["points"][-1]
     return [min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)]
@@ -392,7 +405,7 @@ def compare_page(outputs: dict[str, list[dict]]) -> dict:
             text = table["score"]
         else:
             texts = [" ".join(str(block.get("content") or "") for block in blocks) for blocks in pieces.values()]
-            text = _mean_pairwise(texts, text_distance)
+            text = _mean_pairwise(texts, words_distance if split else text_distance)
         layout = _mean_pairwise(list(model_boxes.values()), layout_distance)
         if missing:
             score = 1.0

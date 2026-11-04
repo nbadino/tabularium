@@ -559,3 +559,32 @@ describe('ContentPane', () => {
     expect(onDraftLabel).toHaveBeenCalledWith(42, 'Issue-date')
   })
 })
+
+describe('ContentPane in model comparison', () => {
+  it('heads the rows with the summary, puts each verdict in its row and the rest below', () => {
+    const draft: PrefillDraft = { serverId: 21, label: 'Text', content: 'Fonte', confirmed: false, grid: null }
+    render(
+      <ContentPane
+        blocks={[makeBlock({ id: 'b1', content: 'Arrivi', confirmed: true })]}
+        drafts={[draft]}
+        labels={[]}
+        selectedId={null}
+        working={null}
+        {...noop}
+        consensus={{
+          summary: <p>summary</p>,
+          row: (rowId) => rowId === 'b1'
+            ? { chip: <span>chip-b1</span>, detail: <div>detail-b1</div> }
+            : rowId === 'draft-21' ? { chip: <span>chip-draft</span>, detail: null } : null,
+          footer: <p>only in the models</p>,
+        }}
+      />,
+    )
+    expect(screen.getByText('summary')).toBeInTheDocument()
+    // A verified block with an open detail is not folded away into one line.
+    expect(screen.getByText('detail-b1')).toBeInTheDocument()
+    expect(screen.getByText('chip-b1')).toBeInTheDocument()
+    expect(screen.getByText('chip-draft')).toBeInTheDocument()
+    expect(screen.getByText('only in the models')).toBeInTheDocument()
+  })
+})

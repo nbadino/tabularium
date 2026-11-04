@@ -245,6 +245,9 @@ interface RowShellProps {
    *  finito si riduce a numero, classe, anteprima e ✓; si riapre col clic. */
   collapsed?: boolean
   preview?: string
+  /** Model comparison: the verdict of the area this row reads, and its detail when selected. */
+  chip?: React.ReactNode
+  detail?: React.ReactNode
   children: React.ReactNode
 }
 
@@ -277,6 +280,8 @@ function RowShell({
   wide,
   collapsed,
   preview,
+  chip,
+  detail,
   children,
 }: RowShellProps) {
   const { t } = useI18n()
@@ -329,6 +334,7 @@ function RowShell({
         <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-[color:var(--color-ink-2)]">
           {preview}
         </span>
+        {chip}
         <span className="shrink-0 text-[11px] text-[color:var(--color-ok)]" title={t('content.confirmDraft')}>
           ✓ {t('content.confirmDraft')}
         </span>
@@ -369,6 +375,8 @@ function RowShell({
             {badge.text}
           </span>
         )}
+
+        {chip}
 
         <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-[color:var(--color-ink-2)]">
           <input
@@ -435,6 +443,7 @@ function RowShell({
         </figure>
         <div className="min-w-0 flex-1">{children}</div>
       </div>
+      {detail}
     </li>
   )
 }
@@ -486,6 +495,13 @@ interface ContentPaneProps {
   /** Presente mentre il modello scrive: l'output live sta sopra la lista e i
    *  blocchi arrivano SOTTO, in diretta, senza coprire nulla. */
   working: { engine: string; startedAt: number; blocks: number; last: string | null; output?: LivePrefillOutput | null } | null
+  /** Model comparison: a head above the rows, a verdict in each row, and the areas only the models read below. */
+  consensus?: {
+    summary: React.ReactNode
+    /** Row id: a block's client id, or `draft-<serverId>`. */
+    row: (rowId: string) => { chip: React.ReactNode; detail: React.ReactNode | null } | null
+    footer: React.ReactNode
+  }
 }
 
 export default function ContentPane({
@@ -520,6 +536,7 @@ export default function ContentPane({
   activeAdapterId,
   onLabelsSaved,
   working,
+  consensus,
 }: ContentPaneProps) {
   const { t, tn } = useI18n()
   // Le righe che cambiano posto scivolano (v. lib/motion.ts).
@@ -589,6 +606,8 @@ export default function ContentPane({
         </>
       }
     >
+      {consensus?.summary}
+
       {(working || stream?.text) && (
         <LiveStream
           working={working}
@@ -605,6 +624,7 @@ export default function ContentPane({
             {sortedBlocks.map((block, i) => {
               const isTable = block.label === 'Table'
               const noContent = NO_CONTENT_LABELS.has(block.label)
+              const verdict = consensus?.row(block.id)
               return (
                 <RowShell
                   key={block.id}
@@ -619,7 +639,9 @@ export default function ContentPane({
                       ? { text: 'OCR', title: t('layers.prefillTitle', { source: block.prefill }) }
                       : undefined
                   }
-                  collapsed={block.confirmed && selectedId !== block.id && !isTable}
+                  collapsed={block.confirmed && selectedId !== block.id && !isTable && !verdict?.detail}
+                  chip={verdict?.chip}
+                  detail={verdict?.detail}
                   preview={noContent ? '' : block.content.replace(/\s+/g, ' ')}
                   confirmed={block.confirmed}
                   onConfirmed={(v) => onConfirmed(block.id, v)}
@@ -678,6 +700,7 @@ export default function ContentPane({
             {pendingDrafts.map((draft) => {
               const isTable = draft.label === 'Table'
               const noContent = NO_CONTENT_LABELS.has(draft.label)
+              const verdict = consensus?.row(`draft-${draft.serverId}`)
               return (
                 <RowShell
                   key={`draft-${draft.serverId}`}
@@ -691,7 +714,9 @@ export default function ContentPane({
                   onConfirmed={(v) => onDraftConfirmed(draft.serverId, v)}
                   onDelete={() => onDraftReject(draft.serverId)}
                   deleteTitle={t('content.rejectDraft')}
-                  selected={false}
+                  selected={Boolean(verdict?.detail)}
+                  chip={verdict?.chip}
+                  detail={verdict?.detail}
                   rowAria={t('content.draftAria', { label: draft.label })}
                   cropUrl={cropUrlFor(draft.serverId)}
                   cropAlt={t('content.cropAlt', { label: draft.label })}
@@ -729,6 +754,8 @@ export default function ContentPane({
           </ul>
         </>
       )}
+
+      {consensus?.footer}
 
       {rulesOpen && projectId != null && (
         <Modal title={t('conventions.tab')} onClose={() => setRulesOpen(false)}>

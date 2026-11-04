@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Image as KonvaImage, Layer, Line, Rect, Stage } from 'react-konva'
+import { Image as KonvaImage, Layer, Line, Rect, Stage, Group, Label, Tag, Text } from 'react-konva'
 import Konva from 'konva'
 import useImage from 'use-image'
 import { bboxPoints, type Pt } from '../lib/coords'
@@ -460,6 +460,27 @@ export default function StudioCanvas({
                   onClick={() => { if (!wasDrag()) overlay.onSelect(rect.cluster) }}
                   onTap={() => overlay.onSelect(rect.cluster)}
                 />
+              )
+            })}
+            {/* The verdict in words at each area's corner, above its own box: a tag
+                is the same size on screen at any zoom. */}
+            {overlay.rects.map((rect, index) => {
+              if (!rect.tag) return null
+              const box = bboxPoints(rect.points)
+              const selected = rect.cluster === overlay.selected
+              return (
+                <Group key={`tag-${index}`} x={box.x} y={box.y} listening={false}>
+                  <Label y={-16 / viewport.k}>
+                    <Tag fill={rect.color} opacity={selected ? 1 : 0.9} cornerRadius={2 / viewport.k} />
+                    <Text
+                      text={rect.tag}
+                      fontSize={11 / viewport.k}
+                      fontStyle={selected ? 'bold' : 'normal'}
+                      padding={3 / viewport.k}
+                      fill="#ffffff"
+                    />
+                  </Label>
+                </Group>
               )
             })}
           </Layer>

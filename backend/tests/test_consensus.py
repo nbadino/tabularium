@@ -223,6 +223,29 @@ def test_pieces_inside_another_models_block_join_its_cluster():
     assert cluster["score"] == pytest.approx(cs.SPLIT_MISMATCH)
 
 
+def test_the_pieces_of_a_split_block_are_compared_whatever_their_order():
+    """Two columns of an advert, pieced in reading order, interleave against one block.
+
+    The same words in another order are no disagreement; a misread word still is.
+    """
+    page = cs.compare_page({
+        "A": [
+            _block("Title", (0, 0, 50, 20), "JAMES POWER"),
+            _block("Title", (50, 0, 100, 20), "CHARTERING AGENTS"),
+            _block("Text", (0, 20, 50, 60), "158 Leadenhall Street"),
+            _block("Text", (50, 20, 100, 60), "Particulars free"),
+        ],
+        "B": [_block("Advertisement", (0, 0, 100, 60), "JAMES POWER 158 Leadenhall Street CHARTERING AGENTS Particulars free")],
+    })
+    (cluster,) = page["clusters"]
+    assert cluster["split"] is True and cluster["text"] == 0.0
+    misread = cs.compare_page({
+        "A": [_block("Text", (0, 0, 50, 60), "158 Leadenhall Street"), _block("Text", (50, 0, 100, 60), "Particulars free")],
+        "B": [_block("Advertisement", (0, 0, 100, 60), "158 Leadenhall Strect Particulars free")],
+    })
+    assert misread["clusters"][0]["text"] > 0.0
+
+
 def test_a_block_barely_touching_another_is_still_missing():
     page = cs.compare_page({
         "A": [_block("Text", (0, 0, 100, 100), "a"), _block("Note", (90, 90, 200, 200), "n")],

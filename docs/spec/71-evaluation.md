@@ -44,7 +44,9 @@ The metric is pure (`domain/consensus.py`), pinned by `tests/test_consensus.py`:
   models read the area but segmented it differently (`split`). Without this, an advert read as
   one block by one model and as Title + Text pieces by the other showed every piece as missing.
 - **Channels** per cluster: `text` = mean pairwise normalised character edit distance (NFC,
-  whitespace collapsed, markdown `#`/`*`/`_`/`` ` `` decoration removed); `layout` = mean pairwise
+  whitespace collapsed, markdown `#`/`*`/`_`/`` ` `` decoration removed); for a split cluster
+  the words are sorted first (`words_distance`), since pieces joined in reading order can
+  interleave columns another model read one after the other; `layout` = mean pairwise
   1 − IoU; `label_agree`.
 - **Score** = max(text, layout, 0.5 if the labels differ); for a split cluster max(text,
   layout, 0.3), with each model's parts joined in reading order for `text` and their union for
@@ -58,6 +60,13 @@ The metric is pure (`domain/consensus.py`), pinned by `tests/test_consensus.py`:
   models there is no comparison (`comparison: null`), not an invented agreement.
 
 The Studio colours a score below 0.1 as agreement, below 0.35 as partial, above as disagreement.
+
+**Verdict** (`studio/consensus.ts::verdictOf`), which decides colour and wording: `missing` when
+a model has no block there; `text` when the text channel is ≥ 0.1 (red or amber by its band);
+`structure` when the words agree but the class, the segmentation or the position (layout ≥ 0.35)
+differs (grey: a choice, not a misreading); otherwise `agree`. The floors of the score (0.3 for
+a split, 0.5 for a label) order the clusters and weigh the page agreement but are never shown
+as a percentage of difference. *Next* goes through `text`, then `missing`, then `structure`.
 
 **Settling a block in the Studio** (`studio/consensus.ts`, `AnnotationPage.tsx`). The user's
 blocks and unverified drafts that read a cluster's area are found with the same thresholds as

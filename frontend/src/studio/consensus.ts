@@ -102,6 +102,66 @@ export const BAND_COLOR: Record<ScoreBand, string> = {
 
 /** A disagreement the user has settled: the same violet as a corrected table cell. */
 export const RESOLVED_COLOR = '#7c3aed'
+/** Same text, another class or segmentation: a choice to make, not a misreading. */
+export const STRUCTURE_COLOR = '#5f6b7a'
+
+/**
+ * What kind of disagreement a cluster is, which decides its colour and the words used.
+ *
+ * - `text`: the models read different words; the one kind that is a likely error.
+ * - `missing`: some model found nothing there.
+ * - `structure`: same words, but another class, segmentation or position: a choice.
+ * - `agree`: nothing to look at.
+ */
+export type VerdictKind = 'text' | 'missing' | 'structure' | 'agree'
+
+export type Degree = 'same' | 'close' | 'partly' | 'different'
+
+export interface Verdict {
+  kind: VerdictKind
+  text: Degree
+  layout: Degree
+  labelsDiffer: boolean
+  split: boolean
+}
+
+/** Text: identical below 2 %, a character here and there below 10 %, then the score bands. */
+export function textDegree(score: number): Degree {
+  if (score < 0.02) return 'same'
+  if (score < 0.1) return 'close'
+  if (score < 0.35) return 'partly'
+  return 'different'
+}
+
+/** Position: 1 − IoU; below 0.1 the boxes are the same area drawn a little differently. */
+export function layoutDegree(score: number): Degree {
+  if (score < 0.1) return 'same'
+  if (score < 0.35) return 'close'
+  return 'different'
+}
+
+export function verdictOf(cluster: ConsensusCluster): Verdict {
+  const text = textDegree(cluster.text)
+  const layout = layoutDegree(cluster.layout)
+  const labelsDiffer = !cluster.label_agree && !cluster.split
+  const kind: VerdictKind = cluster.missing.length > 0 ? 'missing'
+    : text === 'partly' || text === 'different' ? 'text'
+      : cluster.split || labelsDiffer || layout === 'different' ? 'structure'
+        : 'agree'
+  return { kind, text, layout, labelsDiffer, split: cluster.split }
+}
+
+/** The colour of a cluster on the canvas: the text's band, grey for a choice, violet once settled. */
+export function verdictColor(cluster: ConsensusCluster, resolved: boolean): string {
+  if (resolved) return RESOLVED_COLOR
+  const verdict = verdictOf(cluster)
+  if (verdict.kind === 'missing') return BAND_COLOR.disagree
+  if (verdict.kind === 'text') return BAND_COLOR[scoreBand(cluster.text)]
+  if (verdict.kind === 'structure') return STRUCTURE_COLOR
+  return BAND_COLOR.agree
+}
+
+const KIND_ORDER: Record<VerdictKind, number> = { text: 0, missing: 1, structure: 2, agree: 3 }
 
 /** Utility classes for the same bands in the DOM (table heatmap, list). */
 export const BAND_CLASS: Record<ScoreBand, string> = {
@@ -124,6 +184,8 @@ export interface OverlayRect {
   dashed: boolean
   /** False over an area the user already has a block in: the click goes to that block. */
   listening: boolean
+  /** Short words drawn on the page at the rectangle's corner (empty: none). */
+  tag: string
 }
 
 /** 'disagreement' paints every cluster by score; a model key draws that model's own boxes. */
@@ -133,14 +195,18 @@ export function overlayRects(
   page: PageConsensus,
   view: ConsensusView,
   ratio: number,
-  { resolved = new Set<number>(), covered = new Set<number>() }: { resolved?: Set<number>; covered?: Set<number> } = {},
+  {
+    resolved = new Set<number>(),
+    covered = new Set<number>(),
+    tagOf = () => '',
+  }: { resolved?: Set<number>; covered?: Set<number>; tagOf?: (cluster: ConsensusCluster) => string } = {},
 ): OverlayRect[] {
   const clusters = page.comparison?.clusters ?? []
   const box = (x1: number, y1: number, x2: number, y2: number): Pt[] => [
     { x: x1 * ratio, y: y1 * ratio },
     { x: x2 * ratio, y: y2 * ratio },
   ]
-  const color = (cluster: ConsensusCluster) => resolved.has(cluster.id) ? RESOLVED_COLOR : BAND_COLOR[scoreBand(cluster.score)]
+  const color = (cluster: ConsensusCluster) => verdictColor(cluster, resolved.has(cluster.id))
   if (view === 'disagreement') {
     return clusters.map((cluster) => ({
       cluster: cluster.id,
@@ -148,6 +214,7 @@ export function overlayRects(
       color: color(cluster),
       dashed: cluster.missing.length > 0,
       listening: !covered.has(cluster.id),
+      tag: tagOf(cluster),
     }))
   }
   const blocks = page.outputs[view] ?? []
@@ -161,6 +228,7 @@ export function overlayRects(
       color: color(cluster),
       dashed: false,
       listening: !covered.has(cluster.id),
+      tag: '',
     }]
   })
 }
@@ -220,12 +288,29 @@ export function isTableCluster(page: PageConsensus, cluster: ConsensusCluster, m
 
 /** Disputed and not yet settled by the user. */
 export function isOpen(cluster: ConsensusCluster, resolved: Set<number>): boolean {
-  return scoreBand(cluster.score) !== 'agree' && !resolved.has(cluster.id)
+  return verdictOf(cluster).kind !== 'agree' && !resolved.has(cluster.id)
 }
 
-/** The next open cluster after `current`, most disputed first, wrapping round; null when none is left. */
+/** What to look at first: different text, then what a model missed, then the choices; by score within each. */
+export function byPriority(clusters: ConsensusCluster[]): ConsensusCluster[] {
+  return [...clusters].sort((a, b) =>
+    KIND_ORDER[verdictOf(a).kind] - KIND_ORDER[verdictOf(b).kind]
+    || b.score - a.score || a.bbox[1] - b.bbox[1] || a.bbox[0] - b.bbox[0])
+}
+
+/** The open clusters still to look at, by kind. */
+export function openCounts(clusters: ConsensusCluster[], resolved: Set<number>): Record<Exclude<VerdictKind, 'agree'>, number> {
+  const counts = { text: 0, missing: 0, structure: 0 }
+  for (const cluster of clusters) {
+    const kind = verdictOf(cluster).kind
+    if (kind !== 'agree' && !resolved.has(cluster.id)) counts[kind] += 1
+  }
+  return counts
+}
+
+/** The next open cluster after `current`, in priority order, wrapping round; null when none is left. */
 export function nextOpen(clusters: ConsensusCluster[], resolved: Set<number>, current: number | null): number | null {
-  const order = byDisagreement(clusters)
+  const order = byPriority(clusters)
   const at = order.findIndex((c) => c.id === current)
   for (let step = 1; step <= order.length; step++) {
     const cluster = order[(at + step + order.length) % order.length]
@@ -237,6 +322,20 @@ export function nextOpen(clusters: ConsensusCluster[], resolved: Set<number>, cu
 /** Most disputed first; ties in reading order. */
 export function byDisagreement(clusters: ConsensusCluster[]): ConsensusCluster[] {
   return [...clusters].sort((a, b) => b.score - a.score || a.bbox[1] - b.bbox[1] || a.bbox[0] - b.bbox[0])
+}
+
+/** Share of characters that differ between two readings, whitespace collapsed (0 = same). */
+export function readingDistance(a: string, b: string): number {
+  const left = a.replace(/\s+/g, ' ').trim()
+  const right = b.replace(/\s+/g, ' ').trim()
+  if (left === right) return 0
+  let removed = 0
+  let added = 0
+  for (const part of charDiff(left, right)) {
+    if (part.kind === 'del') removed += part.text.length
+    if (part.kind === 'ins') added += part.text.length
+  }
+  return Math.max(removed, added) / Math.max(left.length, right.length)
 }
 
 export interface DiffPart {

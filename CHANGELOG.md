@@ -137,9 +137,18 @@ Notable changes to Tabularium. The format follows
   correction happens where you edit; right click on a disputed cell offers *Use <model>:
   "<reading>"* for each model, and a disputed cell you have corrected or verified turns violet
   (the count of the ones left goes down); *Show disagreements* turns it off.
-  In the Studio the comparison is no longer read-only: the heatmap lies over your own blocks,
-  which stay editable, and the pane shows *Your transcription* next to the models' readings,
-  diffed against yours. Each disputed block can be settled with *Use <model>* (the model's text
+  In the Studio the comparison is no longer read-only and no longer replaces the page content:
+  the heatmap lies over your own blocks, which stay editable, and every row of *Page content*
+  carries the verdict of the area it reads in words (*text differs 16%*, *class*,
+  *segmentation*, *only Argon*), the same words tagged on the page. Red is kept for different
+  words; a different class, segmentation or position is a grey *structure choice*. The summary
+  counts them apart (*1 to correct · 3 structure choices*). The selected area's detail says,
+  aspect by aspect, what differs (text, position, class, or each model's blocks), shows the
+  models' readings diffed against your text, warns when the models agree with each other but
+  not with you, and says what each *Use <model>* will do before it is done. The areas only the
+  models read are listed below the rows. A split block's text is compared word by word in any
+  order: the pieces of a two-column advert, joined in reading order, had counted the
+  interleaving as 57 % different text. Each disputed block can be settled with *Use <model>* (the model's text
   and class into your block; when you have no block there, or it is segmented differently, the
   model's blocks take the place of yours), *Delete mine* or *Fine as it is*; settled blocks turn
   violet, the count of the ones to review goes down and the next one is selected. Keys: `1`–`6`
