@@ -203,6 +203,8 @@ export const it = {
   },
 
   consensus: {
+    offer: "Confronto disponibile: {names}.",
+    offerOpen: "Mostra il confronto",
     mineDiffers: "Il tuo testo è diverso da quello dei modelli: controlla che sia una correzione voluta.",
     diffAgainstMine: "Confrontate con il tuo testo: in verde ciò che il modello aggiunge, in rosso ciò che toglie.",
     tagOnlyIn: "solo {names}",

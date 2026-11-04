@@ -588,3 +588,18 @@ describe('ContentPane in model comparison', () => {
     expect(screen.getByText('only in the models')).toBeInTheDocument()
   })
 })
+
+describe('ContentPane source badge', () => {
+  it('names the model a draft came from, and keeps OCR for the OCR engine', () => {
+    const drafts: PrefillDraft[] = [
+      { serverId: 31, label: 'Text', content: 'Arrivi', confirmed: false, grid: null, source: 'model:ocria-1:official' },
+      { serverId: 32, label: 'Text', content: 'Fonte', confirmed: false, grid: null, source: 'ocr:rapidocr' },
+    ]
+    render(
+      <ContentPane blocks={[]} drafts={drafts} labels={[]} selectedId={null} working={null} {...noop}
+        sourceLabel={(source) => source.startsWith('model:ocria-1') ? 'OCRia-1 (LlamaIndex)' : 'OCR'} />,
+    )
+    expect(screen.getByText('OCRia-1 (LlamaIndex)')).toBeInTheDocument()
+    expect(screen.getByText('OCR')).toBeInTheDocument()
+  })
+})

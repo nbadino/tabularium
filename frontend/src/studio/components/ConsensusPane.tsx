@@ -457,3 +457,32 @@ export function ModelOnlyClusters({ page, clusters, selected, onSelect, actions 
     </section>
   )
 }
+
+/** With the comparison off: this page has one, which models, and what is left in it. */
+export function ConsensusOffer({ page, resolved, onOpen }: {
+  page: PageConsensus
+  resolved: Set<number>
+  onOpen: () => void
+}) {
+  const { t, tn } = useI18n()
+  if (!page.comparison) return null
+  const counts = openCounts(page.comparison.clusters, resolved)
+  const nameOf = (key: string) => page.models.find((m) => m.key === key)?.name ?? key
+  return (
+    <section className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] p-2.5 text-[12px]" data-testid="consensus-offer">
+      <span className="min-w-0 flex-1">
+        <span className="font-semibold">{t('consensus.offer', { names: page.comparison.models.map(nameOf).join(' · ') })}</span>
+        <span className="ml-2 text-[color:var(--color-ink-2)]">
+          {counts.text + counts.missing + counts.structure === 0
+            ? t('consensus.allSettled')
+            : [
+                counts.text > 0 ? tn('consensus.countText', counts.text) : '',
+                counts.missing > 0 ? tn('consensus.countMissing', counts.missing) : '',
+                counts.structure > 0 ? tn('consensus.countStructure', counts.structure) : '',
+              ].filter(Boolean).join(' · ')}
+        </span>
+      </span>
+      <button type="button" className="btn btn-primary" onClick={onOpen}>{t('consensus.offerOpen')}</button>
+    </section>
+  )
+}

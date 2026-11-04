@@ -38,6 +38,8 @@ export interface PrefillDraft {
   grid?: TableGrid | null
   /** Punti in pixel pagina: il confronto modelli li usa per capire quale area legge. */
   points?: number[][]
+  /** Origine della bozza (`model:<modello>:<modo>`, `ocr:…`): il badge nomina il modello. */
+  source?: string | null
 }
 
 export interface LivePrefillOutput {

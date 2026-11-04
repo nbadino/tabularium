@@ -204,6 +204,8 @@ export const fr: Dict = {
   },
 
   consensus: {
+    offer: "Comparaison disponible : {names}.",
+    offerOpen: "Afficher la comparaison",
     mineDiffers: "Votre texte diffère de celui des modèles : vérifiez que c’est une correction voulue.",
     diffAgainstMine: "Comparées à votre texte : en vert ce que le modèle ajoute, en rouge ce qu’il retire.",
     tagOnlyIn: "seulement {names}",

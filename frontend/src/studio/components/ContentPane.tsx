@@ -448,6 +448,12 @@ function RowShell({
   )
 }
 
+/** `model:ocria-1:official` → `ocria-1`; ogni altra origine automatica resta «OCR». */
+export function defaultSourceName(source: string): string {
+  const [kind, model] = source.split(':')
+  return kind === 'model' && model ? model : 'OCR'
+}
+
 interface ContentPaneProps {
   /** Blocchi confermati e blocchi disegnati a mano: quelli che vivono anche
    *  sul canvas. */
@@ -495,6 +501,8 @@ interface ContentPaneProps {
   /** Presente mentre il modello scrive: l'output live sta sopra la lista e i
    *  blocchi arrivano SOTTO, in diretta, senza coprire nulla. */
   working: { engine: string; startedAt: number; blocks: number; last: string | null; output?: LivePrefillOutput | null } | null
+  /** Nome leggibile dell'origine di una bozza: il modello che l'ha scritta (default: il nome servito, o «OCR»). */
+  sourceLabel?: (source: string) => string
   /** Model comparison: a head above the rows, a verdict in each row, and the areas only the models read below. */
   consensus?: {
     summary: React.ReactNode
@@ -537,8 +545,10 @@ export default function ContentPane({
   onLabelsSaved,
   working,
   consensus,
+  sourceLabel,
 }: ContentPaneProps) {
   const { t, tn } = useI18n()
+  const sourceName = (source: string) => sourceLabel?.(source) ?? defaultSourceName(source)
   // Le righe che cambiano posto scivolano (v. lib/motion.ts).
   const listRef = useRef<HTMLUListElement>(null)
   useFlipList(listRef)
@@ -636,7 +646,7 @@ export default function ContentPane({
                   onLabel={(label) => onLabel(block.id, label)}
                   badge={
                     block.prefill && !block.confirmed
-                      ? { text: 'OCR', title: t('layers.prefillTitle', { source: block.prefill }) }
+                      ? { text: sourceName(block.prefill), title: t('layers.prefillTitle', { source: block.prefill }) }
                       : undefined
                   }
                   collapsed={block.confirmed && selectedId !== block.id && !isTable && !verdict?.detail}
@@ -709,7 +719,7 @@ export default function ContentPane({
                   label={draft.label}
                   labels={labels}
                   onLabel={onDraftLabel ? (label) => onDraftLabel(draft.serverId, label) : undefined}
-                  badge={{ text: 'OCR', title: t('content.prefillDraftBody') }}
+                  badge={{ text: draft.source ? sourceName(draft.source) : 'OCR', title: draft.source ? t('layers.prefillTitle', { source: draft.source }) : t('content.prefillDraftBody') }}
                   confirmed={draft.confirmed}
                   onConfirmed={(v) => onDraftConfirmed(draft.serverId, v)}
                   onDelete={() => onDraftReject(draft.serverId)}

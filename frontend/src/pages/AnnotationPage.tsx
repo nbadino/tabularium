@@ -20,6 +20,7 @@ import PrefillDialog from '../studio/components/PrefillDialog'
 import {
   ClusterChip,
   ClusterDetail,
+  ConsensusOffer,
   ConsensusSummary,
   ModelOnlyClusters,
   verdictTag,
@@ -127,7 +128,7 @@ function mapCanvasBlocks(items: BlockOut[], r: number): DisplayBlock[] {
 function mapDrafts(items: BlockOut[]): PrefillDraft[] {
   return items
     .filter((b) => isPendingDraft(b) && b.label !== 'Table')
-    .map((b) => ({ serverId: b.id, label: b.label, content: b.content, confirmed: false, grid: null, points: b.points }))
+    .map((b) => ({ serverId: b.id, label: b.label, content: b.content, confirmed: false, grid: null, points: b.points, source: b.prefill_source }))
 }
 
 function loadSplit(): { sidebar: number; content: number } {
@@ -320,10 +321,11 @@ export default function AnnotationPage() {
 
   const ann = useAnnotationState(page, ratio, labels, !navBusy && !prefillBusy)
 
+  // The comparison is read even with the mode off: the content says the page has one.
   useEffect(() => {
     setConsensus(null)
     setConsensusSelected(null)
-    if (!consensusOn || !page) return
+    if (!page) return
     let alive = true
     let timer: number | undefined
     const load = async () => {
@@ -342,7 +344,7 @@ export default function AnnotationPage() {
     }
     void load()
     return () => { alive = false; window.clearTimeout(timer) }
-  }, [consensusOn, page?.id])
+  }, [page?.id])
 
   const resolvedKey = consensus?.run_id != null && page ? `tabularium.consensus.resolved.${consensus.run_id}.${page.id}` : null
   useEffect(() => {
@@ -588,6 +590,7 @@ export default function AnnotationPage() {
                   label: ev.block.label,
                   content: ev.block.content,
                   confirmed: false,
+                  source: ev.block.prefill_source ?? null,
                   grid: (ev.block.grid as TableGrid | null) ?? null,
                 },
               ])
@@ -1228,7 +1231,11 @@ export default function AnnotationPage() {
       if (!detailRow.has(cluster.id)) detailRow.set(cluster.id, row)
     }
   }
-  const contentConsensus = consensusOn ? {
+  const contentConsensus = !consensusOn ? (consensus?.comparison ? {
+    summary: <ConsensusOffer page={consensus} resolved={consensusResolved} onOpen={() => setConsensusOn(true)} />,
+    row: () => null,
+    footer: null,
+  } : undefined) : {
     summary: (
       <ConsensusSummary
         page={consensus}
@@ -1260,7 +1267,7 @@ export default function AnnotationPage() {
         actions={consensusActions}
       />
     ),
-  } : undefined
+  }
 
   // Tastiera del confronto: 1–6 usa il modello, X elimina il proprio, A va bene
   // così (o riapre), N il prossimo da vedere. Mai mentre si scrive.
@@ -1893,6 +1900,12 @@ export default function AnnotationPage() {
               : null
           }
           consensus={contentConsensus}
+          sourceLabel={(source) => {
+            // The saved model's name when the comparison knows it, else what the source says.
+            const [kind, model] = source.split(':')
+            if (kind !== 'model' || !model) return 'OCR'
+            return consensus?.models.find((m) => m.model_name === model)?.name ?? model
+          }}
         />
         </fieldset>
       </section>

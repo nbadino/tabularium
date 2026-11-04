@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import '@testing-library/jest-dom/vitest'
-import { ClusterChip, ClusterDetail, ConsensusSummary, ModelOnlyClusters, type ConsensusActions } from './ConsensusPane'
+import { ClusterChip, ClusterDetail, ConsensusOffer, ConsensusSummary, ModelOnlyClusters, type ConsensusActions } from './ConsensusPane'
 import { setLocale } from '../../i18n'
 import type { MineItem, PageConsensus } from '../consensus'
 
@@ -182,5 +182,18 @@ describe('ModelOnlyClusters', () => {
     expect(screen.getByTestId('cell-1-1').className).toContain('color-sig-wash')
     await userEvent.click(screen.getByRole('button', { name: 'Next cell' }))
     expect(screen.getByTestId('reading-p2').querySelector('ins')).toHaveTextContent('u')
+  })
+})
+
+describe('ConsensusOffer', () => {
+  it('says the page has a comparison, with which models and what is left, and opens it', async () => {
+    setLocale('en')
+    const onOpen = vi.fn()
+    render(<ConsensusOffer page={page} resolved={new Set()} onOpen={onOpen} />)
+    const offer = screen.getByTestId('consensus-offer')
+    expect(offer).toHaveTextContent('Comparison available: OCRia-1 · Argon.')
+    expect(offer).toHaveTextContent('1 to correct · 1 found by one model only')
+    await userEvent.click(screen.getByRole('button', { name: 'Show the comparison' }))
+    expect(onOpen).toHaveBeenCalled()
   })
 })

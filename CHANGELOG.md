@@ -148,7 +148,10 @@ Notable changes to Tabularium. The format follows
   not with you, and says what each *Use <model>* will do before it is done. The areas only the
   models read are listed below the rows. A split block's text is compared word by word in any
   order: the pieces of a two-column advert, joined in reading order, had counted the
-  interleaving as 57 % different text. Each disputed block can be settled with *Use <model>* (the model's text
+  interleaving as 57 % different text. With the comparison off, *Page content* says the page
+  has one (which models, what is left) with *Show the comparison*; and a draft's badge names
+  the model that wrote it (*OCRia-1 (LlamaIndex)*, the saved model's name when the comparison
+  knows it) instead of a generic *OCR*. Each disputed block can be settled with *Use <model>* (the model's text
   and class into your block; when you have no block there, or it is segmented differently, the
   model's blocks take the place of yours), *Delete mine* or *Fine as it is*; settled blocks turn
   violet, the count of the ones to review goes down and the next one is selected. Keys: `1`–`6`
