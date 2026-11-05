@@ -19,6 +19,16 @@ Notable changes to Tabularium. The format follows
   keep authenticated page images, and a deskew or alignment no longer leaves stale tiles.
 
 ### Fixed
+- Deskew and basic alignment no longer delete a page's blocks when the page is already straight
+  and nothing would change. When they undo an earlier transform, its metadata goes too, so a stale
+  transform no longer stays reported as active.
+- One PDF page that fails to render (or to save) no longer rolls back the whole scan or upload: that
+  PDF is skipped and listed in the report's errors, and every other file is registered.
+- The MinerU MLX runtime checked for mineru-vl-utils 2.0.5 while installing 2.0.8, so it never
+  looked ready. Every start wiped the venv, reinstalled it and then failed. Both now read one constant.
+- PAGE and ALTO exports keep the text and the page size. ALTO writes `Page > PrintSpace > TextBlock >
+  TextLine > String@CONTENT`, one `Page` per page; before, every `TextLine` was empty. PAGE writes one
+  file per page under `exports/page/`, with `Metadata`, the real image size and `TextEquiv/Unicode`.
 - SSO no longer signs in to an account whose email its owner typed (at registration or in the
   profile before SSO was on): only an email saved by an administrator, or created by SSO, links
   a sign-in. Migration 23 adds `users.email_confirmed`; existing accounts stay linkable.
