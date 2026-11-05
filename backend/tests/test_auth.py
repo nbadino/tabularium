@@ -714,3 +714,42 @@ def test_a_wrong_setup_token_is_explained_in_the_reader_language():
         )
     assert r.status_code == 403
     assert "setup-token" in r.json()["detail"] and "server log" in r.json()["detail"]
+
+
+def test_self_email_is_normalised_and_unique():
+    _mkuser("alice")
+    bob = _mkuser("bob")
+    with connect() as conn:
+        usersvc.update_user(conn, bob["id"], email="  Bob@Example.org ")
+    client = _client()
+    _login(client, "alice")
+    r = client.patch("/api/auth/me", json={"email": "bob@example.org"})
+    assert r.status_code == 409
+    with connect() as conn:
+        assert usersvc.get_user(conn, bob["id"])["email"] == "bob@example.org"
+
+
+def test_self_email_change_refused_while_sso_links_by_email(monkeypatch):
+    """With OIDC on, the email is the link to an identity: claiming a colleague's
+    address before their first SSO login would hand their login to the claimer."""
+    from app.services import settings as settingssvc
+
+    _mkuser("alice")
+    monkeypatch.setattr(settingssvc, "get_app_settings", lambda: {"oidc_enabled": True})
+    client = _client()
+    _login(client, "alice")
+    r = client.patch("/api/auth/me", json={"email": "carol@example.org"})
+    assert r.status_code == 403
+
+
+def test_deactivating_a_user_ends_their_sessions():
+    admin = _mkuser("root", role="admin")
+    bob = _mkuser("bob")
+    bob_client = _client()
+    _login(bob_client, "bob")
+    admin_client = _client()
+    _login(admin_client, "root")
+    assert admin_client.patch(f"/api/users/{bob['id']}", json={"active": False}).status_code == 200
+    assert admin_client.patch(f"/api/users/{bob['id']}", json={"active": True}).status_code == 200
+    assert bob_client.get("/api/auth/me").status_code == 401
+    assert admin["id"] != bob["id"]

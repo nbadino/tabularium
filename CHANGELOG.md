@@ -6,7 +6,22 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Security
+- Emails are stored lowercased and must be unique. With SSO on, users can no longer change their
+  own email: SSO links a login to the account holding that address, so claiming a colleague's
+  email before their first SSO login handed that login to the claimer. An administrator sets it.
+- Deactivating a user ends their sessions; reactivating them no longer revives old tokens.
+- Evaluation endpoints (`server_url`, `baseline_server_url`) go through the same endpoint check
+  as compute profiles, so a project writer can no longer make the backend call private hosts.
+- A benchmark target's `api_key` is no longer written to `report.json`/`report.html`, which every
+  project member can read.
+- Page tiles are sent `private, no-cache` instead of `public, immutable`: shared caches no longer
+  keep authenticated page images, and a deskew or alignment no longer leaves stale tiles.
+
 ### Fixed
+- SSO no longer signs in to an account whose email its owner typed (at registration or in the
+  profile before SSO was on): only an email saved by an administrator, or created by SSO, links
+  a sign-in. Migration 23 adds `users.email_confirmed`; existing accounts stay linkable.
 - A large ZIP upload no longer fails on one network hiccup: a piece that does not arrive is sent
   again after a pause (about two minutes of attempts), from the byte the server says it holds
   (`GET …/zip-uploads/{id}`); the dialog says it is retrying. An 800 MB archive had failed at

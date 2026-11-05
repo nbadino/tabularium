@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from ..db import connect
 from ..services import evaluate as evmod
 from ..services.i18n import parse_lang
+from ..services.url_security import validate_endpoint
 from ..services import auth as authsvc
 from .deps import require_resource
 
@@ -38,6 +39,9 @@ def run_evaluation(
 
     with connect() as conn:
         _get_project_or_404(conn, project_id)
+    for url in (payload.server_url, payload.baseline_server_url):
+        if url:
+            validate_endpoint(url)
     try:
         result = evmod.evaluate_project(
             project_id,

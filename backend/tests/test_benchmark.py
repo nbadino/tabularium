@@ -203,3 +203,21 @@ def test_bulk_approve_skips_drafts_unless_confirmed(tmp_path):
                 "SELECT COUNT(*) FROM pages WHERE project_id=? AND status='approved'", (pid,)
             ).fetchone()[0]
         assert approved == 2
+
+
+def test_benchmark_report_never_stores_the_api_key(tmp_path, monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(infmod, "VllmClient", _fake_client_factory(calls))
+    monkeypatch.setattr(
+        "app.services.evaluate.pagesvc.load_source_image",
+        lambda page: Image.new("RGB", (900, 1300)),
+    )
+    with TestClient(app) as client:
+        pid = _gold_project(client, tmp_path)
+        report = benchmod.run_benchmark(
+            pid, [{"adapter_id": "lightonocr-3", "model": "good", "api_key": "sk-secret-123"}],
+            limit=1, with_text=False,
+        )
+    assert calls, "the key must still reach the client"
+    assert "sk-secret-123" not in Path(report["bench_dir"], "report.json").read_text(encoding="utf-8")
+    assert "sk-secret-123" not in Path(report["bench_dir"], "report.html").read_text(encoding="utf-8")

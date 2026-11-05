@@ -456,6 +456,8 @@ def run_benchmark(
             with_text=with_text, use_cache=use_cache, lang=lang, table_hint=table_hint,
             schema_labels=schema_labels, on_page=on_page, table_only=table_only,
         )
+        # The key reached the client; report.json is readable by every project member.
+        (entry.get("target") or {}).pop("api_key", None)
         entries.append(entry)
         # Un modello finito è un risultato: lo si dichiara subito (la tabella si
         # popola man mano, senza aspettare la fine di tutti i candidati).
