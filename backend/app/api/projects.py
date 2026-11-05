@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 import uuid
@@ -116,6 +117,16 @@ def _settings_or_404(project_id: int) -> dict:
     if settings is None:
         raise HTTPException(status_code=404, detail="progetto non trovato")
     return settings
+
+
+@contextmanager
+def _editing_settings(project_id: int):
+    """Settings to change, saved on exit in the same write transaction as the read:
+    two saves at once no longer erase each other. An exception discards the change."""
+    with projectstore.editing_settings(project_id) as settings:
+        if settings is None:
+            raise HTTPException(status_code=404, detail="progetto non trovato")
+        yield settings
 
 
 def _get_project_or_404(_conn, project_id: int):
@@ -366,14 +377,13 @@ def put_study_protocol(
     _auth: dict = Depends(require_resource(write=True)),
 ) -> StudyProtocolOut:
     now = datetime.now(timezone.utc).isoformat()
-    settings = _settings_or_404(project_id)
-    previous = settings.get("study_protocol") or {}
-    version = int(previous.get("version", 0)) + 1
-    protocol = {**payload.model_dump(), "version": version, "updated_at": now}
-    history = settings.setdefault("study_protocol_history", [])
-    history.append(protocol)
-    settings["study_protocol"] = protocol
-    projectstore.put_settings(project_id, settings)
+    with _editing_settings(project_id) as settings:
+        previous = settings.get("study_protocol") or {}
+        version = int(previous.get("version", 0)) + 1
+        protocol = {**payload.model_dump(), "version": version, "updated_at": now}
+        history = settings.setdefault("study_protocol_history", [])
+        history.append(protocol)
+        settings["study_protocol"] = protocol
     return StudyProtocolOut(**protocol)
 
 
@@ -385,19 +395,18 @@ def set_gold_set(
 ) -> dict:
     """Protegge un campione di pagine invisibile al tuning."""
     valid = projectstore.valid_page_ids(project_id, page_ids)
-    settings = _settings_or_404(project_id)
-    protocol = settings.setdefault("study_protocol", {})
-    protocol["gold_pages"] = valid
-    # Un campione già salvato non può diventare contemporaneamente tuning
-    # e gold: proteggere una pagina la rimuove dal pilot persistito.
-    pilot_pages = {
-        int(value) for value in protocol.get("pilot_pages", [])
-        if str(value).lstrip("-").isdigit()
-    }
-    protocol["pilot_pages"] = sorted(pilot_pages - set(valid))
-    protocol["version"] = int(protocol.get("version", 0)) + 1
-    protocol["updated_at"] = datetime.now(timezone.utc).isoformat()
-    projectstore.put_settings(project_id, settings)
+    with _editing_settings(project_id) as settings:
+        protocol = settings.setdefault("study_protocol", {})
+        protocol["gold_pages"] = valid
+        # Un campione già salvato non può diventare contemporaneamente tuning
+        # e gold: proteggere una pagina la rimuove dal pilot persistito.
+        pilot_pages = {
+            int(value) for value in protocol.get("pilot_pages", [])
+            if str(value).lstrip("-").isdigit()
+        }
+        protocol["pilot_pages"] = sorted(pilot_pages - set(valid))
+        protocol["version"] = int(protocol.get("version", 0)) + 1
+        protocol["updated_at"] = datetime.now(timezone.utc).isoformat()
     return {
         "project_id": project_id,
         "gold_pages": valid,
@@ -445,17 +454,16 @@ def save_pilot_sample(
     _auth: dict = Depends(require_resource(write=True)),
 ) -> dict:
     valid = projectstore.valid_page_ids(project_id, page_ids)
-    settings = _settings_or_404(project_id)
-    protocol = settings.setdefault("study_protocol", {})
-    gold_pages = {
-        int(value) for value in protocol.get("gold_pages", [])
-        if str(value).lstrip("-").isdigit()
-    }
-    gold_excluded = len(set(valid) & gold_pages)
-    valid = [page_id for page_id in valid if page_id not in gold_pages]
-    protocol["pilot_pages"] = valid
-    protocol["updated_at"] = datetime.now(timezone.utc).isoformat()
-    projectstore.put_settings(project_id, settings)
+    with _editing_settings(project_id) as settings:
+        protocol = settings.setdefault("study_protocol", {})
+        gold_pages = {
+            int(value) for value in protocol.get("gold_pages", [])
+            if str(value).lstrip("-").isdigit()
+        }
+        gold_excluded = len(set(valid) & gold_pages)
+        valid = [page_id for page_id in valid if page_id not in gold_pages]
+        protocol["pilot_pages"] = valid
+        protocol["updated_at"] = datetime.now(timezone.utc).isoformat()
     return {
         "project_id": project_id,
         "pilot_pages": valid,
@@ -485,9 +493,8 @@ def put_conventions(
     _auth: dict = Depends(require_resource(write=True)),
 ) -> ConventionsOut:
     dumped = [c.model_dump() for c in payload.conventions]
-    settings = _settings_or_404(project_id)
-    settings["conventions"] = dumped
-    projectstore.put_settings(project_id, settings)
+    with _editing_settings(project_id) as settings:
+        settings["conventions"] = dumped
     return ConventionsOut(conventions=payload.conventions)
 
 
@@ -507,13 +514,12 @@ def put_table_hint(
     _auth: dict = Depends(require_resource(write=True)),
 ) -> TableHintOut:
     hint = table_hint_svc.clean_table_hint(payload.hint)
-    settings = _settings_or_404(project_id)
-    if hint:
-        settings["table_hint"] = hint
-    else:
-        # Vuoto = nessun hint: si cancella la chiave invece di salvare "".
-        settings.pop("table_hint", None)
-    projectstore.put_settings(project_id, settings)
+    with _editing_settings(project_id) as settings:
+        if hint:
+            settings["table_hint"] = hint
+        else:
+            # Vuoto = nessun hint: si cancella la chiave invece di salvare "".
+            settings.pop("table_hint", None)
     return _table_hint_out(settings)
 
 
@@ -575,13 +581,12 @@ def save_table_header(
         created_at=now,
         updated_at=now,
     )
-    settings = _settings_or_404(project_id)
-    items = [entry for entry in settings.get("known_table_headers", []) if isinstance(entry, dict)]
-    # Una libreria di progetto deve restare leggera e facile da consultare.
-    items = [entry for entry in items if entry.get("name", "").casefold() != name.casefold()]
-    items.append(item.model_dump())
-    settings["known_table_headers"] = items[-50:]
-    projectstore.put_settings(project_id, settings)
+    with _editing_settings(project_id) as settings:
+        items = [entry for entry in settings.get("known_table_headers", []) if isinstance(entry, dict)]
+        # Una libreria di progetto deve restare leggera e facile da consultare.
+        items = [entry for entry in items if entry.get("name", "").casefold() != name.casefold()]
+        items.append(item.model_dump())
+        settings["known_table_headers"] = items[-50:]
     return item
 
 
@@ -591,13 +596,12 @@ def delete_table_header(
     header_id: str,
     _auth: dict = Depends(require_resource(write=True)),
 ) -> dict:
-    settings = _settings_or_404(project_id)
-    items = [entry for entry in settings.get("known_table_headers", []) if isinstance(entry, dict)]
-    kept = [entry for entry in items if entry.get("id") != header_id]
-    if len(kept) == len(items):
-        raise HTTPException(status_code=404, detail="intestazione non trovata")
-    settings["known_table_headers"] = kept
-    projectstore.put_settings(project_id, settings)
+    with _editing_settings(project_id) as settings:
+        items = [entry for entry in settings.get("known_table_headers", []) if isinstance(entry, dict)]
+        kept = [entry for entry in items if entry.get("id") != header_id]
+        if len(kept) == len(items):
+            raise HTTPException(status_code=404, detail="intestazione non trovata")
+        settings["known_table_headers"] = kept
     return {"deleted": True, "id": header_id}
 
 

@@ -197,6 +197,10 @@ def create_run(
             adapter_id=str(cfg.get("adapter_id") or "") if engine == "model" else "local-ocr",
             provider=provider,
             endpoint=cfg.get("url") if engine == "model" else None,
+            release={
+                "resource_id": cfg.get("resource_id"),
+                "credential_ref": cfg.get("provider_credential_ref"),
+            } if engine == "model" else None,
         )
     except runstore.ModelBusy as exc:
         raise HTTPException(
@@ -317,13 +321,14 @@ def _recover_local_server(run, cancel: threading.Event) -> bool:
 
 
 def _worker(run_id: int, cancel: threading.Event) -> None:
-    started = _now()
-    run = runstore.start(run_id, started)
-    if run is None:
-        return
-    items = runstore.items_for_run(run_id)
-
+    run = None
     try:
+        # Inside the try: a start that fails (e.g. "database is locked") must still
+        # end the run and free `_ACTIVE`, or "model busy" holds until a restart.
+        run = runstore.start(run_id, _now())
+        if run is None:
+            return
+        items = runstore.items_for_run(run_id)
         opts = prefill.PrelabelOptions(
             mode=run["mode"],
             model_mode=run["model_mode"],
@@ -381,11 +386,11 @@ def _worker(run_id: int, cancel: threading.Event) -> None:
         )
         if run["stop_policy"] == "disable_inference" and run["engine"] == "model":
             try:
-                cfg = inference.get_inference_config()
+                target = runstore.release_target(run["job_id"])
                 _release_inference(
                     str(run["provider"]),
-                    resource_id=cfg.get("resource_id"),
-                    credential_ref=cfg.get("provider_credential_ref"),
+                    resource_id=target.get("resource_id"),
+                    credential_ref=target.get("credential_ref"),
                 )
             except Exception as exc:  # noqa: BLE001
                 # Il riconoscimento e i suoi risultati sono già conclusi:
@@ -396,7 +401,7 @@ def _worker(run_id: int, cancel: threading.Event) -> None:
                     f"risultati salvati, ma il modello non è stato arrestato: {exc}",
                 )
     except Exception as exc:  # noqa: BLE001
-        runstore.fail(run_id, run["job_id"], error=str(exc), ended=_now())
+        runstore.fail(run_id, run["job_id"] if run else None, error=str(exc), ended=_now())
     finally:
         with _LOCK:
             _ACTIVE.pop(run_id, None)

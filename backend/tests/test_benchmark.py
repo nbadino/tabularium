@@ -205,6 +205,22 @@ def test_bulk_approve_skips_drafts_unless_confirmed(tmp_path):
         assert approved == 2
 
 
+def test_benchmark_state_is_replaced_never_rewritten_in_place(tmp_path, monkeypatch):
+    """The page polls the state while the worker writes it: a half-written file
+    read as "idle" and the UI stopped following a running benchmark."""
+    import os
+
+    monkeypatch.setattr(benchmod, "_state_path", lambda _pid: tmp_path / "bench_state.json")
+    benchmod._write_state(1, state="running", index=0)
+    replaced: list[str] = []
+    real_replace = os.replace
+    monkeypatch.setattr(benchmod.os, "replace", lambda a, b: (replaced.append(str(b)), real_replace(a, b)))
+    benchmod._write_state(1, index=1)
+    assert replaced == [str(tmp_path / "bench_state.json")]
+    assert json.loads((tmp_path / "bench_state.json").read_text(encoding="utf-8"))["index"] == 1
+    assert [p.name for p in tmp_path.iterdir()] == ["bench_state.json"]
+
+
 def test_benchmark_cache_is_keyed_on_what_was_measured(tmp_path, monkeypatch):
     calls: list[str] = []
     monkeypatch.setattr(infmod, "VllmClient", _fake_client_factory(calls))
