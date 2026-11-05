@@ -337,3 +337,16 @@ def test_align_holds_the_transform_lock_while_it_runs(monkeypatch):
     monkeypatch.setattr(monkey_preprocess, "preprocess", fake_preprocess)
     dewarp.align_page(Image.new("RGB", (40, 40)), "medium")
     assert owned == [True]
+
+
+def test_tiles_are_revalidated_after_a_transform(tmp_path: Path):
+    """Tile URLs carry no transform revision, so a deskew must not leave stale tiles
+    in the browser, and authenticated page images must stay out of shared caches."""
+    pid = _setup(tmp_path / "tile")
+    with TestClient(app) as client:
+        page = client.get(f"/api/projects/{pid}/pages").json()["items"][0]
+        r = client.get(f"/api/pages/{page['id']}/tile/0/0/0")
+        assert r.status_code == 200, r.text
+        cache = r.headers["cache-control"]
+        assert "public" not in cache and "immutable" not in cache
+        assert "private" in cache and "no-cache" in cache

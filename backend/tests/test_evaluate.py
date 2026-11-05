@@ -681,3 +681,17 @@ def test_baseline_without_any_page_still_returns_the_comparison(tmp_path, monkey
         )
     assert r.status_code == 200, r.text
     assert r.json()["comparison"]["order_delta"] is None
+
+
+def test_evaluate_rejects_endpoints_on_private_networks(tmp_path, monkeypatch):
+    pid, _page = _setup(tmp_path)
+    called: list = []
+    monkeypatch.setattr(evmod, "evaluate_project", lambda *a, **k: called.append(k) or {})
+    with TestClient(app) as client:
+        for field in ("server_url", "baseline_server_url"):
+            r = client.post(
+                f"/api/projects/{pid}/evaluate",
+                json={field: "https://169.254.169.254/latest/meta-data"},
+            )
+            assert r.status_code == 400, (field, r.text)
+    assert called == [], "no request may leave before the endpoint is validated"

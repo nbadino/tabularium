@@ -247,3 +247,21 @@ def test_reconcile_never_kills_a_recycled_pid(tmp_path, monkeypatch):
     state.write_text(json.dumps({"state": "running", "serve_pid": 4242}), encoding="utf-8")
     benchmod.reconcile_benchmarks()
     assert killed == [4242] and signal.SIGKILL
+
+
+def test_benchmark_report_never_stores_the_api_key(tmp_path, monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(infmod, "VllmClient", _fake_client_factory(calls))
+    monkeypatch.setattr(
+        "app.services.evaluate.pagesvc.load_source_image",
+        lambda page: Image.new("RGB", (900, 1300)),
+    )
+    with TestClient(app) as client:
+        pid = _gold_project(client, tmp_path)
+        report = benchmod.run_benchmark(
+            pid, [{"adapter_id": "lightonocr-3", "model": "good", "api_key": "sk-secret-123"}],
+            limit=1, with_text=False,
+        )
+    assert calls, "the key must still reach the client"
+    assert "sk-secret-123" not in Path(report["bench_dir"], "report.json").read_text(encoding="utf-8")
+    assert "sk-secret-123" not in Path(report["bench_dir"], "report.html").read_text(encoding="utf-8")
