@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -579,3 +580,64 @@ def _agg_order(pages: list[dict]) -> dict:
 
 def _mean(values: list[float]) -> float | None:
     return sum(values) / len(values) if values else None
+
+
+def evaluate_with_baseline(
+    project_id: int,
+    *,
+    server_url: str | None,
+    model: str | None,
+    with_text: bool,
+    limit: int,
+    lang: str,
+    baseline_server_url: str | None = None,
+    baseline_model: str | None = None,
+) -> dict:
+    """Evaluate the model and, when a baseline is given, the deltas against it."""
+    result = evaluate_project(
+        project_id, server_url=server_url, model=model,
+        with_text=with_text, limit=limit, lang=lang,
+    )
+    if baseline_server_url or baseline_model:
+        baseline = evaluate_project(
+            project_id, server_url=baseline_server_url, model=baseline_model,
+            with_text=with_text, limit=limit, lang=lang,
+        )
+        result["baseline"] = baseline
+        result["comparison"] = {
+            "layout_recall_delta": result["aggregates"]["layout"]["recall"] - baseline["aggregates"]["layout"]["recall"],
+            "layout_precision_delta": result["aggregates"]["layout"]["precision"] - baseline["aggregates"]["layout"]["precision"],
+            "text_cer_delta": (result["aggregates"]["text"]["mean_cer"] or 0) - (baseline["aggregates"]["text"]["mean_cer"] or 0),
+            "order_delta": result["aggregates"]["order"]["mean_levenshtein_norm"] - baseline["aggregates"]["order"]["mean_levenshtein_norm"],
+        }
+    return result
+
+
+# Exact TEDS costs seconds per large table (about 9 s for 80x12), so an evaluation
+# can outlast an HTTP request. It runs in a thread; the page polls the status.
+# shortcut: the status lives in memory, so a backend restart forgets it (the report
+# stays on disk in eval_*/report.json); persist it like the benchmark if that matters.
+_JOBS: dict[int, dict] = {}
+_JOBS_LOCK = threading.Lock()
+
+
+def start_evaluation(project_id: int, **kwargs) -> dict:
+    """Start the evaluation in the background; one at a time per project."""
+    with _JOBS_LOCK:
+        if _JOBS.get(project_id, {}).get("state") == "running":
+            return {"started": False, "state": "running"}
+        job = {"state": "running", "error": None, "report": None}
+        _JOBS[project_id] = job
+
+    def worker() -> None:
+        try:
+            job.update(report=evaluate_with_baseline(project_id, **kwargs), state="done")
+        except Exception as exc:  # noqa: BLE001 - the error goes to the status, not lost
+            job.update(error=str(exc), state="error")
+
+    threading.Thread(target=worker, name=f"evaluate-{project_id}", daemon=True).start()
+    return {"started": True, "state": "running"}
+
+
+def evaluation_status(project_id: int) -> dict:
+    return dict(_JOBS.get(project_id, {"state": "idle"}))

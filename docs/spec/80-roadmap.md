@@ -66,12 +66,13 @@
 - **M6 — Evaluation & playground** ✅ — `services/inference.py` (OpenAI-compatible client: tolerant
   layout parsing, text/table recognition, ping), `services/evaluate.py` (metrics: layout IoU + labels,
   reading-order Levenshtein, text CER/WER, table TEDS + CER; report JSON in `eval/eval_<ts>/`). API:
-  `POST /api/projects/{id}/evaluate`, `POST /api/playground/parse`. Pages: Evaluation (aggregate
+  `POST /api/projects/{id}/evaluate` (starts a background job; `GET …/evaluate/status` returns the
+  report), `POST /api/playground/parse`. Pages: Evaluation (aggregate
   cards, per page, GT vs prediction overlay, page errors) and Playground (predicted layout as SVG
   overlay + blocks/content, copy as Markdown). Degrades with a warning if no model server is up.
   - **The truth of an evaluation is the approved pages only** (`approved`/`exported`), whatever the
     last dataset build says: a page with unverified drafts counted the model's output as the right
-    answer. Without approved pages the API answers `no_gold_pages`. Evaluation **does not require a
+    answer. Without approved pages the status answers `error` with `no_gold_pages`. Evaluation **does not require a
     training run**: measuring the base model on one's corpus is the baseline fine-tuning must beat.
   - **Which pages are measured.** Until a project training run is `finished`, the model has seen no
     page, so **all** approved pages are measured (`report.scope = "all_approved"`): with only the val

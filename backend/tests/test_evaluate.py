@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -660,3 +661,56 @@ def test_model_drafts_on_an_approved_page_are_not_gold(tmp_path: Path):
         conn.execute("UPDATE pages SET status='annotated' WHERE id=?", (page_id,))
     contents = [b["content"] for b in builder.collect_pages_with_blocks(pid)[page_id]["blocks"]]
     assert contents == ["Approved by a person.", "Model draft."]
+
+
+def test_evaluate_api_runs_in_background(tmp_path: Path, monkeypatch):
+    """TEDS on large tables takes seconds per table: the request must not hold the
+    HTTP connection for the whole evaluation. It starts a job; status returns the report."""
+    import threading
+
+    release = threading.Event()
+
+    def slow_evaluate(project_id, **_kwargs):
+        release.wait(5)
+        return {"aggregates": {}, "pages": [], "project_id": project_id}
+
+    monkeypatch.setattr(evmod, "evaluate_project", slow_evaluate)
+    archive = tmp_path / "archive-bg"
+    archive.mkdir(parents=True)
+    Image.new("RGB", (900, 1300), (215, 215, 215)).save(archive / "p.png")
+    with TestClient(app) as client:
+        pid = client.post("/api/projects", json={"name": "BG", "archive_dir": str(archive)}).json()["id"]
+        started = client.post(f"/api/projects/{pid}/evaluate", json={"with_text": False})
+        assert started.status_code == 200, started.text
+        assert started.json()["state"] == "running"
+        assert client.get(f"/api/projects/{pid}/evaluate/status").json()["state"] == "running"
+        # A second start while running does not launch a parallel evaluation.
+        assert client.post(f"/api/projects/{pid}/evaluate", json={}).json()["started"] is False
+
+        release.set()
+        for _ in range(100):
+            status = client.get(f"/api/projects/{pid}/evaluate/status").json()
+            if status["state"] != "running":
+                break
+            time.sleep(0.05)
+        assert status["state"] == "done"
+        assert status["report"]["project_id"] == pid
+
+
+def test_evaluate_api_reports_errors_through_status(tmp_path: Path, monkeypatch):
+    def failing(*_args, **_kwargs):
+        raise ValueError("nessuna pagina approvata")
+
+    monkeypatch.setattr(evmod, "evaluate_project", failing)
+    archive = tmp_path / "archive-err"
+    archive.mkdir(parents=True)
+    Image.new("RGB", (900, 1300), (215, 215, 215)).save(archive / "p.png")
+    with TestClient(app) as client:
+        pid = client.post("/api/projects", json={"name": "ERR", "archive_dir": str(archive)}).json()["id"]
+        client.post(f"/api/projects/{pid}/evaluate", json={})
+        for _ in range(100):
+            status = client.get(f"/api/projects/{pid}/evaluate/status").json()
+            if status["state"] != "running":
+                break
+            time.sleep(0.05)
+        assert status == {"state": "error", "error": "nessuna pagina approvata", "report": None}

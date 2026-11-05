@@ -7,6 +7,10 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Evaluation runs as a background job: the request starts it and the page polls
+  `GET /api/projects/{id}/evaluate/status`, which returns the report when done. Exact TEDS on a
+  large table takes seconds (about 9 s for 80×12), so a corpus of dense registers held the HTTP
+  request open for minutes. A page refresh finds the run in progress or its last report.
 - A large ZIP upload no longer fails on one network hiccup: a piece that does not arrive is sent
   again after a pause (about two minutes of attempts), from the byte the server says it holds
   (`GET …/zip-uploads/{id}`); the dialog says it is retrying. An 800 MB archive had failed at
