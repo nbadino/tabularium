@@ -72,7 +72,7 @@ def log_tail(n: int = 4000) -> str:
 
 def default_paddle_packages(
     *, system: str | None = None, machine: str | None = None,
-    driver_cuda: str | None = None,
+    driver_cuda: str | None = None, compute_cap: str | None = None,
 ) -> list[str]:
     """Pacchetti Paddle ufficiali compatibili con l'host corrente.
 
@@ -105,6 +105,19 @@ def default_paddle_packages(
         version = float(driver_cuda or 0)
     except (TypeError, ValueError):
         pass
+    if compute_cap is None and system != "darwin":
+        compute_cap = _compute_capability()
+    try:
+        blackwell = float(compute_cap or 0) >= 12.0
+    except (TypeError, ValueError):
+        blackwell = False
+    if blackwell and 0 < version < 12.9:
+        # PaddleOCR-VL-NVIDIA-Blackwell guide: driver with CUDA 12.9+ and the cu129
+        # wheel. cu126 does not run on SM 12.0, so installing it only fails later.
+        raise RuntimeError(
+            f"GPU Blackwell con driver CUDA {driver_cuda}: PaddleOCR richiede un driver "
+            "NVIDIA con CUDA 12.9 o superiore. Aggiorna il driver e riprova."
+        )
     if version >= 12.9:
         cuda_index = "cu129"
     elif version >= 12.6:
@@ -117,6 +130,24 @@ def default_paddle_packages(
         "paddlepaddle-gpu==3.2.1", "-i",
         f"https://www.paddlepaddle.org.cn/packages/stable/{cuda_index}/",
     ]
+
+
+def _compute_capability() -> str | None:
+    """Highest compute capability reported by nvidia-smi, or None without a GPU."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    caps = []
+    for line in result.stdout.splitlines() if result.returncode == 0 else []:
+        try:
+            caps.append(float(line.strip()))
+        except ValueError:
+            continue
+    return str(max(caps)) if caps else None
 
 
 # PaddleOCR-VL-1.6 needs the 1.6 pipeline, which PaddleOCR makes its default only from

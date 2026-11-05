@@ -57,7 +57,14 @@ def known_canonical(adapter_id: str) -> frozenset[str]:
     (o emette marker propri): ogni classe è da apprendere.
     """
     if adapter_id in DIRECT_CANONICAL:
-        return frozenset(PUBLIC_LABELS)
+        # A prompt that enumerates its classes bounds what the model can emit.
+        from .model_adapters import get_adapter  # noqa: PLC0415 - model_adapters imports this module
+
+        try:
+            offered = getattr(get_adapter(adapter_id), "prompt_labels", None)
+        except ValueError:
+            offered = None
+        return frozenset(PUBLIC_LABELS) & frozenset(offered) if offered else frozenset(PUBLIC_LABELS)
     mapped = NATIVE_LABELS.get(adapter_id)
     values = set(mapped.values()) if mapped else set()
     values |= EXTRA_CANONICAL.get(adapter_id, frozenset())
