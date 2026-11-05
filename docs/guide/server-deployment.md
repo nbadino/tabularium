@@ -218,3 +218,9 @@ off the server. It contains the vault key: keep it private. Before upgrading, ba
 the service, upgrade with the `uv tool upgrade` command of step 1, and start it again;
 the database migrates on start, after an automatic copy. The full procedure and the
 way back are in [Upgrading and rollback](upgrading.md).
+
+Administrators see in the top bar when a new release is out (see
+[Knowing that a release is out](upgrading.md#knowing-that-a-release-is-out)). If the
+service runs from a git checkout instead of `uv tool`, `scripts/upgrade_server.sh` does
+backup, upgrade, health check and rollback in one command: see
+[One command](upgrading.md#one-command-a-server-run-from-a-git-checkout-with-systemd).

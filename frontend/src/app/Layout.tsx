@@ -3,7 +3,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router'
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { apiGet } from '../lib/api'
 import { syncInferenceFromBackend } from './inference'
-import type { HealthResponse, Project } from '../lib/types'
+import type { HealthResponse, Project, UpdateStatus } from '../lib/types'
 import { projectIdOf, projectPath, switchProjectPath } from './projectPaths'
 import { writeActiveProject } from './activeProject'
 import { LOCALES, LOCALE_LABELS, useI18n } from '../i18n'
@@ -63,10 +63,22 @@ function AccountMenu() {
   const { user, logout } = useAuth()
   const [down, setDown] = useState(false)
 
+  const [update, setUpdate] = useState<UpdateStatus | null>(null)
+
   // Solo l'allarme: la versione sta in Impostazioni.
   useEffect(() => {
     apiGet<HealthResponse>('/health').catch(() => setDown(true))
   }, [])
+
+  // A newer release, for whoever can install it. The server asks GitHub (cached),
+  // so the page never calls a third party; a failure just shows nothing.
+  const isAdmin = user?.role === 'admin'
+  useEffect(() => {
+    if (!isAdmin) return
+    let alive = true
+    apiGet<UpdateStatus>('/system/update').then((s) => alive && setUpdate(s)).catch(() => {})
+    return () => { alive = false }
+  }, [isAdmin])
 
   const roleKey = user ? `users.role${user.role.charAt(0).toUpperCase()}${user.role.slice(1)}` : null
   return (
@@ -75,6 +87,11 @@ function AccountMenu() {
         <span className="badge border-[color:var(--color-sig-plate)] bg-[color:var(--color-sig-plate)] text-white">
           {t('app.backendDown')}
         </span>
+      )}
+      {update?.update_available && update.latest && (
+        <NavLink to="/impostazioni?s=ambiente" className="badge no-underline" title={t('settings.envUpdateTitle', { version: update.latest })}>
+          {t('app.updateAvailable', { version: update.latest })}
+        </NavLink>
       )}
       <Menu
         label={<span className="max-w-[14ch] truncate">{user?.username ?? t('layout.menu')}</span>}

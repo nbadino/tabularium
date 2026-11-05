@@ -79,6 +79,19 @@ export interface HealthResponse {
   version: string
 }
 
+/** GET /api/system/update — administrators only. `null` = not known. */
+export interface UpdateStatus {
+  enabled: boolean
+  current: string
+  latest: string | null
+  update_available: boolean | null
+  url: string | null
+  published_at: string | null
+  guide_url: string
+  checked_at: string | null
+  error: string | null
+}
+
 export interface SystemInfo {
   app: string
   version: string

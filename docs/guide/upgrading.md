@@ -64,6 +64,59 @@ At startup the backend:
 Migrations only go forward: the way back to an older release is the backup taken
 before the upgrade.
 
+## Knowing that a release is out
+
+Administrators see **Update <version> available** next to their name in the top bar,
+and **Settings → Environment** shows the latest release with its notes and a link to
+this page. The server asks GitHub's release list at most every six hours (the browser
+never calls GitHub); when it cannot reach it, the interface just shows nothing.
+Set `TABULARIUM_UPDATE_CHECK=0` to turn the check off, for an offline or
+privacy-strict install.
+
+On a server run from a checkout, `scripts/upgrade_server.sh --check` answers from the
+shell (exit code 10 when an update is available), so it can feed a monitoring check.
+
+## One command: a server run from a git checkout with systemd
+
+If the service runs from a clone of the repository (the unit's `ExecStart` is
+`<clone>/backend/.venv/bin/python -m app.cli`), one command does every step of this
+page, with the way back built in:
+
+```bash
+sudo /opt/tabularium/scripts/upgrade_server.sh --check     # what is installed, what is out
+sudo /opt/tabularium/scripts/upgrade_server.sh             # upgrade to the latest release
+sudo /opt/tabularium/scripts/upgrade_server.sh --to main   # or to a branch, tag or commit
+```
+
+It reads the service user, the data root and the port from the systemd unit
+(`tabularium` by default; `TABULARIUM_SERVICE` names another one), then:
+
+1. **refuses** on a checkout with uncommitted changes, or when the target does not
+   contain every local commit: it only fast-forwards, so it never throws work away. If
+   you carry your own commits, push them and merge them first, or rebase them onto the
+   release and pass that branch to `--to`;
+2. shows the commits it is about to install and asks for confirmation (`--yes` skips
+   the question);
+3. writes a **full backup** with `tabularium backup` (database, projects, vault key) to
+   `/var/backups/tabularium/` (`TABULARIUM_UPGRADE_BACKUP_DIR`), after checking there is
+   room, and keeps the last three (`TABULARIUM_UPGRADE_KEEP`). If the backup fails,
+   nothing has been touched;
+4. stops the service, fast-forwards the code, installs the Python dependencies,
+   rebuilds the frontend and starts the service, which takes its own
+   `pre-migration` copy of the database and migrates it;
+5. waits up to five minutes (`TABULARIUM_UPGRADE_HEALTH_TIMEOUT`) for `/api/health`
+   to answer with the new version.
+
+If step 4 or 5 fails, it **rolls back by itself**: the previous code, its
+dependencies and frontend, the database copy taken just before the migration
+(`tabularium restore-db`; the migrated one is set aside in `pre-restore-<time>/`, not
+deleted), and the old release started again. The full archive of step 3 stays in any
+case. The site is down from step 4 until the health check passes: usually a minute or
+two, mostly the frontend build.
+
+The script needs `git`, `curl`, `npm` and `sudo` on the server, and a remote `origin`
+it can fetch from.
+
 ## Upgrade, step by step
 
 ### 1. Back up
@@ -142,6 +195,9 @@ Removing the container does not remove the volume; never run `docker volume rm` 
 
 **Source checkout.** `data/` and `.env` are ignored by git, so a pull does not touch
 them.
+A server run from a checkout under systemd can use
+[`scripts/upgrade_server.sh`](#one-command-a-server-run-from-a-git-checkout-with-systemd)
+instead of the steps below.
 
 ```bash
 git pull                            # or: git fetch --tags && git checkout v<version>

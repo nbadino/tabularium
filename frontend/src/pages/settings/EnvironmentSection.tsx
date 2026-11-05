@@ -6,8 +6,9 @@
  */
 import { useEffect, useState } from 'react'
 import { apiGet } from '../../lib/api'
-import type { HealthResponse, SystemInfo } from '../../lib/types'
-import { Badge, ErrorNotice, Module } from '../../app/ui'
+import type { HealthResponse, SystemInfo, UpdateStatus } from '../../lib/types'
+import { Badge, ErrorNotice, Module, Notice } from '../../app/ui'
+import { useAuth } from '../../app/auth'
 import { useI18n } from '../../i18n'
 
 export default function EnvironmentSection() {
@@ -31,8 +32,29 @@ export default function EnvironmentSection() {
 
   useEffect(load, [])
 
+  // Only administrators install releases, and only they may ask the server.
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
+  const [update, setUpdate] = useState<UpdateStatus | null>(null)
+  const loadUpdate = (refresh = false) => {
+    if (!isAdmin) return
+    apiGet<UpdateStatus>(`/system/update${refresh ? '?refresh=true' : ''}`).then(setUpdate).catch(() => {})
+  }
+  useEffect(() => loadUpdate(), [isAdmin])
+
+  const latestLabel = !update
+    ? null
+    : !update.enabled
+      ? t('settings.envUpdateCheckOff')
+      : update.latest == null
+        ? t('settings.envUpdateUnknown')
+        : update.update_available
+          ? update.latest
+          : `${update.latest} · ${t('settings.envUpToDate')}`
+
   const rows: Array<[string, string]> = [
     [t('settings.envApp'), health?.version ?? info?.version ?? '—'],
+    ...(latestLabel ? [[t('settings.envLatest'), latestLabel] as [string, string]] : []),
     [t('settings.envSchema'), info?.schema_version ?? '—'],
     [t('settings.envData'), info?.data_dir ?? '—'],
     [t('settings.envPython'), info?.python ?? '—'],
@@ -57,6 +79,19 @@ export default function EnvironmentSection() {
         aux={<Badge tone={health?.status === 'ok' ? 'ok' : loading ? 'progress' : 'warn'}>{loading ? t('common.loading') : health?.status === 'ok' ? t('settings.envOnline') : t('settings.envUnavailable')}</Badge>}
       >
         <p className="mb-3 max-w-[70ch] text-[12px] text-[color:var(--color-ink-2)]">{t('settings.envHint')}</p>
+        {update?.update_available && update.latest && (
+          <div className="mb-3">
+            <Notice tone="sig">
+              <strong>{t('settings.envUpdateTitle', { version: update.latest })}</strong>{' '}
+              {t('settings.envUpdateBody', { current: update.current })}{' '}
+              {update.url && <><a href={update.url} target="_blank" rel="noreferrer">{t('settings.envUpdateNotes')}</a>{' · '}</>}
+              <a href={update.guide_url} target="_blank" rel="noreferrer">{t('settings.envUpdateGuide')}</a>
+            </Notice>
+          </div>
+        )}
+        {isAdmin && update?.enabled && (
+          <button type="button" className="btn mb-3" onClick={() => loadUpdate(true)}>{t('settings.envUpdateRecheck')}</button>
+        )}
         <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
           {rows.map(([label, value]) => (
             <div key={label} className="min-w-0 border-t border-[color:var(--color-rule)] pt-2">

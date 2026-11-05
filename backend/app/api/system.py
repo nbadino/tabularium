@@ -213,6 +213,14 @@ def health() -> dict:
     }
 
 
+@router.get("/api/system/update")
+def update_status(refresh: bool = False, user: dict = Depends(_admin)) -> dict:
+    """Whether a newer release is published (administrators only: they upgrade)."""
+    from ..services import update_check
+
+    return update_check.status(force=refresh)
+
+
 @router.get("/api/system/info")
 def system_info(user: dict = Depends(authsvc.get_current_user)) -> dict:
     version = systemstore.schema_version()

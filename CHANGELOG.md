@@ -6,6 +6,68 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Added
+- Administrators see when a newer release is out: *Update <version> available* in the top bar
+  and the latest release, its notes and the upgrade guide in **Settings → Environment**
+  (`GET /api/system/update`). The server asks GitHub at most every six hours; offline it shows
+  nothing. `TABULARIUM_UPDATE_CHECK=0` turns it off.
+- `scripts/upgrade_server.sh` upgrades a server run from a git checkout under systemd in one
+  command: full backup first, fast-forward only (never drops local commits), dependencies and
+  frontend, health check on the new version, and automatic rollback of code and database if it
+  does not come up. `--check` reports whether an update is out (exit code 10).
+- **Model comparison (consensus).** On the Recognition page, save the model chosen in Models as
+  a saved model (with its own key), save another one, pick two or more and compare the selected
+  pages. Each model's output is stored apart (migration 24): your annotations are never touched.
+  In the Studio, *Model comparison* paints every block by how much the models disagree (text,
+  position and class; dashed when only one model found it), lists the most disputed blocks, shows
+  tables cell by cell as a heatmap and puts each model's reading side by side with a character
+  diff. A model can be shown on its own. When the models segment an area differently (one
+  block against several pieces) the pieces are compared together and marked *segmented
+  differently* instead of missing. *Retry the failed ones* sends again only what failed.
+  In the table editor (*Open the table*), the cells where the compared models disagree are
+  coloured in the sheet itself, and hovering one shows each model's reading next to yours, so the
+  correction happens where you edit; right click on a disputed cell offers *Use <model>:
+  "<reading>"* for each model, and a disputed cell you have corrected or verified turns violet
+  (the count of the ones left goes down); *Show disagreements* turns it off.
+  In the Studio the comparison is no longer read-only and no longer replaces the page content:
+  the heatmap lies over your own blocks, which stay editable, and every row of *Page content*
+  carries the verdict of the area it reads in words (*text differs 16%*, *class*,
+  *segmentation*, *only Argon*), the same words tagged on the page. Red is kept for different
+  words; a different class, segmentation or position is a grey *structure choice*. The summary
+  counts them apart (*1 to correct · 3 structure choices*). The selected area's detail says,
+  aspect by aspect, what differs (text, position, class, or each model's blocks), shows the
+  models' readings diffed against your text, warns when the models agree with each other but
+  not with you, and says what each *Use <model>* will do before it is done. The areas only the
+  models read are listed below the rows. A split block's text is compared word by word in any
+  order: the pieces of a two-column advert, joined in reading order, had counted the
+  interleaving as 57 % different text. With the comparison off, *Page content* says the page
+  has one (which models, what is left) with *Show the comparison*; and a draft's badge names
+  the model that wrote it (*OCRia-1 (LlamaIndex)*, the saved model's name when the comparison
+  knows it) instead of a generic *OCR*. Each disputed block can be settled with *Use <model>* (the model's text
+  and class into your block; when you have no block there, or it is segmented differently, the
+  model's blocks take the place of yours), *Delete mine* or *Fine as it is*; settled blocks turn
+  violet, the count of the ones to review goes down and the next one is selected. Keys: `1`–`6`
+  use a model, `X` deletes, `A` keeps, `N` goes to the next; one Ctrl+Z undoes a change. A table
+  is sent to the table editor (*Open the table*) instead of being replaced. What is settled is
+  kept in the browser, per comparison and page.
+  *Use as the base* turns one model's reading into the drafts of a page (in the Studio) or of
+  every compared page (on the Recognition page), without sending anything to the model again:
+  the comparison doubles as the recognition. Unverified drafts are replaced; a page with blocks
+  you drew or verified is skipped and counted, and in the Studio you are asked whether to replace
+  those too (`POST …/consensus-runs/{id}/adopt`).
+  Metric in `docs/spec/71-evaluation.md`.
+
+### Fixed
+- LlamaIndex OCRia-1 jobs no longer fail with HTTP 422 on the default *Allowed failure ratio* of 0:
+  LlamaCloud wants a ratio above 0, so 0 now leaves the setting to the vendor (one page per job: a
+  failed page still fails it). The vendor-schema test checks numeric bounds too.
+- An OCRia-1 key from LlamaCloud's EU region now works with the default endpoint: on a 401 the
+  client tries `api.cloud.eu.llamaindex.ai` once and remembers it. A rejected key names the region.
+- Prefill with LlamaIndex OCRia-1 in *official* mode no longer fails on every page with
+  `unexpected keyword argument 'on_delta'`: its native runner now takes the same callbacks as the others.
+- A database that ran a pre-release build of the model comparison (which used migration 23 for
+  its tables) gets the `users.email_confirmed` column of the real migration 23 at upgrade.
+
 ## [0.7.0] - 2026-11-05
 
 ### Security
@@ -123,47 +185,6 @@ Notable changes to Tabularium. The format follows
   97 % on a single dropped connection.
 
 ### Added
-- **Model comparison (consensus).** On the Recognition page, save the model chosen in Models as
-  a saved model (with its own key), save another one, pick two or more and compare the selected
-  pages. Each model's output is stored apart (migration 23): your annotations are never touched.
-  In the Studio, *Model comparison* paints every block by how much the models disagree (text,
-  position and class; dashed when only one model found it), lists the most disputed blocks, shows
-  tables cell by cell as a heatmap and puts each model's reading side by side with a character
-  diff. A model can be shown on its own. When the models segment an area differently (one
-  block against several pieces) the pieces are compared together and marked *segmented
-  differently* instead of missing. *Retry the failed ones* sends again only what failed.
-  In the table editor (*Open the table*), the cells where the compared models disagree are
-  coloured in the sheet itself, and hovering one shows each model's reading next to yours, so the
-  correction happens where you edit; right click on a disputed cell offers *Use <model>:
-  "<reading>"* for each model, and a disputed cell you have corrected or verified turns violet
-  (the count of the ones left goes down); *Show disagreements* turns it off.
-  In the Studio the comparison is no longer read-only and no longer replaces the page content:
-  the heatmap lies over your own blocks, which stay editable, and every row of *Page content*
-  carries the verdict of the area it reads in words (*text differs 16%*, *class*,
-  *segmentation*, *only Argon*), the same words tagged on the page. Red is kept for different
-  words; a different class, segmentation or position is a grey *structure choice*. The summary
-  counts them apart (*1 to correct · 3 structure choices*). The selected area's detail says,
-  aspect by aspect, what differs (text, position, class, or each model's blocks), shows the
-  models' readings diffed against your text, warns when the models agree with each other but
-  not with you, and says what each *Use <model>* will do before it is done. The areas only the
-  models read are listed below the rows. A split block's text is compared word by word in any
-  order: the pieces of a two-column advert, joined in reading order, had counted the
-  interleaving as 57 % different text. With the comparison off, *Page content* says the page
-  has one (which models, what is left) with *Show the comparison*; and a draft's badge names
-  the model that wrote it (*OCRia-1 (LlamaIndex)*, the saved model's name when the comparison
-  knows it) instead of a generic *OCR*. Each disputed block can be settled with *Use <model>* (the model's text
-  and class into your block; when you have no block there, or it is segmented differently, the
-  model's blocks take the place of yours), *Delete mine* or *Fine as it is*; settled blocks turn
-  violet, the count of the ones to review goes down and the next one is selected. Keys: `1`–`6`
-  use a model, `X` deletes, `A` keeps, `N` goes to the next; one Ctrl+Z undoes a change. A table
-  is sent to the table editor (*Open the table*) instead of being replaced. What is settled is
-  kept in the browser, per comparison and page.
-  *Use as the base* turns one model's reading into the drafts of a page (in the Studio) or of
-  every compared page (on the Recognition page), without sending anything to the model again:
-  the comparison doubles as the recognition. Unverified drafts are replaced; a page with blocks
-  you drew or verified is skipped and counted, and in the Studio you are asked whether to replace
-  those too (`POST …/consensus-runs/{id}/adopt`).
-  Metric in `docs/spec/71-evaluation.md`.
 - A cover for each collection: select one of its pages and choose *Use as the cover*; the
   collections column shows it as a thumbnail (migration 22). *Remove the cover* is in the row menu.
 - *Select all* on the page wall selects every page shown (after the collection, state and search
