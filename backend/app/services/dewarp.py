@@ -71,6 +71,11 @@ def align_page(image: Image.Image, level: str = "medium", strength: float = 1.0)
     L'angolo restituito è perciò 0 quando il modello lavora, ed è quello del
     deskew solo quando si ripiega su di esso.
     """
+    with _transform_lock:
+        return _align_page_locked(image, level, strength)
+
+
+def _align_page_locked(image: Image.Image, level: str, strength: float) -> tuple[Image.Image, float]:
     global _last_engine, _last_diagnostics
     from .images import deskew
 

@@ -25,6 +25,7 @@ import base64
 import io
 import json
 import os
+import queue
 import threading
 import time
 import uuid
@@ -185,12 +186,11 @@ def main() -> None:
             text_out = ""
             prompt_tokens = completion_tokens = 0
             finish = "stop"
-            for result in generate(prompt, images, kwargs):
+            for result in _exclusive(lambda: generate(prompt, images, kwargs), release_memory):
                 text_out += result.text
                 prompt_tokens = result.prompt_tokens
                 completion_tokens = result.generation_tokens
                 finish = getattr(result, "finish_reason", None) or finish
-            release_memory()
             return {
                 "id": cid,
                 "object": "chat.completion",
@@ -221,13 +221,12 @@ def main() -> None:
             yield _sse(chunk({"role": "assistant", "content": ""}))
             prompt_tokens = completion_tokens = 0
             finish: str | None = None
-            for result in generate(prompt, images, kwargs):
+            for result in _exclusive(lambda: generate(prompt, images, kwargs), release_memory):
                 prompt_tokens = result.prompt_tokens
                 completion_tokens = result.generation_tokens
                 finish = getattr(result, "finish_reason", None) or finish
                 if result.text:
                     yield _sse(chunk({"content": result.text}))
-            release_memory()
             yield _sse(chunk({}, finish or "stop"))
             if include_usage:
                 yield _sse({
@@ -244,6 +243,53 @@ def main() -> None:
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+
+
+_GPU_LOCK = threading.Lock()
+
+
+_DONE = object()
+
+
+class _Failed:
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
+
+
+def _exclusive(generation, after):
+    """Run one generation on the shared model, then `after`, with nobody else on it.
+
+    A batch run and a prefill can reach the server together: two `stream_generate`
+    on one MLX model, or `clear_cache` in the middle of a generation, is undefined.
+    The generation runs in its own thread, so the lock covers the generation and not
+    the client's reading pace; a reader that closes stops it at the next token.
+    """
+    out: queue.Queue = queue.Queue()
+    stop = threading.Event()
+
+    def run() -> None:
+        try:
+            with _GPU_LOCK:
+                try:
+                    for item in generation():
+                        out.put(item)
+                        if stop.is_set():
+                            break
+                finally:
+                    after()
+        except BaseException as exc:  # noqa: BLE001 - handed to the reader
+            out.put(_Failed(exc))
+        finally:
+            out.put(_DONE)
+
+    threading.Thread(target=run, name="mlx-generation", daemon=True).start()
+    try:
+        while (item := out.get()) is not _DONE:
+            if isinstance(item, _Failed):
+                raise item.exc
+            yield item
+    finally:
+        stop.set()
 
 
 def _sse(payload: dict) -> str:

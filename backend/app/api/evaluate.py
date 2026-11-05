@@ -65,7 +65,8 @@ def run_evaluation(
                 "layout_recall_delta": result["aggregates"]["layout"]["recall"] - baseline["aggregates"]["layout"]["recall"],
                 "layout_precision_delta": result["aggregates"]["layout"]["precision"] - baseline["aggregates"]["layout"]["precision"],
                 "text_cer_delta": (result["aggregates"]["text"]["mean_cer"] or 0) - (baseline["aggregates"]["text"]["mean_cer"] or 0),
-                "order_delta": result["aggregates"]["order"]["mean_levenshtein_norm"] - baseline["aggregates"]["order"]["mean_levenshtein_norm"],
+                # None when either side had no page to measure (e.g. the baseline was down).
+                "order_delta": None if None in (ours := result["aggregates"]["order"]["mean_levenshtein_norm"], theirs := baseline["aggregates"]["order"]["mean_levenshtein_norm"]) else ours - theirs,
             }
         return result
     except ValueError as exc:
