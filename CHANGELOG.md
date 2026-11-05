@@ -7,6 +7,11 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- The Studio's "next page" never points at a page whose source file is missing.
+- Input fields have a visible border at rest (3.6:1 against the sheet, up from 1.2:1; WCAG 1.4.11).
+- `tsc -b` writes the compiled Vite config under `node_modules/.tmp`. Before, a stale
+  `vite.config.js` next to `vite.config.ts` won, and edits to the config were silently ignored by
+  `npm run dev` and Vitest.
 - A large ZIP upload no longer fails on one network hiccup: a piece that does not arrive is sent
   again after a pause (about two minutes of attempts), from the byte the server says it holds
   (`GET …/zip-uploads/{id}`); the dialog says it is retrying. An 800 MB archive had failed at
