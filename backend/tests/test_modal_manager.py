@@ -162,3 +162,44 @@ def test_modal_checkpoint_deploy_uploads_complete_model_to_named_volume(tmp_path
     ]
     assert captured["kwargs"]["executable"] == "/bin/bash"
     assert captured["kwargs"]["owner_id"] == 7
+
+
+class _EndedProc:
+    returncode = -15
+
+    def terminate(self):
+        pass
+
+    def wait(self, timeout=None):
+        return -15
+
+    def kill(self):
+        pass
+
+    def poll(self):
+        return -15
+
+
+def test_stopping_the_app_right_after_cancelling_a_deploy_is_accepted(monkeypatch):
+    """`done` was only set by the watcher thread (0.3 s later), so the `app stop`
+    that follows the cancel was refused as "a Modal task is already running"."""
+    task = modal_manager.ModalTask(kind="deploy", proc=_EndedProc(), template_id="t")
+    monkeypatch.setattr(modal_manager, "_task", task)
+    monkeypatch.setattr(modal_manager, "_persisted_running", lambda: None)
+    modal_manager._cancel_deploy_if_running("t")
+    assert modal_manager._current() is None
+
+
+def test_a_cancelled_job_is_not_rewritten_as_failed():
+    from app.adapters import jobs as jobstore
+
+    db.init_db()
+    with db.connect() as conn:
+        job_id = conn.execute(
+            "INSERT INTO jobs(kind, provider, pid, state, command_json) VALUES('modal','modal',1,'running','{}')"
+        ).lastrowid
+    jobstore.stop(job_id, "cancelled")
+    jobstore.finish(job_id, "failed", -15)
+    with db.connect() as conn:
+        assert conn.execute("SELECT state FROM jobs WHERE id=?", (job_id,)).fetchone()[0] == "stopped"
+        conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))

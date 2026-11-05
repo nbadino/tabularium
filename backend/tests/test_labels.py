@@ -197,3 +197,31 @@ def test_known_models_are_model_relative():
     # `Title` è nota a molti; una classe custom non è nota a nessuno.
     assert labeling.label_origin("Title") == "public"
     assert labeling.label_origin("Vessel-name") == "custom"
+
+
+def test_a_label_saved_during_another_settings_save_is_not_lost(tmp_path):
+    """Every writer replaces the whole settings JSON: a label POST that read the
+    settings before another save finished used to erase that save, or be erased."""
+    import threading
+
+    from app.adapters import projects as projectstore
+
+    archive = tmp_path / "a"
+    archive.mkdir()
+    with TestClient(app) as client:
+        pid = client.post("/api/projects", json={"name": "L", "archive_dir": str(archive)}).json()["id"]
+        result: dict = {}
+        with projectstore.editing_settings(pid) as settings:
+            worker = threading.Thread(target=lambda: result.update(r=client.post(
+                f"/api/projects/{pid}/labels",
+                json={"name": "Ship", "color": "#336699", "short": "SH", "prompt_kind": "text", "prompt": "Read it."},
+            )))
+            worker.start()
+            worker.join(0.5)
+            assert worker.is_alive(), "the label POST must wait for the save in progress"
+            settings["table_hint"] = "Port | Ship"
+        worker.join(10)
+        assert result["r"].status_code == 200, result["r"].text
+        saved = projectstore.settings_json(pid)
+    assert saved["table_hint"] == "Port | Ship"
+    assert [label["name"] for label in saved["labels"]] == ["Ship"]

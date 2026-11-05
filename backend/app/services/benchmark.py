@@ -501,19 +501,27 @@ def _state_path(project_id: int) -> Path:
     return d / "bench_state.json"
 
 
+_STATE_LOCK = threading.Lock()
+
+
 def _write_state(project_id: int, **fields) -> None:
+    """Merge `fields` into the state file, replaced atomically: the page polls it
+    while the worker writes, and a half-written file used to read as "idle"."""
     path = _state_path(project_id)
-    state: dict = {}
-    if path.exists():
+    with _STATE_LOCK:
+        state: dict = {}
+        if path.exists():
+            try:
+                state = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                state = {}
+        state.update(fields, updated_at=datetime.now(timezone.utc).isoformat())
+        temporary = path.with_name(f".{path.name}.tmp")
         try:
-            state = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            state = {}
-    state.update(fields, updated_at=datetime.now(timezone.utc).isoformat())
-    try:
-        path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-    except OSError:
-        pass
+            temporary.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+            os.replace(temporary, path)
+        except OSError:
+            temporary.unlink(missing_ok=True)
 
 
 def benchmark_status(project_id: int) -> dict:

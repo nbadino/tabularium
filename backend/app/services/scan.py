@@ -274,12 +274,14 @@ def run_scan(
     lang: str = "it",
     on_progress=None,
 ) -> ScanReport:
-    """Scan an archive into the project, in one transaction.
+    """Scan an archive into the project, committing file by file.
 
     The router used to open the connection and pass it down, which is why the last
-    statements of `api/projects.py` still lived there. The scan is one unit of work —
-    discovering, marking missing sources, registering every candidate — so it owns the
-    connection and reports progress through a callback for the streaming job.
+    statements of `api/projects.py` still lived there. The scan owns the connection and
+    reports progress through a callback for the streaming job. It commits after each
+    file: one transaction over a large archive held SQLite's write lock for minutes, and
+    every other writer failed with "database is locked". A rescan is idempotent, so an
+    interrupted scan resumes by scanning again.
     """
     root = Path(archive_dir)
     with connect() as conn:
@@ -290,6 +292,7 @@ def run_scan(
             mark_missing_pages(conn, missing_ids)
         for index, candidate in enumerate(candidates, 1):
             register_candidate(conn, project_id, candidate, root, report, lang=lang)
+            conn.commit()
             if on_progress is not None:
                 on_progress(index, candidate, report)
     return report
@@ -299,9 +302,10 @@ def register_uploads(
     project_id: int, session_dir: str | Path, report: ScanReport, *, lang: str = "it",
     collection_id: int | None = None,
 ) -> None:
-    """Register a folder of uploaded files, in one transaction."""
+    """Register a folder of uploaded files, committing file by file (see `run_scan`)."""
     root = Path(session_dir)
     with connect() as conn:
         for candidate in scan_archive(root):
             register_candidate(conn, project_id, candidate, root, report, lang=lang, collection_id=collection_id)
+            conn.commit()
 

@@ -447,6 +447,9 @@ def _cancel_deploy_if_running(template_id: str) -> None:
             task.proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             task.proc.kill()
+            task.proc.wait(timeout=5)
+        # Ended now, not when the watcher next polls: `app stop` follows at once.
+        task.done, task.ok = True, False
         if task.job_id is not None:
             try:
                 jobstore.stop(task.job_id, "deploy interrotto prima dello stop dell’app")

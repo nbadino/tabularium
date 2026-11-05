@@ -7,6 +7,21 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- A scan or upload commits file by file. Before, it held SQLite's write lock for its whole
+  length, and autosave, page edits and run heartbeats failed with "database is locked" on a
+  large archive.
+- Project settings (classes, study protocol, gold set, pilot, conventions, table hint, table
+  headers) are read and written in one write transaction. Two saves at once no longer erase
+  each other, e.g. creating a class in two tabs.
+- The end-of-run release with "stop the model" stops the cloud instance the run started on,
+  even if the configuration changed during the run. A run whose worker cannot start no longer
+  leaves the model "busy" until a restart.
+- The benchmark state file is replaced atomically, so the page no longer loses track of a
+  running benchmark.
+- PaddleOCR-VL and Xiaomi-OCR no longer install their shared Paddle runtime twice at once,
+  which broke it.
+- Stopping a Modal app right after cancelling its deploy is accepted, and the cancelled job
+  stays "stopped" instead of turning "failed".
 - A large ZIP upload no longer fails on one network hiccup: a piece that does not arrive is sent
   again after a pause (about two minutes of attempts), from the byte the server says it holds
   (`GET …/zip-uploads/{id}`); the dialog says it is retrying. An 800 MB archive had failed at

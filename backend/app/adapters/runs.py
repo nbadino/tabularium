@@ -132,8 +132,13 @@ def create(
     adapter_id: str,
     provider: str,
     endpoint: str | None,
+    release: dict[str, Any] | None = None,
 ) -> int:
-    """Insert the job, the session and its pages. Returns the session id."""
+    """Insert the job, the session and its pages. Returns the session id.
+
+    `release` is the cloud instance the run uses (`resource_id`, `credential_ref`):
+    the end-of-run release must stop that one, whatever the config says by then.
+    """
     placeholders = ",".join("?" for _ in page_ids)
     with connect() as conn:
         if engine == "model":
@@ -173,7 +178,7 @@ def create(
                 provider,
                 "queued",
                 _now(),
-                json.dumps({"page_ids": page_ids, "engine": engine}),
+                json.dumps({"page_ids": page_ids, "engine": engine, "release": release or {}}),
                 "persisted-results-mark-interrupted",
             ),
         )
@@ -249,9 +254,21 @@ def fail(run_id: int, job_id: int | None, *, error: str, ended: str) -> None:
             (error, ended, ended, run_id),
         )
         conn.execute(
-            "UPDATE jobs SET state='failed',error=?,ended_at=?,heartbeat_at=? WHERE id=?",
-            (error, ended, ended, job_id),
+            "UPDATE jobs SET state='failed',error=?,ended_at=?,heartbeat_at=? "
+            "WHERE id=COALESCE(?, (SELECT job_id FROM recognition_runs WHERE id=?))",
+            (error, ended, ended, job_id, run_id),
         )
+
+
+def release_target(job_id: int | None) -> dict[str, Any]:
+    """The cloud instance recorded when the run was created (see `create`)."""
+    with connect() as conn:
+        row = conn.execute("SELECT command_json FROM jobs WHERE id=?", (job_id,)).fetchone()
+    try:
+        release = json.loads(row["command_json"] or "{}").get("release") if row else None
+    except (TypeError, ValueError, AttributeError):
+        release = None
+    return release if isinstance(release, dict) else {}
 
 
 def set_error(run_id: int, error: str) -> None:
