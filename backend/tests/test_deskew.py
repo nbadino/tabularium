@@ -339,6 +339,27 @@ def test_align_holds_the_transform_lock_while_it_runs(monkeypatch):
     assert owned == [True]
 
 
+@pytest.mark.parametrize("call", [
+    lambda c, pid: c.post(f"/api/pages/{pid}/deskew?confirm=true"),
+    lambda c, pid: c.post(f"/api/pages/{pid}/align?confirm=true", json={"level": "basic"}),
+])
+def test_a_transform_that_changes_nothing_keeps_the_blocks(tmp_path: Path, call):
+    archive = tmp_path / "straight"
+    archive.mkdir(parents=True)
+    Image.new("RGB", (900, 1300), "white").save(archive / "p.png")
+    with TestClient(app) as client:
+        project = client.post("/api/projects", json={"name": "ST", "archive_dir": str(archive)}).json()["id"]
+        client.post(f"/api/projects/{project}/scan")
+        page = client.get(f"/api/projects/{project}/pages").json()["items"][0]["id"]
+        client.put(
+            f"/api/pages/{page}/annotations",
+            json={"items": [{"label": "Text", "kind": "rect", "points": [[0, 0], [100, 50]], "content": "x", "order_idx": 1}]},
+        )
+        r = call(client, page)
+        assert r.status_code == 200, r.text
+        assert len(client.get(f"/api/pages/{page}/annotations").json()["items"]) == 1
+
+
 def test_tiles_are_revalidated_after_a_transform(tmp_path: Path):
     """Tile URLs carry no transform revision, so a deskew must not leave stale tiles
     in the browser, and authenticated page images must stay out of shared caches."""

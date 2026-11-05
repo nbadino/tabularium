@@ -17,7 +17,8 @@ from pathlib import Path
 
 from .. import config
 
-PACKAGES = ["fastapi", "uvicorn", "mineru-vl-utils[mlx]==2.0.8"]
+MINERU_VL_UTILS_VERSION = "2.0.8"
+PACKAGES = ["fastapi", "uvicorn", f"mineru-vl-utils[mlx]=={MINERU_VL_UTILS_VERSION}"]
 _GIB = 1024 ** 3
 
 
@@ -76,7 +77,7 @@ def is_ready() -> bool:
                 "import importlib.metadata as m,importlib.util,sys; "
                 "names=('mlx_vlm','mineru_vl_utils','fastapi','uvicorn'); "
                 "ok=all(importlib.util.find_spec(n) for n in names); "
-                "ok=ok and m.version('mineru-vl-utils')=='2.0.5'; "
+                f"ok=ok and m.version('mineru-vl-utils')=='{MINERU_VL_UTILS_VERSION}'; "
                 "ok=ok and m.version('mlx-vlm').split('.')[0]=='0' and "
                 "m.version('mlx-vlm').split('.')[1]=='7'; sys.exit(0 if ok else 1)",
             ],
