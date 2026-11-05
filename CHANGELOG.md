@@ -19,6 +19,11 @@ Notable changes to Tabularium. The format follows
   keep authenticated page images, and a deskew or alignment no longer leaves stale tiles.
 
 ### Fixed
+- Evaluation runs as a background job: the request starts it and the page polls
+  `GET /api/projects/{id}/evaluate/status`, which returns the report when done. Exact TEDS on a
+  large table takes seconds (about 9 s for 80×12), so a corpus of dense registers held the HTTP
+  request open for minutes. The status is kept in `eval/eval_state.json`: a page refresh or a
+  backend restart finds the last report, and a run cut by a restart is reported as interrupted.
 - The Studio's "next page" never points at a page whose source file is missing.
 - Input fields have a visible border at rest (3.6:1 against the sheet, up from 1.2:1; WCAG 1.4.11).
 - `tsc -b` writes the compiled Vite config under `node_modules/.tmp`. Before, a stale

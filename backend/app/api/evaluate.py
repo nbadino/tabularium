@@ -1,7 +1,7 @@
 """API valutazione: esegue metriche sul val split servendo il modello via vLLM."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
 from ..db import connect
@@ -33,41 +33,35 @@ def run_evaluation(
     request: Request,
     _auth: dict = Depends(require_resource(write=True)),
 ) -> dict:
+    """Start the evaluation in the background; poll `/evaluate/status` for the report."""
     from ..api.projects import _get_project_or_404  # noqa: PLC0415
-
-    lang = parse_lang(request.headers.get("accept-language"))
 
     with connect() as conn:
         _get_project_or_404(conn, project_id)
+    # Checked before the job starts: a refused endpoint is a 400, and no request leaves.
     for url in (payload.server_url, payload.baseline_server_url):
         if url:
             validate_endpoint(url)
-    try:
-        result = evmod.evaluate_project(
-            project_id,
-            server_url=payload.server_url,
-            model=payload.model,
-            with_text=payload.with_text,
-            limit=payload.limit,
-            lang=lang,
-        )
-        if payload.baseline_server_url or payload.baseline_model:
-            baseline = evmod.evaluate_project(
-                project_id,
-                server_url=payload.baseline_server_url,
-                model=payload.baseline_model,
-                with_text=payload.with_text,
-                limit=payload.limit,
-                lang=lang,
-            )
-            result["baseline"] = baseline
-            result["comparison"] = {
-                "layout_recall_delta": result["aggregates"]["layout"]["recall"] - baseline["aggregates"]["layout"]["recall"],
-                "layout_precision_delta": result["aggregates"]["layout"]["precision"] - baseline["aggregates"]["layout"]["precision"],
-                "text_cer_delta": (result["aggregates"]["text"]["mean_cer"] or 0) - (baseline["aggregates"]["text"]["mean_cer"] or 0),
-                # None when either side had no page to measure (e.g. the baseline was down).
-                "order_delta": None if None in (ours := result["aggregates"]["order"]["mean_levenshtein_norm"], theirs := baseline["aggregates"]["order"]["mean_levenshtein_norm"]) else ours - theirs,
-            }
-        return result
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return evmod.start_evaluation(
+        project_id,
+        server_url=payload.server_url,
+        model=payload.model,
+        with_text=payload.with_text,
+        limit=payload.limit,
+        lang=parse_lang(request.headers.get("accept-language")),
+        baseline_server_url=payload.baseline_server_url,
+        baseline_model=payload.baseline_model,
+    )
+
+
+@router.get("/api/projects/{project_id}/evaluate/status")
+def evaluation_status(
+    project_id: int,
+    _auth: dict = Depends(require_resource(write=False)),
+) -> dict:
+    """Evaluation state (idle/running/done/error); `report` is set when done."""
+    from ..api.projects import _get_project_or_404  # noqa: PLC0415
+
+    with connect() as conn:
+        _get_project_or_404(conn, project_id)
+    return evmod.evaluation_status(project_id)

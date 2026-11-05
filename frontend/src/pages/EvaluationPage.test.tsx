@@ -33,11 +33,22 @@ const report: EvalReport = {
   eval_dir: '/tmp/eval',
 }
 
+// The evaluation is a background job: idle before the click, running on the first
+// poll after it, then done with the report.
+let job: string[] = []
 vi.mock('../lib/api', () => ({
-  apiGet: vi.fn(async (path: string) =>
-    path === '/projects' ? { items: [{ id: 1, name: 'P', root_dir: '/a' }] } : { items: [] },
-  ),
-  apiPost: vi.fn(async () => report),
+  apiGet: vi.fn(async (path: string) => {
+    if (path === '/projects') return { items: [{ id: 1, name: 'P', root_dir: '/a' }] }
+    if (path.endsWith('/evaluate/status')) {
+      const state = job.shift() ?? 'idle'
+      return state === 'done' ? { state, report, error: null } : { state }
+    }
+    return { items: [] }
+  }),
+  apiPost: vi.fn(async () => {
+    job = ['running', 'done']
+    return { started: true, state: 'running' }
+  }),
 }))
 let finishedTraining = false
 
@@ -62,7 +73,7 @@ describe('EvaluationPage', () => {
     expect(screen.getByRole('button', { name: 'Esegui valutazione' })).toBeDisabled()
   })
 
-  afterEach(() => { cleanup(); finishedTraining = false })
+  afterEach(() => { cleanup(); finishedTraining = false; job = [] })
 
   it('mostra F1 a IoU 0,75 e il dettaglio per label', async () => {
     render(<MemoryRouter><EvaluationPage /></MemoryRouter>)
@@ -70,7 +81,7 @@ describe('EvaluationPage', () => {
     await vi.waitFor(() => expect(run).toBeEnabled())
     fireEvent.click(run)
     // The plain summary comes first; the metrics open on request.
-    expect(await screen.findByText('zone trovate')).toBeInTheDocument()
+    expect(await screen.findByText('zone trovate', undefined, { timeout: 4000 })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Dettagli delle metriche/ }))
     expect(await screen.findByText('40.0%')).toBeInTheDocument()
     expect(screen.getByText('1/2 trovati · 3 predetti')).toBeInTheDocument()

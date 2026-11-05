@@ -17,6 +17,12 @@ import { pageLabel } from '../lib/pageLabel'
 import { useModelNames } from '../app/models/names'
 import { API_BASE } from '../lib/endpoints'
 
+type EvalStatus = {
+  state: 'idle' | 'running' | 'done' | 'error'
+  report?: EvalReport | null
+  error?: string | null
+}
+
 const pct = (v: number | null | undefined) => (v == null ? '—' : `${(v * 100).toFixed(1)}%`)
 const num = (v: number | null | undefined, d = 3) => (v == null ? '—' : v.toFixed(d))
 
@@ -147,24 +153,57 @@ export default function EvaluationPage() {
       setError(new Error(t('evaluate.modelUnreachableBody', { url: inference.url })))
       return
     }
-    setRunning(true)
     setError(null)
     setReport(null)
+    setSelPage(null)
     try {
-      const rep = await apiPost<EvalReport>(`/projects/${projectId}/evaluate`, {
+      await apiPost(`/projects/${projectId}/evaluate`, {
         server_url: inference.url.trim() || null,
         model: inference.model.trim() || null,
         with_text: withText,
         limit: 50,
       })
-      setReport(rep)
-      setSelPage(rep.pages[0] ?? null)
+      setRunning(true)
     } catch (e) {
       setError(e)
-    } finally {
-      setRunning(false)
     }
   }
+
+  // The evaluation is a background job (exact TEDS on large tables takes seconds per
+  // table): poll its status, and pick up a run or a report that outlived a page refresh.
+  useEffect(() => {
+    if (projectId === '') return
+    let active = true
+    let timer: number | undefined
+    const poll = async () => {
+      try {
+        const status = await apiGet<EvalStatus>(`/projects/${projectId}/evaluate/status`)
+        if (!active) return
+        if (status.state === 'running') {
+          if (running) timer = window.setTimeout(() => void poll(), 2000)
+          else setRunning(true)
+          return
+        }
+        if (status.state === 'done' && status.report) {
+          setReport(status.report)
+          setSelPage(status.report.pages[0] ?? null)
+        } else if (status.state === 'error' && running) {
+          setError(new Error(status.error ?? ''))
+        }
+        setRunning(false)
+      } catch (e) {
+        if (active && running) {
+          setError(e)
+          setRunning(false)
+        }
+      }
+    }
+    void poll()
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [projectId, running])
 
   const project = projects.find((p) => p.id === projectId) ?? null
   const { workflow, dataset, training } = usePipelineState(projectId === '' ? null : projectId, { runs: false })
