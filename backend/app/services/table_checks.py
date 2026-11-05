@@ -60,6 +60,10 @@ def number(text: str | None) -> Fraction | None:
         if not whole.isdigit() or int(m.group(3)) == 0:
             return None
         return total + int(whole) + Fraction(int(m.group(2)), int(m.group(3)))
+    # A fraction with no whole part («⁹⁄₂₀», «9/20»).
+    m = re.fullmatch(r"(\d+)\s*/\s*(\d+)", s)
+    if m:
+        return None if int(m.group(2)) == 0 else total + Fraction(int(m.group(1)), int(m.group(2)))
     digits = re.sub(r"[,\s']", "", s)
     if not digits:
         return total if total else None

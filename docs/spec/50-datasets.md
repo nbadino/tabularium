@@ -44,7 +44,7 @@ Each training recipe (§10) points to its view; the builder never converts the t
 
 | View | Files | Model | Content |
 |---|---|---|---|
-| layout | `layout_{train,val}.json` + `annotations/` | PaddleX detector (COCO) | block bbox + class, reading order |
+| layout | `layout_{train,val}.json` + `annotations/` + `images/` | PaddleX detector (COCO) | block bbox + class, reading order; `file_name` relative to the folder (page images hard-linked or copied into `images/`, rendered PDF pages in `crops/`), so the folder can be moved |
 | line | `rec_{train,val}.txt` + `rec_dict.txt` + `cells/` | PP-OCR rec | **one sample per cell**: crop → text |
 
 PaddleOCR-VL itself is trained by the Training Center from the `messages` view

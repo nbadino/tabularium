@@ -739,3 +739,68 @@ def test_evaluate_status_survives_backend_restart(tmp_path: Path, monkeypatch):
         status = client.get(f"/api/projects/{pid}/evaluate/status").json()
         assert status["state"] == "error"
         assert "interrupted" in status["error"]
+
+
+def test_a_page_whose_image_is_missing_is_excluded_not_scored_as_empty(tmp_path, monkeypatch):
+    """Scoring an unreadable page as "the model found nothing" lowered the totals
+    with no warning and blamed the model for a moved file."""
+    with TestClient(app) as client:
+        archive = tmp_path / "archive3"
+        archive.mkdir(parents=True)
+        Image.new("RGB", (900, 1300), (215, 215, 215)).save(archive / "p.png")
+        pid = client.post("/api/projects", json={"name": "E3", "archive_dir": str(archive)}).json()["id"]
+        client.post(f"/api/projects/{pid}/scan")
+        page = client.get(f"/api/projects/{pid}/pages").json()["items"][0]
+        client.put(
+            f"/api/pages/{page['id']}/annotations",
+            json={"items": [{"label": "Text", "kind": "rect", "points": [[10, 100], [890, 900]], "content": "x", "order_idx": 1}]},
+        )
+    from app.db import connect
+
+    with connect() as conn:
+        conn.execute("UPDATE pages SET status='approved' WHERE project_id=?", (pid,))
+    monkeypatch.setattr(infmod, "VllmClient", FakeClient)
+    monkeypatch.setattr(evmod.pagesvc, "load_source_image", lambda _page: None)
+    report = evmod.evaluate_project(pid, with_text=True)
+    assert report["pages_evaluated"] == 0
+    assert any(str(page["id"]) in w and "p.png" in w for w in report["warnings"])
+
+
+def test_baseline_without_any_page_still_returns_the_comparison(tmp_path, monkeypatch):
+    pid, _page = _setup(tmp_path)
+
+    def fake(_pid, *, server_url=None, **_k):
+        mean = None if server_url == "http://127.0.0.1:9/v1" else 0.2
+        return {"aggregates": {
+            "layout": {"recall": 1.0, "precision": 1.0},
+            "text": {"mean_cer": None},
+            "order": {"mean_levenshtein_norm": mean},
+        }}
+
+    monkeypatch.setattr(evmod, "evaluate_project", fake)
+    with TestClient(app) as client:
+        r = client.post(
+            f"/api/projects/{pid}/evaluate",
+            json={"server_url": "http://127.0.0.1:8/v1", "baseline_server_url": "http://127.0.0.1:9/v1"},
+        )
+        assert r.status_code == 200, r.text
+        for _ in range(100):
+            status = client.get(f"/api/projects/{pid}/evaluate/status").json()
+            if status["state"] != "running":
+                break
+            time.sleep(0.05)
+    assert status["report"]["comparison"]["order_delta"] is None
+
+
+def test_evaluate_rejects_endpoints_on_private_networks(tmp_path, monkeypatch):
+    pid, _page = _setup(tmp_path)
+    called: list = []
+    monkeypatch.setattr(evmod, "evaluate_project", lambda *a, **k: called.append(k) or {})
+    with TestClient(app) as client:
+        for field in ("server_url", "baseline_server_url"):
+            r = client.post(
+                f"/api/projects/{pid}/evaluate",
+                json={field: "https://169.254.169.254/latest/meta-data"},
+            )
+            assert r.status_code == 400, (field, r.text)
+    assert called == [], "no request may leave before the endpoint is validated"

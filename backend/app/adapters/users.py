@@ -97,12 +97,13 @@ def list_accounts(conn=None) -> list[dict[str, Any]]:
 
 
 def insert(conn, *, username: str, email: str | None, password_hash: str, salt: str,
-           role: str, active: bool, must_change_password: bool) -> int:
+           role: str, active: bool, must_change_password: bool,
+           email_confirmed: bool) -> int:
     cursor = conn.execute(
         "INSERT INTO users (username, email, password_hash, salt, role, active, "
-        "must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "must_change_password, email_confirmed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (username, email, password_hash, salt, role, 1 if active else 0,
-         1 if must_change_password else 0),
+         1 if must_change_password else 0, 1 if email_confirmed else 0),
     )
     return int(cursor.lastrowid or 0)
 

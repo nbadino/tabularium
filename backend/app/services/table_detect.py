@@ -115,6 +115,7 @@ _PEAK_TOL_FRAC = 0.15      # tolleranza di clustering dei bordi, frazione del pa
 _SNAP_SEARCH = 1.5         # quanto lontano cercare il varco di una riga, in passi
 _SNAP_DISTANCE_COST = 0.5  # quanto costa allontanarsi dal prior, in px di varco
 _MIN_GAP_PX = 3            # larghezza minima di un tratto di bianco credibile
+_GLYPH_CAP_FLOOR_PX = 64   # a glyph is never ruled out as a rule below this (corpus: 27–30 px)
 
 
 @dataclass
@@ -264,7 +265,9 @@ def _glyphs(comps: np.ndarray, height: int, width: int) -> np.ndarray:
     keep = (
         (comps[:, 4] >= 6)              # area: sotto è granello di scansione
         & (h >= _MIN_XHEIGHT)
-        & (h <= max(4, height // 10))   # sopra è un filetto o una macchia
+        # Sopra è un filetto o una macchia. A tenth of the crop alone threw away the
+        # real glyphs of a crop a few rows tall.
+        & (h <= max(_GLYPH_CAP_FLOOR_PX, height // 10))
         & (w <= max(4, width // 4))     # una parola intera non è un glifo
     )
     return comps[keep]
@@ -806,7 +809,9 @@ def detect_grid(
     # copia anche nel grid persistibile, mentre la diagnostica resta utile per
     # compatibilità e per mostrare le misure dell'algoritmo.
     if len(vlines_px) > 2:
-        row_bounds, row_proven = snap_boundaries(ink, bands, vlines_px, pitch, shear)
+        row_bounds, row_proven = snap_boundaries(
+            ink, bands, vlines_px, pitch, shear, suppress_leaders=suppress_leaders
+        )
     else:
         row_bounds, row_proven = [], []
     unproven = sum(1 for flags in row_proven for f in flags if not f)

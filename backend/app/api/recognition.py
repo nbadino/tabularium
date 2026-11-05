@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from ..services import auth as authsvc
 from ..services import recognition as recognitionsvc
 from ..adapters import collections as collectionstore
+from ..adapters import runs as runstore
 from ..services.i18n import msg, parse_lang
 from .deps import require_resource
 
@@ -79,15 +80,21 @@ def get_recognition_run(
     return run
 
 
+def _run_in_project_or_404(run_id: int, project_id: int) -> None:
+    """Ownership from the run row alone: decoding every page's output just to compare
+    project ids was the heaviest part of cancel, retry and export."""
+    row = runstore.get(run_id)
+    if row is None or int(row["project_id"]) != project_id:
+        raise HTTPException(status_code=404, detail="sessione di riconoscimento non trovata")
+
+
 @router.post("/api/projects/{project_id}/recognition-runs/{run_id}/cancel")
 def cancel_recognition_run(
     project_id: int,
     run_id: int,
     _user: dict = Depends(require_resource(write=True)),
 ) -> dict:
-    run = recognitionsvc.get_run(run_id)
-    if int(run["project_id"]) != project_id:
-        raise HTTPException(status_code=404, detail="sessione di riconoscimento non trovata")
+    _run_in_project_or_404(run_id, project_id)
     return recognitionsvc.cancel_run(run_id)
 
 
@@ -97,9 +104,7 @@ def retry_recognition_run(
     run_id: int,
     user: dict = Depends(require_resource(write=True)),
 ) -> dict:
-    run = recognitionsvc.get_run(run_id)
-    if int(run["project_id"]) != project_id:
-        raise HTTPException(status_code=404, detail="sessione di riconoscimento non trovata")
+    _run_in_project_or_404(run_id, project_id)
     return recognitionsvc.retry_failed_run(
         run_id,
         owner_id=user.get("id"),
@@ -118,9 +123,7 @@ def export_recognition_run(
     collection: str | None = None,
     _user: dict = Depends(require_resource(write=False)),
 ):
-    run = recognitionsvc.get_run(run_id)
-    if int(run["project_id"]) != project_id:
-        raise HTTPException(status_code=404, detail="sessione di riconoscimento non trovata")
+    _run_in_project_or_404(run_id, project_id)
     if collection is not None and collection != "none":
         lang = parse_lang(request.headers.get("accept-language"))
         if not collection.isdigit():

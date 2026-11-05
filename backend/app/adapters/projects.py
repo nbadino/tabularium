@@ -61,8 +61,27 @@ def settings_json_or_none(project_id: int) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else {}
 
 
-def put_settings(project_id: int, settings: dict[str, Any]) -> None:
+@contextmanager
+def editing_settings(project_id: int) -> Iterator[dict[str, Any] | None]:
+    """Read, change and write `settings_json` under SQLite's write lock.
+
+    Every writer replaces the whole JSON, so a read and a write in two separate
+    transactions let two saves erase each other. `None` when the project does not
+    exist; an exception in the body discards the change.
+    """
     with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT settings_json FROM projects WHERE id=?", (project_id,)).fetchone()
+        if row is None:
+            yield None
+            return
+        try:
+            settings = json.loads(row["settings_json"] or "{}")
+        except (TypeError, ValueError):
+            settings = {}
+        if not isinstance(settings, dict):
+            settings = {}
+        yield settings
         conn.execute(
             "UPDATE projects SET settings_json=? WHERE id=?",
             (json.dumps(settings, ensure_ascii=False), project_id),
@@ -232,7 +251,9 @@ def annotation_queue(project_id: int, limit: int) -> list[dict[str, Any]]:
         rows = conn.execute(
             "SELECT p.id, p.rel_path, p.status, p.issue_date, p.issue_no, p.page_no, "
             "COUNT(b.id) AS blocks, SUM(CASE WHEN b.confirmed=0 THEN 1 ELSE 0 END) AS unconfirmed "
-            "FROM pages p LEFT JOIN blocks b ON b.page_id=p.id WHERE p.project_id=? "
+            # A page whose file is gone cannot be worked on: never the "next page".
+            "FROM pages p LEFT JOIN blocks b ON b.page_id=p.id "
+            "WHERE p.project_id=? AND p.status != 'missing' "
             "GROUP BY p.id ORDER BY CASE p.status WHEN 'new' THEN 0 WHEN 'annotated' THEN 1 "
             "WHEN 'qa' THEN 2 WHEN 'review' THEN 3 ELSE 4 END, unconfirmed DESC, "
             "p.rel_path LIMIT ?",

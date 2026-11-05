@@ -30,7 +30,9 @@
 - Coordinates **stored in source pixels**; normalization to 0–1000 **only at export** (§7).
 - **Auth**:
   - `users(id, username UNIQUE, password_hash, email, role ['admin','editor','viewer'], active,
-    created_at, last_login_at, must_change_password, invite_token_hash, invite_expires_at)`;
+    created_at, last_login_at, must_change_password, invite_token_hash, invite_expires_at,
+    email_confirmed)` — `email_confirmed` is 1 when an administrator or the SSO provider wrote the
+    email, 0 when the owner typed it; SSO links a sign-in only to a confirmed email;
   - `sessions(id, user_id, token_hash, expires_at)` — random 32-byte token, stored **only as a
     hash**; cookie `tab_session` (HttpOnly, SameSite=Strict);
   - `project_members(project_id, user_id, role ['editor','viewer'])` — shared access;

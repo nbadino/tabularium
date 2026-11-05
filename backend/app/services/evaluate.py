@@ -290,8 +290,15 @@ def _evaluate_page(
         mode = getattr(adapter, "native_prefill_mode", None)
         end2end = mode in {"end2end", "official"}
         if image is None:
-            pred_items = []
-        elif mode == "official":
+            # An unreadable source is not "the model found nothing": excluded and said.
+            warnings.append(msg("eval_source_missing", lang, id=page["id"], path=page["rel_path"]))
+            return {
+                "page_id": page["id"],
+                "rel_path": page["rel_path"],
+                "pdf_page": page["pdf_page"],
+                "error": "source_missing",
+            }
+        if mode == "official":
             from . import prefill as prefillsvc  # import locale: evita un ciclo
 
             pred_items = prefillsvc.native_page_items(client, image)
@@ -608,7 +615,8 @@ def evaluate_with_baseline(
             "layout_recall_delta": result["aggregates"]["layout"]["recall"] - baseline["aggregates"]["layout"]["recall"],
             "layout_precision_delta": result["aggregates"]["layout"]["precision"] - baseline["aggregates"]["layout"]["precision"],
             "text_cer_delta": (result["aggregates"]["text"]["mean_cer"] or 0) - (baseline["aggregates"]["text"]["mean_cer"] or 0),
-            "order_delta": result["aggregates"]["order"]["mean_levenshtein_norm"] - baseline["aggregates"]["order"]["mean_levenshtein_norm"],
+            # None when either side had no page to measure (e.g. the baseline was down).
+            "order_delta": None if None in (ours := result["aggregates"]["order"]["mean_levenshtein_norm"], theirs := baseline["aggregates"]["order"]["mean_levenshtein_norm"]) else ours - theirs,
         }
     return result
 

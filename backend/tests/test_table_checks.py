@@ -161,3 +161,15 @@ def test_page_list_counts_failing_sums_and_follows_the_fix(tmp_path):
         client.put(f"/api/blocks/{block}/table", json={**_grid(rows), "phantom_cols": []})
         sums = client.get(f"/api/projects/{pid}/sum-failures").json()["pages"]
         assert sums == {str(page): {"checks": 6, "failed": 0, "rows": 3, "cols": 3}}
+
+
+def test_a_cell_holding_only_a_fraction_is_a_number():
+    """`⁹⁄₂₀` or `9/20` alone was read as "not a number", so every sum through that
+    cell failed and the cell was flagged as unreadable."""
+    from fractions import Fraction
+
+    from app.services import table_checks
+
+    assert table_checks.number("⁹⁄₂₀") == Fraction(9, 20)
+    assert table_checks.number("9/20") == Fraction(9, 20)
+    assert table_checks.number("9/0") is None

@@ -54,6 +54,9 @@
   --color-fill-2: #edeae6;
   --color-rule: #e5e3e1;
   --color-rule-strong: #d7d4d1;
+  /* Bordo dei campi a riposo: 3.6:1 sul foglio (WCAG 1.4.11 chiede 3:1 per il
+     contorno di un controllo; `--color-rule` è 1.2:1, il campo spariva). */
+  --color-rule-field: #8c8681;
   /* Alias verso i token esistenti: `--color-panel`/`--color-sheet-dim` erano
      referenziati in 29 punti (modali cloud/inferenza) ma mai definiti — ogni
      header, tab bar e pannello risultava trasparente. Nessun colore nuovo:
@@ -295,7 +298,7 @@
   .fld {
     width: 100%;
     padding: 4px 8px;
-    border: 1px solid var(--color-rule);
+    border: 1px solid var(--color-rule-field);
     border-radius: var(--radius-md);
     background: var(--color-sheet);
     color: var(--color-ink);

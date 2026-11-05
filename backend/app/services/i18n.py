@@ -139,6 +139,7 @@ _IT: dict[str, str] = {
     "dataset_no_samples": "nessun campione scritto: le famiglie esportate sono tutte vuote",
     # --- valutazione ------------------------------------------------------------
     "inference_failed": "pagina {id}: inferenza fallita ({exc})",
+    "eval_source_missing": "pagina {id}: immagine sorgente non trovata ({path}), esclusa dalla misura",
     "table_error_w": "tabella blocco {id}: {exc}",
     "text_error_w": "testo blocco {id}: {exc}",
     "vllm_ping": (
@@ -205,6 +206,8 @@ _IT: dict[str, str] = {
     "password_short": "password troppo corta (minimo 8 caratteri)",
     "role_invalid": "ruolo non valido: {role}",
     "username_taken": "nome utente già esistente",
+    "email_taken": "email già usata da un altro utente",
+    "email_set_by_admin_sso": "con l'accesso SSO l'email la imposta un amministratore",
     "user_not_found": "utente non trovato",
     "last_admin": "non si può eliminare o declassare l'ultimo amministratore",
     "self_password_reset": "usa il cambio password per il tuo account",
@@ -435,6 +438,7 @@ _EN: dict[str, str] = {
     "dataset_empty": "no page with exportable annotations: the dataset is empty",
     "dataset_no_samples": "no sample written: every exported family is empty",
     "inference_failed": "page {id}: inference failed ({exc})",
+    "eval_source_missing": "page {id}: source image not found ({path}), left out of the measure",
     "table_error_w": "table block {id}: {exc}",
     "text_error_w": "text block {id}: {exc}",
     "vllm_ping": (
@@ -498,6 +502,8 @@ _EN: dict[str, str] = {
     "password_short": "password too short (minimum 8 characters)",
     "role_invalid": "invalid role: {role}",
     "username_taken": "username already exists",
+    "email_taken": "email already used by another user",
+    "email_set_by_admin_sso": "with SSO sign-in, an administrator sets the email",
     "user_not_found": "user not found",
     "last_admin": "you cannot delete or demote the last administrator",
     "self_password_reset": "use change password for your own account",
@@ -727,6 +733,7 @@ _FR: dict[str, str] = {
     "dataset_empty": "aucune page avec des annotations exportables : le dataset est vide",
     "dataset_no_samples": "aucun échantillon écrit : toutes les familles exportées sont vides",
     "inference_failed": "page {id} : inférence impossible ({exc})",
+    "eval_source_missing": "page {id} : image source introuvable ({path}), exclue de la mesure",
     "table_error_w": "tableau bloc {id} : {exc}",
     "text_error_w": "texte bloc {id} : {exc}",
     "vllm_ping": (
@@ -790,6 +797,8 @@ _FR: dict[str, str] = {
     "password_short": "mot de passe trop court (8 caractères minimum)",
     "role_invalid": "rôle invalide : {role}",
     "username_taken": "ce nom d'utilisateur existe déjà",
+    "email_taken": "e-mail déjà utilisée par un autre utilisateur",
+    "email_set_by_admin_sso": "avec la connexion SSO, c'est un administrateur qui définit l'e-mail",
     "user_not_found": "utilisateur introuvable",
     "last_admin": "vous ne pouvez pas supprimer ou rétrograder le dernier administrateur",
     "self_password_reset": "utilisez le changement de mot de passe pour votre propre compte",

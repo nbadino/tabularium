@@ -302,7 +302,8 @@ def training_stream(
         idle = 0
         while True:
             try:
-                st = trainer._status(project_id)  # noqa: SLF001
+                # Blocking work (SQLite, files, nvidia-smi): keep it off the event loop.
+                st = await asyncio.to_thread(trainer._status, project_id)  # noqa: SLF001
             except Exception:  # noqa: BLE001
                 break
             state = st["run"].get("state") if st.get("run") else None

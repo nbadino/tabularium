@@ -43,6 +43,7 @@ def create_user(payload: UserCreate, _admin: dict = Depends(_admin)) -> UserCrea
                 role=payload.role,
                 active=payload.active,
                 must_change_password=True,
+                email_confirmed=True,
             )
             token, _expires = usersvc.generate_invite(conn, user["id"])
             auditsvc.record(conn, _admin, "user.invited", resource_type="user", resource_id=user["id"], payload={"role": user["role"]})
@@ -55,6 +56,7 @@ def create_user(payload: UserCreate, _admin: dict = Depends(_admin)) -> UserCrea
             role=payload.role,
             active=payload.active,
             must_change_password=True,
+            email_confirmed=True,
         )
         auditsvc.record(conn, _admin, "user.created", resource_type="user", resource_id=user["id"], payload={"role": user["role"]})
     return UserCreatedOut(**user)
@@ -96,7 +98,8 @@ def update_user(
         if payload.role and payload.role != target["role"] and admin["id"] != target["id"]:
             _guard_demote(conn, target["id"])
         user = usersvc.update_user(
-            conn, user_id, email=payload.email, role=payload.role, active=payload.active
+            conn, user_id, email=payload.email, role=payload.role, active=payload.active,
+            email_confirmed=True,
         )
         auditsvc.record(conn, admin, "user.updated", resource_type="user", resource_id=user_id, payload=payload.model_dump(exclude_unset=True))
     return UserOut(**user)
