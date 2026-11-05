@@ -675,3 +675,24 @@ def test_a_table_gets_a_table_sized_output_budget():
 
     assert seen["table"] == TABLE_MAX_TOKENS
     assert seen["text"] < seen["table"]
+
+
+def test_a_short_crop_keeps_its_glyphs():
+    """The tallness cap was a tenth of the crop: on a crop of a few rows the real
+    glyphs were thrown away as "rules" and detection failed."""
+    detection = table_detect.detect_grid(_synthetic_table(rows=3))
+    assert detection.rows == 3
+    assert detection.cols == 5
+
+
+def test_turning_leader_suppression_off_reaches_the_bent_boundaries(monkeypatch):
+    seen: list[bool] = []
+    real = table_detect.snap_boundaries
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get("suppress_leaders", True))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(table_detect, "snap_boundaries", spy)
+    table_detect.detect_grid(_synthetic_table(rows=20, col_x=(60, 300, 560), leaders=True), suppress_leaders=False)
+    assert seen == [False]

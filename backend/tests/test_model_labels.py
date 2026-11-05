@@ -68,3 +68,16 @@ def test_adapter_map_wins_over_generic_alias():
         "prompt_kind": "text", "prompt": "text",
     }])
     assert model_labels.resolve_native_label("page_number", labels, "mineru2.5") == "Page-footer"
+
+
+def test_gemini_argon_knows_only_the_labels_its_prompt_offers():
+    """Its prompt lists the classes it may answer with: it cannot "already know"
+    Caption, Footnote or Page-footer, which the prompt never offers."""
+    from app.services import model_adapters, model_labels
+
+    adapter = model_adapters.get_adapter("gemini-argon")
+    known = model_labels.known_canonical("gemini-argon")
+    assert {"Caption", "Footnote", "Page-footer"}.isdisjoint(known)
+    assert {"Title", "Table", "Section-header"} <= known
+    for label in known:
+        assert label in adapter.prompt_for("end2end")

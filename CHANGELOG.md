@@ -19,6 +19,20 @@ Notable changes to Tabularium. The format follows
   keep authenticated page images, and a deskew or alignment no longer leaves stale tiles.
 
 ### Fixed
+- PaddleOCR-VL's `paragraph_title` is mapped to `Section-header`, not `Title`, as PP-DocLayout
+  defines it and as GLM-OCR and DeepSeek-OCR already do. Its prefills no longer label section
+  headings as the masthead.
+- Gemini 4 Argon is listed as knowing only the classes its prompt offers, so no longer Caption,
+  Footnote or Page-footer.
+- Table detection keeps the glyphs of a crop only a few rows tall (it failed with "no glyph
+  detected"). Turning leader-dot suppression off now reaches the per-row boundaries too.
+- A table cell holding only a fraction (`⁹⁄₂₀`, `9/20`) is read as a number, so its sums are
+  checked instead of the cell being flagged as unreadable.
+- On a Blackwell GPU whose driver is older than CUDA 12.9, the Paddle runtime install stops and
+  says to update the driver (PaddleOCR's Blackwell guide) instead of installing the `cu126` wheel,
+  which cannot run there.
+- The Paddle layout dataset uses paths relative to its folder (page images hard-linked or copied
+  into `images/`), so it still works when moved to the training machine.
 - Evaluation and benchmark leave out a page whose source image cannot be read, with a warning
   naming it. Before, it was scored as if the model had found nothing.
 - A recognition run interrupted by a restart shows its failed pages in its counters.

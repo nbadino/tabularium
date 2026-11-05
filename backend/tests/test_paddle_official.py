@@ -82,7 +82,7 @@ def test_paddle_labels_land_in_the_tabularium_taxonomy():
 
     expected = {
         "doc_title": "Title",
-        "paragraph_title": "Title",
+        "paragraph_title": "Section-header",
         "figure_title": "Caption",
         "table_title": "Caption",
         "number": "Issue-number",
