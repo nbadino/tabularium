@@ -211,6 +211,9 @@ def update_me(
     """Modifica del proprio profilo: solo l'email (il nome utente è immutabile)."""
     if user.get("is_local"):
         raise HTTPException(status_code=400, detail="la modalità locale non ha un profilo")
+    # SSO links a login to the account holding the same email: only an admin may set it.
+    if payload.email is not None and settingssvc.get_app_settings().get("oidc_enabled"):
+        raise HTTPException(status_code=403, detail="con l'accesso SSO l'email la imposta un amministratore")
     with connect() as conn:
         updated = usersvc.update_user(conn, user["id"], email=payload.email)
     return UserOut(**updated)

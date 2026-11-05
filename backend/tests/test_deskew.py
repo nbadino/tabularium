@@ -321,3 +321,16 @@ def test_prefill_does_not_rotate_a_page_under_existing_blocks(tmp_path: Path, mo
         assert abs(r.json()["results"][0]["deskew_angle"]) < 0.05
         r = client.post(f"/api/projects/{pid}/prelabel", json={"page_ids": [page], "mode": "replace_all", "confirm": True})
         assert abs(r.json()["results"][0]["deskew_angle"]) >= 0.05
+
+
+def test_tiles_are_revalidated_after_a_transform(tmp_path: Path):
+    """Tile URLs carry no transform revision, so a deskew must not leave stale tiles
+    in the browser, and authenticated page images must stay out of shared caches."""
+    pid = _setup(tmp_path / "tile")
+    with TestClient(app) as client:
+        page = client.get(f"/api/projects/{pid}/pages").json()["items"][0]
+        r = client.get(f"/api/pages/{page['id']}/tile/0/0/0")
+        assert r.status_code == 200, r.text
+        cache = r.headers["cache-control"]
+        assert "public" not in cache and "immutable" not in cache
+        assert "private" in cache and "no-cache" in cache

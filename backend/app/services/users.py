@@ -58,6 +58,17 @@ def user_out(row: sqlite3.Row) -> dict:
     }
 
 
+def _claim_email(conn: sqlite3.Connection, email: str, user_id: int | None) -> str | None:
+    """Emails link OIDC logins to accounts, so they are stored normalised and unique."""
+    email = email.strip().lower()
+    if not email:
+        return None
+    owner = accountstore.by_email(email, conn)
+    if owner is not None and owner["id"] != user_id:
+        raise HTTPException(status_code=409, detail="email già usata da un altro utente")
+    return email
+
+
 def create_user(
     conn: sqlite3.Connection,
     username: str,
@@ -68,6 +79,7 @@ def create_user(
     must_change_password: bool = False,
 ) -> dict:
     username = normalize_username(username)
+    email = _claim_email(conn, email or "", None)
     validate_password(password)
     role = validate_role(role)
     if accountstore.username_taken(username, conn):
@@ -76,7 +88,7 @@ def create_user(
     user_id = accountstore.insert(
         conn,
         username=username,
-        email=email or None,
+        email=email,
         password_hash=hash_hex,
         salt=salt,
         role=role,
@@ -111,9 +123,12 @@ def update_user(
     if active is not None:
         fields["active"] = 1 if active else 0
     if email is not None:
-        fields["email"] = email or None
+        fields["email"] = _claim_email(conn, email, user_id)
     if fields:
         accountstore.update_fields(conn, user_id, fields)
+    if active is False:
+        # A deactivated account keeps no live token to come back with on reactivation.
+        accountstore.delete_sessions(user_id, conn)
     return user_out(get_user(conn, user_id))
 
 

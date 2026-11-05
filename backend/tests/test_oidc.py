@@ -48,6 +48,9 @@ def _auth_on_and_clean(monkeypatch) -> None:
         conn.execute("DELETE FROM meta WHERE key LIKE 'oidc_state:%' OR key='app_settings'")
         conn.execute("DELETE FROM secrets WHERE name='oidc'")
     yield
+    # SSO left on would change how later suites' users may edit their profile.
+    with connect() as conn:
+        conn.execute("DELETE FROM meta WHERE key='app_settings'")
 
 
 def _configure(**overrides) -> dict:

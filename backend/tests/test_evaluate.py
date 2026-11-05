@@ -660,3 +660,17 @@ def test_model_drafts_on_an_approved_page_are_not_gold(tmp_path: Path):
         conn.execute("UPDATE pages SET status='annotated' WHERE id=?", (page_id,))
     contents = [b["content"] for b in builder.collect_pages_with_blocks(pid)[page_id]["blocks"]]
     assert contents == ["Approved by a person.", "Model draft."]
+
+
+def test_evaluate_rejects_endpoints_on_private_networks(tmp_path, monkeypatch):
+    pid, _page = _setup(tmp_path)
+    called: list = []
+    monkeypatch.setattr(evmod, "evaluate_project", lambda *a, **k: called.append(k) or {})
+    with TestClient(app) as client:
+        for field in ("server_url", "baseline_server_url"):
+            r = client.post(
+                f"/api/projects/{pid}/evaluate",
+                json={field: "https://169.254.169.254/latest/meta-data"},
+            )
+            assert r.status_code == 400, (field, r.text)
+    assert called == [], "no request may leave before the endpoint is validated"
