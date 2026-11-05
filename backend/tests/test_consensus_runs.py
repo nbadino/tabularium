@@ -9,10 +9,20 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.main import app
+
+
+
+@pytest.fixture(autouse=True)
+def _vault_key(monkeypatch):
+    """Saved profiles carry their own credential, encrypted in the vault: the tests
+    must not depend on a key happening to be in the developer's environment."""
+    monkeypatch.setenv("TABULARIUM_VAULT_KEY", "test-vault-key")
+
 
 OCRIA = {
     "url": "https://api.cloud.eu.llamaindex.ai",
