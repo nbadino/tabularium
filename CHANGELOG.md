@@ -7,6 +7,8 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- The local MLX server holds its model only while it generates: a slow or vanished client no longer
+  keeps every other request waiting, and a closed connection stops the generation at the next token.
 - `nvidia-smi` printing `[N/A]` (MIG, some virtual GPUs) no longer turns `/api/system/gpu`, the
   hardware view and the training preflight into a 500: that GPU is skipped.
 - A truncated last line in a run's `metrics.jsonl` no longer hides every metric of the run.

@@ -25,6 +25,7 @@ import base64
 import io
 import json
 import os
+import queue
 import threading
 import time
 import uuid
@@ -247,15 +248,48 @@ def main() -> None:
 _GPU_LOCK = threading.Lock()
 
 
+_DONE = object()
+
+
+class _Failed:
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
+
+
 def _exclusive(generation, after):
     """Run one generation on the shared model, then `after`, with nobody else on it.
 
     A batch run and a prefill can reach the server together: two `stream_generate`
     on one MLX model, or `clear_cache` in the middle of a generation, is undefined.
+    The generation runs in its own thread, so the lock covers the generation and not
+    the client's reading pace; a reader that closes stops it at the next token.
     """
-    with _GPU_LOCK:
-        yield from generation()
-        after()
+    out: queue.Queue = queue.Queue()
+    stop = threading.Event()
+
+    def run() -> None:
+        try:
+            with _GPU_LOCK:
+                try:
+                    for item in generation():
+                        out.put(item)
+                        if stop.is_set():
+                            break
+                finally:
+                    after()
+        except BaseException as exc:  # noqa: BLE001 - handed to the reader
+            out.put(_Failed(exc))
+        finally:
+            out.put(_DONE)
+
+    threading.Thread(target=run, name="mlx-generation", daemon=True).start()
+    try:
+        while (item := out.get()) is not _DONE:
+            if isinstance(item, _Failed):
+                raise item.exc
+            yield item
+    finally:
+        stop.set()
 
 
 def _sse(payload: dict) -> str:
