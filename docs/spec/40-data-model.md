@@ -41,7 +41,7 @@
     value in `meta` (`services/settings.py`).
 - Other tables: `compute_profiles` (active model/provider, v10+; inactive rows are the saved
   models of a consensus run, each with its own `vault:consensus_profile_*` key), `recognition_runs` /
-  `recognition_run_items`, `consensus_runs` / `consensus_outputs` (v23: each model's blocks for a
+  `recognition_run_items`, `consensus_runs` / `consensus_outputs` (v24: each model's blocks for a
   page, never written to `blocks`/`tables`), `jobs`, `page_reviews`, `custom_models`, `secrets` (vault),
   `audit_events`, `rate_limits`, `meta`.
 - **Migrations**: up to **baseline 6** they are additive by column presence
