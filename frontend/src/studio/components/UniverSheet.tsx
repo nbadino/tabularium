@@ -16,6 +16,7 @@
  * l'impronta: selezione e scorrimento non serializzano il foglio.
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import type { ReactNode } from 'react'
 import { LoadingGrid } from '../../app/ui'
 import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets'
 import {
@@ -37,6 +38,7 @@ import UniverFrFR from '@univerjs/preset-sheets-core/locales/fr-FR'
 import type { FUniver } from '@univerjs/core/lib/facade'
 import type { IScale, Univer } from '@univerjs/core'
 import { IContextMenuService } from '@univerjs/ui'
+import { of } from 'rxjs'
 import '@univerjs/preset-sheets-core/lib/index.css'
 
 import type { TableGrid } from '../../lib/types'
@@ -280,6 +282,16 @@ function sheetCanvas(host: HTMLElement): HTMLCanvasElement | null {
   return Array.from(host.querySelectorAll('canvas')).find((c) => c.clientHeight > 60) ?? null
 }
 
+export interface Disagreements {
+  partly: [number, number][]
+  disagree: [number, number][]
+  resolved: [number, number][]
+}
+
+const NO_DISAGREEMENTS: Disagreements = { partly: [], disagree: [], resolved: [] }
+/** Right-click slots for quick values: one per compared model (at most six). */
+const CHOICE_SLOTS = 6
+
 interface UniverSheetProps {
   /** Il modello di partenza: si carica una volta, poi comanda Univer. */
   grid: TableGrid
@@ -303,9 +315,16 @@ interface UniverSheetProps {
   onRedo?: () => void
   /** Mostra lo scheletro soltanto finché la tela del foglio è pronta. */
   intro?: boolean
+  /** Cells where the compared models disagree (consensus), painted under the checks;
+   *  `resolved` are disputed cells the user has since edited or verified. */
+  disagreements?: Disagreements
+  /** Quick values offered on right click for a cell (consensus: each model's reading). */
+  cellChoices?: (row: number, column: number) => { label: string; value: string }[]
+  /** What to show when the pointer rests on a cell; null shows nothing. */
+  cellHint?: (row: number, column: number) => ReactNode | null
 }
 
-export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp, onSaveHeader, onApplyHeader, suspects, onSelectionChange, onControllerChange, onUndo, onRedo, intro = false }: UniverSheetProps) {
+export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp, onSaveHeader, onApplyHeader, suspects, onSelectionChange, onControllerChange, onUndo, onRedo, intro = false, disagreements, cellHint, cellChoices }: UniverSheetProps) {
   const { t, locale } = useI18n()
   const host = useRef<HTMLDivElement | null>(null)
   const [failed, setFailed] = useState(false)
@@ -336,6 +355,14 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
   const paintRef = useRef<((cells: [number, number][]) => void) | null>(null)
   const suspectsRef = useRef(suspects ?? [])
   suspectsRef.current = suspects ?? []
+  const disagreementsRef = useRef(disagreements ?? NO_DISAGREEMENTS)
+  disagreementsRef.current = disagreements ?? NO_DISAGREEMENTS
+  const paintDisagreementsRef = useRef<((value: Disagreements) => void) | null>(null)
+  const choicesRef = useRef(cellChoices)
+  choicesRef.current = cellChoices
+  // Hovered cell and pointer position (relative to the sheet) for the hint.
+  const [hover, setHover] = useState<{ row: number; column: number } | null>(null)
+  const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null)
 
   // Durante il lavoro sul foglio il pinch deve essere un gesto dell'editor,
   // non lo zoom della pagina. Il meta viewport vale solo finché il foglio è
@@ -355,6 +382,7 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
     let univer: Univer | null = null
     let unsubscribe: { dispose?: () => void } | null = null
     let selectionListener: { dispose: () => void } | null = null
+    let hoverListener: { dispose: () => void } | null = null
     let editStartedListener: { dispose: () => void } | null = null
     let editListener: { dispose: () => void } | null = null
     let disposeSheetGestures: (() => void) | null = null
@@ -576,6 +604,22 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
         }
         const paintSuspects = painter('tabularium-suspects', 'rgba(232, 161, 0, 0.16)', '#e8a100', () => suspectsRef.current)
         const paintVerified = painter('tabularium-verified', 'rgba(46, 125, 50, 0.12)', null, () => verifiedCells(gridRef.current))
+        // Consensus: the models' disagreement, under the arithmetic checks (amber
+        // frame) and distinct from them: a light amber fill for "partly", a red
+        // fill and frame for "disagree".
+        const paintPartly = painter('tabularium-consensus-partly', 'rgba(232, 161, 0, 0.2)', null, () => disagreementsRef.current.partly)
+        const paintDisagree = painter('tabularium-consensus-disagree', 'rgba(163, 0, 14, 0.14)', '#a3000e', () => disagreementsRef.current.disagree)
+        // Violet: a disputed cell the user has already corrected or verified.
+        const paintResolved = painter('tabularium-consensus-resolved', 'rgba(124, 58, 237, 0.16)', '#7c3aed', () => disagreementsRef.current.resolved)
+        paintDisagreementsRef.current = (value) => { paintPartly(value.partly); paintDisagree(value.disagree); paintResolved(value.resolved) }
+        paintDisagreementsRef.current(disagreementsRef.current)
+        try {
+          hoverListener = api.addEvent(api.Event.CellHover, (params: { row: number; column: number }) => {
+            setHover({ row: params.row, column: params.column })
+          })
+        } catch {
+          hoverListener = null
+        }
         paintRef.current = (cells) => paintSuspects(cells)
         paintSuspects(suspectsRef.current)
         paintVerified(verifiedCells(gridRef.current))
@@ -812,6 +856,34 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
           })
         }
 
+        // Consensus quick values: fixed slots whose title and visibility are read
+        // when the menu opens (Univer rebuilds it each time), for the active cell.
+        const choicesHere = () => {
+          const at = selection()
+          return choicesRef.current?.(at.startRow, at.startColumn) ?? []
+        }
+        const choiceIds = Array.from({ length: CHOICE_SLOTS }, (_, i) => `tabularium.consensus.use.${i}`)
+        choiceIds.forEach((id, i) => {
+          commands.registerCommand({
+            id,
+            type: CommandType.COMMAND,
+            handler: () => {
+              const choice = choicesHere()[i]
+              const at = selection()
+              if (!choice) return false
+              void api.getActiveWorkbook()?.getActiveSheet().getRange(at.startRow, at.startColumn).setValue(choice.value)
+              return true
+            },
+          })
+        })
+        const choiceGroup = Object.fromEntries(choiceIds.map((id, i) => [id, {
+          order: -100 + i,
+          menuItemFactory: () => {
+            const choice = choicesHere()[i]
+            return { id, type: MenuItemType.BUTTON, title: choice?.label ?? '', commandId: id, hidden$: of(!choice) }
+          },
+        }]))
+
         const entry = (key: string, title: string, commandId: string, order: number) => ({
           [key]: {
             order,
@@ -827,7 +899,7 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
             // Sul corpo del foglio, sull'intestazione di colonna e su quella di
             // riga: il gesto è «tasto destro su riga/colonna», e le tre strade
             // devono portare allo stesso posto.
-            [ContextMenuPosition.MAIN_AREA]: { [ContextMenuGroup.OTHERS]: group },
+            [ContextMenuPosition.MAIN_AREA]: { [ContextMenuGroup.OTHERS]: { ...choiceGroup, ...group } },
             [ContextMenuPosition.COL_HEADER]: { [ContextMenuGroup.OTHERS]: group },
             [ContextMenuPosition.ROW_HEADER]: { [ContextMenuGroup.OTHERS]: group },
           },
@@ -845,6 +917,8 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
       window.clearTimeout(readyTimeout)
       window.removeEventListener('keydown', onUndoRedo, true)
       paintRef.current = null
+      paintDisagreementsRef.current = null
+      hoverListener?.dispose()
       selectionListener?.dispose()
       editStartedListener?.dispose()
       editListener?.dispose()
@@ -867,6 +941,12 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
     paintRef.current?.(suspects ?? [])
   }, [suspects])
 
+  useEffect(() => {
+    paintDisagreementsRef.current?.(disagreements ?? NO_DISAGREEMENTS)
+  }, [disagreements])
+
+  const hint = hover && pointer && cellHint ? cellHint(hover.row, hover.column) : null
+
   if (failed) {
     return (
       <p className="border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-3 text-[12px] text-[color:var(--color-ink-2)]">
@@ -875,8 +955,24 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
     )
   }
   return (
-    <div className="relative h-full min-h-[320px] w-full">
+    <div
+      className="relative h-full min-h-[320px] w-full"
+      onMouseMove={cellHint ? (event) => {
+        const box = event.currentTarget.getBoundingClientRect()
+        setPointer({ x: event.clientX - box.left, y: event.clientY - box.top })
+      } : undefined}
+      onMouseLeave={() => { setPointer(null); setHover(null) }}
+    >
       <div ref={host} data-testid="univer-host" className="sheet-host h-full w-full" data-ready={ready || undefined} />
+      {hint && (
+        <div
+          role="tooltip"
+          className="pointer-events-none absolute z-50 max-w-[320px] rounded-md border border-[color:var(--color-rule-strong)] bg-[color:var(--color-sheet)] p-2 text-[12px] shadow-lg"
+          style={{ left: Math.min(pointer!.x + 14, Math.max(0, (host.current?.clientWidth ?? 400) - 330)), top: pointer!.y + 18 }}
+        >
+          {hint}
+        </div>
+      )}
       {!skeletonGone && (
         <div className="sheet-skeleton pointer-events-none absolute inset-0">
           <LoadingGrid label={t('content.tableLoading')} rows={10} />

@@ -131,3 +131,44 @@ def test_additive_migrations_have_no_semicolon_in_comments():
         for line in ddl.splitlines():
             if _re.match(r"\s*--", line):
                 assert ";" not in line, f"migration {version}: ';' in a comment: {line.strip()}"
+
+
+def test_prerelease_consensus_db_at_23_gets_email_confirmed():
+    """A pre-release build used version 23 for the consensus tables, and 0.7.0
+    used it for ``users.email_confirmed``. A database stamped 23 by the former
+    lacks the column; migration 24 must add it and keep the consensus rows."""
+    with _fresh_conn() as conn:
+        db.init_db()
+        conn.execute("ALTER TABLE users DROP COLUMN email_confirmed")
+        conn.execute("UPDATE meta SET value='23' WHERE key='schema_version'")
+        conn.execute(
+            "INSERT INTO projects (name, root_dir) VALUES ('p', '/tmp/p')"
+        )
+        conn.execute(
+            "INSERT INTO consensus_runs (project_id, state) VALUES (1, 'finished')"
+        )
+        conn.commit()
+
+    db.init_db()
+
+    with db.connect() as conn:
+        assert _version(conn) == db.SCHEMA_VERSION
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+        assert "email_confirmed" in cols
+        assert conn.execute("SELECT count(*) FROM consensus_runs").fetchone()[0] == 1
+
+
+def test_db_from_070_at_23_gets_consensus_tables():
+    """A database upgraded by 0.7.0 (version 23, no consensus tables) gets them."""
+    with _fresh_conn() as conn:
+        db.init_db()
+        conn.execute("DROP TABLE consensus_outputs")
+        conn.execute("DROP TABLE consensus_runs")
+        conn.execute("UPDATE meta SET value='23' WHERE key='schema_version'")
+        conn.commit()
+
+    db.init_db()
+
+    with db.connect() as conn:
+        tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert {"consensus_runs", "consensus_outputs"} <= tables

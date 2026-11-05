@@ -26,6 +26,7 @@ file of the data folder.
 | `TABULARIUM_PUBLIC_URL` | unset | public URL for the OIDC callback when a proxy hides the real address |
 | `TABULARIUM_SESSION_COOKIE_SECURE` | `0` | `1` behind HTTPS: the session cookie is never sent in clear |
 | `TABULARIUM_FORWARDED_ALLOW_IPS` | `127.0.0.1` | proxies trusted for `X-Forwarded-For`: a comma list of addresses and CIDR ranges (`10.0.0.0/8`), or `*`; the client address keys the login rate limit. Behind a CDN, see [below](#behind-cloudflare-or-another-cdn) |
+| `TABULARIUM_UPDATE_CHECK` | `1` | `0` stops the server from asking GitHub whether a newer release is out (administrators see it in the top bar and in Settings → Environment) |
 
 ## Behind Cloudflare or another CDN
 

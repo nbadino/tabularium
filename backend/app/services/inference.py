@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import hashlib
 import io
 import json
 import os
@@ -57,7 +58,11 @@ END2END_PROMPT = (
 # come "custom".
 _PROFILE_PROVIDERS = frozenset({"local", "ssh", "vast", "runpod", "modal", "custom", "llamaindex"})
 
-from ..domain.inference import LLAMAINDEX_BASE_URL  # noqa: F401  (re-export)
+from ..domain.inference import LLAMAINDEX_BASE_URL, LLAMAINDEX_EU_BASE_URL  # noqa: F401  (re-export)
+
+# LlamaCloud host that accepted a key the default (US) host rejected, by key digest:
+# one probe per key and process, then every page goes straight to the right region.
+_LLAMAINDEX_REGION: dict[str, str] = {}
 
 
 
@@ -300,6 +305,35 @@ class VllmClient:
             headers.update(self.extra_headers)
         return headers
 
+    def _llamaindex_key_id(self) -> str:
+        return hashlib.sha256((self.api_key or "").encode("utf-8")).hexdigest()
+
+    def _llamaindex_base(self) -> str:
+        """The configured host, or the region this key was found on earlier."""
+        base = _llamaindex_base_url(self.url)
+        if base == LLAMAINDEX_BASE_URL:
+            return _LLAMAINDEX_REGION.get(self._llamaindex_key_id(), base)
+        return base
+
+    def _llamaindex_other_region(
+        self, base: str, response, send: Callable[[str], requests.Response],
+    ) -> tuple[str, requests.Response]:
+        """On a 401/403 from the default host, try the key on the EU host once.
+
+        A host the user typed is left alone. When the EU host accepts the key it is
+        remembered, so the next calls skip the US host.
+        """
+        if response.status_code not in (401, 403) or base != LLAMAINDEX_BASE_URL:
+            return base, response
+        try:
+            retry = send(LLAMAINDEX_EU_BASE_URL)
+        except requests.RequestException:
+            return base, response
+        if retry.status_code in (401, 403):
+            return base, response
+        _LLAMAINDEX_REGION[self._llamaindex_key_id()] = LLAMAINDEX_EU_BASE_URL
+        return LLAMAINDEX_EU_BASE_URL, retry
+
     def _llamaindex_configuration(self) -> tuple[dict, int]:
         """Fetch this model's workflow and hand it to the protocol mapping."""
         if self.adapter.adapter_id != "llamaindex-ocria-1":
@@ -318,32 +352,45 @@ class VllmClient:
         self,
         image: Image.Image,
         *,
+        on_delta: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
     ) -> list[dict]:
-        """Upload one page, run a native LlamaParse job and poll its result."""
+        """Upload one page, run a native LlamaParse job and poll its result.
+
+        `on_delta` keeps the signature shared by every `*_native_page` runner;
+        a LlamaParse job is polled, not streamed, so there is no output to relay.
+        """
         if self.adapter.adapter_id != "llamaindex-ocria-1":
             raise RuntimeError("il parser nativo LlamaIndex richiede l'adapter OCRia-1")
         if not self.api_key:
             raise RuntimeError("API key LlamaIndex mancante: inseriscila in Modelli → OCRia-1")
-        base = _llamaindex_base_url(self.url)
+        base = self._llamaindex_base()
         configuration, total_timeout = self._llamaindex_configuration()
         headers = self._llamaindex_headers()
         started = time.perf_counter()
         buffer = io.BytesIO()
         image.convert("RGB").save(buffer, format="PNG")
 
-        try:
-            upload = requests.post(
-                f"{base}/api/v1/beta/files",
+        def send_upload(host: str) -> requests.Response:
+            return requests.post(
+                f"{host}/api/v1/beta/files",
                 headers=headers,
                 data={"purpose": "parse"},
                 files={"file": ("page.png", buffer.getvalue(), "image/png")},
                 timeout=(10, max(30, min(self.timeout, 300))),
             )
+
+        try:
+            upload = send_upload(base)
         except requests.RequestException as exc:
             raise RuntimeError(f"LlamaCloud non raggiungibile durante l'upload: {exc}") from exc
+        base, upload = self._llamaindex_other_region(base, upload, send_upload)
         if upload.status_code in (401, 403):
-            raise RuntimeError("API key LlamaIndex rifiutata durante l'upload (HTTP 401/403)")
+            raise RuntimeError(
+                "API key LlamaIndex rifiutata durante l'upload (HTTP 401/403): controlla che la "
+                f"chiave sia della regione dell'endpoint {base} "
+                f"(US {LLAMAINDEX_BASE_URL}, EU {LLAMAINDEX_EU_BASE_URL})"
+            )
         if upload.status_code >= 400:
             raise RuntimeError(f"upload LlamaCloud fallito (HTTP {upload.status_code}): {upload.text[:300]}")
         try:
@@ -1695,7 +1742,7 @@ class VllmClient:
     def _test_llamaindex_connection(self, timeout: float = 10.0) -> dict:
         """Validate the user's LlamaCloud key with the cheap versions endpoint."""
         started = time.perf_counter()
-        base = _llamaindex_base_url(self.url)
+        base = self._llamaindex_base()
 
         def result(ok: bool, error: str | None, versions: list[str] | None = None) -> dict:
             return {
@@ -1710,16 +1757,24 @@ class VllmClient:
 
         if not self.api_key:
             return result(False, "API key LlamaIndex mancante")
-        try:
-            response = requests.get(
-                f"{base}/api/v2/parse/versions",
+        def send(host: str) -> requests.Response:
+            return requests.get(
+                f"{host}/api/v2/parse/versions",
                 headers=self._llamaindex_headers(),
                 timeout=max(5.0, timeout),
             )
+
+        try:
+            response = send(base)
         except requests.RequestException as exc:
             return result(False, f"LlamaCloud non raggiungibile: {exc}")
+        base, response = self._llamaindex_other_region(base, response, send)
         if response.status_code in (401, 403):
-            return result(False, "API key LlamaIndex rifiutata (HTTP 401/403)")
+            return result(
+                False,
+                f"API key LlamaIndex rifiutata da {base} (HTTP 401/403): controlla che la chiave "
+                f"sia della sua regione (US {LLAMAINDEX_BASE_URL}, EU {LLAMAINDEX_EU_BASE_URL})",
+            )
         if response.status_code >= 400:
             return result(False, f"endpoint versioni LlamaCloud non disponibile (HTTP {response.status_code})")
         try:
@@ -1893,19 +1948,7 @@ def get_inference_config() -> dict:
 
             api_key = opencode_gateway.read_api_key()
 
-    native_url = None
-    if adapter_id in {"teleocr", "glm-ocr", "mineru2.5"} and provider == "vast":
-        try:
-            from . import cloud_manager
-            tunnel = cloud_manager.get_tunnel_status()
-            if tunnel.running and getattr(tunnel, "native_local_port", None):
-                native_url = f"http://127.0.0.1:{tunnel.native_local_port}"
-        except Exception:  # noqa: BLE001 - legacy/non-Vast profiles have no sidecar
-            native_url = None
-    elif adapter_id == "mineru2.5" and provider == "local":
-        # Local Apple Silicon uses MinerUClient's native mlx-engine gateway on
-        # the same port as the server's /v1/models readiness endpoint.
-        native_url = url[:-3].rstrip("/") if url.rstrip("/").endswith("/v1") else url.rstrip("/")
+    native_url = _native_url(adapter_id, provider, url)
 
     if adapter_id == "llamaindex-ocria-1":
         url = _llamaindex_base_url(url)
@@ -1926,6 +1969,24 @@ def get_inference_config() -> dict:
         "source_profile_id": source_profile_id,
         "native_url": native_url,
     }
+
+
+def _native_url(adapter_id: str, provider: str | None, url: str) -> str | None:
+    """The sidecar URL of the adapters whose official pipeline is not on `/v1`."""
+    if adapter_id in {"teleocr", "glm-ocr", "mineru2.5"} and provider == "vast":
+        try:
+            from . import cloud_manager
+            tunnel = cloud_manager.get_tunnel_status()
+            if tunnel.running and getattr(tunnel, "native_local_port", None):
+                return f"http://127.0.0.1:{tunnel.native_local_port}"
+        except Exception:  # noqa: BLE001 - legacy/non-Vast profiles have no sidecar
+            return None
+        return None
+    if adapter_id == "mineru2.5" and provider == "local":
+        # Local Apple Silicon uses MinerUClient's native mlx-engine gateway on
+        # the same port as the server's /v1/models readiness endpoint.
+        return url[:-3].rstrip("/") if url.rstrip("/").endswith("/v1") else url.rstrip("/")
+    return None
 
 
 def _provider_for_endpoint(url: str) -> str:
@@ -2118,3 +2179,50 @@ def get_vllm_client(
             return VllmClient(url=url or cfg["url"], model=model or cfg["model"], adapter=adapter)
         except TypeError:
             return VllmClient()
+
+
+def profile_credential(ref: str | None) -> str:
+    """The secret a compute profile's `credential_ref` points to ("" if none)."""
+    if not ref:
+        return ""
+    if ref.startswith("env:"):
+        return os.environ.get(ref[4:], "")
+    if ref.startswith("vault:"):
+        from . import vault
+        return vault.get(ref)
+    # Secret values never belong in a profile row. A missing/unknown ref is
+    # deliberately treated as no credential instead of being echoed.
+    return ""
+
+
+def client_for_profile(profile: dict, *, timeout: int | None = None) -> VllmClient:
+    """A client for a saved compute profile, without activating it.
+
+    The global configuration keeps describing the one active model; a consensus run
+    reaches several models at once, each through its own profile. Key resolution,
+    the OpenCode gateway fallback, the LlamaIndex base URL and the native sidecar
+    follow the same rules as `get_inference_config`.
+    """
+    adapter_id = str(profile["model_adapter_id"])
+    adapter = get_adapter(adapter_id)
+    provider = str(profile.get("provider") or "") or None
+    url = str(profile["endpoint"])
+    if adapter_id == "llamaindex-ocria-1":
+        url = _llamaindex_base_url(url)
+    api_key = profile_credential(profile.get("credential_ref"))
+    if not api_key and (
+        provider == "opencode"
+        or getattr(adapter.capabilities, "serve_backend", "") == "opencode-gateway"
+    ):
+        from . import opencode_gateway
+
+        api_key = opencode_gateway.read_api_key()
+    return VllmClient(
+        url=url,
+        model=str(profile["served_model_name"]),
+        api_key=api_key,
+        timeout=timeout if timeout is not None else config.VLLM_TIMEOUT,
+        adapter=adapter,
+        provider=provider,
+        native_url=_native_url(adapter_id, provider, url),
+    )

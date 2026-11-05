@@ -17,11 +17,19 @@ vi.mock('./UniverSheet', () => ({
   default: ({
     suspects,
     onSelectionChange,
+    disagreements,
+    cellHint,
+    cellChoices,
   }: {
     suspects?: [number, number][]
     onSelectionChange?: (s: { startRow: number; startColumn: number; endRow: number; endColumn: number }) => void
+    disagreements?: { partly: [number, number][]; disagree: [number, number][] }
+    cellHint?: (row: number, column: number) => React.ReactNode
+    cellChoices?: (row: number, column: number) => { label: string; value: string }[]
   }) => (
-    <div data-testid="univer-sheet" data-suspects={JSON.stringify(suspects ?? [])}>
+    <div data-testid="univer-sheet" data-suspects={JSON.stringify(suspects ?? [])} data-disagreements={JSON.stringify(disagreements ?? null)}>
+      <div data-testid="hint-1-1">{cellHint?.(1, 1)}</div>
+      <ul data-testid="choices-1-1">{(cellChoices?.(1, 1) ?? []).map((choice) => <li key={choice.label}>{choice.label}</li>)}</ul>
       <button type="button" onClick={() => onSelectionChange?.({ startRow: 2, startColumn: 3, endRow: 2, endColumn: 3 })}>
         seleziona D3
       </button>
@@ -175,6 +183,62 @@ describe('ContentPane', () => {
     // Selezionata la cella, la riga dice quale somma non torna.
     await userEvent.click(screen.getByRole('button', { name: 'seleziona D3' }))
     expect(screen.getByText('Summation Error in column (4) ≠ column (2) + (3)')).toBeTruthy()
+  })
+
+  it('confronto modelli: le celle in disaccordo si colorano nel foglio e il passaggio del mouse mostra le letture', async () => {
+    const grid = emptyGrid(3, 4)
+    grid.cells = grid.cells.map((cell) =>
+      cell.r === 1 && cell.c === 1 ? { ...cell, text: 'Genva', source: 'ocr' as const }
+        // Already corrected by hand: resolved, painted violet.
+        : cell.r === 2 && cell.c === 2 ? { ...cell, text: '1523', source: 'manual' as const }
+          : { ...cell, source: 'ocr' as const })
+    const consensus = {
+      run_id: 2,
+      models: [{ key: 'p3', name: 'OCRia-1' }, { key: 'p1', name: 'Argon' }],
+      cells: [
+        { r: 0, c: 0, values: { p3: 'Nave', p1: 'Nave' }, score: 0 },
+        { r: 1, c: 1, values: { p3: 'Genova', p1: 'Genovo' }, score: 0.17 },
+        { r: 2, c: 2, values: { p3: '1523', p1: null }, score: 1 },
+      ],
+      extra_rows: [],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(
+            String(url).includes('/consensus') ? consensus
+              : String(url).includes('/tables/checks') ? { checks: [], passed: 0, failed: 0, suspects: [] }
+                : { grid },
+          ),
+        }),
+      ),
+    )
+    render(
+      <ContentPane
+        blocks={[makeBlock({ label: 'Table' })]}
+        drafts={[]}
+        labels={[]}
+        selectedId={null}
+        working={null}
+        {...noop}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Apri la tabella' }))
+    await waitFor(() => expect(screen.getByTestId('consensus-bar')).toHaveTextContent('1 cella in disaccordo'))
+    expect(screen.getByTestId('consensus-bar')).toHaveTextContent('1 corretta')
+    expect(screen.getByTestId('univer-sheet')).toHaveAttribute('data-disagreements', JSON.stringify({ partly: [[1, 1]], disagree: [], resolved: [[2, 2]] }))
+    // Right click on a disputed cell offers each model's reading.
+    expect(screen.getByTestId('choices-1-1')).toHaveTextContent('Usa OCRia-1: «Genova»')
+    expect(screen.getByTestId('choices-1-1')).toHaveTextContent('Usa Argon: «Genovo»')
+    const hint = screen.getByTestId('hint-1-1')
+    expect(hint).toHaveTextContent('La tua trascrizione: Genva')
+    expect(hint).toHaveTextContent('OCRia-1: Genova')
+    expect(hint).toHaveTextContent('Argon: Genovo')
+    // Turned off, the sheet is plain again.
+    await userEvent.click(screen.getByLabelText('Mostra disaccordi'))
+    expect(screen.getByTestId('univer-sheet')).toHaveAttribute('data-disagreements', 'null')
   })
 
   it('una somma sbagliata dalla stampa si conferma come refuso e smette di contare', async () => {
@@ -493,5 +557,49 @@ describe('ContentPane', () => {
     // La bozza porta il menu della classe, come un blocco confermato.
     await user.click(screen.getByRole('option', { name: 'Data dell’uscita' }))
     expect(onDraftLabel).toHaveBeenCalledWith(42, 'Issue-date')
+  })
+})
+
+describe('ContentPane in model comparison', () => {
+  it('heads the rows with the summary, puts each verdict in its row and the rest below', () => {
+    const draft: PrefillDraft = { serverId: 21, label: 'Text', content: 'Fonte', confirmed: false, grid: null }
+    render(
+      <ContentPane
+        blocks={[makeBlock({ id: 'b1', content: 'Arrivi', confirmed: true })]}
+        drafts={[draft]}
+        labels={[]}
+        selectedId={null}
+        working={null}
+        {...noop}
+        consensus={{
+          summary: <p>summary</p>,
+          row: (rowId) => rowId === 'b1'
+            ? { chip: <span>chip-b1</span>, detail: <div>detail-b1</div> }
+            : rowId === 'draft-21' ? { chip: <span>chip-draft</span>, detail: null } : null,
+          footer: <p>only in the models</p>,
+        }}
+      />,
+    )
+    expect(screen.getByText('summary')).toBeInTheDocument()
+    // A verified block with an open detail is not folded away into one line.
+    expect(screen.getByText('detail-b1')).toBeInTheDocument()
+    expect(screen.getByText('chip-b1')).toBeInTheDocument()
+    expect(screen.getByText('chip-draft')).toBeInTheDocument()
+    expect(screen.getByText('only in the models')).toBeInTheDocument()
+  })
+})
+
+describe('ContentPane source badge', () => {
+  it('names the model a draft came from, and keeps OCR for the OCR engine', () => {
+    const drafts: PrefillDraft[] = [
+      { serverId: 31, label: 'Text', content: 'Arrivi', confirmed: false, grid: null, source: 'model:ocria-1:official' },
+      { serverId: 32, label: 'Text', content: 'Fonte', confirmed: false, grid: null, source: 'ocr:rapidocr' },
+    ]
+    render(
+      <ContentPane blocks={[]} drafts={drafts} labels={[]} selectedId={null} working={null} {...noop}
+        sourceLabel={(source) => source.startsWith('model:ocria-1') ? 'OCRia-1 (LlamaIndex)' : 'OCR'} />,
+    )
+    expect(screen.getByText('OCRia-1 (LlamaIndex)')).toBeInTheDocument()
+    expect(screen.getByText('OCR')).toBeInTheDocument()
   })
 })

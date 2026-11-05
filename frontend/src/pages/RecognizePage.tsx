@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { projectPath } from '../app/projectPaths'
 import { Link, useSearchParams } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
+import ConsensusPanel from './ConsensusPanel'
 import { ApiError } from '../lib/api'
 import type { PageItem, PrefillEngines, RecognitionRun, SystemInfo } from '../lib/types'
 import { defaultEngine } from '../lib/defaultEngine'
@@ -469,7 +470,8 @@ export default function RecognizePage() {
           {/* Il pannello resta in vista mentre si scorre l'elenco: chi sceglie
               pagine in fondo ha modello e «Avvia» a portata senza risalire.
               Le esecuzioni recenti gli scorrono sotto. */}
-          <Module tab={t('recognition.newRun')} className="xl:sticky xl:top-0 xl:z-10">
+          <div className="space-y-3 xl:sticky xl:top-0 xl:z-10 xl:max-h-[calc(100vh-7rem)] xl:overflow-y-auto xl:pr-2 xl:bg-[color:var(--color-sheet)]">
+          <Module tab={t('recognition.newRun')}>
             <Field label={t('recognition.engine')}>
               <select
                 value={engine}
@@ -551,6 +553,14 @@ export default function RecognizePage() {
               <IconPlayground size={13} />{busy ? t('recognition.starting') : t('recognition.start')}
             </button>
           </Module>
+
+          <ConsensusPanel
+            projectId={projectId}
+            pageIds={[...selected]}
+            canManage={canManageInference}
+            currentModel={nameOf(inference.adapterId) ?? inference.model ?? ''}
+          />
+          </div>
 
           <Collapsible tab={t('recognition.recent')} quiet flush>
             {runs.length === 0 ? <p className="p-3 text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.noRuns')}</p> : (

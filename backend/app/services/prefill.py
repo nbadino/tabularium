@@ -222,6 +222,7 @@ def model_prelabel_events(
     lang: str,
     on_output=None,
     cancel_event: threading.Event | None = None,
+    writer=None,
 ):
     """Versione a eventi del prefill modello: un generatore che emette un
     evento per ogni blocco scritto, così l'endpoint SSE può far comparire la
@@ -233,6 +234,10 @@ def model_prelabel_events(
     motivo). La scrittura su DB resta qui:
     l'evento parte solo dopo l'INSERT — ciò che la UI mostra è ciò che esiste
     davvero lato server.
+
+    `writer` replaces the unit of work (default `blockstore.writing`): a consensus
+    run passes `blockstore.reading_only`, which runs the same pipeline and emits the
+    same events without writing a block, a grid or a revision.
     """
     # `native` si risolve nel percorso nativo dell'adapter una volta sola.
     mm = opts.model_mode
@@ -245,7 +250,7 @@ def model_prelabel_events(
     # `Text` in silenzio.
     schema_labels = _project_schema_labels(project_id)
     table_hint_text = _project_table_hint(project_id)
-    with blockstore.writing() as conn:
+    with (writer or blockstore.writing)() as conn:
         for pid in page_ids:
             if cancel_event is not None and cancel_event.is_set():
                 return

@@ -118,3 +118,9 @@ def deactivate_all(*, at: str, conn=None) -> None:
         return
     with connect() as own:
         own.execute(statement, (at,))
+
+
+def delete(profile_id: int) -> None:
+    """Remove an inactive profile; the active one is refused by the caller."""
+    with connect() as conn:
+        conn.execute("DELETE FROM compute_profiles WHERE id=? AND active=0", (profile_id,))

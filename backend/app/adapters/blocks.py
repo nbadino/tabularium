@@ -34,6 +34,14 @@ class PageWriter:
     def has_blocks(self, page_id: int) -> bool:
         return self._conn.execute("SELECT 1 FROM blocks WHERE page_id=? LIMIT 1", (page_id,)).fetchone() is not None
 
+    def human_blocks(self, page_id: int) -> int:
+        """Blocks a person drew or verified: what `replace_drafts` never deletes."""
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM blocks WHERE page_id=? AND (prefill_source IS NULL OR confirmed=1)",
+            (page_id,),
+        ).fetchone()
+        return int(row[0] or 0)
+
     # --- writes --------------------------------------------------------
     def replace_blocks(self, page_id: int, mode: str) -> dict[str, int]:
         """Delete the blocks the chosen mode allows, and say how many went."""
@@ -114,7 +122,43 @@ class PageWriter:
         self._conn.commit()
 
 
+class ReadOnlyPageWriter(PageWriter):
+    """The same scope with every write turned into a no-op.
+
+    A consensus run sends the page through the prefill pipeline only to see what a
+    model returns. It reads the page like a prefill does, but the annotations, the
+    grids and the revision stay untouched; the caller keeps the emitted blocks.
+    `has_blocks` answers yes so the pipeline never rotates the page master.
+    """
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        super().__init__(conn)
+        self._next_id = 0
+
+    def has_blocks(self, page_id: int) -> bool:
+        return True
+
+    def replace_blocks(self, page_id: int, mode: str) -> dict[str, int]:
+        return {"blocks": 0, "grids": 0}
+
+    def insert_block(self, page_id: int, **_fields: Any) -> int:
+        self._next_id += 1
+        return self._next_id
+
+    def upsert_grid(self, block_id: int, grid: dict[str, Any]) -> None:
+        return None
+
+    def bump_revision(self, page_id: int) -> int:
+        return 0
+
+
 @contextmanager
 def writing() -> Iterator[PageWriter]:
     with connect() as conn:
         yield PageWriter(conn)
+
+
+@contextmanager
+def reading_only() -> Iterator[PageWriter]:
+    with connect() as conn:
+        yield ReadOnlyPageWriter(conn)

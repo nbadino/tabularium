@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Image as KonvaImage, Layer, Line, Rect, Stage } from 'react-konva'
+import { Image as KonvaImage, Layer, Line, Rect, Stage, Group, Label, Tag, Text } from 'react-konva'
 import Konva from 'konva'
 import useImage from 'use-image'
 import { bboxPoints, type Pt } from '../lib/coords'
@@ -9,6 +9,7 @@ import BlockLayer from './components/BlockLayer'
 import { IconFit, IconMinus, IconPlus } from '../app/icons'
 import { useI18n } from '../i18n'
 import { clamp, clampDragDelta, clampPoints } from './canvasGeometry'
+import { withAlpha, type OverlayRect } from './consensus'
 
 interface StudioCanvasProps {
   interactive?: boolean
@@ -24,6 +25,8 @@ interface StudioCanvasProps {
   onAddBlock: (input: { kind: 'rect' | 'polygon'; points: Pt[]; label: string }) => void
   onUpdateBlock: (id: string, points: Pt[]) => void
   onDeleteBlock: (id: string) => void
+  /** Rectangles drawn above the blocks (consensus heatmap); the blocks under them stay editable. */
+  overlay?: { rects: OverlayRect[]; selected: number | null; onSelect: (cluster: number) => void }
 }
 
 const MIN_SIZE = 3
@@ -44,6 +47,7 @@ export default function StudioCanvas({
   onAddBlock,
   onUpdateBlock,
   onDeleteBlock,
+  overlay,
 }: StudioCanvasProps) {
   const { t, tn } = useI18n()
   const [image] = useImage(imageUrl)
@@ -436,10 +440,55 @@ export default function StudioCanvas({
             />
           ))}
         </Layer>
+        {overlay && (
+          <Layer>
+            {overlay.rects.map((rect, index) => {
+              const box = bboxPoints(rect.points)
+              const selected = rect.cluster === overlay.selected
+              return (
+                <Rect
+                  key={index}
+                  x={box.x}
+                  y={box.y}
+                  width={box.w}
+                  height={box.h}
+                  fill={withAlpha(rect.color, selected ? 0.24 : 0.12)}
+                  stroke={rect.color}
+                  strokeWidth={(selected ? 3 : 1.5) / viewport.k}
+                  dash={rect.dashed ? [6 / viewport.k, 4 / viewport.k] : undefined}
+                  listening={rect.listening}
+                  onClick={() => { if (!wasDrag()) overlay.onSelect(rect.cluster) }}
+                  onTap={() => overlay.onSelect(rect.cluster)}
+                />
+              )
+            })}
+            {/* The verdict in words at each area's corner, above its own box: a tag
+                is the same size on screen at any zoom. */}
+            {overlay.rects.map((rect, index) => {
+              if (!rect.tag) return null
+              const box = bboxPoints(rect.points)
+              const selected = rect.cluster === overlay.selected
+              return (
+                <Group key={`tag-${index}`} x={box.x} y={box.y} listening={false}>
+                  <Label y={-16 / viewport.k}>
+                    <Tag fill={rect.color} opacity={selected ? 1 : 0.9} cornerRadius={2 / viewport.k} />
+                    <Text
+                      text={rect.tag}
+                      fontSize={11 / viewport.k}
+                      fontStyle={selected ? 'bold' : 'normal'}
+                      padding={3 / viewport.k}
+                      fill="#ffffff"
+                    />
+                  </Label>
+                </Group>
+              )
+            })}
+          </Layer>
+        )}
       </Stage>
 
       <p className="pointer-events-none absolute bottom-2 left-2 hidden max-w-[calc(100%-260px)] rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] px-2 py-1 text-[11px] text-[color:var(--color-ink-2)] sm:block">
-        {interactionHint}
+        {overlay ? t('consensus.canvasHint') : interactionHint}
         {tool === 'polygon' && polyVerts.length >= 3 && ` — ${tn('canvas.vertices', polyVerts.length)}`}
       </p>
 

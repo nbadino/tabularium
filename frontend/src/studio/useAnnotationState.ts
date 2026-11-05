@@ -73,6 +73,12 @@ function landedAlready(error: ApiError, sent: SentItem[], deleted: number[]): bo
   })
 }
 
+export interface ReadingChange {
+  patch?: { id: string; label: string; content: string }[]
+  remove?: string[]
+  add?: { points: { x: number; y: number }[]; label: string; content: string }[]
+}
+
 export interface UseAnnotationStateReturn {
   blocks: DisplayBlock[]
   selectedId: string | null
@@ -95,6 +101,10 @@ export interface UseAnnotationStateReturn {
   setBlockContent: (id: string, content: string) => void
   setBlockConfirmed: (id: string, confirmed: boolean) => void
   deleteBlock: (id: string) => void
+  /** Confronto modelli: la lettura di un modello entra in un solo passo di
+   *  undo — `patch` riscrive classe e testo, `remove` toglie, `add` aggiunge
+   *  (coordinate display). */
+  applyReading: (change: ReadingChange) => void
   moveBlock: (id: string, dir: -1 | 1) => void
   reorderReset: () => void
   saveNow: () => Promise<void>
@@ -307,6 +317,38 @@ export function useAnnotationState(
         if (selectedId === id) setSelectedId(null)
         return next
       })
+    },
+    [hist, selectedId],
+  )
+
+  const applyReading = useCallback(
+    (change: ReadingChange) => {
+      markDirty()
+      const added: DisplayBlock[] = (change.add ?? []).map((item) => ({
+        id: nextId(),
+        serverId: null,
+        label: item.label,
+        kind: 'rect',
+        points: item.points,
+        content: item.content,
+        orderIdx: null,
+        confirmed: false,
+      }))
+      const patches = new Map((change.patch ?? []).map((item) => [item.id, item]))
+      const removed = new Set(change.remove ?? [])
+      hist.set((prev) => {
+        for (const b of prev) if (removed.has(b.id) && b.serverId) deletedRef.current.add(b.serverId)
+        const kept = prev
+          .filter((b) => !removed.has(b.id))
+          .map((b) => {
+            const p = patches.get(b.id)
+            return p ? { ...b, label: p.label, content: p.content } : b
+          })
+        return [...kept, ...added]
+      })
+      const focus = added[0]?.id ?? change.patch?.[0]?.id ?? null
+      if (focus) setSelectedId(focus)
+      else if (selectedId && removed.has(selectedId)) setSelectedId(null)
     },
     [hist, selectedId],
   )
@@ -542,6 +584,7 @@ export function useAnnotationState(
     setBlockContent,
     setBlockConfirmed,
     deleteBlock,
+    applyReading,
     moveBlock,
     reorderReset,
     saveNow,
