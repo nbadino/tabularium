@@ -614,30 +614,58 @@ def evaluate_with_baseline(
 
 
 # Exact TEDS costs seconds per large table (about 9 s for 80x12), so an evaluation
-# can outlast an HTTP request. It runs in a thread; the page polls the status.
-# shortcut: the status lives in memory, so a backend restart forgets it (the report
-# stays on disk in eval_*/report.json); persist it like the benchmark if that matters.
+# can outlast an HTTP request. It runs in a thread; the page polls the status, which
+# is also written to `eval/eval_state.json` so a backend restart neither forgets the
+# last report nor leaves a run that no thread will finish shown as running.
 _JOBS: dict[int, dict] = {}
 _JOBS_LOCK = threading.Lock()
 
 
-def start_evaluation(project_id: int, **kwargs) -> dict:
+def _state_path(project_id: int) -> Path:
+    return builder._project_dir(project_id) / "eval" / "eval_state.json"  # noqa: SLF001
+
+
+def _save_state(project_id: int, job: dict) -> None:
+    path = _state_path(project_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
+def start_evaluation(project_id: int, *, lang: str = "it", **kwargs) -> dict:
     """Start the evaluation in the background; one at a time per project."""
     with _JOBS_LOCK:
         if _JOBS.get(project_id, {}).get("state") == "running":
             return {"started": False, "state": "running"}
-        job = {"state": "running", "error": None, "report": None}
+        job = {"state": "running", "error": None, "report": None, "lang": lang}
         _JOBS[project_id] = job
+        _save_state(project_id, job)
 
     def worker() -> None:
         try:
-            job.update(report=evaluate_with_baseline(project_id, **kwargs), state="done")
+            job.update(report=evaluate_with_baseline(project_id, lang=lang, **kwargs), state="done")
         except Exception as exc:  # noqa: BLE001 - the error goes to the status, not lost
             job.update(error=str(exc), state="error")
+        try:
+            _save_state(project_id, job)
+        except OSError:
+            pass  # the in-memory status still answers until the next restart
 
     threading.Thread(target=worker, name=f"evaluate-{project_id}", daemon=True).start()
     return {"started": True, "state": "running"}
 
 
 def evaluation_status(project_id: int) -> dict:
-    return dict(_JOBS.get(project_id, {"state": "idle"}))
+    job = _JOBS.get(project_id)
+    if job is None:
+        try:
+            job = json.loads(_state_path(project_id).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"state": "idle"}
+        if job.get("state") == "running":
+            # No thread of this process runs it: the backend restarted mid-run.
+            job.update(state="error", error=msg("eval_interrupted", job.get("lang")), report=None)
+    status = dict(job)
+    status.pop("lang", None)
+    return status

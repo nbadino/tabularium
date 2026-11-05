@@ -714,3 +714,28 @@ def test_evaluate_api_reports_errors_through_status(tmp_path: Path, monkeypatch)
                 break
             time.sleep(0.05)
         assert status == {"state": "error", "error": "nessuna pagina approvata", "report": None}
+
+
+def test_evaluate_status_survives_backend_restart(tmp_path: Path, monkeypatch):
+    """The status is on disk: after a restart the last report is still there, and a
+    run that was in progress is reported as interrupted instead of running forever."""
+    monkeypatch.setattr(evmod, "evaluate_project", lambda project_id, **_kw: {"pages": [], "project_id": project_id})
+    archive = tmp_path / "archive-restart"
+    archive.mkdir(parents=True)
+    Image.new("RGB", (900, 1300), (215, 215, 215)).save(archive / "p.png")
+    with TestClient(app) as client:
+        pid = client.post("/api/projects", json={"name": "RS", "archive_dir": str(archive)}).json()["id"]
+        client.post(f"/api/projects/{pid}/evaluate", json={})
+        for _ in range(100):
+            if client.get(f"/api/projects/{pid}/evaluate/status").json()["state"] != "running":
+                break
+            time.sleep(0.05)
+
+        evmod._JOBS.clear()  # what a restart does to the in-memory status
+        status = client.get(f"/api/projects/{pid}/evaluate/status").json()
+        assert status["state"] == "done" and status["report"]["project_id"] == pid
+
+        evmod._save_state(pid, {"state": "running", "error": None, "report": None, "lang": "en"})
+        status = client.get(f"/api/projects/{pid}/evaluate/status").json()
+        assert status["state"] == "error"
+        assert "interrupted" in status["error"]
