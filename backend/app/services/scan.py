@@ -231,6 +231,13 @@ def register_candidate(
         report.unsupported += 1
         report.errors.append(f"{cand.path.name}: {msg('no_pages_rendered', lang)}")
         return
+    # A rescan of a PDF whose pages are all known renders nothing: rendering every
+    # page at 200 DPI only to learn it was a duplicate cost minutes per archive.
+    known = pagestore.registered_pdf_pages(conn, project_id, abs_path)
+    if known >= set(range(page_count)):
+        pagestore.revive_pdf_pages(conn, project_id, abs_path)
+        report.duplicates += page_count
+        return
     meta = pagemeta.parse_filename(cand.path.name)
     extra = {"publication": meta.publication} if meta.publication else {}
     for page_idx, rendered in enumerate(iter_pdf_pages(cand.path)):

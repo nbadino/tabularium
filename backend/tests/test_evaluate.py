@@ -660,3 +660,28 @@ def test_model_drafts_on_an_approved_page_are_not_gold(tmp_path: Path):
         conn.execute("UPDATE pages SET status='annotated' WHERE id=?", (page_id,))
     contents = [b["content"] for b in builder.collect_pages_with_blocks(pid)[page_id]["blocks"]]
     assert contents == ["Approved by a person.", "Model draft."]
+
+
+def test_a_page_whose_image_is_missing_is_excluded_not_scored_as_empty(tmp_path, monkeypatch):
+    """Scoring an unreadable page as "the model found nothing" lowered the totals
+    with no warning and blamed the model for a moved file."""
+    with TestClient(app) as client:
+        archive = tmp_path / "archive3"
+        archive.mkdir(parents=True)
+        Image.new("RGB", (900, 1300), (215, 215, 215)).save(archive / "p.png")
+        pid = client.post("/api/projects", json={"name": "E3", "archive_dir": str(archive)}).json()["id"]
+        client.post(f"/api/projects/{pid}/scan")
+        page = client.get(f"/api/projects/{pid}/pages").json()["items"][0]
+        client.put(
+            f"/api/pages/{page['id']}/annotations",
+            json={"items": [{"label": "Text", "kind": "rect", "points": [[10, 100], [890, 900]], "content": "x", "order_idx": 1}]},
+        )
+    from app.db import connect
+
+    with connect() as conn:
+        conn.execute("UPDATE pages SET status='approved' WHERE project_id=?", (pid,))
+    monkeypatch.setattr(infmod, "VllmClient", FakeClient)
+    monkeypatch.setattr(evmod.pagesvc, "load_source_image", lambda _page: None)
+    report = evmod.evaluate_project(pid, with_text=True)
+    assert report["pages_evaluated"] == 0
+    assert any(str(page["id"]) in w and "p.png" in w for w in report["warnings"])

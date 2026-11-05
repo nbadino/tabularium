@@ -139,6 +139,7 @@ _IT: dict[str, str] = {
     "dataset_no_samples": "nessun campione scritto: le famiglie esportate sono tutte vuote",
     # --- valutazione ------------------------------------------------------------
     "inference_failed": "pagina {id}: inferenza fallita ({exc})",
+    "eval_source_missing": "pagina {id}: immagine sorgente non trovata ({path}), esclusa dalla misura",
     "table_error_w": "tabella blocco {id}: {exc}",
     "text_error_w": "testo blocco {id}: {exc}",
     "vllm_ping": (
@@ -434,6 +435,7 @@ _EN: dict[str, str] = {
     "dataset_empty": "no page with exportable annotations: the dataset is empty",
     "dataset_no_samples": "no sample written: every exported family is empty",
     "inference_failed": "page {id}: inference failed ({exc})",
+    "eval_source_missing": "page {id}: source image not found ({path}), left out of the measure",
     "table_error_w": "table block {id}: {exc}",
     "text_error_w": "text block {id}: {exc}",
     "vllm_ping": (
@@ -725,6 +727,7 @@ _FR: dict[str, str] = {
     "dataset_empty": "aucune page avec des annotations exportables : le dataset est vide",
     "dataset_no_samples": "aucun échantillon écrit : toutes les familles exportées sont vides",
     "inference_failed": "page {id} : inférence impossible ({exc})",
+    "eval_source_missing": "page {id} : image source introuvable ({path}), exclue de la mesure",
     "table_error_w": "tableau bloc {id} : {exc}",
     "text_error_w": "texte bloc {id} : {exc}",
     "vllm_ping": (

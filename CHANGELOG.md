@@ -7,6 +7,15 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Evaluation and benchmark leave out a page whose source image cannot be read, with a warning
+  naming it. Before, it was scored as if the model had found nothing.
+- A recognition run interrupted by a restart shows its failed pages in its counters.
+- The cloud cost estimate of an instance that was stopped and resumed no longer counts the
+  stopped time.
+- Cancel, retry and export of a recognition run check its project without decoding every
+  page's output.
+- The training status reads `train.log` again only when it changed.
+- Rescanning an archive no longer re-renders PDFs whose pages are all registered.
 - A large ZIP upload no longer fails on one network hiccup: a piece that does not arrive is sent
   again after a pause (about two minutes of attempts), from the byte the server says it holds
   (`GET …/zip-uploads/{id}`); the dialog says it is retrying. An 800 MB archive had failed at

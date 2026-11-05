@@ -228,6 +228,23 @@ def insert_pdf_page(
     return int(cursor.lastrowid or 0)
 
 
+def registered_pdf_pages(conn, project_id: int, abs_path: str) -> set[int]:
+    rows = conn.execute(
+        "SELECT pdf_page FROM pages WHERE project_id=? AND abs_path=? AND pdf_page IS NOT NULL",
+        (project_id, abs_path),
+    ).fetchall()
+    return {int(row["pdf_page"]) for row in rows}
+
+
+def revive_pdf_pages(conn, project_id: int, abs_path: str) -> None:
+    """A PDF found again: its pages marked missing come back, as `insert_pdf_page` does."""
+    conn.execute(
+        "UPDATE pages SET status='new' WHERE project_id=? AND abs_path=? "
+        "AND pdf_page IS NOT NULL AND status='missing'",
+        (project_id, abs_path),
+    )
+
+
 def set_thumb(conn, page_id: int, thumb: str) -> None:
     conn.execute("UPDATE pages SET thumb_path=? WHERE id=?", (str(thumb), page_id))
 
