@@ -233,37 +233,57 @@ def register_candidate(
         return
     meta = pagemeta.parse_filename(cand.path.name)
     extra = {"publication": meta.publication} if meta.publication else {}
-    for page_idx, rendered in enumerate(iter_pdf_pages(cand.path)):
-        pil_img, (width, height) = rendered
-        page_id = pagestore.insert_pdf_page(
-            conn,
-            project_id=project_id,
-            rel_path=rel_path,
-            abs_path=abs_path,
-            pdf_page=page_idx,
-            width=width,
-            height=height,
-            issue_no=meta.issue_no,
-            # In un PDF multipagina il numero di pagina è l'indice, non il
-            # suffisso del nome file (che identifica il fascicolo intero).
-            page_no=meta.page_no if page_count == 1 else str(page_idx + 1),
-            page_type=meta.page_type,
-            meta_json=json.dumps(extra),
-            collection_id=collection_id,
-        )
-        if page_id is None:
-            report.duplicates += 1
+    # A PDF is all or nothing: a page that fails to render rolls back only this file,
+    # and the rest of the scan (one transaction) goes on.
+    if not conn.in_transaction:
+        conn.execute("BEGIN")
+    conn.execute("SAVEPOINT pdf_file")
+    registered = duplicates = 0
+    written: list[Path] = []
+    try:
+        for page_idx, rendered in enumerate(iter_pdf_pages(cand.path)):
+            pil_img, (width, height) = rendered
+            page_id = pagestore.insert_pdf_page(
+                conn,
+                project_id=project_id,
+                rel_path=rel_path,
+                abs_path=abs_path,
+                pdf_page=page_idx,
+                width=width,
+                height=height,
+                issue_no=meta.issue_no,
+                # In un PDF multipagina il numero di pagina è l'indice, non il
+                # suffisso del nome file (che identifica il fascicolo intero).
+                page_no=meta.page_no if page_count == 1 else str(page_idx + 1),
+                page_type=meta.page_type,
+                meta_json=json.dumps(extra),
+                collection_id=collection_id,
+            )
+            if page_id is None:
+                duplicates += 1
+                pil_img.close()
+                continue
+            written += [pagesvc.pdf_image_path(page_id), pagesvc.thumb_path(page_id)]
+            extracted = pagesvc.pdf_image_path(page_id)
+            pil_img.save(extracted, format="PNG", optimize=True)
+            pagestore.set_meta(
+                conn, page_id, json.dumps({**extra, "extracted_path": str(extracted)})
+            )
+            thumb = pagesvc.save_pdf_thumb(pil_img, page_id)
+            pagestore.set_thumb(conn, page_id, str(thumb))
             pil_img.close()
-            continue
-        extracted = pagesvc.pdf_image_path(page_id)
-        pil_img.save(extracted, format="PNG", optimize=True)
-        pagestore.set_meta(
-            conn, page_id, json.dumps({**extra, "extracted_path": str(extracted)})
-        )
-        thumb = pagesvc.save_pdf_thumb(pil_img, page_id)
-        pagestore.set_thumb(conn, page_id, str(thumb))
-        pil_img.close()
-        report.registered += 1
+            registered += 1
+    except Exception as exc:  # noqa: BLE001 - any render/save failure is a per-file error
+        conn.execute("ROLLBACK TO pdf_file")
+        conn.execute("RELEASE pdf_file")
+        for path in written:
+            path.unlink(missing_ok=True)
+        report.unsupported += 1
+        report.errors.append(f"{cand.path.name}: {exc}")
+        return
+    conn.execute("RELEASE pdf_file")
+    report.registered += registered
+    report.duplicates += duplicates
 
 
 def run_scan(

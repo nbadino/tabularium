@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 from xml.etree.ElementTree import Element, SubElement, ElementTree
@@ -75,35 +76,49 @@ def export_formats(project_id: int, formats: tuple[str, ...] = ("internal", "coc
         chunks.append("</body></html>")
         path.write_text("\n".join(chunks), encoding="utf-8")
         written["html"] = str(path)
-    for fmt in ("page", "alto"):
-        if fmt not in formats:
-            continue
-        root_tag = "PcGts" if fmt == "page" else "alto"
-        root = Element(root_tag, {"xmlns": "http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15"} if fmt == "page" else {"xmlns": "http://www.loc.gov/standards/alto/ns-v4#"})
-        if fmt == "page":
-            page_el = SubElement(root, "Page", {"imageWidth": "0", "imageHeight": "0"})
-        else:
-            layout = SubElement(root, "Layout")
-        for item in data.values():
+    if "alto" in formats:
+        root = Element("alto", {"xmlns": "http://www.loc.gov/standards/alto/ns-v4#"})
+        layout = SubElement(root, "Layout")
+        for number, item in enumerate(data.values(), start=1):
             page = item["page"]
-            parent = SubElement(page_el if fmt == "page" else layout, "TextRegion", {"id": f"p{page['id']}"})
+            page_el = SubElement(layout, "Page", {"ID": f"p{page['id']}", "WIDTH": str(int(page["width"])), "HEIGHT": str(int(page["height"])), "PHYSICAL_IMG_NR": str(number)})
+            space = SubElement(page_el, "PrintSpace")
             for block in item["blocks"]:
                 points = parse_points(block["points"])
                 if len(points) < 2:
                     continue
-                b = _bbox(points)
-                attrs = {"id": f"b{block['id']}", "LABEL": str(block["label"])}
-                if fmt == "page":
-                    region = SubElement(parent, "TextRegion", attrs)
-                    SubElement(region, "Coords", {"points": " ".join(f"{int(x)},{int(y)}" for x, y in points)})
-                    if block["content"]:
-                        line = SubElement(region, "TextLine")
-                        SubElement(line, "String", {"CONTENT": str(block["content"])})
-                else:
-                    region = SubElement(parent, "TextBlock", {"ID": f"b{block['id']}", "HPOS": str(int(b[0])), "VPOS": str(int(b[1])), "WIDTH": str(int(b[2])), "HEIGHT": str(int(b[3]))})
-                    if block["content"]:
-                        SubElement(region, "TextLine")
-        path = out_dir / f"annotations.{fmt}.xml"
+                box = {k: str(int(v)) for k, v in zip(("HPOS", "VPOS", "WIDTH", "HEIGHT"), _bbox(points))}
+                region = SubElement(space, "TextBlock", {"ID": f"b{block['id']}", **box})
+                if block["content"]:
+                    line = SubElement(region, "TextLine", {"ID": f"l{block['id']}", **box})
+                    SubElement(line, "String", {"CONTENT": str(block["content"])})
+        path = out_dir / "annotations.alto.xml"
         ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
-        written[fmt] = str(path)
+        written["alto"] = str(path)
+    if "page" in formats:
+        # PAGE describes one image per document: one file per page.
+        page_dir = out_dir / "page"
+        page_dir.mkdir(exist_ok=True)
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        for item in data.values():
+            page = item["page"]
+            root = Element("PcGts", {"xmlns": "http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15"})
+            meta = SubElement(root, "Metadata")
+            SubElement(meta, "Creator").text = "Tabularium"
+            SubElement(meta, "Created").text = now
+            SubElement(meta, "LastChange").text = now
+            page_el = SubElement(root, "Page", {"imageFilename": str(page.get("rel_path") or Path(str(page["abs_path"])).name), "imageWidth": str(int(page["width"])), "imageHeight": str(int(page["height"]))})
+            for block in item["blocks"]:
+                points = parse_points(block["points"])
+                if len(points) < 2:
+                    continue
+                if len(points) == 2:
+                    (x1, y1), (x2, y2) = points
+                    points = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+                region = SubElement(page_el, "TextRegion", {"id": f"b{block['id']}", "custom": f"structure {{type:{block['label']};}}"})
+                SubElement(region, "Coords", {"points": " ".join(f"{int(x)},{int(y)}" for x, y in points)})
+                if block["content"]:
+                    SubElement(SubElement(region, "TextEquiv"), "Unicode").text = str(block["content"])
+            ElementTree(root).write(page_dir / f"page_{page['id']}.xml", encoding="utf-8", xml_declaration=True)
+        written["page"] = str(page_dir)
     return {"project_id": project_id, "formats": written}

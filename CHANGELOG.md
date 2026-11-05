@@ -7,6 +7,16 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Deskew and basic alignment no longer delete a page's blocks when the page is already straight
+  and nothing would change. When they undo an earlier transform, its metadata goes too, so a stale
+  transform no longer stays reported as active.
+- One PDF page that fails to render (or to save) no longer rolls back the whole scan or upload: that
+  PDF is skipped and listed in the report's errors, and every other file is registered.
+- The MinerU MLX runtime checked for mineru-vl-utils 2.0.5 while installing 2.0.8, so it never
+  looked ready. Every start wiped the venv, reinstalled it and then failed. Both now read one constant.
+- PAGE and ALTO exports keep the text and the page size. ALTO writes `Page > PrintSpace > TextBlock >
+  TextLine > String@CONTENT`, one `Page` per page; before, every `TextLine` was empty. PAGE writes one
+  file per page under `exports/page/`, with `Metadata`, the real image size and `TextEquiv/Unicode`.
 - A large ZIP upload no longer fails on one network hiccup: a piece that does not arrive is sent
   again after a pause (about two minutes of attempts), from the byte the server says it holds
   (`GET …/zip-uploads/{id}`); the dialog says it is retrying. An 800 MB archive had failed at
