@@ -21,6 +21,7 @@ const SSO_ERROR_KEYS: Record<string, string> = {
   oidc_discovery: 'auth.oidcErrorProvider',
   oidc_userinfo: 'auth.oidcErrorProvider',
   oidc_user: 'auth.oidcErrorUser',
+  oidc_unconfirmed: 'auth.oidcErrorUnconfirmed',
   oidc_disabled: 'auth.oidcErrorDisabled',
 }
 

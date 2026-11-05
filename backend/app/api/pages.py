@@ -619,4 +619,4 @@ def page_tile(
     with connect() as conn:
         page = _get_page_or_404(page_id)
         tile = pagesvc.ensure_tile(page, level, x, y)
-    return FileResponse(tile, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=31536000, immutable"})
+    return FileResponse(tile, media_type="image/jpeg", headers={"Cache-Control": "private, no-cache"})
