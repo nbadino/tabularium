@@ -306,6 +306,13 @@ def _invalidate_page_cache(page_id: int) -> None:
         shutil.rmtree(tiles, ignore_errors=True)
 
 
+def _drop_transform(page_id: int) -> None:
+    """Back to the original image: the file and the metadata that says it is active."""
+    pagesvc.deskew_path(page_id).unlink(missing_ok=True)
+    pagesvc.legacy_deskew_path(page_id).unlink(missing_ok=True)
+    pagesvc.transform_meta_path(page_id).unlink(missing_ok=True)
+
+
 @router.post("/api/pages/{page_id}/deskew")
 def deskew_page(
     page_id: int,
@@ -330,6 +337,9 @@ def deskew_page(
     if img is None:
         raise pagesvc.source_missing(page)
     out, angle = imgmod.deskew(img)
+    noop = abs(angle) < 0.3
+    if noop and pagesvc._active_transform_path(page_id) is None:  # noqa: SLF001
+        return {"page_id": page_id, "deskewed": False, "angle": 0.0}
 
     if confirm:
         with annotationstore.writing() as writer:
@@ -337,9 +347,8 @@ def deskew_page(
     _invalidate_page_cache(page_id)
 
     desk = pagesvc.deskew_path(page_id)
-    if abs(angle) < 0.3:
-        desk.unlink(missing_ok=True)
-        pagesvc.legacy_deskew_path(page_id).unlink(missing_ok=True)
+    if noop:
+        _drop_transform(page_id)
         return {"page_id": page_id, "deskewed": False, "angle": 0.0}
     desk.parent.mkdir(parents=True, exist_ok=True)
     out.convert("RGB").save(desk, "PNG", compress_level=4)
@@ -371,9 +380,7 @@ def deskew_remove(
             )
         if confirm:
             writer.delete_page_blocks(page_id)
-    pagesvc.deskew_path(page_id).unlink(missing_ok=True)
-    pagesvc.legacy_deskew_path(page_id).unlink(missing_ok=True)
-    pagesvc.transform_meta_path(page_id).unlink(missing_ok=True)
+    _drop_transform(page_id)
     pagesvc.clear_candidate(page_id)
     _invalidate_page_cache(page_id)
     return {"page_id": page_id, "deskewed": False, "reset": True}
@@ -414,7 +421,13 @@ def align_page_endpoint(
     img = pagesvc.load_original_source_image(page)
     if img is None:
         raise pagesvc.source_missing(page)
-    aligned, angle = dewarp.align_page(img, payload.level, payload.strength)
+    # Engine and diagnostics are module state: read them under the same lock as the run.
+    with dewarp._transform_lock:  # noqa: SLF001
+        aligned, angle = dewarp.align_page(img, payload.level, payload.strength)
+        engine, diagnostics = dewarp.last_engine(), dewarp.last_diagnostics()
+    noop = payload.level == "basic" and abs(angle) < 0.05
+    if noop and pagesvc._active_transform_path(page_id) is None:  # noqa: SLF001
+        return {"page_id": page_id, "applied": False, "angle": 0.0, "level": "basic"}
 
     if confirm:
         with annotationstore.writing() as writer:
@@ -422,8 +435,8 @@ def align_page_endpoint(
     _invalidate_page_cache(page_id)
 
     desk = pagesvc.deskew_path(page_id)
-    if payload.level == "basic" and abs(angle) < 0.05:
-        desk.unlink(missing_ok=True)
+    if noop:
+        _drop_transform(page_id)
         return {"page_id": page_id, "applied": False, "angle": 0.0, "level": "basic"}
     desk.parent.mkdir(parents=True, exist_ok=True)
     aligned.convert("RGB").save(desk, "PNG", compress_level=4)
@@ -434,12 +447,12 @@ def align_page_endpoint(
         aligned.size,
         details={
             "requested_engine": payload.level,
-            "actual_engine": dewarp.last_engine(),
+            "actual_engine": engine,
             "angle": angle,
-            "diagnostics": dewarp.last_diagnostics(),
+            "diagnostics": diagnostics,
         },
     )
-    return {"page_id": page_id, "applied": True, "angle": angle, "level": payload.level, "engine": dewarp.last_engine()}
+    return {"page_id": page_id, "applied": True, "angle": angle, "level": payload.level, "engine": engine}
 
 
 def _transform_state(page_id: int) -> dict:
@@ -609,4 +622,4 @@ def page_tile(
     with connect() as conn:
         page = _get_page_or_404(page_id)
         tile = pagesvc.ensure_tile(page, level, x, y)
-    return FileResponse(tile, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=31536000, immutable"})
+    return FileResponse(tile, media_type="image/jpeg", headers={"Cache-Control": "private, no-cache"})

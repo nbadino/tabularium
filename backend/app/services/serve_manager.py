@@ -481,7 +481,7 @@ def _is_our_serving_process(pid: str | int) -> bool:
         return False
     if str(config.MODELS_DIR) in cmdline:
         return True
-    markers = ("vllm serve", "serve.py", "vllm/vllm-openai", "mlx_vlm.server", "mineru_mlx_gateway.py")
+    markers = ("vllm serve", "serve.py", "vllm/vllm-openai", "mlx_vlm.server", "mineru_mlx_gateway.py", "unlimited_ocr_mlx_server.py")
     return any(marker in cmdline for marker in markers)
 
 

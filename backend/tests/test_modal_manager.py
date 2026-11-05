@@ -203,3 +203,52 @@ def test_a_cancelled_job_is_not_rewritten_as_failed():
     with db.connect() as conn:
         assert conn.execute("SELECT state FROM jobs WHERE id=?", (job_id,)).fetchone()[0] == "stopped"
         conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+
+
+def test_modal_deploy_runs_in_its_own_process_group(monkeypatch, tmp_path):
+    """Cancelling after a restart signals the group the deploy leads; without its
+    own session that group would be the backend's."""
+    db.init_db()
+    seen: dict = {}
+
+    class FakeProc:
+        pid = 7272
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    def fake_popen(argv, **kwargs):
+        seen.update(kwargs)
+        return FakeProc()
+
+    monkeypatch.setattr(modal_manager.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(modal_manager.os, "getpgid", lambda pid: pid, raising=False)
+    monkeypatch.setattr(modal_manager, "_persisted_running", lambda: None)
+    monkeypatch.setattr(modal_manager, "_watch", lambda task: None)
+    monkeypatch.setattr(modal_manager, "_task", None)
+    monkeypatch.setattr(modal_manager.config, "ROOT_DIR", tmp_path)
+    modal_manager._start("deploy", ["deploy", "x.py"], executable="/bin/modal")
+    assert seen.get("start_new_session") is True
+    with db.connect() as conn:
+        conn.execute("DELETE FROM jobs WHERE pid=7272")
+
+
+def test_modal_cancel_falls_back_to_the_pid_when_the_group_is_gone(monkeypatch):
+    monkeypatch.setattr(modal_manager, "_task", None)
+    monkeypatch.setattr(
+        modal_manager, "_persisted_running",
+        lambda: {"id": -1, "pid": 6161, "kind": "deploy", "template_id": "t"},
+    )
+    killed = []
+
+    def no_group(group, sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(modal_manager.os, "killpg", no_group)
+    monkeypatch.setattr(modal_manager.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    monkeypatch.setattr(modal_manager.jobstore, "stop", lambda *a, **k: None)
+    modal_manager._cancel_deploy_if_running("t")
+    assert killed == [(6161, 15)]

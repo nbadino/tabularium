@@ -252,6 +252,8 @@ def _start(
             stderr=subprocess.STDOUT,
             text=True,
             env=env,
+            # Its own group, so a cancel after a restart signals the deploy and never the backend.
+            start_new_session=os.name == "posix",
         )
         try:
             job_id = jobstore.start_modal_job(
@@ -460,14 +462,15 @@ def _cancel_deploy_if_running(template_id: str) -> None:
     if persisted is None or persisted.get("kind") != "deploy" or persisted.get("template_id") != template_id:
         return
     pid = int(persisted["pid"])
+    # The deploy leads its own group (start_new_session); one started before that
+    # change is not a leader, so killpg fails and the PID alone is signalled.
     try:
-        process_group = int(persisted.get("process_group") or pid)
-        if hasattr(os, "killpg"):
-            os.killpg(process_group, 15)
-        else:
+        os.killpg(pid, 15)
+    except (AttributeError, OSError):
+        try:
             os.kill(pid, 15)
-    except OSError:
-        pass
+        except OSError:
+            pass
     try:
         jobstore.stop(persisted["id"], "deploy interrotto prima dello stop dell’app")
     except sqlite3.OperationalError:

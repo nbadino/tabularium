@@ -441,3 +441,44 @@ def test_a_worker_that_cannot_start_does_not_leave_the_model_busy(tmp_path, monk
     recognition._worker(run_id, recognition._ACTIVE[run_id])
     assert run_id not in recognition._ACTIVE
     assert recognition.get_run(run_id)["state"] == "failed"
+
+
+def test_run_checks_and_insert_share_one_write_transaction(tmp_path, monkeypatch):
+    """The busy checks are only a guard if no other start can slip in between the
+    check and the insert: they must run inside a write (IMMEDIATE) transaction."""
+    from app.adapters import runs as runstore
+    from app.db import connect as real_connect
+
+    seen: list[bool] = []
+
+    class Spy:
+        def __init__(self):
+            self.conn = real_connect()
+
+        def __enter__(self):
+            self.conn.__enter__()
+            return self
+
+        def __exit__(self, *exc):
+            try:
+                return self.conn.__exit__(*exc)
+            finally:
+                self.conn.close()
+
+        def execute(self, sql, *args):
+            if "recognition_run_items" in sql and sql.lstrip().upper().startswith("SELECT"):
+                seen.append(self.conn.in_transaction)
+            return self.conn.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self.conn, name)
+
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        monkeypatch.setattr(runstore, "connect", Spy)
+        runstore.create(
+            project_id, [page_ids[0]], engine="ocr", mode="draft", model_mode="end2end",
+            stop_policy="none", owner_id=None, model_name="", adapter_id="", provider="local",
+            endpoint=None,
+        )
+    assert seen == [True]

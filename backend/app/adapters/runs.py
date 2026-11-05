@@ -141,6 +141,9 @@ def create(
     """
     placeholders = ",".join("?" for _ in page_ids)
     with connect() as conn:
+        # The busy checks below guard nothing unless no other start can slip in
+        # between them and the insert: take the write lock first.
+        conn.execute("BEGIN IMMEDIATE")
         if engine == "model":
             active = conn.execute(
                 "SELECT id FROM recognition_runs "
