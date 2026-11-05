@@ -414,7 +414,10 @@ def align_page_endpoint(
     img = pagesvc.load_original_source_image(page)
     if img is None:
         raise pagesvc.source_missing(page)
-    aligned, angle = dewarp.align_page(img, payload.level, payload.strength)
+    # Engine and diagnostics are module state: read them under the same lock as the run.
+    with dewarp._transform_lock:  # noqa: SLF001
+        aligned, angle = dewarp.align_page(img, payload.level, payload.strength)
+        engine, diagnostics = dewarp.last_engine(), dewarp.last_diagnostics()
 
     if confirm:
         with annotationstore.writing() as writer:
@@ -434,12 +437,12 @@ def align_page_endpoint(
         aligned.size,
         details={
             "requested_engine": payload.level,
-            "actual_engine": dewarp.last_engine(),
+            "actual_engine": engine,
             "angle": angle,
-            "diagnostics": dewarp.last_diagnostics(),
+            "diagnostics": diagnostics,
         },
     )
-    return {"page_id": page_id, "applied": True, "angle": angle, "level": payload.level, "engine": dewarp.last_engine()}
+    return {"page_id": page_id, "applied": True, "angle": angle, "level": payload.level, "engine": engine}
 
 
 def _transform_state(page_id: int) -> dict:

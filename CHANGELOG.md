@@ -7,6 +7,26 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- `nvidia-smi` printing `[N/A]` (MIG, some virtual GPUs) no longer turns `/api/system/gpu`, the
+  hardware view and the training preflight into a 500: that GPU is skipped.
+- A truncated last line in a run's `metrics.jsonl` no longer hides every metric of the run.
+- The training stream reads the run status in a worker thread. Each 2 s poll used to block the
+  event loop for every other request (nvidia-smi alone can take 8 s).
+- The benchmark cache is keyed on what was measured (text on/off, table-only, table hint, classes):
+  a run without text no longer answers for a later run with text.
+- An evaluation whose baseline measured no page returns `order_delta: null` instead of a 500.
+- At startup, the benchmark kills its orphaned local server only when the recorded PID's command line
+  is one of ours. After a reboot that PID can belong to any process.
+- A Modal deploy runs in its own process group, so cancelling one recovered after a restart works.
+  The backend's own group is never signalled.
+- Two recognition runs started at the same moment can no longer both pass the "model busy" and
+  "pages busy" checks: the checks and the insert share one write transaction.
+- Two `/align` requests no longer interleave the preprocessor or swap each other's diagnostics.
+- The Unlimited-OCR MLX server runs one generation at a time on the shared model.
+- Custom classes are compared the way the label bridge compares them: "text" or "Text_" is refused
+  as the default "Text", and "Ship Name" / "ship_name" as duplicates.
+- The Windows scripts stop on a failed `npm`, `pip` or `venv` command. They no longer print "ready"
+  and exit 0, and `run.ps1` no longer starts the server on a failed build.
 - A large ZIP upload no longer fails on one network hiccup: a piece that does not arrive is sent
   again after a pause (about two minutes of attempts), from the byte the server says it holds
   (`GET …/zip-uploads/{id}`); the dialog says it is retrying. An 800 MB archive had failed at

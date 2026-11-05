@@ -13,9 +13,12 @@ if ($pyVersion -notin @("3.11", "3.12", "3.13")) {
 if (-not (Test-Path ".venv")) {
     Write-Host ">> Creo virtualenv..."
     & $py -m venv .venv
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 & ".venv\Scripts\python.exe" -m pip install --upgrade pip -q
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & ".venv\Scripts\python.exe" -m pip install -r requirements.txt -r requirements-dev.txt
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & ".venv\Scripts\python.exe" -c "import cryptography; print('cryptography ' + cryptography.__version__)"
 if ($LASTEXITCODE -ne 0) {
     throw "Dipendenza cryptography non disponibile: il vault dei segreti non è sicuro."

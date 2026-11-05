@@ -321,3 +321,19 @@ def test_prefill_does_not_rotate_a_page_under_existing_blocks(tmp_path: Path, mo
         assert abs(r.json()["results"][0]["deskew_angle"]) < 0.05
         r = client.post(f"/api/projects/{pid}/prelabel", json={"page_ids": [page], "mode": "replace_all", "confirm": True})
         assert abs(r.json()["results"][0]["deskew_angle"]) >= 0.05
+
+
+def test_align_holds_the_transform_lock_while_it_runs(monkeypatch):
+    """`align_page` updates module-level diagnostics and runs the preprocessor:
+    two /align requests must not interleave."""
+    from app.services import monkey_preprocess
+
+    owned: list[bool] = []
+
+    def fake_preprocess(image):
+        owned.append(dewarp._transform_lock._is_owned())
+        return image
+
+    monkeypatch.setattr(monkey_preprocess, "preprocess", fake_preprocess)
+    dewarp.align_page(Image.new("RGB", (40, 40)), "medium")
+    assert owned == [True]
