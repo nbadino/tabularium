@@ -77,7 +77,10 @@ def create_user(
     role: str = "editor",
     active: bool = True,
     must_change_password: bool = False,
+    email_confirmed: bool = False,
 ) -> dict:
+    """`email_confirmed`: True only when an administrator (or the SSO provider) wrote
+    the email; SSO never signs in to an account whose owner typed it."""
     username = normalize_username(username)
     email = _claim_email(conn, email or "", None)
     validate_password(password)
@@ -94,6 +97,7 @@ def create_user(
         role=role,
         active=active,
         must_change_password=must_change_password,
+        email_confirmed=email_confirmed,
     )
     return user_out(accountstore.get(user_id, conn))
 
@@ -113,6 +117,7 @@ def update_user(
     email: str | None = None,
     role: str | None = None,
     active: bool | None = None,
+    email_confirmed: bool = False,
 ) -> dict:
     user = get_user(conn, user_id)
     if user is None:
@@ -124,6 +129,7 @@ def update_user(
         fields["active"] = 1 if active else 0
     if email is not None:
         fields["email"] = _claim_email(conn, email, user_id)
+        fields["email_confirmed"] = 1 if email_confirmed else 0
     if fields:
         accountstore.update_fields(conn, user_id, fields)
     if active is False:
@@ -204,6 +210,9 @@ def count_admins(conn: sqlite3.Connection) -> int:
     return accountstore.count_admins(conn)
 
 
+EMAIL_UNCONFIRMED = "email non confermata da un amministratore"
+
+
 def ensure_oidc_user(
     conn: sqlite3.Connection,
     *,
@@ -223,6 +232,8 @@ def ensure_oidc_user(
     if existing is not None:
         if not existing["active"]:
             raise HTTPException(status_code=403, detail="account disattivato")
+        if not existing["email_confirmed"]:
+            raise HTTPException(status_code=403, detail=EMAIL_UNCONFIRMED)
         return existing
 
     base = normalize_username(username) or "utente"
@@ -239,5 +250,6 @@ def ensure_oidc_user(
         role=role,
         active=True,
         must_change_password=False,
+        email_confirmed=True,
     )
     return accountstore.get(created["id"], conn) or {}

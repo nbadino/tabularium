@@ -19,6 +19,9 @@ Notable changes to Tabularium. The format follows
   keep authenticated page images, and a deskew or alignment no longer leaves stale tiles.
 
 ### Fixed
+- SSO no longer signs in to an account whose email its owner typed (at registration or in the
+  profile before SSO was on): only an email saved by an administrator, or created by SSO, links
+  a sign-in. Migration 23 adds `users.email_confirmed`; existing accounts stay linkable.
 - A large ZIP upload no longer fails on one network hiccup: a piece that does not arrive is sent
   again after a pause (about two minutes of attempts), from the byte the server says it holds
   (`GET …/zip-uploads/{id}`); the dialog says it is retrying. An 800 MB archive had failed at

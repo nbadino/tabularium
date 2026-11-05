@@ -16,7 +16,7 @@ from contextlib import closing
 
 from . import config
 
-SCHEMA_VERSION = "22"
+SCHEMA_VERSION = "23"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -454,6 +454,13 @@ _MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE collections ADD COLUMN cover_page_id INTEGER
             REFERENCES pages(id) ON DELETE SET NULL;
     """),
+    ("23", """
+        -- SSO links a sign-in to the account holding the same email, so it must know
+        -- who wrote that email: 1 = an administrator (or the provider itself), 0 = the
+        -- account's owner (registration, own profile). Existing rows stay linkable
+        -- (1): marking them 0 would lock every current user out of SSO at upgrade.
+        ALTER TABLE users ADD COLUMN email_confirmed INTEGER NOT NULL DEFAULT 1;
+    """),
 ]
 
 
@@ -516,7 +523,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     for version, ddl in sorted(_MIGRATIONS, key=lambda m: int(m[0])):
         if int(version) <= current:
             continue
-        if version in {"16", "17", "18", "21", "22"}:
+        if version in {"16", "17", "18", "21", "22", "23"}:
             _execute_additive_migration(conn, ddl)
             conn.execute("UPDATE meta SET value=? WHERE key='schema_version'", (version,))
             conn.commit()

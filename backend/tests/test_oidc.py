@@ -238,3 +238,38 @@ def test_two_people_can_sign_in_at_the_same_time(monkeypatch) -> None:
     _, state_two = _start(second)
     response = first.get(f"/api/auth/oidc/callback?code=abc&state={state_one}", follow_redirects=False)
     assert response.headers["location"] == "/"
+
+
+def _sso_login_for(monkeypatch, email: str) -> str:
+    _configure()
+    _fake_provider(monkeypatch, {"sub": "7", "email": email, "email_verified": True})
+    client = TestClient(app)
+    _, state = _start(client)
+    return client.get(f"/api/auth/oidc/callback?code=abc&state={state}", follow_redirects=False).headers["location"]
+
+
+def test_sso_does_not_sign_in_to_an_account_whose_email_its_owner_typed(monkeypatch) -> None:
+    """A local user who typed someone else's address (at registration, or in the profile
+    before SSO was on) must not receive that person's SSO sign-in."""
+    from app.services import users as usersvc
+
+    monkeypatch.setattr(config, "AUTH_MODE", "on")
+    with connect() as conn:
+        usersvc.create_user(conn, "mallory", "a-long-password-1", email="ada@uni.it", email_confirmed=False)
+    assert "auth_error=oidc_unconfirmed" in _sso_login_for(monkeypatch, "ada@uni.it")
+
+    # Once an administrator saves the address, it is a confirmed link.
+    with connect() as conn:
+        uid = conn.execute("SELECT id FROM users WHERE username='mallory'").fetchone()[0]
+        usersvc.update_user(conn, uid, email="ada@uni.it", email_confirmed=True)
+    assert _sso_login_for(monkeypatch, "ada@uni.it") == "/"
+
+
+def test_self_service_email_paths_are_unconfirmed(monkeypatch) -> None:
+    monkeypatch.setattr(config, "AUTH_MODE", "on")
+    settingssvc.save_app_settings({"allow_registration": True})
+    client = TestClient(app)
+    res = client.post("/api/auth/register", json={"username": "eve", "password": "a-long-password-1", "email": "eve@uni.it"})
+    assert res.status_code == 201, res.text
+    with connect() as conn:
+        assert conn.execute("SELECT email_confirmed FROM users WHERE username='eve'").fetchone()[0] == 0
