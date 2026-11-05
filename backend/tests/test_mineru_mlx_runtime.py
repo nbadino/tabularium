@@ -26,3 +26,21 @@ def test_mineru_mlx_runtime_launches_the_native_gateway_with_model_settings(monk
     settings = json.loads(argv[argv.index("--settings") + 1])
     assert settings["workflow"]["layout_image_size"] == [1200, 1200]
     assert settings["serving"]["max_num_seqs"] == 4
+
+
+def test_readiness_probe_checks_the_version_that_is_installed(monkeypatch, tmp_path):
+    """A probe pinned to another version than PACKAGES never passes, so every
+    ensure_ready() wiped and reinstalled the venv, then failed."""
+    python = tmp_path / "python"
+    python.touch()
+    monkeypatch.setattr(mineru_mlx_runtime, "python_bin", lambda: python)
+    seen: list[str] = []
+
+    def fake_run(argv, **_kwargs):
+        seen.append(argv[2])
+        return __import__("subprocess").CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(mineru_mlx_runtime.subprocess, "run", fake_run)
+    assert mineru_mlx_runtime.is_ready()
+    pinned = next(p for p in mineru_mlx_runtime.PACKAGES if p.startswith("mineru-vl-utils")).split("==")[1]
+    assert f"=='{pinned}'" in seen[0]

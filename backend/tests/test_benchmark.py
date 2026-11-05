@@ -203,3 +203,81 @@ def test_bulk_approve_skips_drafts_unless_confirmed(tmp_path):
                 "SELECT COUNT(*) FROM pages WHERE project_id=? AND status='approved'", (pid,)
             ).fetchone()[0]
         assert approved == 2
+
+
+def test_benchmark_state_is_replaced_never_rewritten_in_place(tmp_path, monkeypatch):
+    """The page polls the state while the worker writes it: a half-written file
+    read as "idle" and the UI stopped following a running benchmark."""
+    import os
+
+    monkeypatch.setattr(benchmod, "_state_path", lambda _pid: tmp_path / "bench_state.json")
+    benchmod._write_state(1, state="running", index=0)
+    replaced: list[str] = []
+    real_replace = os.replace
+    monkeypatch.setattr(benchmod.os, "replace", lambda a, b: (replaced.append(str(b)), real_replace(a, b)))
+    benchmod._write_state(1, index=1)
+    assert replaced == [str(tmp_path / "bench_state.json")]
+    assert json.loads((tmp_path / "bench_state.json").read_text(encoding="utf-8"))["index"] == 1
+    assert [p.name for p in tmp_path.iterdir()] == ["bench_state.json"]
+
+
+def test_benchmark_cache_is_keyed_on_what_was_measured(tmp_path, monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(infmod, "VllmClient", _fake_client_factory(calls))
+    monkeypatch.setattr(
+        "app.services.evaluate.pagesvc.load_source_image",
+        lambda page: Image.new("RGB", (900, 1300)),
+    )
+    with TestClient(app) as client:
+        pid = _gold_project(client, tmp_path)
+        targets = [{"adapter_id": "lightonocr-3", "model": "good"}]
+        benchmod.run_benchmark(pid, targets, limit=2, with_text=False, use_cache=True)
+        first = len(calls)
+        report = benchmod.run_benchmark(pid, targets, limit=2, with_text=True, use_cache=True)
+    assert len(calls) == 2 * first, "a run without text cannot answer for a run with text"
+    assert report["targets"][0]["aggregates"]["text"]["n"] > 0
+
+
+def test_reconcile_never_kills_a_recycled_pid(tmp_path, monkeypatch):
+    """After a reboot the recorded PID can belong to any process of the user."""
+    import os
+    import signal
+
+    from app import config
+
+    monkeypatch.setattr(config, "ROOT_DIR", tmp_path)
+    state = tmp_path / "projects" / "1" / "eval" / "bench_state.json"
+    state.parent.mkdir(parents=True)
+    state.write_text(json.dumps({"state": "running", "serve_pid": 4242}), encoding="utf-8")
+    killed: list[int] = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: killed.append(pid))
+    monkeypatch.setattr("app.services.process_probe.process_cmdline", lambda pid: "/usr/bin/vim notes.txt")
+    benchmod.reconcile_benchmarks()
+    assert killed == []
+    assert json.loads(state.read_text(encoding="utf-8"))["state"] == "error"
+
+    monkeypatch.setattr(
+        "app.services.process_probe.process_cmdline",
+        lambda pid: "/x/.venv/bin/python /x/app/services/unlimited_ocr_mlx_server.py --model m --port 1",
+    )
+    state.write_text(json.dumps({"state": "running", "serve_pid": 4242}), encoding="utf-8")
+    benchmod.reconcile_benchmarks()
+    assert killed == [4242] and signal.SIGKILL
+
+
+def test_benchmark_report_never_stores_the_api_key(tmp_path, monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(infmod, "VllmClient", _fake_client_factory(calls))
+    monkeypatch.setattr(
+        "app.services.evaluate.pagesvc.load_source_image",
+        lambda page: Image.new("RGB", (900, 1300)),
+    )
+    with TestClient(app) as client:
+        pid = _gold_project(client, tmp_path)
+        report = benchmod.run_benchmark(
+            pid, [{"adapter_id": "lightonocr-3", "model": "good", "api_key": "sk-secret-123"}],
+            limit=1, with_text=False,
+        )
+    assert calls, "the key must still reach the client"
+    assert "sk-secret-123" not in Path(report["bench_dir"], "report.json").read_text(encoding="utf-8")
+    assert "sk-secret-123" not in Path(report["bench_dir"], "report.html").read_text(encoding="utf-8")

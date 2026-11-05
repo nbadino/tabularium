@@ -162,3 +162,93 @@ def test_modal_checkpoint_deploy_uploads_complete_model_to_named_volume(tmp_path
     ]
     assert captured["kwargs"]["executable"] == "/bin/bash"
     assert captured["kwargs"]["owner_id"] == 7
+
+
+class _EndedProc:
+    returncode = -15
+
+    def terminate(self):
+        pass
+
+    def wait(self, timeout=None):
+        return -15
+
+    def kill(self):
+        pass
+
+    def poll(self):
+        return -15
+
+
+def test_stopping_the_app_right_after_cancelling_a_deploy_is_accepted(monkeypatch):
+    """`done` was only set by the watcher thread (0.3 s later), so the `app stop`
+    that follows the cancel was refused as "a Modal task is already running"."""
+    task = modal_manager.ModalTask(kind="deploy", proc=_EndedProc(), template_id="t")
+    monkeypatch.setattr(modal_manager, "_task", task)
+    monkeypatch.setattr(modal_manager, "_persisted_running", lambda: None)
+    modal_manager._cancel_deploy_if_running("t")
+    assert modal_manager._current() is None
+
+
+def test_a_cancelled_job_is_not_rewritten_as_failed():
+    from app.adapters import jobs as jobstore
+
+    db.init_db()
+    with db.connect() as conn:
+        job_id = conn.execute(
+            "INSERT INTO jobs(kind, provider, pid, state, command_json) VALUES('modal','modal',1,'running','{}')"
+        ).lastrowid
+    jobstore.stop(job_id, "cancelled")
+    jobstore.finish(job_id, "failed", -15)
+    with db.connect() as conn:
+        assert conn.execute("SELECT state FROM jobs WHERE id=?", (job_id,)).fetchone()[0] == "stopped"
+        conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+
+
+def test_modal_deploy_runs_in_its_own_process_group(monkeypatch, tmp_path):
+    """Cancelling after a restart signals the group the deploy leads; without its
+    own session that group would be the backend's."""
+    db.init_db()
+    seen: dict = {}
+
+    class FakeProc:
+        pid = 7272
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    def fake_popen(argv, **kwargs):
+        seen.update(kwargs)
+        return FakeProc()
+
+    monkeypatch.setattr(modal_manager.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(modal_manager.os, "getpgid", lambda pid: pid, raising=False)
+    monkeypatch.setattr(modal_manager, "_persisted_running", lambda: None)
+    monkeypatch.setattr(modal_manager, "_watch", lambda task: None)
+    monkeypatch.setattr(modal_manager, "_task", None)
+    monkeypatch.setattr(modal_manager.config, "ROOT_DIR", tmp_path)
+    modal_manager._start("deploy", ["deploy", "x.py"], executable="/bin/modal")
+    assert seen.get("start_new_session") is True
+    with db.connect() as conn:
+        conn.execute("DELETE FROM jobs WHERE pid=7272")
+
+
+def test_modal_cancel_falls_back_to_the_pid_when_the_group_is_gone(monkeypatch):
+    monkeypatch.setattr(modal_manager, "_task", None)
+    monkeypatch.setattr(
+        modal_manager, "_persisted_running",
+        lambda: {"id": -1, "pid": 6161, "kind": "deploy", "template_id": "t"},
+    )
+    killed = []
+
+    def no_group(group, sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(modal_manager.os, "killpg", no_group)
+    monkeypatch.setattr(modal_manager.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    monkeypatch.setattr(modal_manager.jobstore, "stop", lambda *a, **k: None)
+    modal_manager._cancel_deploy_if_running("t")
+    assert killed == [(6161, 15)]

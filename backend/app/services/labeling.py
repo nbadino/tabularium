@@ -166,17 +166,22 @@ def validate_labels(items: list) -> list[dict]:
     fine-tuning una tassonomia incoerente è un danno silenzioso, quindi i
     controlli sono rigidi e nominano la causa.
     """
+    # Compared as the bridge compares them: "text" or "Text_" is the default "Text".
+    from .model_labels import normalize_label  # noqa: PLC0415 - model_labels imports this module
+
+    defaults = {normalize_label(n) for n in _DEFAULT_NAMES}
     cleaned: list[dict] = []
     seen: set[str] = set()
     for item in items:
         name = str(getattr(item, "name", "") or "").strip()
         if not _NAME_RE.match(name):
             raise LabelValidationError("label_name_invalid", name=name or "—")
-        if name in _DEFAULT_NAMES:
+        key = normalize_label(name)
+        if key in defaults:
             raise LabelValidationError("label_name_conflict", name=name)
-        if name in seen:
+        if key in seen:
             raise LabelValidationError("label_name_duplicate", name=name)
-        seen.add(name)
+        seen.add(key)
 
         color = str(getattr(item, "color", "") or "").strip()
         if not _COLOR_RE.match(color):

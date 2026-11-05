@@ -14,10 +14,11 @@ from ..db import connect
 
 
 def finish(job_id: int, state: str, exit_code: int | None) -> None:
+    """Close a running job. One already stopped (a cancel) keeps its state and reason."""
     with connect() as conn:
         conn.execute(
             "UPDATE jobs SET state=?, ended_at=datetime('now'), exit_code=?, "
-            "heartbeat_at=datetime('now') WHERE id=?",
+            "heartbeat_at=datetime('now') WHERE id=? AND state='running'",
             (state, exit_code, job_id),
         )
 

@@ -2691,6 +2691,7 @@ export const it = {
     oidcErrorDomain: 'Il tuo indirizzo non appartiene a un dominio ammesso da questa istanza.',
     oidcErrorEmail: 'Il provider non ha restituito un indirizzo email verificato.',
     oidcErrorProvider: 'Il provider di identità non ha risposto correttamente. Riprova o avvisa l’amministratore.',
+    oidcErrorUnconfirmed: 'Un account con questa email esiste, ma l’email non è stata confermata da un amministratore: chiedigli di salvarla nella gestione utenti.',
     oidcErrorUser: 'Il tuo account esiste ma è disattivato: chiedi all’amministratore.',
     oidcErrorDisabled: 'L’accesso con identità non è attivo su questa istanza.',
     oidcErrorGeneric: 'Accesso con identità non riuscito. Riprova.',

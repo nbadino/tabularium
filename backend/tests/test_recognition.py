@@ -434,3 +434,93 @@ def test_checking_which_project_a_run_belongs_to_does_not_decode_its_results(tmp
         assert decoded == []
         client.get(f"/api/projects/{project_id}/recognition-runs/{run_id}/export")
     assert len(decoded) == 1, "export loads the run once"
+
+
+def _model_run(client, tmp_path, **release):
+    from app.adapters import runs as runstore
+
+    project_id, page_ids = _project(client, tmp_path)
+    return runstore.create(
+        project_id, [page_ids[0]], engine="model", mode="draft", model_mode="end2end",
+        stop_policy="disable_inference", owner_id=None, model_name="m", adapter_id="a",
+        provider="vast", endpoint="http://127.0.0.1:9/v1", **release,
+    )
+
+
+def test_end_of_run_release_stops_the_runs_own_instance(tmp_path, monkeypatch):
+    """The user may point the config at another instance mid-run: the release must
+    stop the instance the run was started on, not the one configured now."""
+    import threading
+
+    from app.services import recognition
+
+    with TestClient(app) as client:
+        run_id = _model_run(client, tmp_path, release={"resource_id": "111", "credential_ref": "vault:vast"})
+    released: list[dict] = []
+    monkeypatch.setattr(recognition.inference, "get_inference_config",
+                        lambda: {"resource_id": "222", "provider_credential_ref": "vault:other"})
+    monkeypatch.setattr(recognition.inference, "get_vllm_client", lambda: object())
+    monkeypatch.setattr(recognition, "_recognize_page", lambda *a: ([], {"detected": 0, "inserted": 0}, None))
+    monkeypatch.setattr(recognition, "_release_inference", lambda provider, **k: released.append(k))
+    recognition._worker(run_id, threading.Event())
+    assert released == [{"resource_id": "111", "credential_ref": "vault:vast"}]
+
+
+def test_a_worker_that_cannot_start_does_not_leave_the_model_busy(tmp_path, monkeypatch):
+    import sqlite3
+    import threading
+
+    from app.services import recognition
+
+    with TestClient(app) as client:
+        run_id = _model_run(client, tmp_path, release=None)
+
+    def locked(*_a):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(recognition.runstore, "start", locked)
+    recognition._ACTIVE[run_id] = threading.Event()
+    recognition._worker(run_id, recognition._ACTIVE[run_id])
+    assert run_id not in recognition._ACTIVE
+    assert recognition.get_run(run_id)["state"] == "failed"
+
+
+def test_run_checks_and_insert_share_one_write_transaction(tmp_path, monkeypatch):
+    """The busy checks are only a guard if no other start can slip in between the
+    check and the insert: they must run inside a write (IMMEDIATE) transaction."""
+    from app.adapters import runs as runstore
+    from app.db import connect as real_connect
+
+    seen: list[bool] = []
+
+    class Spy:
+        def __init__(self):
+            self.conn = real_connect()
+
+        def __enter__(self):
+            self.conn.__enter__()
+            return self
+
+        def __exit__(self, *exc):
+            try:
+                return self.conn.__exit__(*exc)
+            finally:
+                self.conn.close()
+
+        def execute(self, sql, *args):
+            if "recognition_run_items" in sql and sql.lstrip().upper().startswith("SELECT"):
+                seen.append(self.conn.in_transaction)
+            return self.conn.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self.conn, name)
+
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        monkeypatch.setattr(runstore, "connect", Spy)
+        runstore.create(
+            project_id, [page_ids[0]], engine="ocr", mode="draft", model_mode="end2end",
+            stop_policy="none", owner_id=None, model_name="", adapter_id="", provider="local",
+            endpoint=None,
+        )
+    assert seen == [True]

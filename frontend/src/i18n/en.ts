@@ -2690,6 +2690,7 @@ export const en: Dict = {
     oidcErrorDomain: 'Your address is not in a domain this instance accepts.',
     oidcErrorEmail: 'The provider did not return a verified email address.',
     oidcErrorProvider: 'The identity provider did not answer correctly. Try again or tell your administrator.',
+    oidcErrorUnconfirmed: 'An account with this email exists, but no administrator has confirmed the email: ask one to save it in user management.',
     oidcErrorUser: 'Your account exists but is disabled: ask your administrator.',
     oidcErrorDisabled: 'Sign-in with an identity provider is not enabled on this instance.',
     oidcErrorGeneric: 'Sign-in with your institution failed. Try again.',

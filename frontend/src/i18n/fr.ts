@@ -2691,6 +2691,7 @@ export const fr: Dict = {
     oidcErrorDomain: 'Votre adresse n’appartient pas à un domaine accepté par cette instance.',
     oidcErrorEmail: 'Le fournisseur n’a pas renvoyé d’adresse e-mail vérifiée.',
     oidcErrorProvider: 'Le fournisseur d’identité n’a pas répondu correctement. Réessayez ou prévenez l’administrateur.',
+    oidcErrorUnconfirmed: 'Un compte avec cet e-mail existe, mais aucun administrateur n’a confirmé l’e-mail : demandez-lui de l’enregistrer dans la gestion des utilisateurs.',
     oidcErrorUser: 'Votre compte existe mais il est désactivé : demandez à l’administrateur.',
     oidcErrorDisabled: 'La connexion avec un fournisseur d’identité n’est pas active sur cette instance.',
     oidcErrorGeneric: 'La connexion avec votre établissement a échoué. Réessayez.',
