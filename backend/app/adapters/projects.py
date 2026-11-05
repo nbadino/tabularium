@@ -61,8 +61,27 @@ def settings_json_or_none(project_id: int) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else {}
 
 
-def put_settings(project_id: int, settings: dict[str, Any]) -> None:
+@contextmanager
+def editing_settings(project_id: int) -> Iterator[dict[str, Any] | None]:
+    """Read, change and write `settings_json` under SQLite's write lock.
+
+    Every writer replaces the whole JSON, so a read and a write in two separate
+    transactions let two saves erase each other. `None` when the project does not
+    exist; an exception in the body discards the change.
+    """
     with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT settings_json FROM projects WHERE id=?", (project_id,)).fetchone()
+        if row is None:
+            yield None
+            return
+        try:
+            settings = json.loads(row["settings_json"] or "{}")
+        except (TypeError, ValueError):
+            settings = {}
+        if not isinstance(settings, dict):
+            settings = {}
+        yield settings
         conn.execute(
             "UPDATE projects SET settings_json=? WHERE id=?",
             (json.dumps(settings, ensure_ascii=False), project_id),

@@ -60,3 +60,50 @@ def test_paddle_install_does_not_recreate_venv_after_opening_log(tmp_path, monke
 
     assert created == [str(tmp_path)]
     assert "installazione PaddleOCR document parser" in paddle_runtime.log_path().read_text()
+
+
+def test_a_blackwell_gpu_with_a_pre_12_9_driver_is_told_to_update_it():
+    """The cu126 wheel is not valid on SM 12.0; PaddleOCR's Blackwell guide requires a
+    driver supporting CUDA 12.9+ and the cu129 wheel. Installing cu126 silently failed later."""
+    import pytest
+
+    with pytest.raises(RuntimeError, match="12.9"):
+        default_paddle_packages(system="linux", machine="x86_64", driver_cuda="12.8", compute_cap="12.0")
+    assert default_paddle_packages(
+        system="linux", machine="x86_64", driver_cuda="12.9", compute_cap="12.0"
+    )[-1].endswith("/cu129/")
+    assert default_paddle_packages(
+        system="linux", machine="x86_64", driver_cuda="12.8", compute_cap="8.9"
+    )[-1].endswith("/cu126/")
+
+
+def test_two_installs_at_once_build_the_runtime_once(monkeypatch, tmp_path):
+    """paddleocr-vl and xiaomi-ocr-0 share this runtime and both start its install
+    when the model list loads: two `EnvBuilder(clear=True)` on one folder break it."""
+    import threading
+    import time as _time
+
+    from app.services import paddle_runtime
+
+    installed = threading.Event()
+    builds: list[int] = []
+
+    class Builder:
+        def __init__(self, **_kwargs):
+            pass
+
+        def create(self, _path):
+            builds.append(1)
+            _time.sleep(0.2)
+
+    monkeypatch.setattr(paddle_runtime, "_dir", lambda: tmp_path / "paddle-runtime")
+    monkeypatch.setattr(paddle_runtime, "ready", lambda **_k: installed.is_set())
+    monkeypatch.setattr(paddle_runtime.venv, "EnvBuilder", Builder)
+    monkeypatch.setattr(paddle_runtime.subprocess, "run", lambda *a, **k: installed.set())
+    monkeypatch.setattr(paddle_runtime, "_write_state", lambda **_k: None)
+    threads = [threading.Thread(target=paddle_runtime.ensure_ready) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(5)
+    assert builds == [1]

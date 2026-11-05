@@ -6,12 +6,110 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Security
+- Emails are stored lowercased and must be unique. With SSO on, users can no longer change their
+  own email: SSO links a login to the account holding that address, so claiming a colleague's
+  email before their first SSO login handed that login to the claimer. An administrator sets it.
+- Deactivating a user ends their sessions; reactivating them no longer revives old tokens.
+- Evaluation endpoints (`server_url`, `baseline_server_url`) go through the same endpoint check
+  as compute profiles, so a project writer can no longer make the backend call private hosts.
+- A benchmark target's `api_key` is no longer written to `report.json`/`report.html`, which every
+  project member can read.
+- Page tiles are sent `private, no-cache` instead of `public, immutable`: shared caches no longer
+  keep authenticated page images, and a deskew or alignment no longer leaves stale tiles.
+
 ### Fixed
 - The Studio's "next page" never points at a page whose source file is missing.
 - Input fields have a visible border at rest (3.6:1 against the sheet, up from 1.2:1; WCAG 1.4.11).
 - `tsc -b` writes the compiled Vite config under `node_modules/.tmp`. Before, a stale
   `vite.config.js` next to `vite.config.ts` won, and edits to the config were silently ignored by
   `npm run dev` and Vitest.
+- PaddleOCR-VL's `paragraph_title` is mapped to `Section-header`, not `Title`, as PP-DocLayout
+  defines it and as GLM-OCR and DeepSeek-OCR already do. Its prefills no longer label section
+  headings as the masthead.
+- Gemini 4 Argon is listed as knowing only the classes its prompt offers, so no longer Caption,
+  Footnote or Page-footer.
+- Table detection keeps the glyphs of a crop only a few rows tall (it failed with "no glyph
+  detected"). Turning leader-dot suppression off now reaches the per-row boundaries too.
+- A table cell holding only a fraction (`⁹⁄₂₀`, `9/20`) is read as a number, so its sums are
+  checked instead of the cell being flagged as unreadable.
+- On a Blackwell GPU whose driver is older than CUDA 12.9, the Paddle runtime install stops and
+  says to update the driver (PaddleOCR's Blackwell guide) instead of installing the `cu126` wheel,
+  which cannot run there.
+- The Paddle layout dataset uses paths relative to its folder (page images hard-linked or copied
+  into `images/`), so it still works when moved to the training machine.
+- Evaluation and benchmark leave out a page whose source image cannot be read, with a warning
+  naming it. Before, it was scored as if the model had found nothing.
+- A recognition run interrupted by a restart shows its failed pages in its counters.
+- The cloud cost estimate of an instance that was stopped and resumed no longer counts the
+  stopped time.
+- Cancel, retry and export of a recognition run check its project without decoding every
+  page's output.
+- The training status reads `train.log` again only when it changed.
+- Rescanning an archive no longer re-renders PDFs whose pages are all registered.
+- A scan or upload commits file by file. Before, it held SQLite's write lock for its whole
+  length, and autosave, page edits and run heartbeats failed with "database is locked" on a
+  large archive.
+- Project settings (classes, study protocol, gold set, pilot, conventions, table hint, table
+  headers) are read and written in one write transaction. Two saves at once no longer erase
+  each other, e.g. creating a class in two tabs.
+- The end-of-run release with "stop the model" stops the cloud instance the run started on,
+  even if the configuration changed during the run. A run whose worker cannot start no longer
+  leaves the model "busy" until a restart.
+- The benchmark state file is replaced atomically, so the page no longer loses track of a
+  running benchmark.
+- PaddleOCR-VL and Xiaomi-OCR no longer install their shared Paddle runtime twice at once,
+  which broke it.
+- Stopping a Modal app right after cancelling its deploy is accepted, and the cancelled job
+  stays "stopped" instead of turning "failed".
+- An existing MonkeyOCRv2 clone is moved to the pinned commit too (fetched if a shallow clone
+  lacks it). A clone with local changes, or a folder that is not its own git checkout, is left as
+  it is.
+- A first SSO login with an accented or short name ("Nicolò Rossi", "Li") creates the account.
+  Before, it failed the local username rule and could never sign in. Accents are folded and
+  short names get `-sso`.
+- `setup_backend.ps1` generates `TABULARIUM_VAULT_KEY` in `.env` as `setup_backend.sh` does, so a
+  Windows install can save provider credentials. `run.ps1` and `run_backend.ps1` read
+  `TABULARIUM_HOST`/`TABULARIUM_PORT` from `.env`.
+- Settings and the compute-profile list no longer return 500 when the vault key is gone or a
+  profile has a malformed credential reference: the credential shows as absent.
+- The MonkeyOCRv2 clone used for serving is pinned to one upstream commit. Before, every install
+  ran whatever upstream `main` was that day.
+- The local MLX server holds its model only while it generates: a slow or vanished client no longer
+  keeps every other request waiting, and a closed connection stops the generation at the next token.
+- `nvidia-smi` printing `[N/A]` (MIG, some virtual GPUs) no longer turns `/api/system/gpu`, the
+  hardware view and the training preflight into a 500: that GPU is skipped.
+- A truncated last line in a run's `metrics.jsonl` no longer hides every metric of the run.
+- The training stream reads the run status in a worker thread. Each 2 s poll used to block the
+  event loop for every other request (nvidia-smi alone can take 8 s).
+- The benchmark cache is keyed on what was measured (text on/off, table-only, table hint, classes):
+  a run without text no longer answers for a later run with text.
+- An evaluation whose baseline measured no page returns `order_delta: null` instead of a 500.
+- At startup, the benchmark kills its orphaned local server only when the recorded PID's command line
+  is one of ours. After a reboot that PID can belong to any process.
+- A Modal deploy runs in its own process group, so cancelling one recovered after a restart works.
+  The backend's own group is never signalled.
+- Two recognition runs started at the same moment can no longer both pass the "model busy" and
+  "pages busy" checks: the checks and the insert share one write transaction.
+- Two `/align` requests no longer interleave the preprocessor or swap each other's diagnostics.
+- The Unlimited-OCR MLX server runs one generation at a time on the shared model.
+- Custom classes are compared the way the label bridge compares them: "text" or "Text_" is refused
+  as the default "Text", and "Ship Name" / "ship_name" as duplicates.
+- The Windows scripts stop on a failed `npm`, `pip` or `venv` command. They no longer print "ready"
+  and exit 0, and `run.ps1` no longer starts the server on a failed build.
+- Deskew and basic alignment no longer delete a page's blocks when the page is already straight
+  and nothing would change. When they undo an earlier transform, its metadata goes too, so a stale
+  transform no longer stays reported as active.
+- One PDF page that fails to render (or to save) no longer rolls back the whole scan or upload: that
+  PDF is skipped and listed in the report's errors, and every other file is registered.
+- The MinerU MLX runtime checked for mineru-vl-utils 2.0.5 while installing 2.0.8, so it never
+  looked ready. Every start wiped the venv, reinstalled it and then failed. Both now read one constant.
+- PAGE and ALTO exports keep the text and the page size. ALTO writes `Page > PrintSpace > TextBlock >
+  TextLine > String@CONTENT`, one `Page` per page; before, every `TextLine` was empty. PAGE writes one
+  file per page under `exports/page/`, with `Metadata`, the real image size and `TextEquiv/Unicode`.
+- SSO no longer signs in to an account whose email its owner typed (at registration or in the
+  profile before SSO was on): only an email saved by an administrator, or created by SSO, links
+  a sign-in. Migration 23 adds `users.email_confirmed`; existing accounts stay linkable.
 - A large ZIP upload no longer fails on one network hiccup: a piece that does not arrive is sent
   again after a pause (about two minutes of attempts), from the byte the server says it holds
   (`GET …/zip-uploads/{id}`); the dialog says it is retrying. An 800 MB archive had failed at

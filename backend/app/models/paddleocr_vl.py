@@ -18,7 +18,9 @@ from ..models.types import (
 PADDLE_LABELS: dict[str, str] = {
     # titoli
     "doc_title": "Title",
-    "paragraph_title": "Title",
+    # PP-DocLayout's "paragraph title" is a section heading (PaddleOCR renders it as
+    # `##`); Title is the masthead. Same mapping as GLM-OCR and DeepSeek-OCR.
+    "paragraph_title": "Section-header",
     "title": "Title",
     # didascalie di figure, tabelle e grafici
     "figure_title": "Caption",

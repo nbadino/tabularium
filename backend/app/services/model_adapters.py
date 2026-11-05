@@ -2158,14 +2158,18 @@ class GeminiArgonAdapter(_StubAdapter):
     # modello non la conosce, quindi la si dichiara. Le classi custom di un
     # progetto restano fuori e il bridge nativa→canonica le conta fra le
     # `unmapped` (v. prefill), senza inventare etichette.
+    # The classes the prompt offers: also what the label UI says this model knows.
+    prompt_labels = (
+        "Title", "Page-header", "Issue-number", "Issue-date", "Section-header", "Headline",
+        "Text", "List-item", "Table", "Picture", "Advertisement", "Column", "Note", "Formula",
+    )
     _END2END_PROMPT = (
         "You are given one scanned page of an old newspaper register. Return ONLY a JSON array "
         "(no prose, no markdown fences) of the document elements in reading order. Each element "
         'is an object: {"bbox": [x1, y1, x2, y2], "label": "<class>", "content": "<text>"} '
         "where bbox is normalized 0-1000 relative to the full image (x and y independently), "
-        "x1<x2 and y1<y2. Allowed labels (use exactly these): Title, Page-header, Issue-number, "
-        "Issue-date, Section-header, Headline, Text, List-item, Table, Picture, Advertisement, "
-        "Column, Note, Formula. For Table, content must be OTSL using ONLY these tokens with no "
+        f"x1<x2 and y1<y2. Allowed labels (use exactly these): {', '.join(prompt_labels)}. "
+        "For Table, content must be OTSL using ONLY these tokens with no "
         "closing tags: <fcel>text, <ecel>, <lcel>, <ucel>, <xcel>, <nl>. Include EVERY visible "
         "element, including the masthead/title, the issue number and the date at the top; do not "
         "merge them into the table."

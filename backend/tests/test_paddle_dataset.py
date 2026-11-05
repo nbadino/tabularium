@@ -137,3 +137,22 @@ def test_cell_crop_follows_the_grid_geometry(tmp_path: Path):
     # La cella in basso a destra parte da metà ritaglio, con lo stesso respiro.
     left, top, right, bottom = by_cell[(1, 1)]
     assert left < 200 and right == 300 and bottom == 400
+
+
+def test_layout_images_live_inside_the_dataset_folder(tmp_path: Path):
+    """PaddleX reads file_name relative to dataset_dir: absolute source paths broke
+    the folder as soon as it was copied to the training machine."""
+    import json
+
+    pid = _project_with_table(tmp_path / "rel", verified=True)
+    report = paddle_dataset.build(pid, approved_only=True)
+    out = Path(report["files"]["layout_dataset_dir"])
+    names = [
+        image["file_name"]
+        for split in ("train", "val")
+        for image in json.loads((out / "annotations" / f"{split}.json").read_text(encoding="utf-8"))["images"]
+    ]
+    assert names
+    for name in names:
+        assert not Path(name).is_absolute(), name
+        assert (out / name).exists(), name

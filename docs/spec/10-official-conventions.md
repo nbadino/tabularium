@@ -13,6 +13,8 @@ block and label map — plus their adapter behaviour in `services/model_adapters
 - Model: `zenosai/MonkeyOCRv2-B-Parsing` (0.7B: frozen 113M ViT + 0.6B LLM) or `-S` (0.6B: 28M ViT-S).
 - Training stack: the **monkeyocrv2-compatible ms-swift** bundled in
   `parsing/train/ms-swift` of the official `Yuliang-Liu/MonkeyOCRv2` repository.
+- Serving runs `parsing/serve.py` from a clone of that repository pinned to commit
+  `6cc0c0bb4864f2541fa6bc3a8f976cffaac8f359` (upstream has no tags; `vendor_repos.MONKEYOCRV2_COMMIT`).
 - Canonical command: `swift sft --model zenosai/MonkeyOCRv2-B-Parsing --model_type monkeyocrv2 --template monkeyocrv2 ...`
 - The ViT stays **frozen** by default (`--freeze_vit True`); unfreeze it only if the visual
   shift of period sheets requires it (with a reduced `--vit_lr`).

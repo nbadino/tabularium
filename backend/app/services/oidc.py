@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 import secrets
 import time
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
@@ -228,6 +230,10 @@ def identity_from_claims(claims: dict) -> dict:
 
 
 def _username_from(raw: str) -> str:
-    candidate = "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "." for ch in raw.lower())
-    candidate = candidate.strip("._-")[:32] or "utente"
-    return candidate
+    """A valid local username (3-40 of `a-z0-9._-`, see users.USERNAME_RE): accents
+    are folded ("Nicolò" -> "nicolo"), anything else becomes a dot."""
+    folded = unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode().lower()
+    candidate = re.sub(r"[^a-z0-9._-]+", ".", folded).strip("._-")[:32]
+    if not candidate:
+        return "utente"
+    return candidate if len(candidate) >= 3 else f"{candidate}-sso"

@@ -6,6 +6,7 @@ solo viste derivate, con split per pagina, e non modifica né corregge il gold.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -101,6 +102,24 @@ def _split(
     return train_ids & known, val_ids & known
 
 
+def _inside(out: Path, image: Path, page_id: int) -> str:
+    """The image's path relative to the dataset folder, linking (or copying) a source
+    image in: PaddleX resolves `file_name` against dataset_dir, and the folder is
+    meant to be moved to the training machine."""
+    try:
+        return image.relative_to(out).as_posix()
+    except ValueError:
+        pass
+    target = out / "images" / f"page_{page_id}{image.suffix.lower()}"
+    target.parent.mkdir(exist_ok=True)
+    target.unlink(missing_ok=True)
+    try:
+        os.link(image, target)  # same disk: no second copy of the scan
+    except OSError:
+        shutil.copy2(image, target)
+    return target.relative_to(out).as_posix()
+
+
 def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_only: bool = True) -> dict:
     data = builder.collect_pages_with_blocks(project_id)
     if not data:
@@ -142,7 +161,7 @@ def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_on
         if not page_image:
             continue
         layout[split]["images"].append({
-            "id": int(page_id), "file_name": page_image,
+            "id": int(page_id), "file_name": _inside(out, Path(page_image), page_id),
             "width": int(page["width"]), "height": int(page["height"]),
         })
         for block in item["blocks"]:

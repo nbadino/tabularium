@@ -17,6 +17,7 @@ Proprietà di contratto:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -58,10 +59,13 @@ def _cache_dir(project_id: int) -> Path:
     return d
 
 
-def _cache_path(project_id: int, target: dict, page_id: int, revision: int) -> Path:
+def _cache_path(project_id: int, target: dict, page_id: int, revision: int, options: dict) -> Path:
     # La versione invalida la cache quando cambia la logica di misura (es. il
     # bridge delle label): senza, un risultato vecchio resterebbe per sempre.
-    key = f"v{_CACHE_VERSION}__{_slug(target['adapter_id'])}__{_slug(target['model'])}__{page_id}__{revision}.json"
+    # `options` are what was measured (text on/off, table hint...): a result
+    # measured without text cannot answer for a run with text.
+    measured = hashlib.sha256(json.dumps(options, sort_keys=True, default=str).encode()).hexdigest()[:12]
+    key = f"v{_CACHE_VERSION}__{_slug(target['adapter_id'])}__{_slug(target['model'])}__{page_id}__{revision}__{measured}.json"
     return _cache_dir(project_id) / key
 
 
@@ -307,7 +311,10 @@ def _evaluate_target(
             if on_page is not None:
                 on_page(page_index, total_pages)
             revision = revisions[pid]
-            cache_path = _cache_path(project_id, target, pid, revision)
+            cache_path = _cache_path(project_id, target, pid, revision, {
+                "with_text": with_text, "table_only": table_only,
+                "table_hint": table_hint, "schema_labels": schema_labels,
+            })
             cached = None
             if use_cache and cache_path.exists():
                 try:
@@ -456,6 +463,8 @@ def run_benchmark(
             with_text=with_text, use_cache=use_cache, lang=lang, table_hint=table_hint,
             schema_labels=schema_labels, on_page=on_page, table_only=table_only,
         )
+        # The key reached the client; report.json is readable by every project member.
+        (entry.get("target") or {}).pop("api_key", None)
         entries.append(entry)
         # Un modello finito è un risultato: lo si dichiara subito (la tabella si
         # popola man mano, senza aspettare la fine di tutti i candidati).
@@ -501,18 +510,39 @@ def _state_path(project_id: int) -> Path:
     return d / "bench_state.json"
 
 
+_STATE_LOCK = threading.Lock()
+
+
 def _write_state(project_id: int, **fields) -> None:
+    """Merge `fields` into the state file, replaced atomically: the page polls it
+    while the worker writes, and a half-written file used to read as "idle"."""
     path = _state_path(project_id)
-    state: dict = {}
-    if path.exists():
+    with _STATE_LOCK:
+        state: dict = {}
+        if path.exists():
+            try:
+                state = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                state = {}
+        state.update(fields, updated_at=datetime.now(timezone.utc).isoformat())
+        temporary = path.with_name(f".{path.name}.tmp")
         try:
-            state = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            state = {}
-    state.update(fields, updated_at=datetime.now(timezone.utc).isoformat())
+            temporary.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+            os.replace(temporary, path)
+        except OSError:
+            temporary.unlink(missing_ok=True)
+
+
+def _kill_orphan_server(pid) -> None:
+    """Stop the local server a dead benchmark left behind, and nothing else:
+    PIDs are recycled, so only a command line we recognise is killed."""
+    from . import serve_manager  # noqa: PLC0415 - serve_manager imports the world
+
+    if not isinstance(pid, int) or not serve_manager._is_our_serving_process(pid):  # noqa: SLF001
+        return
     try:
-        path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-    except OSError:
+        os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
         pass
 
 
@@ -529,12 +559,7 @@ def benchmark_status(project_id: int) -> dict:
     # vivo è un'interruzione, non un lavoro in corso. Il server locale avviato
     # dal benchmark resta orfano: lo si spegne qui (pid registrato nello stato).
     if state.get("state") == "running" and project_id not in _ACTIVE:
-        pid = state.get("serve_pid")
-        if isinstance(pid, int):
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
+        _kill_orphan_server(state.get("serve_pid"))
         state["state"] = "error"
         state["error"] = "benchmark interrotto (backend riavviato)"
         state["serve_pid"] = None
@@ -554,12 +579,7 @@ def reconcile_benchmarks() -> None:
             continue
         if state.get("state") != "running":
             continue
-        pid = state.get("serve_pid")
-        if isinstance(pid, int):
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
+        _kill_orphan_server(state.get("serve_pid"))
         state.update(state="error", error="benchmark interrotto (backend riavviato)", serve_pid=None)
         try:
             state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
