@@ -19,6 +19,11 @@ Notable changes to Tabularium. The format follows
   keep authenticated page images, and a deskew or alignment no longer leaves stale tiles.
 
 ### Fixed
+- The Studio's "next page" never points at a page whose source file is missing.
+- Input fields have a visible border at rest (3.6:1 against the sheet, up from 1.2:1; WCAG 1.4.11).
+- `tsc -b` writes the compiled Vite config under `node_modules/.tmp`. Before, a stale
+  `vite.config.js` next to `vite.config.ts` won, and edits to the config were silently ignored by
+  `npm run dev` and Vitest.
 - PaddleOCR-VL's `paragraph_title` is mapped to `Section-header`, not `Title`, as PP-DocLayout
   defines it and as GLM-OCR and DeepSeek-OCR already do. Its prefills no longer label section
   headings as the masthead.

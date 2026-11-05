@@ -251,7 +251,9 @@ def annotation_queue(project_id: int, limit: int) -> list[dict[str, Any]]:
         rows = conn.execute(
             "SELECT p.id, p.rel_path, p.status, p.issue_date, p.issue_no, p.page_no, "
             "COUNT(b.id) AS blocks, SUM(CASE WHEN b.confirmed=0 THEN 1 ELSE 0 END) AS unconfirmed "
-            "FROM pages p LEFT JOIN blocks b ON b.page_id=p.id WHERE p.project_id=? "
+            # A page whose file is gone cannot be worked on: never the "next page".
+            "FROM pages p LEFT JOIN blocks b ON b.page_id=p.id "
+            "WHERE p.project_id=? AND p.status != 'missing' "
             "GROUP BY p.id ORDER BY CASE p.status WHEN 'new' THEN 0 WHEN 'annotated' THEN 1 "
             "WHEN 'qa' THEN 2 WHEN 'review' THEN 3 ELSE 4 END, unconfirmed DESC, "
             "p.rel_path LIMIT ?",
