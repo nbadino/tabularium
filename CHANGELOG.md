@@ -7,6 +7,9 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- An existing MonkeyOCRv2 clone is moved to the pinned commit too (fetched if a shallow clone
+  lacks it). A clone with local changes, or a folder that is not its own git checkout, is left as
+  it is.
 - A first SSO login with an accented or short name ("Nicolò Rossi", "Li") creates the account.
   Before, it failed the local username rule and could never sign in. Accents are folded and
   short names get `-sso`.

@@ -26,10 +26,38 @@ def monkeyocrv2_repo_dir() -> Path:
     return config.ROOT_DIR / "vendor" / "MonkeyOCRv2"
 
 
+def _repin(target: Path) -> None:
+    """Move a clone made before the pin, or at an older one, to MONKEYOCRV2_COMMIT.
+
+    A folder that is not its own git checkout, or one with local changes, belongs to
+    the user and stays as it is. Offline, the clone that is there keeps serving.
+    """
+    if not (target / ".git").exists():
+        return  # without its own .git, `git -C` would act on an enclosing repository
+
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(target), *args], capture_output=True, text=True, timeout=300,
+        )
+
+    try:
+        head = git("rev-parse", "HEAD")
+        if head.returncode != 0 or head.stdout.strip() == MONKEYOCRV2_COMMIT:
+            return
+        if git("status", "--porcelain", "--untracked-files=no").stdout.strip():
+            return
+        if git("cat-file", "-e", f"{MONKEYOCRV2_COMMIT}^{{commit}}").returncode != 0:
+            git("fetch", "--filter=blob:none", "origin", MONKEYOCRV2_COMMIT)
+        git("checkout", "--detach", MONKEYOCRV2_COMMIT)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def ensure_monkeyocrv2_repo() -> Path:
     """Clona (shallow, una volta sola) il repo ufficiale se non è già presente."""
     target = monkeyocrv2_repo_dir()
     if (target / "parsing" / "serve.py").exists():
+        _repin(target)
         return target
     if target.exists():
         # Cartella parziale/corrotta da un tentativo precedente interrotto.
