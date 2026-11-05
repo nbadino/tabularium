@@ -394,6 +394,48 @@ def test_playground_reads_headers_and_table_with_end2end_model(tmp_path, monkeyp
         assert table["content"] == otsl
 
 
+def test_a_run_interrupted_by_a_restart_counts_its_failed_pages(tmp_path):
+    from app.adapters import runs as runstore
+
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        run_id = runstore.create(
+            project_id, page_ids, engine="ocr", mode="draft", model_mode="end2end",
+            stop_policy="none", owner_id=None, model_name="", adapter_id="", provider="local",
+            endpoint=None,
+        )
+    first = runstore.items_for_run(run_id)[0]
+    runstore.mark_item(first["id"], "finished", ended_at="t")
+    runstore.refresh_counts(run_id)
+    runstore.reconcile(set(), message="interrupted", ended="t")
+    from app.services import recognition
+
+    run = recognition.get_run(run_id)
+    assert (run["completed_pages"], run["succeeded_pages"], run["failed_pages"]) == (2, 1, 1)
+
+
+def test_checking_which_project_a_run_belongs_to_does_not_decode_its_results(tmp_path, monkeypatch):
+    """cancel/retry/export decoded every page's raw output only to compare project ids."""
+    from app.adapters import runs as runstore
+    from app.services import recognition
+
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        run_id = runstore.create(
+            project_id, page_ids, engine="ocr", mode="draft", model_mode="end2end",
+            stop_policy="none", owner_id=None, model_name="", adapter_id="", provider="local",
+            endpoint=None,
+        )
+        decoded: list = []
+        real = recognition._run_out
+        monkeypatch.setattr(recognition, "_run_out", lambda row, **k: decoded.append(k) or real(row, **k))
+        r = client.get(f"/api/projects/{project_id + 999}/recognition-runs/{run_id}/export")
+        assert r.status_code in (403, 404)
+        assert decoded == []
+        client.get(f"/api/projects/{project_id}/recognition-runs/{run_id}/export")
+    assert len(decoded) == 1, "export loads the run once"
+
+
 def _model_run(client, tmp_path, **release):
     from app.adapters import runs as runstore
 

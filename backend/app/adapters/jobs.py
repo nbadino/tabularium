@@ -251,7 +251,9 @@ def cloud_upsert(
     """Record a provider-side resource, or refresh the row that already tracks it."""
     with connect() as conn:
         row = conn.execute(
-            "SELECT id FROM jobs WHERE kind='cloud_resource' AND provider=? AND remote_job_id=? "
+            "SELECT id, ended_at, cost_json, "
+            "(julianday('now') - julianday(started_at)) * 24.0 AS open_hours "
+            "FROM jobs WHERE kind='cloud_resource' AND provider=? AND remote_job_id=? "
             "ORDER BY id DESC LIMIT 1",
             (provider, remote_id),
         ).fetchone()
@@ -264,12 +266,30 @@ def cloud_upsert(
                 (owner_id, provider, remote_id, state, json.dumps(cost), terminal),
             )
             return
+        # A stop/resume cycle keeps one row: the hours of each closed running interval
+        # are banked in `billed_hours`, and a resume restarts the clock, so the paused
+        # time is never billed.
+        billed = _billed_hours(row["cost_json"])
+        running = row["ended_at"] is None
+        if terminal and running:
+            billed = (billed or 0.0) + max(0.0, float(row["open_hours"] or 0.0))
+        resumed = not terminal and not running
         conn.execute(
             "UPDATE jobs SET state=?, heartbeat_at=datetime('now'), cost_json=?, "
-            "ended_at=CASE WHEN ? THEN COALESCE(ended_at, datetime('now')) ELSE NULL END "
+            "ended_at=CASE WHEN ? THEN COALESCE(ended_at, datetime('now')) ELSE NULL END, "
+            "started_at=CASE WHEN ? THEN datetime('now') ELSE started_at END "
             "WHERE id=?",
-            (state, json.dumps(cost), terminal, row["id"]),
+            (state, json.dumps({**cost, **({"billed_hours": billed} if billed is not None else {})}),
+             terminal, resumed, row["id"]),
         )
+
+
+def _billed_hours(cost_json: str | None) -> float | None:
+    try:
+        value = json.loads(cost_json or "{}").get("billed_hours")
+        return None if value is None else float(value)
+    except (TypeError, ValueError, AttributeError):
+        return None
 
 
 def cloud_usage(provider: str, remote_id: str) -> tuple[float, float] | None:
@@ -280,7 +300,8 @@ def cloud_usage(provider: str, remote_id: str) -> tuple[float, float] | None:
     """
     statement = (
         "SELECT started_at, ended_at, cost_json, "
-        "(julianday(COALESCE(ended_at, datetime('now'))) - julianday(started_at)) * 24.0 AS hours "
+        "(julianday(COALESCE(ended_at, datetime('now'))) - julianday(started_at)) * 24.0 AS hours, "
+        "(julianday('now') - julianday(started_at)) * 24.0 AS open_hours "
         "FROM jobs WHERE kind='cloud_resource' AND provider=? AND remote_job_id=? "
         "ORDER BY id DESC LIMIT 1"
     )
@@ -295,5 +316,9 @@ def cloud_usage(provider: str, remote_id: str) -> tuple[float, float] | None:
         rate = float(json.loads(row["cost_json"] or "{}").get("hourly_rate"))
     except (TypeError, ValueError, KeyError):
         return None
-    return max(0.0, float(row["hours"] or 0.0)), rate
+    billed = _billed_hours(row["cost_json"])
+    if billed is None:  # never stopped since it was recorded: one interval
+        return max(0.0, float(row["hours"] or 0.0)), rate
+    current = 0.0 if row["ended_at"] else max(0.0, float(row["open_hours"] or 0.0))
+    return billed + current, rate
 

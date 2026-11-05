@@ -292,23 +292,27 @@ def mark_item(item_id: int, state: str, **values: Any) -> None:
         )
 
 
+def _write_counts(conn, run_id: int, now: str) -> None:
+    counts = {
+        row["state"]: int(row["n"])
+        for row in conn.execute(
+            "SELECT state,COUNT(*) AS n FROM recognition_run_items WHERE run_id=? GROUP BY state",
+            (run_id,),
+        ).fetchall()
+    }
+    completed = sum(counts.get(key, 0) for key in ("finished", "failed", "cancelled"))
+    conn.execute(
+        """UPDATE recognition_runs
+              SET completed_pages=?, succeeded_pages=?, failed_pages=?, heartbeat_at=?
+            WHERE id=?""",
+        (completed, counts.get("finished", 0), counts.get("failed", 0), now, run_id),
+    )
+
+
 def refresh_counts(run_id: int) -> None:
     now = _now()
     with connect() as conn:
-        counts = {
-            row["state"]: int(row["n"])
-            for row in conn.execute(
-                "SELECT state,COUNT(*) AS n FROM recognition_run_items WHERE run_id=? GROUP BY state",
-                (run_id,),
-            ).fetchall()
-        }
-        completed = sum(counts.get(key, 0) for key in ("finished", "failed", "cancelled"))
-        conn.execute(
-            """UPDATE recognition_runs
-                  SET completed_pages=?, succeeded_pages=?, failed_pages=?, heartbeat_at=?
-                WHERE id=?""",
-            (completed, counts.get("finished", 0), counts.get("failed", 0), now, run_id),
-        )
+        _write_counts(conn, run_id, now)
         conn.execute(
             "UPDATE jobs SET heartbeat_at=? WHERE id=(SELECT job_id FROM recognition_runs WHERE id=?)",
             (now, run_id),
@@ -333,6 +337,7 @@ def reconcile(active_ids: set[int], *, message: str, ended: str) -> None:
                 "WHERE run_id=? AND state IN ('queued','running')",
                 (message, ended, row["id"]),
             )
+            _write_counts(conn, int(row["id"]), ended)
             if row["job_id"]:
                 conn.execute(
                     "UPDATE jobs SET state='failed',error=?,ended_at=?,heartbeat_at=? WHERE id=?",

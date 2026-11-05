@@ -105,14 +105,32 @@ def _log_tail(log_file: Path, n: int = 30) -> str:
         return ""
 
 
+_LOG_CACHE: dict[Path, tuple[int, int, list[str]]] = {}
+_LOG_CACHE_LOCK = threading.Lock()
+
+
 def _log_tail_logfile(run_dir: Path) -> list[str]:
+    """Last lines of `train.log`, re-read only when the file changed: the status is
+    polled every few seconds and the log grows to tens of MB."""
     log = run_dir / "train.log"
-    if not log.exists():
-        return []
     try:
-        return log.read_text(encoding="utf-8", errors="replace").splitlines()[-20000:]
+        stat = log.stat()
     except OSError:
         return []
+    key = (stat.st_mtime_ns, stat.st_size)
+    with _LOG_CACHE_LOCK:
+        cached = _LOG_CACHE.get(log)
+    if cached is not None and cached[:2] == key:
+        return cached[2]
+    try:
+        lines = log.read_text(encoding="utf-8", errors="replace").splitlines()[-20000:]
+    except OSError:
+        return []
+    with _LOG_CACHE_LOCK:
+        if len(_LOG_CACHE) > 16:  # one entry per watched run is plenty
+            _LOG_CACHE.clear()
+        _LOG_CACHE[log] = (*key, lines)
+    return lines
 
 
 def _extract_metrics(lines: list[str]) -> list[dict]:
