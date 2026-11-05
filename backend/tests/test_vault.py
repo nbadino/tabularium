@@ -90,3 +90,13 @@ def test_missing_key_with_saved_secrets_is_reported(monkeypatch, isolated_secret
     assert vault.unreadable_names() == ["vast"]
     problem = vault.key_problem()
     assert problem is not None and "non è configurata" in problem
+
+
+def test_has_reports_absent_instead_of_raising(monkeypatch, isolated_secrets):
+    """`has` feeds status views (settings, compute profiles): a removed key or a
+    malformed reference must read as "no credential", not turn the page into a 500."""
+    monkeypatch.setenv("TABULARIUM_VAULT_KEY", "key-original")
+    vault.put("oidc", "secret")
+    monkeypatch.delenv("TABULARIUM_VAULT_KEY")
+    assert vault.has("vault:oidc") is False
+    assert vault.has("vault:a b") is False

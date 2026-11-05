@@ -240,6 +240,22 @@ def test_two_people_can_sign_in_at_the_same_time(monkeypatch) -> None:
     assert response.headers["location"] == "/"
 
 
+@pytest.mark.parametrize("raw, expected", [
+    ("Nicolò Rossi", "nicolo.rossi"),
+    ("Li", "li-sso"),
+    ("李明", "utente"),
+    ("ana_maría-o'neil", "ana_maria-o.neil"),
+])
+def test_sso_usernames_are_valid_local_usernames(raw, expected):
+    """A first SSO login must be able to create its account: an accented or short
+    name used to fail the local 3-40 ASCII rule and the login never succeeded."""
+    from app.services import users as usersvc
+
+    name = oidc._username_from(raw)
+    assert name == expected
+    assert usersvc.normalize_username(name) == name
+
+
 def _sso_login_for(monkeypatch, email: str) -> str:
     _configure()
     _fake_provider(monkeypatch, {"sub": "7", "email": email, "email_verified": True})

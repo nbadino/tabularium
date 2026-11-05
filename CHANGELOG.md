@@ -19,6 +19,19 @@ Notable changes to Tabularium. The format follows
   keep authenticated page images, and a deskew or alignment no longer leaves stale tiles.
 
 ### Fixed
+- An existing MonkeyOCRv2 clone is moved to the pinned commit too (fetched if a shallow clone
+  lacks it). A clone with local changes, or a folder that is not its own git checkout, is left as
+  it is.
+- A first SSO login with an accented or short name ("Nicolò Rossi", "Li") creates the account.
+  Before, it failed the local username rule and could never sign in. Accents are folded and
+  short names get `-sso`.
+- `setup_backend.ps1` generates `TABULARIUM_VAULT_KEY` in `.env` as `setup_backend.sh` does, so a
+  Windows install can save provider credentials. `run.ps1` and `run_backend.ps1` read
+  `TABULARIUM_HOST`/`TABULARIUM_PORT` from `.env`.
+- Settings and the compute-profile list no longer return 500 when the vault key is gone or a
+  profile has a malformed credential reference: the credential shows as absent.
+- The MonkeyOCRv2 clone used for serving is pinned to one upstream commit. Before, every install
+  ran whatever upstream `main` was that day.
 - The local MLX server holds its model only while it generates: a slow or vanished client no longer
   keeps every other request waiting, and a closed connection stops the generation at the next token.
 - `nvidia-smi` printing `[N/A]` (MIG, some virtual GPUs) no longer turns `/api/system/gpu`, the
