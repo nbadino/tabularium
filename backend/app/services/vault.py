@@ -95,7 +95,11 @@ def delete(name: str) -> None:
 
 
 def has(ref: str | None) -> bool:
-    return bool(get(ref))
+    """For status views: no key, no cryptography or a malformed name read as absent."""
+    try:
+        return bool(get(ref))
+    except (RuntimeError, ValueError):
+        return False
 
 
 def unreadable_names() -> list[str]:

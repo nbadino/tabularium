@@ -7,6 +7,16 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- A first SSO login with an accented or short name ("Nicolò Rossi", "Li") creates the account.
+  Before, it failed the local username rule and could never sign in. Accents are folded and
+  short names get `-sso`.
+- `setup_backend.ps1` generates `TABULARIUM_VAULT_KEY` in `.env` as `setup_backend.sh` does, so a
+  Windows install can save provider credentials. `run.ps1` and `run_backend.ps1` read
+  `TABULARIUM_HOST`/`TABULARIUM_PORT` from `.env`.
+- Settings and the compute-profile list no longer return 500 when the vault key is gone or a
+  profile has a malformed credential reference: the credential shows as absent.
+- The MonkeyOCRv2 clone used for serving is pinned to one upstream commit. Before, every install
+  ran whatever upstream `main` was that day.
 - A large ZIP upload no longer fails on one network hiccup: a piece that does not arrive is sent
   again after a pause (about two minutes of attempts), from the byte the server says it holds
   (`GET …/zip-uploads/{id}`); the dialog says it is retrying. An 800 MB archive had failed at

@@ -17,6 +17,9 @@ from pathlib import Path
 from .. import config
 
 MONKEYOCRV2_REPO_URL = "https://github.com/Yuliang-Liu/MonkeyOCRv2"
+# Upstream has no tags: pin a commit, so every install runs the same `serve.py`.
+# Bump it on purpose, after re-checking docs/spec/10-official-conventions.md (R3).
+MONKEYOCRV2_COMMIT = "6cc0c0bb4864f2541fa6bc3a8f976cffaac8f359"
 
 
 def monkeyocrv2_repo_dir() -> Path:
@@ -33,13 +36,11 @@ def ensure_monkeyocrv2_repo() -> Path:
         shutil.rmtree(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
-        subprocess.run(
-            ["git", "clone", "--depth", "1", MONKEYOCRV2_REPO_URL, str(target)],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
+        for argv in (
+            ["git", "clone", "--filter=blob:none", "--no-checkout", MONKEYOCRV2_REPO_URL, str(target)],
+            ["git", "-C", str(target), "checkout", "--detach", MONKEYOCRV2_COMMIT],
+        ):
+            subprocess.run(argv, check=True, capture_output=True, text=True, timeout=300)
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(
             f"clone automatico del repo MonkeyOCRv2 fallito: {exc.stderr.strip()}"

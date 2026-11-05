@@ -53,3 +53,22 @@ def test_ensure_repo_raises_readable_error_on_clone_failure(monkeypatch, tmp_pat
 
     with pytest.raises(RuntimeError, match="clone automatico"):
         vendor_repos.ensure_monkeyocrv2_repo()
+
+
+def test_the_clone_is_pinned_to_one_upstream_commit(monkeypatch, tmp_path):
+    """`parsing/serve.py` is executed: every install must run the same upstream code."""
+    monkeypatch.setattr(vendor_repos.config, "ROOT_DIR", tmp_path)
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+
+        class Result:
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(vendor_repos.subprocess, "run", fake_run)
+    vendor_repos.ensure_monkeyocrv2_repo()
+    assert len(vendor_repos.MONKEYOCRV2_COMMIT) == 40
+    assert calls[-1][-2:] == ["--detach", vendor_repos.MONKEYOCRV2_COMMIT]
