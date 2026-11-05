@@ -231,39 +231,66 @@ def register_candidate(
         report.unsupported += 1
         report.errors.append(f"{cand.path.name}: {msg('no_pages_rendered', lang)}")
         return
+    # A rescan of a PDF whose pages are all known renders nothing: rendering every
+    # page at 200 DPI only to learn it was a duplicate cost minutes per archive.
+    known = pagestore.registered_pdf_pages(conn, project_id, abs_path)
+    if known >= set(range(page_count)):
+        pagestore.revive_pdf_pages(conn, project_id, abs_path)
+        report.duplicates += page_count
+        return
     meta = pagemeta.parse_filename(cand.path.name)
     extra = {"publication": meta.publication} if meta.publication else {}
-    for page_idx, rendered in enumerate(iter_pdf_pages(cand.path)):
-        pil_img, (width, height) = rendered
-        page_id = pagestore.insert_pdf_page(
-            conn,
-            project_id=project_id,
-            rel_path=rel_path,
-            abs_path=abs_path,
-            pdf_page=page_idx,
-            width=width,
-            height=height,
-            issue_no=meta.issue_no,
-            # In un PDF multipagina il numero di pagina è l'indice, non il
-            # suffisso del nome file (che identifica il fascicolo intero).
-            page_no=meta.page_no if page_count == 1 else str(page_idx + 1),
-            page_type=meta.page_type,
-            meta_json=json.dumps(extra),
-            collection_id=collection_id,
-        )
-        if page_id is None:
-            report.duplicates += 1
+    # A PDF is all or nothing: a page that fails to render rolls back only this file,
+    # and the rest of the scan (one transaction) goes on.
+    if not conn.in_transaction:
+        conn.execute("BEGIN")
+    conn.execute("SAVEPOINT pdf_file")
+    registered = duplicates = 0
+    written: list[Path] = []
+    try:
+        for page_idx, rendered in enumerate(iter_pdf_pages(cand.path)):
+            pil_img, (width, height) = rendered
+            page_id = pagestore.insert_pdf_page(
+                conn,
+                project_id=project_id,
+                rel_path=rel_path,
+                abs_path=abs_path,
+                pdf_page=page_idx,
+                width=width,
+                height=height,
+                issue_no=meta.issue_no,
+                # In un PDF multipagina il numero di pagina è l'indice, non il
+                # suffisso del nome file (che identifica il fascicolo intero).
+                page_no=meta.page_no if page_count == 1 else str(page_idx + 1),
+                page_type=meta.page_type,
+                meta_json=json.dumps(extra),
+                collection_id=collection_id,
+            )
+            if page_id is None:
+                duplicates += 1
+                pil_img.close()
+                continue
+            written += [pagesvc.pdf_image_path(page_id), pagesvc.thumb_path(page_id)]
+            extracted = pagesvc.pdf_image_path(page_id)
+            pil_img.save(extracted, format="PNG", optimize=True)
+            pagestore.set_meta(
+                conn, page_id, json.dumps({**extra, "extracted_path": str(extracted)})
+            )
+            thumb = pagesvc.save_pdf_thumb(pil_img, page_id)
+            pagestore.set_thumb(conn, page_id, str(thumb))
             pil_img.close()
-            continue
-        extracted = pagesvc.pdf_image_path(page_id)
-        pil_img.save(extracted, format="PNG", optimize=True)
-        pagestore.set_meta(
-            conn, page_id, json.dumps({**extra, "extracted_path": str(extracted)})
-        )
-        thumb = pagesvc.save_pdf_thumb(pil_img, page_id)
-        pagestore.set_thumb(conn, page_id, str(thumb))
-        pil_img.close()
-        report.registered += 1
+            registered += 1
+    except Exception as exc:  # noqa: BLE001 - any render/save failure is a per-file error
+        conn.execute("ROLLBACK TO pdf_file")
+        conn.execute("RELEASE pdf_file")
+        for path in written:
+            path.unlink(missing_ok=True)
+        report.unsupported += 1
+        report.errors.append(f"{cand.path.name}: {exc}")
+        return
+    conn.execute("RELEASE pdf_file")
+    report.registered += registered
+    report.duplicates += duplicates
 
 
 def run_scan(
@@ -274,12 +301,14 @@ def run_scan(
     lang: str = "it",
     on_progress=None,
 ) -> ScanReport:
-    """Scan an archive into the project, in one transaction.
+    """Scan an archive into the project, committing file by file.
 
     The router used to open the connection and pass it down, which is why the last
-    statements of `api/projects.py` still lived there. The scan is one unit of work —
-    discovering, marking missing sources, registering every candidate — so it owns the
-    connection and reports progress through a callback for the streaming job.
+    statements of `api/projects.py` still lived there. The scan owns the connection and
+    reports progress through a callback for the streaming job. It commits after each
+    file: one transaction over a large archive held SQLite's write lock for minutes, and
+    every other writer failed with "database is locked". A rescan is idempotent, so an
+    interrupted scan resumes by scanning again.
     """
     root = Path(archive_dir)
     with connect() as conn:
@@ -290,6 +319,7 @@ def run_scan(
             mark_missing_pages(conn, missing_ids)
         for index, candidate in enumerate(candidates, 1):
             register_candidate(conn, project_id, candidate, root, report, lang=lang)
+            conn.commit()
             if on_progress is not None:
                 on_progress(index, candidate, report)
     return report
@@ -299,9 +329,10 @@ def register_uploads(
     project_id: int, session_dir: str | Path, report: ScanReport, *, lang: str = "it",
     collection_id: int | None = None,
 ) -> None:
-    """Register a folder of uploaded files, in one transaction."""
+    """Register a folder of uploaded files, committing file by file (see `run_scan`)."""
     root = Path(session_dir)
     with connect() as conn:
         for candidate in scan_archive(root):
             register_candidate(conn, project_id, candidate, root, report, lang=lang, collection_id=collection_id)
+            conn.commit()
 

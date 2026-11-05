@@ -13,6 +13,7 @@ import platform
 import re
 import subprocess
 import sys
+import threading
 import time
 import venv
 from datetime import datetime, timezone
@@ -209,8 +210,21 @@ def status(*, probe: bool = True) -> dict:
     }
 
 
+_INSTALL_LOCK = threading.Lock()
+
+
 def ensure_ready() -> None:
-    """Installa il pipeline ufficiale PaddleOCR document parser."""
+    """Installa il pipeline ufficiale PaddleOCR document parser.
+
+    One install at a time: several adapters share this runtime and each can start
+    it, and two `EnvBuilder(clear=True)` on one folder break the venv. The second
+    caller waits, then finds it ready.
+    """
+    with _INSTALL_LOCK:
+        _ensure_ready_locked()
+
+
+def _ensure_ready_locked() -> None:
     if ready():
         return
     global _ready_cache

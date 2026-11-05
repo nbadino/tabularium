@@ -2,3 +2,4 @@
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..\frontend")
 npm run dev
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

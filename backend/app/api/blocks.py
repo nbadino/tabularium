@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from PIL import Image
@@ -219,12 +220,20 @@ def _load_settings(project_id: int) -> dict:
     return settings
 
 
-def _store_custom_labels(project_id: int, settings: dict, customs: list[dict]) -> None:
+def _store_custom_labels(settings: dict, customs: list[dict]) -> None:
     if customs:
         settings["labels"] = customs
     else:
         settings.pop("labels", None)
-    projectstore.put_settings(project_id, settings)
+
+
+@contextmanager
+def _editing_settings(project_id: int):
+    """Read and write in one write transaction: two tabs no longer erase each other."""
+    with projectstore.editing_settings(project_id) as settings:
+        if settings is None:
+            raise HTTPException(status_code=404, detail="progetto non trovato")
+        yield settings
 
 
 def _validate_or_400(items, lang: str) -> list[dict]:
@@ -256,8 +265,8 @@ def put_project_labels(
     """
     lang = parse_lang(request.headers.get("accept-language"))
     cleaned = _validate_or_400(payload.labels, lang)
-    settings = _load_settings(project_id)
-    _store_custom_labels(project_id, settings, cleaned)
+    with _editing_settings(project_id) as settings:
+        _store_custom_labels(settings, cleaned)
     return _label_schema(settings)
 
 
@@ -276,13 +285,13 @@ def create_project_label(
     """
     lang = parse_lang(request.headers.get("accept-language"))
     cleaned = _validate_or_400([payload], lang)
-    settings = _load_settings(project_id)
-    customs = list(settings.get("labels") or [])
-    name = cleaned[0]["name"]
-    if any(str(c.get("name")) == name for c in customs):
-        raise HTTPException(status_code=409, detail=msg("label_name_duplicate", lang, name=name))
-    customs.append(cleaned[0])
-    _store_custom_labels(project_id, settings, customs)
+    with _editing_settings(project_id) as settings:
+        customs = list(settings.get("labels") or [])
+        name = cleaned[0]["name"]
+        if any(str(c.get("name")) == name for c in customs):
+            raise HTTPException(status_code=409, detail=msg("label_name_duplicate", lang, name=name))
+        customs.append(cleaned[0])
+        _store_custom_labels(settings, customs)
     return _label_schema(settings)
 
 

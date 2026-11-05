@@ -132,10 +132,18 @@ def create(
     adapter_id: str,
     provider: str,
     endpoint: str | None,
+    release: dict[str, Any] | None = None,
 ) -> int:
-    """Insert the job, the session and its pages. Returns the session id."""
+    """Insert the job, the session and its pages. Returns the session id.
+
+    `release` is the cloud instance the run uses (`resource_id`, `credential_ref`):
+    the end-of-run release must stop that one, whatever the config says by then.
+    """
     placeholders = ",".join("?" for _ in page_ids)
     with connect() as conn:
+        # The busy checks below guard nothing unless no other start can slip in
+        # between them and the insert: take the write lock first.
+        conn.execute("BEGIN IMMEDIATE")
         if engine == "model":
             active = conn.execute(
                 "SELECT id FROM recognition_runs "
@@ -173,7 +181,7 @@ def create(
                 provider,
                 "queued",
                 _now(),
-                json.dumps({"page_ids": page_ids, "engine": engine}),
+                json.dumps({"page_ids": page_ids, "engine": engine, "release": release or {}}),
                 "persisted-results-mark-interrupted",
             ),
         )
@@ -249,9 +257,21 @@ def fail(run_id: int, job_id: int | None, *, error: str, ended: str) -> None:
             (error, ended, ended, run_id),
         )
         conn.execute(
-            "UPDATE jobs SET state='failed',error=?,ended_at=?,heartbeat_at=? WHERE id=?",
-            (error, ended, ended, job_id),
+            "UPDATE jobs SET state='failed',error=?,ended_at=?,heartbeat_at=? "
+            "WHERE id=COALESCE(?, (SELECT job_id FROM recognition_runs WHERE id=?))",
+            (error, ended, ended, job_id, run_id),
         )
+
+
+def release_target(job_id: int | None) -> dict[str, Any]:
+    """The cloud instance recorded when the run was created (see `create`)."""
+    with connect() as conn:
+        row = conn.execute("SELECT command_json FROM jobs WHERE id=?", (job_id,)).fetchone()
+    try:
+        release = json.loads(row["command_json"] or "{}").get("release") if row else None
+    except (TypeError, ValueError, AttributeError):
+        release = None
+    return release if isinstance(release, dict) else {}
 
 
 def set_error(run_id: int, error: str) -> None:
@@ -272,23 +292,27 @@ def mark_item(item_id: int, state: str, **values: Any) -> None:
         )
 
 
+def _write_counts(conn, run_id: int, now: str) -> None:
+    counts = {
+        row["state"]: int(row["n"])
+        for row in conn.execute(
+            "SELECT state,COUNT(*) AS n FROM recognition_run_items WHERE run_id=? GROUP BY state",
+            (run_id,),
+        ).fetchall()
+    }
+    completed = sum(counts.get(key, 0) for key in ("finished", "failed", "cancelled"))
+    conn.execute(
+        """UPDATE recognition_runs
+              SET completed_pages=?, succeeded_pages=?, failed_pages=?, heartbeat_at=?
+            WHERE id=?""",
+        (completed, counts.get("finished", 0), counts.get("failed", 0), now, run_id),
+    )
+
+
 def refresh_counts(run_id: int) -> None:
     now = _now()
     with connect() as conn:
-        counts = {
-            row["state"]: int(row["n"])
-            for row in conn.execute(
-                "SELECT state,COUNT(*) AS n FROM recognition_run_items WHERE run_id=? GROUP BY state",
-                (run_id,),
-            ).fetchall()
-        }
-        completed = sum(counts.get(key, 0) for key in ("finished", "failed", "cancelled"))
-        conn.execute(
-            """UPDATE recognition_runs
-                  SET completed_pages=?, succeeded_pages=?, failed_pages=?, heartbeat_at=?
-                WHERE id=?""",
-            (completed, counts.get("finished", 0), counts.get("failed", 0), now, run_id),
-        )
+        _write_counts(conn, run_id, now)
         conn.execute(
             "UPDATE jobs SET heartbeat_at=? WHERE id=(SELECT job_id FROM recognition_runs WHERE id=?)",
             (now, run_id),
@@ -313,6 +337,7 @@ def reconcile(active_ids: set[int], *, message: str, ended: str) -> None:
                 "WHERE run_id=? AND state IN ('queued','running')",
                 (message, ended, row["id"]),
             )
+            _write_counts(conn, int(row["id"]), ended)
             if row["job_id"]:
                 conn.execute(
                     "UPDATE jobs SET state='failed',error=?,ended_at=?,heartbeat_at=? WHERE id=?",
