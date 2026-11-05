@@ -24,6 +24,7 @@ if ($env:TABULARIUM_BUILD_FRONTEND -eq "1") {
 if ($needsBuild) {
     Write-Host ">> frontend\dist assente o non aggiornato: eseguo la build..."
     & (Join-Path $PSScriptRoot "build_frontend.ps1")
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 Set-Location (Join-Path $root "backend")
 # Host and port from .env, as run.sh does (variables already set win).
@@ -38,3 +39,4 @@ if (Test-Path $envFile) {
 $hostAddr = if ($env:TABULARIUM_HOST) { $env:TABULARIUM_HOST } else { "127.0.0.1" }
 $port = if ($env:TABULARIUM_PORT) { $env:TABULARIUM_PORT } else { "8787" }
 & ".venv\Scripts\uvicorn.exe" app.main:app --host $hostAddr --port $port
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

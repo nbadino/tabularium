@@ -44,16 +44,20 @@ def gpu_snapshot() -> list[dict]:
     for line in out.stdout.strip().splitlines():
         parts = [p.strip() for p in line.split(",")]
         if len(parts) >= 6:
-            gpus.append(
-                {
-                    "index": parts[0],
-                    "name": parts[1],
-                    "memory_total": int(float(parts[2])),
-                    "memory_used": int(float(parts[3])),
-                    "utilization": int(float(parts[4])),
-                    "temp": int(float(parts[5])),
-                }
-            )
+            # MIG and some virtual GPUs print `[N/A]`: skip them, as training_executor does.
+            try:
+                gpus.append(
+                    {
+                        "index": parts[0],
+                        "name": parts[1],
+                        "memory_total": int(float(parts[2])),
+                        "memory_used": int(float(parts[3])),
+                        "utilization": int(float(parts[4])),
+                        "temp": int(float(parts[5])),
+                    }
+                )
+            except ValueError:
+                continue
     with _gpu_cache_lock:
         _gpu_cache = (time.monotonic(), gpus)
     return [dict(gpu) for gpu in gpus]
@@ -127,13 +131,21 @@ def _metrics(run_dir: Path) -> list[dict]:
         return _extract_metrics(lines)
     import json
     try:
-        metrics = [json.loads(l) for l in f.read_text(encoding="utf-8").splitlines() if l.strip()]
+        metrics = []
+        # A run killed mid-write leaves a truncated last line: skip it, keep the rest.
+        for raw in f.read_text(encoding="utf-8").splitlines():
+            try:
+                item = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(item, dict):
+                metrics.append(item)
         if metrics and not any(item.get("step") is not None for item in metrics):
             parsed = _extract_metrics(_log_tail_logfile(run_dir))
             if any(item.get("step") is not None for item in parsed):
                 return parsed
         return metrics or _extract_metrics(_log_tail_logfile(run_dir))
-    except (TypeError, ValueError):
+    except (OSError, TypeError, ValueError):
         return []
 
 

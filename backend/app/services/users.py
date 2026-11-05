@@ -58,6 +58,17 @@ def user_out(row: sqlite3.Row) -> dict:
     }
 
 
+def _claim_email(conn: sqlite3.Connection, email: str, user_id: int | None) -> str | None:
+    """Emails link OIDC logins to accounts, so they are stored normalised and unique."""
+    email = email.strip().lower()
+    if not email:
+        return None
+    owner = accountstore.by_email(email, conn)
+    if owner is not None and owner["id"] != user_id:
+        raise HTTPException(status_code=409, detail="email già usata da un altro utente")
+    return email
+
+
 def create_user(
     conn: sqlite3.Connection,
     username: str,
@@ -66,8 +77,12 @@ def create_user(
     role: str = "editor",
     active: bool = True,
     must_change_password: bool = False,
+    email_confirmed: bool = False,
 ) -> dict:
+    """`email_confirmed`: True only when an administrator (or the SSO provider) wrote
+    the email; SSO never signs in to an account whose owner typed it."""
     username = normalize_username(username)
+    email = _claim_email(conn, email or "", None)
     validate_password(password)
     role = validate_role(role)
     if accountstore.username_taken(username, conn):
@@ -76,12 +91,13 @@ def create_user(
     user_id = accountstore.insert(
         conn,
         username=username,
-        email=email or None,
+        email=email,
         password_hash=hash_hex,
         salt=salt,
         role=role,
         active=active,
         must_change_password=must_change_password,
+        email_confirmed=email_confirmed,
     )
     return user_out(accountstore.get(user_id, conn))
 
@@ -101,6 +117,7 @@ def update_user(
     email: str | None = None,
     role: str | None = None,
     active: bool | None = None,
+    email_confirmed: bool = False,
 ) -> dict:
     user = get_user(conn, user_id)
     if user is None:
@@ -111,9 +128,13 @@ def update_user(
     if active is not None:
         fields["active"] = 1 if active else 0
     if email is not None:
-        fields["email"] = email or None
+        fields["email"] = _claim_email(conn, email, user_id)
+        fields["email_confirmed"] = 1 if email_confirmed else 0
     if fields:
         accountstore.update_fields(conn, user_id, fields)
+    if active is False:
+        # A deactivated account keeps no live token to come back with on reactivation.
+        accountstore.delete_sessions(user_id, conn)
     return user_out(get_user(conn, user_id))
 
 
@@ -189,6 +210,9 @@ def count_admins(conn: sqlite3.Connection) -> int:
     return accountstore.count_admins(conn)
 
 
+EMAIL_UNCONFIRMED = "email non confermata da un amministratore"
+
+
 def ensure_oidc_user(
     conn: sqlite3.Connection,
     *,
@@ -208,6 +232,8 @@ def ensure_oidc_user(
     if existing is not None:
         if not existing["active"]:
             raise HTTPException(status_code=403, detail="account disattivato")
+        if not existing["email_confirmed"]:
+            raise HTTPException(status_code=403, detail=EMAIL_UNCONFIRMED)
         return existing
 
     base = normalize_username(username) or "utente"
@@ -224,5 +250,6 @@ def ensure_oidc_user(
         role=role,
         active=True,
         must_change_password=False,
+        email_confirmed=True,
     )
     return accountstore.get(created["id"], conn) or {}

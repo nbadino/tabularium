@@ -321,3 +321,53 @@ def test_prefill_does_not_rotate_a_page_under_existing_blocks(tmp_path: Path, mo
         assert abs(r.json()["results"][0]["deskew_angle"]) < 0.05
         r = client.post(f"/api/projects/{pid}/prelabel", json={"page_ids": [page], "mode": "replace_all", "confirm": True})
         assert abs(r.json()["results"][0]["deskew_angle"]) >= 0.05
+
+
+def test_align_holds_the_transform_lock_while_it_runs(monkeypatch):
+    """`align_page` updates module-level diagnostics and runs the preprocessor:
+    two /align requests must not interleave."""
+    from app.services import monkey_preprocess
+
+    owned: list[bool] = []
+
+    def fake_preprocess(image):
+        owned.append(dewarp._transform_lock._is_owned())
+        return image
+
+    monkeypatch.setattr(monkey_preprocess, "preprocess", fake_preprocess)
+    dewarp.align_page(Image.new("RGB", (40, 40)), "medium")
+    assert owned == [True]
+
+
+@pytest.mark.parametrize("call", [
+    lambda c, pid: c.post(f"/api/pages/{pid}/deskew?confirm=true"),
+    lambda c, pid: c.post(f"/api/pages/{pid}/align?confirm=true", json={"level": "basic"}),
+])
+def test_a_transform_that_changes_nothing_keeps_the_blocks(tmp_path: Path, call):
+    archive = tmp_path / "straight"
+    archive.mkdir(parents=True)
+    Image.new("RGB", (900, 1300), "white").save(archive / "p.png")
+    with TestClient(app) as client:
+        project = client.post("/api/projects", json={"name": "ST", "archive_dir": str(archive)}).json()["id"]
+        client.post(f"/api/projects/{project}/scan")
+        page = client.get(f"/api/projects/{project}/pages").json()["items"][0]["id"]
+        client.put(
+            f"/api/pages/{page}/annotations",
+            json={"items": [{"label": "Text", "kind": "rect", "points": [[0, 0], [100, 50]], "content": "x", "order_idx": 1}]},
+        )
+        r = call(client, page)
+        assert r.status_code == 200, r.text
+        assert len(client.get(f"/api/pages/{page}/annotations").json()["items"]) == 1
+
+
+def test_tiles_are_revalidated_after_a_transform(tmp_path: Path):
+    """Tile URLs carry no transform revision, so a deskew must not leave stale tiles
+    in the browser, and authenticated page images must stay out of shared caches."""
+    pid = _setup(tmp_path / "tile")
+    with TestClient(app) as client:
+        page = client.get(f"/api/projects/{pid}/pages").json()["items"][0]
+        r = client.get(f"/api/pages/{page['id']}/tile/0/0/0")
+        assert r.status_code == 200, r.text
+        cache = r.headers["cache-control"]
+        assert "public" not in cache and "immutable" not in cache
+        assert "private" in cache and "no-cache" in cache

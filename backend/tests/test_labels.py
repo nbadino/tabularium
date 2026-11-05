@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -197,3 +198,20 @@ def test_known_models_are_model_relative():
     # `Title` è nota a molti; una classe custom non è nota a nessuno.
     assert labeling.label_origin("Title") == "public"
     assert labeling.label_origin("Vessel-name") == "custom"
+
+
+@pytest.mark.parametrize("names, code", [
+    (["text"], "label_name_conflict"),
+    (["Text_"], "label_name_conflict"),
+    (["Ship Name", "ship_name"], "label_name_duplicate"),
+])
+def test_custom_labels_are_compared_as_the_bridge_compares_them(names, code):
+    """The bridge looks labels up by normalised name: "text" would take over the
+    model's "Text" output, and "Ship Name"/"ship_name" would be one class."""
+    from app.schemas import LabelDef
+    from app.services import labeling
+
+    items = [LabelDef(name=n, color="#336699", short="X", prompt_kind="text", prompt="Read it.") for n in names]
+    with pytest.raises(labeling.LabelValidationError) as caught:
+        labeling.validate_labels(items)
+    assert caught.value.code == code

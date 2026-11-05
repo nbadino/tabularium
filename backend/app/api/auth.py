@@ -107,7 +107,8 @@ def setup_first_admin(payload: SetupIn, response: Response) -> UserOut:
         if not setup_token.matches(payload.setup_token):
             raise HTTPException(status_code=403, detail="token di configurazione mancante o errato: è nel log del server e in <data>/setup-token")
         admin = usersvc.create_user(
-            conn, payload.username, payload.password, email=payload.email, role="admin"
+            conn, payload.username, payload.password, email=payload.email, role="admin",
+            email_confirmed=True,
         )
         # I progetti esistenti (creati prima dell'auth) vanno al nuovo admin.
         conn.execute("UPDATE projects SET owner_id=? WHERE owner_id IS NULL", (admin["id"],))
@@ -211,6 +212,9 @@ def update_me(
     """Modifica del proprio profilo: solo l'email (il nome utente è immutabile)."""
     if user.get("is_local"):
         raise HTTPException(status_code=400, detail="la modalità locale non ha un profilo")
+    # SSO links a login to the account holding the same email: only an admin may set it.
+    if payload.email is not None and settingssvc.get_app_settings().get("oidc_enabled"):
+        raise HTTPException(status_code=403, detail="con l'accesso SSO l'email la imposta un amministratore")
     with connect() as conn:
         updated = usersvc.update_user(conn, user["id"], email=payload.email)
     return UserOut(**updated)
@@ -350,8 +354,10 @@ def oidc_callback(request: Request, code: str = "", state: str = "") -> Redirect
                 username=identity["username"],
                 role=setup.default_role,
             )
-        except HTTPException:
-            return _login_error("oidc_user")
+        except HTTPException as exc:
+            # A typed, never confirmed email is not proof of identity (see migration 23).
+            unconfirmed = exc.detail == usersvc.EMAIL_UNCONFIRMED
+            return _login_error("oidc_unconfirmed" if unconfirmed else "oidc_user")
     token, expires_at = authsvc.create_session(user["id"], request)
     response = RedirectResponse("/", status_code=303)
     authsvc.set_session_cookie(response, token, expires_at)
