@@ -40,6 +40,8 @@ times) is stopped: its remaining pages are marked failed at once with `consensus
 ("out of credits or invalid key?") instead of each costing a request; a retry sends them again.
 Stored errors are Italian catalog messages, localized on read (`run_pages`, `page_comparison`).
 The Recognition page shows each model's progress (pages read, failed) from the run's pages.
+A *Check in the Studio* button opens the first compared page with cells still to check (else
+the first compared page, else the first page of the run); each page row also links to it.
 
 The metric is pure (`domain/consensus.py`), pinned by `tests/test_consensus.py`:
 
