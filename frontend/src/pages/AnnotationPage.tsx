@@ -43,6 +43,9 @@ import {
   type DecisionsOut,
   type MineItem,
   type PageConsensus,
+  type ConsensusRunRef,
+  activeRunToFollow,
+  pageInRun,
 } from '../studio/consensus'
 import {
   summarizePage,
@@ -337,7 +340,17 @@ export default function AnnotationPage() {
     const load = async () => {
       setConsensusLoading(true)
       try {
-        const out = await apiGet<PageConsensus>(`/pages/${page.id}/consensus`)
+        let out = await apiGet<PageConsensus>(`/pages/${page.id}/consensus`)
+        // A newer run still reading this page wins over an older one without a comparison:
+        // the content then says which model is reading it instead of an old failure.
+        if (!out.comparison && projectId !== '') {
+          const runs = await apiGet<{ items: ConsensusRunRef[] }>(`/projects/${projectId}/consensus-runs`).catch(() => ({ items: [] }))
+          const follow = activeRunToFollow(out, runs.items ?? [])
+          if (follow != null) {
+            const current = await apiGet<PageConsensus>(`/pages/${page.id}/consensus?run_id=${follow}`).catch(() => null)
+            if (current && pageInRun(current)) out = current
+          }
+        }
         if (!alive) return
         setConsensus(out)
         // Keep following while a model is still working on this page.
@@ -350,7 +363,8 @@ export default function AnnotationPage() {
     }
     void load()
     return () => { alive = false; window.clearTimeout(timer) }
-  }, [page?.id])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page?.id, projectId])
 
   useEffect(() => {
     setConsensusResolved(new Set(consensus?.resolved ?? []))

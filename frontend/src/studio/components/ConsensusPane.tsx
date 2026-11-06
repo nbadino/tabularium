@@ -440,13 +440,26 @@ export function ConsensusSummary({ page, loading, view, onView, onClose, actions
       {page && page.run_id == null && (
         <div><p className="font-semibold">{t('consensus.noRun')}</p><p className="text-[color:var(--color-ink-2)]">{t('consensus.noRunHint')}</p></div>
       )}
-      {models.filter((m) => m.state === 'failed').map((m) => (
+      {!models.some((m) => m.state === 'queued' || m.state === 'running') && models.filter((m) => m.state === 'failed').map((m) => (
         <p key={m.key} className="text-[color:var(--color-sig-text)]">{t('consensus.modelFailed', { name: m.name, error: m.error ?? '' })}</p>
       ))}
-      {models.filter((m) => m.state === 'queued' || m.state === 'running').map((m) => (
-        <p key={m.key} className="text-[color:var(--color-ink-2)]">{t('consensus.modelPending', { name: m.name })}</p>
-      ))}
-      {page && page.run_id != null && !page.comparison && <p className="text-[color:var(--color-warn)]">{t('consensus.notEnough')}</p>}
+      {models.some((m) => m.state === 'queued' || m.state === 'running') ? (
+        <div className="space-y-1" data-testid="consensus-waiting" role="status" aria-live="polite">
+          {models.map((m) => (
+            <p key={m.key} className="flex items-center gap-2 text-[color:var(--color-ink-2)]">
+              {m.state === 'running' || m.state === 'queued' ? (
+                <span aria-hidden className={`h-3 w-3 shrink-0 border-[1.5px] border-[color:var(--color-rule)] ${m.state === 'running' ? 'animate-spin border-t-[color:var(--color-sig)]' : ''}`} />
+              ) : (
+                <span aria-hidden className="w-3 shrink-0 text-center">{m.state === 'finished' ? '✓' : '✕'}</span>
+              )}
+              {t(m.state === 'running' ? 'consensus.modelReading' : m.state === 'queued' ? 'consensus.modelQueued' : m.state === 'finished' ? 'consensus.modelRead' : 'consensus.modelNoResult', { name: m.name })}
+            </p>
+          ))}
+          {!page?.comparison && <p className="text-[11px] text-[color:var(--color-ink-3)]">{t('consensus.waitingHint')}</p>}
+        </div>
+      ) : (
+        page && page.run_id != null && !page.comparison && <p className="text-[color:var(--color-warn)]">{t('consensus.notEnough')}</p>
+      )}
 
       {page?.comparison && (
         <>

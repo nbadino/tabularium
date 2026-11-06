@@ -40,6 +40,10 @@ times) is stopped: its remaining pages are marked failed at once with `consensus
 ("out of credits or invalid key?") instead of each costing a request; a retry sends them again.
 Stored errors are Italian catalog messages, localized on read (`run_pages`, `page_comparison`).
 The Recognition page shows each model's progress (pages read, failed) from the run's pages.
+In the Studio, a page without a comparison follows the project's run in progress when that
+run is newer and includes the page (`studio/consensus.ts::activeRunToFollow`, then
+`GET /pages/{id}/consensus?run_id=…`): each model's state is shown (reading, queued, read)
+and the content polls until both have read it.
 A *Check in the Studio* button opens the first compared page with cells still to check (else
 the first compared page, else the first page of the run); each page row also links to it.
 
