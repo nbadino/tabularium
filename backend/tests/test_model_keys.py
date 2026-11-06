@@ -51,7 +51,18 @@ def _auth_on(monkeypatch):
         conn.execute("DELETE FROM user_model_keys")
         conn.execute("DELETE FROM compute_profiles")
         conn.execute("DELETE FROM users")
+        # The tests switch the active model (and its key, in the vault): put the
+        # configuration back so later modules, without a vault key, read what they had.
+        meta = conn.execute("SELECT key, value FROM meta WHERE key LIKE 'inference%'").fetchall()
+        secrets = conn.execute("SELECT name, ciphertext FROM secrets").fetchall()
     yield
+    with connect() as conn:
+        conn.execute("DELETE FROM meta WHERE key LIKE 'inference%'")
+        conn.executemany("INSERT INTO meta (key, value) VALUES (?, ?)", [tuple(r) for r in meta])
+        conn.execute("DELETE FROM secrets")
+        conn.executemany("INSERT INTO secrets (name, ciphertext) VALUES (?, ?)", [tuple(r) for r in secrets])
+        conn.execute("DELETE FROM user_model_keys")
+        conn.execute("DELETE FROM compute_profiles")
 
 
 def _user(username: str, role: str) -> dict:
