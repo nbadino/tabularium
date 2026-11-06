@@ -56,17 +56,40 @@ The metric is pure (`domain/consensus.py`), pinned by `tests/test_consensus.py`:
   cell scores the mean distance to the other models' aligned cell (1 if unaligned); rows or
   columns only another model has count as disagreeing cells. The table score is the cluster's
   `text` channel.
+- **Kinds of difference** (`classify_difference`). Two readings can differ only in how the same
+  print is written down. A difference is `convention` only when the named rules explain *all* of
+  it: `dash` (any dash or minus → `-`), `quotes` (curly → straight), `leaders` (two or more dots,
+  middle dots or an ellipsis), `spacing` (all whitespace), `ligature` (æ œ ﬁ ﬂ ß), `small_caps`
+  (ʀ ɪ ı ᴠ … → capitals), `case`; it lists only the rules it cannot do without. Otherwise it is
+  `digits` when the digit sequences differ (also when one side is empty or has no aligned cell:
+  a dropped year is a number, not a blank), `missing` when one side is empty, else `text`. Over
+  several models a cell takes the worst pairwise kind, in the order digits > text > missing >
+  convention > same, and the union of the rules.
+- **Distances set the conventions aside**: `text`, the table cell `score` and the row/column
+  alignment use `content_distance` (the edit distance after every rule). The distance with the
+  conventions counted is kept as `text_raw` and `raw_score`. Each cluster has `text_kind` and
+  `conventions`; each table counts its cells by kind (`kinds`) and by rule (`conventions`); the
+  page sums the rules (`comparison.conventions`, table cells one by one, other blocks once).
+  On Lloyd's Daily Index (1 April 1920, p. 3, OCRia-1 against Gemini 4 Argon) 64 of the 105
+  differing cells were conventions; the 26 `digits` cells were the real errors (a year dropped
+  on every row with an empty *Reg*, continuation lines on the wrong row).
 - **Page agreement** = 1 − the area-weighted mean cluster score. With fewer than two finished
   models there is no comparison (`comparison: null`), not an invented agreement.
 
 The Studio colours a score below 0.1 as agreement, below 0.35 as partial, above as disagreement.
 
 **Verdict** (`studio/consensus.ts::verdictOf`), which decides colour and wording: `missing` when
-a model has no block there; `text` when the text channel is ≥ 0.1 (red or amber by its band);
-`structure` when the words agree but the class, the segmentation or the position (layout ≥ 0.35)
-differs (grey: a choice, not a misreading); otherwise `agree`. The floors of the score (0.3 for
-a split, 0.5 for a label) order the clusters and weigh the page agreement but are never shown
-as a percentage of difference. *Next* goes through `text`, then `missing`, then `structure`.
+a model has no block there; `text` when a number differs (`text_kind` `digits`, red however
+short), when a table has a `text` or `missing` cell or a row or column only one model has, or
+when the text channel is ≥ 0.1 (red or amber by its band); `structure` when the words agree
+but the class, the segmentation or the position (layout ≥ 0.35) differs (grey: a choice, not a
+misreading); `convention` when the text differs only by convention rules (light grey, not
+counted as open: it is settled by its rule, not block by block); otherwise `agree`. The floors
+of the score (0.3 for a split, 0.5 for a label) order the clusters and weigh the page agreement
+but are never shown as a percentage of difference. *Next* goes through `text` (numbers first),
+then `missing`, then `structure`. A table cell is coloured by its kind (`cellBand`): `digits`
+and `missing` red, `text` amber or red by its distance, `convention` grey; *Next cell* and the
+table editor's painted cells cover `digits`, `text` and `missing` only, in that order.
 
 **Settling a block in the Studio** (`studio/consensus.ts`, `AnnotationPage.tsx`). The user's
 blocks and unverified drafts that read a cluster's area are found with the same thresholds as
@@ -90,7 +113,23 @@ approval lapses and an open Studio reloads (live `annotations_changed`, action `
 `domain/consensus.py::annotate_grid`) the user's grid is the reference: each finished model's
 Table block overlapping it best (IoU ≥ 0.3) is aligned onto it, and a cell's score is how much
 the models disagree *with each other* (mean pairwise distance, 1 between a reading and none),
-not with the user; a cell no model has scores none. The sheet paints partial and disagreeing
+not with the user; a cell no model has scores none. Each cell carries its `kind` and
+`conventions` as above; a convention-only cell is not painted, its readings still show.
+The editor's consensus bar counts the open cells by kind (numbers, words, missing; the
+convention-only cells apart) and works through them: *Next cell* (Alt+N,
+`studio/consensus.ts::nextDisputedCell`) selects the next open disputed cell, numbers first;
+*My reading is right* (Alt+V) marks the selected cell verified and moves on (never while a
+cell is being typed in, never an empty cell). The selected disputed cell's row is framed on
+the table's scan as an **estimated** band (`estimateRowBand`): the models give no cell
+geometry, so the row is placed by its index with 4 % of the rows (at least two) either side,
+full width, since blank and continuation lines make the proportion drift by a few rows and a
+column cannot be placed from the text; the frame says so (table view only, not the whole
+page). Open `digits` cells where the user's reading is a number one model read too and the
+other models left empty are grouped by column (`confirmGroups`, two cells or more): the group
+can be visited or confirmed at once after a confirmation that names the column, the count and
+the models (one undo step). On the right click a model that read nothing is offered last, as
+*Empty the cell*. The `spacing` rule keeps a space between two digits: `1523` and `15 23`
+are a `digits` difference. The sheet paints partial and disagreeing
 cells and shows the readings on hover.
 
 ---

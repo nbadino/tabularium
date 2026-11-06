@@ -34,23 +34,25 @@ const page: PageConsensus = {
   comparison: {
     models: ['p1', 'p2'],
     agreement: 0.81,
+    conventions: {},
     clusters: [
-      { id: 0, members: { p1: 0, p2: 0 }, parts: { p1: [0], p2: [0] }, split: false, label: 'Title', labels: { p1: 'Title', p2: 'Title' }, bbox: [0, 0, 100, 20], text: 0, layout: 0, label_agree: true, missing: [], score: 0, table: null },
+      { id: 0, members: { p1: 0, p2: 0 }, parts: { p1: [0], p2: [0] }, split: false, label: 'Title', labels: { p1: 'Title', p2: 'Title' }, bbox: [0, 0, 100, 20], text: 0, text_raw: 0, text_kind: 'same', conventions: [], layout: 0, label_agree: true, missing: [], score: 0, table: null },
       {
-        id: 1, members: { p1: 1, p2: 1 }, parts: { p1: [1], p2: [1] }, split: false, label: 'Table', labels: { p1: 'Table', p2: 'Table' }, bbox: [0, 30, 100, 90], text: 0.1, layout: 0, label_agree: true, missing: [], score: 0.1,
+        id: 1, members: { p1: 1, p2: 1 }, parts: { p1: [1], p2: [1] }, split: false, label: 'Table', labels: { p1: 'Table', p2: 'Table' }, bbox: [0, 30, 100, 90], text: 0.1, text_raw: 0.1, text_kind: 'text', conventions: [], layout: 0, label_agree: true, missing: [], score: 0.1,
         table: {
-          reference: 'p1', rows: 2, cols: 2, score: 0.1,
+          reference: 'p1', rows: 2, cols: 2, score: 0.1, raw_score: 0.1,
+          kinds: { same: 3, convention: 0, missing: 0, text: 1, digits: 0 }, conventions: {},
           cells: [
-            { r: 0, c: 0, rowspan: 1, colspan: 1, values: { p1: 'Nave', p2: 'Nave' }, score: 0 },
-            { r: 0, c: 1, rowspan: 1, colspan: 1, values: { p1: 'Capitano', p2: 'Capitano' }, score: 0 },
-            { r: 1, c: 0, rowspan: 1, colspan: 1, values: { p1: 'Aurora', p2: 'Aurora' }, score: 0 },
-            { r: 1, c: 1, rowspan: 1, colspan: 1, values: { p1: 'Rossi', p2: 'Russo' }, score: 0.4 },
+            { r: 0, c: 0, rowspan: 1, colspan: 1, values: { p1: 'Nave', p2: 'Nave' }, score: 0, raw_score: 0, kind: 'same', conventions: [] },
+            { r: 0, c: 1, rowspan: 1, colspan: 1, values: { p1: 'Capitano', p2: 'Capitano' }, score: 0, raw_score: 0, kind: 'same', conventions: [] },
+            { r: 1, c: 0, rowspan: 1, colspan: 1, values: { p1: 'Aurora', p2: 'Aurora' }, score: 0, raw_score: 0, kind: 'same', conventions: [] },
+            { r: 1, c: 1, rowspan: 1, colspan: 1, values: { p1: 'Rossi', p2: 'Russo' }, score: 0.4, raw_score: 0.4, kind: 'text', conventions: [] },
           ],
           extra_rows: [{ model: 'p2', index: 2, texts: ['Lampo', 'Bari'] }],
           extra_cols: [],
         },
       },
-      { id: 2, members: { p1: null, p2: 2 }, parts: { p2: [2] }, split: false, label: 'Note', labels: { p2: 'Note' }, bbox: [0, 95, 50, 99], text: 0, layout: 0, label_agree: true, missing: ['p1'], score: 1, table: null },
+      { id: 2, members: { p1: null, p2: 2 }, parts: { p2: [2] }, split: false, label: 'Note', labels: { p2: 'Note' }, bbox: [0, 95, 50, 99], text: 0, text_raw: 0, text_kind: 'same', conventions: [], layout: 0, label_agree: true, missing: ['p1'], score: 1, table: null },
     ],
   },
 }
@@ -182,6 +184,50 @@ describe('ModelOnlyClusters', () => {
     expect(screen.getByTestId('cell-1-1').className).toContain('color-sig-wash')
     await userEvent.click(screen.getByRole('button', { name: 'Next cell' }))
     expect(screen.getByTestId('reading-p2').querySelector('ins')).toHaveTextContent('u')
+  })
+})
+
+describe('Conventions', () => {
+  it('counts a table\'s cells by kind, names the convention rules, and does not count them as disputed', async () => {
+    setLocale('en')
+    const table = clusterOf(page, 1).table!
+    const lloyds: PageConsensus = {
+      ...page,
+      comparison: {
+        ...page.comparison!,
+        conventions: { dash: 1, leaders: 1 },
+        clusters: [{
+          ...clusterOf(page, 2),
+          members: { p1: 1, p2: 1 },
+          parts: { p1: [1], p2: [1] },
+          missing: [],
+          text_kind: 'digits',
+          conventions: ['dash', 'leaders'],
+          table: {
+            ...table,
+            cells: [
+              { r: 0, c: 0, rowspan: 1, colspan: 1, values: { p1: 'STEAMER—Owner', p2: 'STEAMER-Owner' }, score: 0, raw_score: 0.08, kind: 'convention', conventions: ['dash'] },
+              { r: 0, c: 1, rowspan: 1, colspan: 1, values: { p1: 'Year', p2: 'Year' }, score: 0, raw_score: 0, kind: 'same', conventions: [] },
+              { r: 1, c: 0, rowspan: 1, colspan: 1, values: { p1: 'Admiralen Iron', p2: 'Admiralen ... Iron' }, score: 0, raw_score: 0.3, kind: 'convention', conventions: ['leaders'] },
+              { r: 1, c: 1, rowspan: 1, colspan: 1, values: { p1: '18', p2: '' }, score: 1, raw_score: 1, kind: 'digits', conventions: [] },
+            ],
+            extra_rows: [],
+            kinds: { same: 1, convention: 2, missing: 0, text: 0, digits: 1 },
+            conventions: { dash: 1, leaders: 1 },
+          },
+        }],
+      },
+    }
+    render(<ModelOnlyClusters page={lloyds} clusters={lloyds.comparison!.clusters} selected={2} onSelect={() => {}} />)
+    expect(screen.getByTestId('chip-2')).toHaveTextContent('1 cells differ')
+    expect(screen.getByTestId('disputed-count')).toHaveTextContent('1 cells to check')
+    const kinds = screen.getByTestId('cell-kinds')
+    expect(kinds).toHaveTextContent('1 different number')
+    expect(kinds).toHaveTextContent('2 cells differ by convention only: dash 1 · dot leaders 1')
+    await userEvent.click(screen.getByTestId('cell-0-0'))
+    expect(screen.getByTestId('cell-kind')).toHaveTextContent('convention: dash')
+    render(<ConsensusSummary page={lloyds} loading={false} view="disagreement" onView={() => {}} onClose={() => {}} />)
+    expect(screen.getByTestId('page-conventions')).toHaveTextContent('Convention-only differences on this page: dash 1 · dot leaders 1')
   })
 })
 

@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { MutableRefObject } from 'react'
 import type { HeaderTemplate, KnownTableHeader, KnownTableHeadersOut, TableCell, TableGrid, TableGridOut, TableCheck, TableChecksOut } from '../../lib/types'
-import { applyHeaderTemplate, deleteTrack, emptyGrid, extractHeaderTemplate, fillDown, insertTrack, joinColumns, mergeKeepsEveryText, mergeRange, normalizeColumn, fractionsColumn, splitCell, transformColumnCase } from '../../lib/grid'
+import { applyHeaderTemplate, setVerified, deleteTrack, emptyGrid, extractHeaderTemplate, fillDown, insertTrack, joinColumns, mergeKeepsEveryText, mergeRange, normalizeColumn, fractionsColumn, splitCell, transformColumnCase } from '../../lib/grid'
 import type { ColumnOp, SheetSelection, TrackOp, UniverController } from './UniverSheet'
 import { useConfirm } from '../../app/confirm'
 import { univerGridSignature } from '../../lib/univerGrid'
@@ -14,7 +14,7 @@ import TablePageImage from './TablePageImage'
 import Splitter from './Splitter'
 import KnownHeaderDialog from './KnownHeaderDialog'
 import { API_BASE } from '../../lib/endpoints'
-import { charDiff, scoreBand, type GridConsensus } from '../consensus'
+import { cellBand, charDiff, confirmGroups, disputedCells, estimateRowBand, nextDisputedCell, type GridConsensus } from '../consensus'
 const UniverSheet = lazy(() => import('./UniverSheet'))
 
 function sumErrorMessage(check: TableCheck, t: (key: string, vars?: Record<string, string | number>) => string) {
@@ -231,7 +231,9 @@ export function TableWorkspacePanel({
     return () => { stale = true; clearTimeout(timer) }
   }, [grid, serverId])
   const consensusCells = new Map((consensus?.cells ?? []).map((cell) => [`${cell.r}:${cell.c}`, cell]))
-  const disputed = (consensus?.cells ?? []).filter((cell) => cell.score != null && scoreBand(cell.score) !== 'agree')
+  // A cell that differs only by a convention (a dash, dot leaders…) is not painted:
+  // it is no misreading. Its readings still show on hover and on right click.
+  const disputed = disputedCells((consensus?.cells ?? []).filter((cell) => cell.score != null))
   // A disputed cell the user has edited (source becomes 'manual') or verified is
   // resolved: violet instead of amber or red, so the remaining work stays visible.
   const currentCells = new Map((grid?.cells ?? []).map((cell) => [`${cell.r}:${cell.c}`, cell]))
@@ -242,22 +244,25 @@ export function TableWorkspacePanel({
   const open = disputed.filter((cell) => !isResolved(cell.r, cell.c))
   const disagreements = consensus && showConsensus
     ? {
-        partly: open.filter((cell) => scoreBand(cell.score!) === 'partly').map((cell) => [cell.r, cell.c] as [number, number]),
-        disagree: open.filter((cell) => scoreBand(cell.score!) === 'disagree').map((cell) => [cell.r, cell.c] as [number, number]),
+        partly: open.filter((cell) => cellBand(cell) === 'partly').map((cell) => [cell.r, cell.c] as [number, number]),
+        disagree: open.filter((cell) => cellBand(cell) === 'disagree').map((cell) => [cell.r, cell.c] as [number, number]),
         resolved: disputed.filter((cell) => isResolved(cell.r, cell.c)).map((cell) => [cell.r, cell.c] as [number, number]),
       }
     : undefined
   const cellChoices = consensus && showConsensus
     ? (row: number, column: number) => {
         const cell = consensusCells.get(`${row}:${column}`)
-        if (!cell || cell.score == null || scoreBand(cell.score) === 'agree') return []
+        if (!cell || cell.score == null || cell.kind === 'same') return []
         const mine = currentCells.get(`${row}:${column}`)?.text ?? ''
-        return consensus.models.flatMap((model) => {
+        // A model that read nothing would empty the cell: said so, and offered last.
+        const choices = consensus.models.flatMap((model) => {
           const value = cell.values[model.key]
-          return value == null || value === mine
-            ? []
-            : [{ label: t('consensus.useModel', { name: model.name, value: value || t('consensus.emptyValue') }), value }]
+          if (value == null || value === mine) return []
+          return [value.trim()
+            ? { label: t('consensus.useModel', { name: model.name, value }), value }
+            : { label: t('consensus.useModelEmpty', { name: model.name }), value }]
         })
+        return [...choices.filter((choice) => choice.value.trim()), ...choices.filter((choice) => !choice.value.trim())]
       }
     : undefined
   const cellHint = consensus && showConsensus
@@ -267,14 +272,21 @@ export function TableWorkspacePanel({
         const mine = (gridRef.current ?? grid)?.cells.find((item) => item.r === row && item.c === column)?.text ?? ''
         return (
           <div className="space-y-1" data-testid="consensus-hint">
+            {cell.kind !== 'same' && (
+              <div className="text-[11px] font-semibold" data-testid="consensus-hint-kind">
+                {cell.kind === 'convention'
+                  ? `${t('consensus.kind.convention')}: ${cell.conventions.map((rule) => t(`consensus.rule.${rule}`)).join(', ')}`
+                  : t(`consensus.kind.${cell.kind}`)}
+              </div>
+            )}
             <div className="text-[11px] text-[color:var(--color-ink-3)]">{t('consensus.mine')}: <span className="mono text-[color:var(--color-ink)]">{mine || '—'}</span></div>
             {consensus.models.map((model) => {
               const value = cell.values[model.key]
               return (
                 <div key={model.key}>
                   <span className="font-semibold">{model.name}: </span>
-                  {value == null
-                    ? <span className="italic text-[color:var(--color-ink-3)]">{t('consensus.noValue')}</span>
+                  {value == null || !value.trim()
+                    ? <span className="italic text-[color:var(--color-ink-3)]">{value == null ? t('consensus.noValue') : t('consensus.emptyValue')}</span>
                     // The model's reading as it is, with what differs from mine marked.
                     : <span className="mono">{charDiff(mine, value).filter((part) => part.kind !== 'del').map((part, index) =>
                         part.kind === 'same' ? <span key={index}>{part.text}</span>
@@ -286,6 +298,82 @@ export function TableWorkspacePanel({
         )
       }
     : undefined
+
+  // Working through the disagreements: the kinds still open, the next cell
+  // (numbers first), the cell's estimated place on the scan, and confirming a
+  // reading that is already right, one cell or a whole column's pattern.
+  const openKinds = { digits: 0, text: 0, missing: 0 }
+  for (const cell of open) if (cell.kind !== 'same' && cell.kind !== 'convention') openKinds[cell.kind] += 1
+  const conventionCells = (consensus?.cells ?? []).filter((cell) => cell.kind === 'convention').length
+  const goToCell = (cell: { r: number; c: number } | null) => {
+    if (!cell) return
+    sheetController?.select(cell.r, cell.c)
+    setActive({ r: cell.r, c: cell.c })
+    setSelection({ startRow: cell.r, startColumn: cell.c, endRow: cell.r, endColumn: cell.c })
+  }
+  const goNext = () => goToCell(nextDisputedCell(open, active))
+  const myText = (r: number, c: number) => (gridRef.current ?? grid)?.cells.find((cell) => cell.r === r && cell.c === c)?.text ?? ''
+  const verifyCells = (cells: { r: number; c: number }[]) => {
+    const current = gridRef.current
+    if (!current || !cells.length) return
+    const next = cells.reduce((acc, cell) => setVerified(acc, { startRow: cell.r, startColumn: cell.c, endRow: cell.r, endColumn: cell.c }, true), current)
+    if (univerGridSignature(next) === univerGridSignature(current) && next.cells.every((cell, i) => cell.verified === current.cells[i]?.verified)) return
+    remember(current)
+    applySnapshot(next)
+  }
+  const confirmAndNext = () => {
+    if (!active || !myText(active.r, active.c).trim()) return
+    const after = nextDisputedCell(open, active)
+    verifyCells([active])
+    if (after && (after.r !== active.r || after.c !== active.c)) goToCell(after)
+  }
+  const activeConsensus = active ? consensusCells.get(`${active.r}:${active.c}`) : undefined
+  const groups = consensus && showConsensus
+    ? confirmGroups(open, myText, consensus.models.map((model) => model.key))
+    : []
+  const modelName = (key: string) => consensus?.models.find((model) => model.key === key)?.name ?? key
+  const columnName = (c: number) => {
+    const letter = String.fromCharCode(65 + (c % 26))
+    const header = [0, 1].map((r) => myText(r, c).trim()).filter(Boolean).join(' ')
+    return header ? `${letter} (${header})` : letter
+  }
+  const confirmGroup = async (group: (typeof groups)[number]) => {
+    const ok = await confirm({
+      title: t('consensus.groupTitle'),
+      message: t('consensus.groupConfirm', {
+        n: group.cells.length,
+        column: columnName(group.column),
+        agree: group.agree.map(modelName).join(', '),
+        differ: group.differ.map(modelName).join(', '),
+      }),
+      acceptLabel: t('consensus.groupAccept', { n: group.cells.length }),
+    })
+    if (ok) verifyCells(group.cells)
+  }
+  const keysRef = useRef<{ goNext: () => void; confirmAndNext: () => void; editing: () => boolean }>({ goNext, confirmAndNext, editing: () => false })
+  keysRef.current = { goNext, confirmAndNext, editing: () => sheetController?.isEditing() ?? false }
+  useEffect(() => {
+    if (!consensus) return
+    // Captured before the sheet's own keys. The sheet keeps the focus in a hidden
+    // editable element even when nothing is typed: ask it whether a cell is being
+    // edited (the key would confirm the old text), and leave other fields alone.
+    const onKey = (event: KeyboardEvent) => {
+      if (!event.altKey || event.ctrlKey || event.metaKey) return
+      if (event.code !== 'KeyN' && event.code !== 'KeyV') return
+      const target = event.target
+      if (target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return
+      if (keysRef.current.editing()) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.code === 'KeyN') keysRef.current.goNext()
+      else keysRef.current.confirmAndNext()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [consensus])
+  const imageFocus = consensus && showConsensus && active && activeConsensus && activeConsensus.kind !== 'same' && grid && !showPage
+    ? { ...estimateRowBand(grid.rows, active.r), label: t('consensus.estimated', { row: active.r + 1, column: columnName(active.c) }) }
+    : null
 
   const activeProblems = active
     ? (checks?.checks ?? []).filter(
@@ -787,18 +875,59 @@ export function TableWorkspacePanel({
       )}
 
       {consensus && (
-        <div className="flex flex-wrap items-center gap-3 text-[11px] text-[color:var(--color-ink-2)]" data-testid="consensus-bar">
-          <span className="font-semibold text-[color:var(--color-ink)]">{tn('consensus.editorBar', open.length)}</span>
-          {disputed.length > open.length && <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 border border-[#7c3aed]" style={{ background: 'rgba(124, 58, 237, 0.3)' }} />{tn('consensus.resolvedCount', disputed.length - open.length)}</span>}
-          <span>{consensus.models.map((model) => model.name).join(' · ')}</span>
-          <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5" style={{ background: 'rgba(232, 161, 0, 0.45)' }} />{t('consensus.legendPartly')}</span>
-          <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 border border-[#a3000e]" style={{ background: 'rgba(163, 0, 14, 0.25)' }} />{t('consensus.legendDisagree')}</span>
-          <span>{t('consensus.editorHover')}</span>
-          <span>{t('consensus.editorRightClick')}</span>
-          <label className="ml-auto inline-flex items-center gap-1">
-            <input type="checkbox" checked={showConsensus} onChange={(event) => setShowConsensus(event.target.checked)} />
-            {t('consensus.editorToggle')}
-          </label>
+        <div className="space-y-1 text-[11px] text-[color:var(--color-ink-2)]" data-testid="consensus-bar">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="font-semibold text-[color:var(--color-ink)]">{tn('consensus.editorBar', open.length)}</span>
+            {openKinds.digits > 0 && <span className="font-semibold text-[color:var(--color-sig-text)]" data-testid="open-digits">{tn('consensus.kindCount.digits', openKinds.digits)}</span>}
+            {openKinds.text > 0 && <span className="font-semibold text-[color:var(--color-warn)]">{tn('consensus.kindCount.text', openKinds.text)}</span>}
+            {openKinds.missing > 0 && <span className="font-semibold text-[color:var(--color-sig-text)]">{tn('consensus.kindCount.missing', openKinds.missing)}</span>}
+            {conventionCells > 0 && <span title={t('consensus.conventionNotPainted')}>{tn('consensus.kindCount.convention', conventionCells)}</span>}
+            {disputed.length > open.length && <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 border border-[#7c3aed]" style={{ background: 'rgba(124, 58, 237, 0.3)' }} />{tn('consensus.resolvedCount', disputed.length - open.length)}</span>}
+            {showConsensus && open.length > 0 && (
+              <span className="ml-auto inline-flex items-center gap-1">
+                <button type="button" className="btn btn-primary btn-sm" aria-keyshortcuts="Alt+N" onClick={goNext}>
+                  {t('consensus.nextCell')} <kbd className="mono text-[10px]">Alt N</kbd>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  aria-keyshortcuts="Alt+V"
+                  disabled={!active || !myText(active.r, active.c).trim()}
+                  title={t('consensus.confirmMineHint')}
+                  onClick={confirmAndNext}
+                >
+                  {t('consensus.confirmMine')} <kbd className="mono text-[10px]">Alt V</kbd>
+                </button>
+              </span>
+            )}
+            <label className={`${showConsensus && open.length > 0 ? '' : 'ml-auto '}inline-flex items-center gap-1`}>
+              <input type="checkbox" checked={showConsensus} onChange={(event) => setShowConsensus(event.target.checked)} />
+              {t('consensus.editorToggle')}
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <span>{consensus.models.map((model) => model.name).join(' · ')}</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5" style={{ background: 'rgba(232, 161, 0, 0.45)' }} />{t('consensus.legendPartly')}</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 border border-[#a3000e]" style={{ background: 'rgba(163, 0, 14, 0.25)' }} />{t('consensus.legendDisagreeCell')}</span>
+            <span>{t('consensus.editorHover')}</span>
+            <span>{t('consensus.editorRightClick')}</span>
+          </div>
+          {groups.length > 0 && (
+            <ul className="space-y-0.5" data-testid="confirm-groups">
+              {groups.slice(0, 3).map((group) => (
+                <li key={`${group.column}-${group.agree.join()}`} className="flex flex-wrap items-center gap-2">
+                  <span>{t('consensus.groupLine', {
+                    n: group.cells.length,
+                    column: columnName(group.column),
+                    agree: group.agree.map(modelName).join(', '),
+                    differ: group.differ.map(modelName).join(', '),
+                  })}</span>
+                  <button type="button" className="btn btn-sm" onClick={() => goToCell(group.cells[0])}>{t('consensus.groupFirst')}</button>
+                  <button type="button" className="btn btn-sm" onClick={() => void confirmGroup(group)}>{t('consensus.groupAccept', { n: group.cells.length })}</button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
@@ -818,6 +947,7 @@ export function TableWorkspacePanel({
             imageSize={showPage ? pageImageSize : null}
             mode={showPage ? 'page' : 'crop'}
             onModeChange={pageImageUrl ? (next) => setShowPage(next === 'page') : undefined}
+            focus={imageFocus}
           />
         </div>
         <Splitter value={workspaceWidth * imageWidth / 100} min={workspaceWidth * 0.25} max={workspaceWidth * 0.65} side="left" label={t('table.imageWidth')} onChange={(width) => setImageWidth(width / workspaceWidth * 100)} onReset={() => setImageWidth(45)} />

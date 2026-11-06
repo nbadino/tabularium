@@ -292,3 +292,90 @@ def test_a_cell_only_one_model_has_scores_one():
     by_pos = {(c["r"], c["c"]): c for c in cs.annotate_grid(mine, {"A": a, "B": b})["cells"]}
     assert by_pos[(0, 2)]["values"] == {"A": "Note", "B": None}
     assert by_pos[(0, 2)]["score"] == 1.0
+
+
+# --- kinds of difference and conventions ------------------------------------
+# Cases from Lloyd's Daily Index, 1 April 1920 (OCRia-1 and Gemini on the same pages).
+
+
+@pytest.mark.parametrize(("a", "b", "rules"), [
+    ("Ar Mar 4—In pt Mar 14", "Ar Mar 4-In pt Mar 14", ["dash"]),
+    ("Admiralen Iron", "Admiralen ... ... ... Iron", ["leaders"]),
+    ("Ar Feb 27 [✠ Mar 11, 12", "Ar Feb 27 [✠Mar11,12", ["spacing"]),
+    ("Piraeus", "Piræus", ["ligature"]),
+    ("ʀ", "R", ["small_caps"]),
+    ("*v", "*V", ["case"]),
+    ("Lloyd’s", "Lloyd's", ["quotes"]),
+    ("Ar Dec 29—In pt Feb 4", "Ar Dec 29-In pt  Feb\n4", ["dash"]),
+])
+def test_a_difference_the_conventions_explain_is_classified_with_its_rules(a, b, rules):
+    found = cs.classify_difference(a, b)
+    assert found == {"kind": "convention", "conventions": rules}
+    assert cs.content_distance(a, b) == 0.0
+    assert cs.text_distance(a, b) > 0.0
+
+
+def test_two_rules_together_are_both_named():
+    found = cs.classify_difference("Aculeo ... Wood—Am", "Aculeo Wood-Am")
+    assert found == {"kind": "convention", "conventions": ["dash", "leaders"]}
+
+
+@pytest.mark.parametrize(("a", "b", "kind"), [
+    ("18", "", "digits"),               # a year one model dropped
+    ("Ar Mar 20", "Ar Mar 29", "digits"),
+    ("2594", None, "digits"),           # no aligned cell, and it was a number
+    ("B", "R", "text"),                 # a misreading, whatever its length
+    ("Aculeo Wood", "Aculoo ... Wood", "text"),  # leaders do not hide the misreading
+    ("Fire.", "", "missing"),
+    ("Wood", None, "missing"),
+    ("Genova", "Genova", "same"),
+    ("1523", "15 23", "digits"),        # a space between digits is not spacing
+    ("2594", "2 594", "digits"),
+])
+def test_other_differences_are_digits_text_or_missing(a, b, kind):
+    assert cs.classify_difference(a, b)["kind"] == kind
+
+
+def test_a_table_counts_its_cells_by_kind_and_by_rule():
+    table = cs.compare_tables({
+        "A": _grid([["STEAMER—Owner", "Year"], ["Adara", "18"], ["Aculeo", "Piraeus"]]),
+        "B": _grid([["STEAMER-Owner", "Year"], ["Adara", ""], ["Aculoo", "Piræus"]]),
+    })
+    by_pos = {(c["r"], c["c"]): c for c in table["cells"]}
+    assert by_pos[(0, 0)]["kind"] == "convention" and by_pos[(0, 0)]["score"] == 0.0
+    assert by_pos[(0, 0)]["raw_score"] > 0.0
+    assert by_pos[(1, 1)]["kind"] == "digits"
+    assert by_pos[(2, 0)]["kind"] == "text"
+    assert table["kinds"] == {"same": 2, "convention": 2, "missing": 0, "text": 1, "digits": 1}
+    assert table["conventions"] == {"dash": 1, "ligature": 1}
+
+
+def test_a_cluster_says_what_kind_of_difference_its_text_is():
+    page = cs.compare_page({
+        "A": [_block("Page-header", (0, 0, 100, 20), "LLOYD’S DAILY INDEX—Apr. 1")],
+        "B": [_block("Page-header", (0, 0, 100, 20), "LLOYD'S DAILY INDEX-Apr. 1")],
+    })
+    (cluster,) = page["clusters"]
+    assert cluster["text"] == 0.0 and cluster["text_raw"] > 0.0
+    assert cluster["text_kind"] == "convention"
+    assert cluster["conventions"] == ["dash", "quotes"]
+    assert page["conventions"] == {"dash": 1, "quotes": 1}
+    dated = cs.compare_page({
+        "A": [_block("Text", (0, 0, 100, 20), "Ar Mar 14—In pt Mar 23 and a long report that goes on")],
+        "B": [_block("Text", (0, 0, 100, 20), "Ar Mar 11-In pt Mar 23 and a long report that goes on")],
+    })
+    # One digit in a long text: a small distance, but a number, which comes first.
+    assert dated["clusters"][0]["text"] < 0.1
+    assert dated["clusters"][0]["text_kind"] == "digits"
+
+
+def test_the_table_editor_cells_carry_their_kind():
+    mine = _grid([["Nave", "Anno"], ["Adara", "18"]])
+    a = _grid([["Nave", "Anno"], ["Adara", "18"]])
+    b = _grid([["Nave", "Anno"], ["Adara", ""]])
+    c = _grid([["NAVE", "Anno"], ["Adara", "18"]])
+    out = cs.annotate_grid(mine, {"A": a, "B": b, "C": c})
+    by_pos = {(cell["r"], cell["c"]): cell for cell in out["cells"]}
+    assert by_pos[(1, 1)]["kind"] == "digits"
+    assert by_pos[(0, 0)]["kind"] == "convention" and by_pos[(0, 0)]["conventions"] == ["case"]
+    assert by_pos[(0, 0)]["score"] == 0.0

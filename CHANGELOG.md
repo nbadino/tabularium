@@ -7,6 +7,20 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **Model comparison tells conventions from misreadings.** Each difference between two readings
+  now has a kind: a *number* read differently or dropped, *different words*, a reading only one
+  model has, or a *convention only*: the same print written another way (dash, dot leaders,
+  spacing, ligature, small caps, upper/lower case, quotes), with the rules it needs named. Only
+  real differences are coloured and counted; numbers come first in *Next* and *Next cell*, and are
+  red however short. A table lists its cells by kind and by rule, and the page sums the rules it
+  meets, ready to be settled once per rule.
+- **Working through a table's disagreements in the table editor.** The bar counts the open cells
+  by kind and has *Next cell* (Alt+N, numbers first) and *My reading is right* (Alt+V: verified,
+  then the next one). The selected cell's row is framed on the scan as an estimated band. When a
+  model leaves empty a number you read as the other model does, again and again in one column (a
+  year dropped on every row with a blank *Reg*), the column is offered as a group to visit or
+  confirm at once.
+  Emptying a cell from a model that read nothing is now said as such and offered last.
 - **Pause, resume and stop a recognition from anywhere.** While a session runs, the top bar shows
   its progress (*Recognition 9/557*) with **Pause**, **Resume** and **Stop**; the same buttons are
   on the Results and Recognition pages. Pause finishes the page in hand and then waits without

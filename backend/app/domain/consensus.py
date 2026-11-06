@@ -18,6 +18,10 @@ same block", how much they disagree and why.
 - Tables are compared on their grids, not on their raw content (one model returns
   HTML, another OTSL): rows are aligned by sequence alignment on the row text, then
   columns on the aligned cells, so one extra row does not shift every later cell.
+- Differences that only the named convention rules explain (dash, dot leaders,
+  spacing, ligatures, small caps, case, quotes) are classified `convention` and set
+  aside by the distances; every other difference is `digits`, `text` or `missing`
+  (`classify_difference`). The raw distances are kept as `raw_score` / `text_raw`.
 - Page agreement is 1 - the area-weighted mean cluster score.
 """
 from __future__ import annotations
@@ -74,6 +78,140 @@ def words_distance(a: str | None, b: str | None) -> float:
         return " ".join(sorted(normalize_text(value).split()))
 
     return text_distance(bag(a), bag(b))
+
+
+# --- conventions --------------------------------------------------------------
+#
+# Two readings can differ only in how the same print is written down: an em dash
+# typed as a hyphen, dot leaders kept or dropped, `Piræus` or `Piraeus`, a small-cap
+# `ᴠ` as `V`. On a Lloyd's register a third of the differing cells are of this kind.
+# They are not misreadings, and counting them as such buried the real errors; nor
+# are they noise to throw away, since a training set must write them one way. So a
+# difference is *classified*: it is a `convention` difference only when the named
+# rules below explain all of it, and the rules it needed are listed, so the
+# researcher can settle each rule once (`conventions`) instead of cell by cell.
+
+# Applied in this order: leaders before spacing (a leader is dots between spaces),
+# small caps and ligatures before case.
+CONVENTIONS = ("dash", "quotes", "leaders", "spacing", "ligature", "small_caps", "case")
+
+_DASHES = re.compile(r"[‐‑‒–—―−]")
+_QUOTES = str.maketrans({"‘": "'", "’": "'", "‚": "'", "‛": "'", "′": "'",
+                         "“": '"', "”": '"', "„": '"', "«": '"', "»": '"'})
+# Two or more dots (or middle dots, or an ellipsis) with optional spaces between.
+_LEADERS = re.compile(r"(?:\s*(?:\.|·|…)){2,}\s*|\s*…\s*")
+# Whitespace not between two digits.
+_SPACING = re.compile(r"(?<!\d)\s+|\s+(?!\d)")
+_LIGATURES = str.maketrans({"æ": "ae", "Æ": "AE", "œ": "oe", "Œ": "OE", "ﬁ": "fi", "ﬂ": "fl", "ß": "ss"})
+# Small capitals (and the dotless i OCR uses for a small-cap I) as the capital they print.
+_SMALL_CAPS = str.maketrans({
+    "ᴀ": "A", "ʙ": "B", "ᴄ": "C", "ᴅ": "D", "ᴇ": "E", "ꜰ": "F", "ɢ": "G", "ʜ": "H", "ɪ": "I", "ı": "I",
+    "ᴊ": "J", "ᴋ": "K", "ʟ": "L", "ᴍ": "M", "ɴ": "N", "ᴏ": "O", "ᴘ": "P", "ʀ": "R", "ꜱ": "S", "ᴛ": "T",
+    "ᴜ": "U", "ᴠ": "V", "ᴡ": "W", "ʏ": "Y", "ᴢ": "Z",
+})
+
+
+def _convention(kind: str, text: str) -> str:
+    if kind == "dash":
+        return _DASHES.sub("-", text)
+    if kind == "quotes":
+        return text.translate(_QUOTES)
+    if kind == "leaders":
+        return _SPACE.sub(" ", _LEADERS.sub(" ", text)).strip()
+    if kind == "spacing":
+        # A space between two digits is not spacing: `1523` and `15 23` are two
+        # readings of a number (or two numbers), whatever the rule says.
+        return _SPACING.sub("", _SPACE.sub(" ", text))
+    if kind == "ligature":
+        return text.translate(_LIGATURES)
+    if kind == "small_caps":
+        return text.translate(_SMALL_CAPS)
+    if kind == "case":
+        return text.casefold()
+    raise ValueError(kind)
+
+
+def canonical_text(value: str | None, kinds: tuple[str, ...] = CONVENTIONS) -> str:
+    """`normalize_text` with the convention rules `kinds` applied (all by default)."""
+    text = normalize_text(value)
+    for kind in CONVENTIONS:
+        if kind in kinds:
+            text = _convention(kind, text)
+    return text
+
+
+def content_distance(a: str | None, b: str | None) -> float:
+    """`text_distance` once the conventions are set aside: what the readings disagree on."""
+    left, right = canonical_text(a), canonical_text(b)
+    if not left and not right:
+        return 0.0
+    return Levenshtein.distance(left, right) / max(len(left), len(right))
+
+
+_DIGITS = re.compile(r"\d+")
+
+# How much a kind of difference matters, for ordering and for combining pairs:
+# a number read differently first (a year, a tonnage, a date), then other words,
+# then a reading only some models have, then a matter of convention.
+DIFFERENCE_KINDS = ("same", "convention", "missing", "text", "digits")
+_RANK = {kind: rank for rank, kind in enumerate(DIFFERENCE_KINDS)}
+
+
+def classify_difference(a: str | None, b: str | None) -> dict:
+    """What kind of difference lies between two readings, and the conventions it needs.
+
+    `None` is no reading (a model without that cell). Numbers come first: if the
+    digits differ, even because one side is empty, the kind is `digits`. A
+    `convention` difference lists only the rules it cannot do without, so a cell
+    explained by the dash rule alone does not also count against `spacing`.
+    """
+    if a is None or b is None:
+        if a is None and b is None:
+            return {"kind": "same", "conventions": []}
+        present = a if b is None else b
+        kind = "digits" if _DIGITS.search(normalize_text(present)) else "missing"
+        return {"kind": kind, "conventions": []}
+    if normalize_text(a) == normalize_text(b):
+        return {"kind": "same", "conventions": []}
+    left, right = canonical_text(a), canonical_text(b)
+    if left == right:
+        needed = [
+            kind for kind in CONVENTIONS
+            if canonical_text(a, tuple(k for k in CONVENTIONS if k != kind))
+            != canonical_text(b, tuple(k for k in CONVENTIONS if k != kind))
+        ]
+        if not needed:
+            # Redundant rules (either alone would do): name every rule that changes something.
+            needed = [
+                kind for kind in CONVENTIONS
+                if _convention(kind, normalize_text(a)) != normalize_text(a)
+                or _convention(kind, normalize_text(b)) != normalize_text(b)
+            ]
+        return {"kind": "convention", "conventions": needed}
+    if _DIGITS.findall(left) != _DIGITS.findall(right):
+        return {"kind": "digits", "conventions": []}
+    if not left or not right:
+        return {"kind": "missing", "conventions": []}
+    return {"kind": "text", "conventions": []}
+
+
+def worst_kind(kinds) -> str:
+    return max(kinds, key=_RANK.__getitem__, default="same")
+
+
+def classify_readings(readings: list[str | None]) -> dict:
+    """`classify_difference` over every pair of readings: the worst kind, all conventions."""
+    kinds, conventions = [], set()
+    for a, b in combinations(readings, 2):
+        found = classify_difference(a, b)
+        kinds.append(found["kind"])
+        conventions.update(found["conventions"])
+    return {"kind": worst_kind(kinds), "conventions": [k for k in CONVENTIONS if k in conventions]}
+
+
+def _bag(value: str | None) -> str:
+    """The words of a text sorted (conventions aside for the order), for `split` clusters."""
+    return " ".join(sorted(normalize_text(value).split(), key=lambda word: (canonical_text(word), word)))
 
 
 def _box(block: dict) -> list[float]:
@@ -236,7 +374,9 @@ def _align_grids(ref: list[list[str]], other: list[list[str]]):
     """Map reference rows/columns to the other grid's (None = no counterpart)."""
     ref_rows = [" ".join(row) for row in ref]
     other_rows = [" ".join(row) for row in other]
-    row_path = _align(len(ref), len(other), lambda i, j: text_distance(ref_rows[i], other_rows[j]))
+    # Aligned on the content, conventions aside: dot leaders kept by one model and
+    # dropped by the other must not push a row off its counterpart.
+    row_path = _align(len(ref), len(other), lambda i, j: content_distance(ref_rows[i], other_rows[j]))
     row_pairs = [(i, j) for i, j in row_path if i is not None and j is not None]
 
     ref_cols = len(ref[0]) if ref else 0
@@ -245,7 +385,7 @@ def _align_grids(ref: list[list[str]], other: list[list[str]]):
     def column_cost(a: int, b: int) -> float:
         if not row_pairs:
             return 1.0
-        return sum(text_distance(ref[i][a], other[j][b]) for i, j in row_pairs) / len(row_pairs)
+        return sum(content_distance(ref[i][a], other[j][b]) for i, j in row_pairs) / len(row_pairs)
 
     col_path = _align(ref_cols, other_cols, column_cost)
     row_map = {i: j for i, j in row_path if i is not None}
@@ -259,9 +399,12 @@ def compare_tables(grids: dict[str, dict]) -> dict:
     """Cell-by-cell disagreement, laid out on the first model's grid.
 
     Every reference cell carries each model's value at the aligned position (None when
-    that model has no matching row or column) and a score: the mean distance from the
-    reference value, 1 for a model without the cell. Rows and columns only another
+    that model has no matching row or column), a score: the mean `content_distance`
+    from the reference value (conventions aside), 1 for a model without the cell, the
+    same with conventions counted (`raw_score`), and the `kind` of difference with
+    the `conventions` it needs (`classify_readings`). Rows and columns only another
     model has are listed apart and count as disagreeing cells in the table score.
+    `kinds` and `conventions` count the cells of each kind and of each rule.
     """
     keys = list(grids)
     reference = keys[0]
@@ -275,16 +418,19 @@ def compare_tables(grids: dict[str, dict]) -> dict:
         if not (0 <= r < len(ref) and ref and 0 <= c < len(ref[0])):
             continue
         values: dict[str, str | None] = {reference: ref[r][c]}
-        distances = []
+        distances, raw = [], []
         for key, matrix in others.items():
             row_map, col_map, _rows, _cols = alignments[key]
             j, b = row_map.get(r), col_map.get(c)
             if j is None or b is None:
                 values[key] = None
                 distances.append(1.0)
+                raw.append(1.0)
             else:
                 values[key] = matrix[j][b]
-                distances.append(text_distance(ref[r][c], matrix[j][b]))
+                distances.append(content_distance(ref[r][c], matrix[j][b]))
+                raw.append(text_distance(ref[r][c], matrix[j][b]))
+        found = classify_readings([values[reference], *(values[key] for key in others)])
         cells.append({
             "r": r,
             "c": c,
@@ -292,6 +438,8 @@ def compare_tables(grids: dict[str, dict]) -> dict:
             "colspan": int(cell.get("colspan", 1)),
             "values": values,
             "score": sum(distances) / len(distances) if distances else 0.0,
+            "raw_score": sum(raw) / len(raw) if raw else 0.0,
+            **found,
         })
 
     extra_rows, extra_cols = [], []
@@ -307,7 +455,10 @@ def compare_tables(grids: dict[str, dict]) -> dict:
             extra_cells += len(matrix) - len(rows)
     total = len(cells) + extra_cells
     score = (sum(cell["score"] for cell in cells) + extra_cells) / total if total else 0.0
+    raw_score = (sum(cell["raw_score"] for cell in cells) + extra_cells) / total if total else 0.0
     return {
+        **_tally(cells),
+        "raw_score": raw_score,
         "reference": reference,
         "rows": len(ref),
         "cols": len(ref[0]) if ref else 0,
@@ -318,12 +469,23 @@ def compare_tables(grids: dict[str, dict]) -> dict:
     }
 
 
+def _tally(cells: list[dict]) -> dict:
+    """Cells of each kind of difference, and of each convention rule."""
+    kinds = {kind: 0 for kind in DIFFERENCE_KINDS}
+    conventions = {kind: 0 for kind in CONVENTIONS}
+    for cell in cells:
+        kinds[cell["kind"]] += 1
+        for rule in cell["conventions"]:
+            conventions[rule] += 1
+    return {"kinds": kinds, "conventions": {rule: n for rule, n in conventions.items() if n}}
+
+
 def _pair_distance(a: str | None, b: str | None) -> float:
     if a is None and b is None:
         return 0.0
     if a is None or b is None:
         return 1.0
-    return text_distance(a, b)
+    return content_distance(a, b)
 
 
 def annotate_grid(reference: dict, grids: dict[str, dict]) -> dict:
@@ -333,7 +495,9 @@ def annotate_grid(reference: dict, grids: dict[str, dict]) -> dict:
     grid is aligned onto it like in `compare_tables`. A cell's `score` is how much
     the models disagree *with each other* (mean pairwise distance, 1 between a
     reading and no reading), not with the user: two models that agree point at
-    nothing, whatever the user typed. A cell no model has scores None.
+    nothing, whatever the user typed. The distance sets the conventions aside; the
+    cell's `kind` and `conventions` say what kind of difference it is. A cell no
+    model has scores None, kind `same`.
     """
     ref = _dense(reference)
     others = {key: _dense(grid) for key, grid in grids.items()}
@@ -351,9 +515,11 @@ def annotate_grid(reference: dict, grids: dict[str, dict]) -> dict:
         readings = list(values.values())
         if all(value is None for value in readings):
             score = None
+            found = {"kind": "same", "conventions": []}
         else:
             score = _mean_pairwise(readings, _pair_distance)
-        cells.append({"r": r, "c": c, "values": values, "score": score})
+            found = classify_readings(readings)
+        cells.append({"r": r, "c": c, "values": values, "score": score, **found})
     extra_rows = [
         {"model": key, "index": j, "texts": list(others[key][j])}
         for key, (_rm, _cm, rows, _cols) in alignments.items()
@@ -403,9 +569,19 @@ def compare_page(outputs: dict[str, list[dict]]) -> dict:
         table = compare_tables(grids) if len(grids) >= 2 and len(grids) == len(pieces) else None
         if table is not None:
             text = table["score"]
+            text_raw = table["raw_score"]
+            found = {
+                "kind": worst_kind(kind for kind, n in table["kinds"].items() if n),
+                "conventions": list(table["conventions"]),
+            }
         else:
             texts = [" ".join(str(block.get("content") or "") for block in blocks) for blocks in pieces.values()]
-            text = _mean_pairwise(texts, words_distance if split else text_distance)
+            if split:
+                # Pieces joined in reading order can interleave columns: words, any order.
+                texts = [_bag(value) for value in texts]
+            text = _mean_pairwise(texts, content_distance)
+            text_raw = _mean_pairwise(texts, text_distance)
+            found = classify_readings(texts)
         layout = _mean_pairwise(list(model_boxes.values()), layout_distance)
         if missing:
             score = 1.0
@@ -422,6 +598,10 @@ def compare_page(outputs: dict[str, list[dict]]) -> dict:
             "labels": model_labels,
             "bbox": union,
             "text": text,
+            # The text channel with the conventions counted, and what kind of difference it is.
+            "text_raw": text_raw,
+            "text_kind": found["kind"],
+            "conventions": found["conventions"],
             "layout": layout,
             "label_agree": label_agree,
             "missing": missing,
@@ -434,4 +614,19 @@ def compare_page(outputs: dict[str, list[dict]]) -> dict:
         disagreement = sum(_area(c["bbox"]) * c["score"] for c in clusters) / weight
     else:
         disagreement = 0.0
-    return {"models": keys, "agreement": 1.0 - disagreement, "clusters": clusters}
+    # How often each convention rule turns up on the page: a table's cells one by
+    # one, any other block once. It is what the researcher settles rule by rule.
+    conventions = {kind: 0 for kind in CONVENTIONS}
+    for c in clusters:
+        if c["table"] is not None:
+            for kind, n in c["table"]["conventions"].items():
+                conventions[kind] += n
+        else:
+            for kind in c["conventions"]:
+                conventions[kind] += 1
+    return {
+        "models": keys,
+        "agreement": 1.0 - disagreement,
+        "clusters": clusters,
+        "conventions": {kind: n for kind, n in conventions.items() if n},
+    }
