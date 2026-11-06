@@ -205,6 +205,7 @@ export const en: Dict = {
   },
 
   consensus: {
+    saveSection: "Save the active model as a saved model",
     runPages: "Pages of the comparison",
     pageWaiting: "waiting for the second model",
     pageFailed: "a model did not answer",
@@ -397,6 +398,12 @@ export const en: Dict = {
     unreachableNotice:
       'The endpoint {url} is not responding: check model and provider on the Models page before starting a recognition.',
     localOcr: 'Local OCR',
+    savedModels: "Saved models (API services)",
+    otherEngines: "Other engines",
+    activeModelNamed: "Active model: {name}",
+    activeModelOff: "Active model (off)",
+    savedModelHint: "A saved model with its own key: used as it is, nothing to start or stop. The active model stays as it is.",
+    savedModelWhere: "via API, its own key",
     servedModel: 'Configured model',
     engine: 'Engine',
     servedModelHint: 'Uses the model and destination chosen in Models. The review and export workflow stays the same.',

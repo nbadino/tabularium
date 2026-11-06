@@ -133,22 +133,28 @@ def create(
     provider: str,
     endpoint: str | None,
     release: dict[str, Any] | None = None,
+    profile_id: int | None = None,
 ) -> int:
     """Insert the job, the session and its pages. Returns the session id.
 
     `release` is the cloud instance the run uses (`resource_id`, `credential_ref`):
     the end-of-run release must stop that one, whatever the config says by then.
+    `profile_id` is the saved model the run reads with instead of the active one
+    (kept with the job's command, read back by `run_profile_id`).
     """
     placeholders = ",".join("?" for _ in page_ids)
     with connect() as conn:
         # The busy checks below guard nothing unless no other start can slip in
         # between them and the insert: take the write lock first.
         conn.execute("BEGIN IMMEDIATE")
-        if engine == "model":
+        # One run at a time on the active model (one served model, one GPU). A saved
+        # model is a service of its own, reached with its own key: it does not wait.
+        if engine == "model" and profile_id is None:
             active = conn.execute(
-                "SELECT id FROM recognition_runs "
-                "WHERE engine='model' AND state IN ('queued','running') "
-                "ORDER BY id LIMIT 1"
+                "SELECT r.id FROM recognition_runs r LEFT JOIN jobs j ON j.id = r.job_id "
+                "WHERE r.engine='model' AND r.state IN ('queued','running') "
+                "AND (j.command_json IS NULL OR json_extract(j.command_json, '$.profile_id') IS NULL) "
+                "ORDER BY r.id LIMIT 1"
             ).fetchone()
             if active is not None:
                 raise ModelBusy(int(active["id"]))
@@ -181,7 +187,10 @@ def create(
                 provider,
                 "queued",
                 _now(),
-                json.dumps({"page_ids": page_ids, "engine": engine, "release": release or {}}),
+                json.dumps({
+                    "page_ids": page_ids, "engine": engine, "release": release or {},
+                    "profile_id": profile_id,
+                }),
                 "persisted-results-mark-interrupted",
             ),
         )
@@ -261,6 +270,17 @@ def fail(run_id: int, job_id: int | None, *, error: str, ended: str) -> None:
             "WHERE id=COALESCE(?, (SELECT job_id FROM recognition_runs WHERE id=?))",
             (error, ended, ended, job_id, run_id),
         )
+
+
+def run_profile_id(job_id: int | None) -> int | None:
+    """The saved model a run reads with (see `create`); None: the active model."""
+    with connect() as conn:
+        row = conn.execute("SELECT command_json FROM jobs WHERE id=?", (job_id,)).fetchone()
+    try:
+        value = json.loads(row["command_json"] or "{}").get("profile_id") if row else None
+    except (TypeError, ValueError, AttributeError):
+        value = None
+    return int(value) if isinstance(value, int) else None
 
 
 def release_target(job_id: int | None) -> dict[str, Any]:

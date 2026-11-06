@@ -147,6 +147,7 @@ def create_run(
     stop_policy: str = "disable_inference",
     owner_id: int | None = None,
     lang: str | None = None,
+    profile_id: int | None = None,
 ) -> dict[str, Any]:
     unique_ids = list(dict.fromkeys(int(value) for value in page_ids))
     if not unique_ids:
@@ -159,6 +160,12 @@ def create_run(
         raise HTTPException(status_code=422, detail="modalità di aggiornamento non valida")
     if stop_policy not in {"none", "disable_inference"}:
         raise HTTPException(status_code=422, detail="politica di arresto non valida")
+
+    if engine == "model" and profile_id is not None:
+        return _create_profile_run(
+            project_id, unique_ids, profile_id, mode=mode, model_mode=model_mode,
+            owner_id=owner_id, lang=lang,
+        )
 
     cfg = inference.get_inference_config()
     if engine == "model" and not cfg.get("enabled", True):
@@ -223,6 +230,49 @@ def create_run(
         raise HTTPException(
             status_code=404, detail="una o più pagine non appartengono al progetto"
         ) from exc
+    _start_worker(run_id)
+    return get_run(run_id)
+
+
+def _create_profile_run(
+    project_id: int,
+    page_ids: list[int],
+    profile_id: int,
+    *,
+    mode: str,
+    model_mode: str,
+    owner_id: int | None,
+    lang: str | None,
+) -> dict[str, Any]:
+    """A run on a saved model (a compute profile): an API service with its own key.
+
+    Nothing is activated, served or stopped: the active model stays as it is, the
+    run reaches the saved model as a consensus run does (`client_for_profile`).
+    """
+    from ..adapters import compute_profiles as profilestore
+
+    profile = profilestore.get(profile_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail=msg("saved_model_not_found", lang))
+    try:
+        run_id = runstore.create(
+            project_id,
+            page_ids,
+            engine="model",
+            mode=mode,
+            model_mode=model_mode,
+            stop_policy="none",
+            owner_id=owner_id,
+            model_name=str(profile.get("name") or profile.get("served_model_name") or ""),
+            adapter_id=str(profile.get("model_adapter_id") or ""),
+            provider=str(profile.get("provider") or "custom"),
+            endpoint=str(profile.get("endpoint") or "") or None,
+            profile_id=profile_id,
+        )
+    except runstore.PagesBusy as exc:
+        raise HTTPException(status_code=409, detail=msg("pages_in_active_run", lang, run=exc.run_id)) from exc
+    except runstore.MissingPages as exc:
+        raise HTTPException(status_code=404, detail="una o più pagine non appartengono al progetto") from exc
     _start_worker(run_id)
     return get_run(run_id)
 
@@ -342,7 +392,18 @@ def _worker(run_id: int, cancel: threading.Event) -> None:
             model_mode=run["model_mode"],
             recognition_run_id=run_id,
         )
-        client = inference.get_vllm_client() if run["engine"] == "model" else None
+        client = None
+        if run["engine"] == "model":
+            profile_id = runstore.run_profile_id(run["job_id"])
+            if profile_id is None:
+                client = inference.get_vllm_client()
+            else:
+                from ..adapters import compute_profiles as profilestore
+
+                profile = profilestore.get(profile_id)
+                if profile is None:
+                    raise RuntimeError("il modello salvato di questa sessione è stato eliminato")
+                client = inference.client_for_profile(profile)
         engine = ocrmod.OcrEngine() if run["engine"] == "ocr" else None
         if engine is not None and not engine.available:
             raise RuntimeError("nessun motore OCR locale disponibile")

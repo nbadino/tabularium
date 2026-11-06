@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { projectPath } from '../app/projectPaths'
 import { Link, useSearchParams } from 'react-router'
 import { apiGet, apiPost } from '../lib/api'
-import ConsensusPanel from './ConsensusPanel'
+import ConsensusPanel, { type SavedModel } from './ConsensusPanel'
 import { ApiError } from '../lib/api'
 import type { PageItem, PrefillEngines, RecognitionRun, SystemInfo } from '../lib/types'
-import { defaultEngine } from '../lib/defaultEngine'
+import { defaultRecognitionEngine, savedModelOf, type RecognitionEngine } from '../lib/defaultEngine'
 import { Badge, Collapsible, ErrorNotice, Field, Loading, Modal, Module, Notice, Progress, PageHeader } from '../app/ui'
 import { useProjects, useRouteProjectId, writeActiveProject } from '../app/activeProject'
 import { syncInferenceFromBackend, useInference } from '../app/inference'
@@ -111,7 +111,12 @@ export default function RecognizePage() {
   const [runs, setRuns] = useState<RecognitionRun[]>([])
   const [modelRuntime, setModelRuntime] = useState<ModelRuntimeInfo[]>([])
   const [current, setCurrent] = useState<RecognitionRun | null>(null)
-  const [engine, setEngine] = useState<'model' | 'ocr'>(() => defaultEngine(null, inference))
+  const [engine, setEngine] = useState<RecognitionEngine>(() => defaultRecognitionEngine(null, inference, []))
+  // Saved models (compute profiles): API services with their own key, nothing to
+  // serve or stop. Shared with the comparison panel, which saves and deletes them.
+  const [savedModels, setSavedModels] = useState<SavedModel[]>([])
+  const savedModelId = savedModelOf(engine)
+  const savedModel = savedModelId == null ? null : savedModels.find((item) => item.id === savedModelId) ?? null
   const [disableAfter, setDisableAfter] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
@@ -129,6 +134,7 @@ export default function RecognizePage() {
       apiGet<{ items: ModelRuntimeInfo[] }>('/models').then((out) => setModelRuntime(out.items)),
       apiGet<PrefillEngines>('/system/prefill-engines').then(setEngines),
       apiGet<SystemInfo>('/system/info').then((info) => setCaps(info.capabilities ?? null)),
+      apiGet<{ items: SavedModel[] }>('/consensus/profiles').then((out) => setSavedModels(out.items ?? [])),
     ]).catch(() => {})
   }, [])
 
@@ -137,11 +143,18 @@ export default function RecognizePage() {
   // warning. The user's explicit choice always wins.
   useEffect(() => {
     if (engineTouched) return
-    setEngine(defaultEngine(
+    setEngine(defaultRecognitionEngine(
       engines ? { recommended: engines.recommended, ocrAvailable: !!engines.ocr?.available } : null,
       inference,
+      savedModels,
     ))
-  }, [engines, engineTouched, inference])
+  }, [engines, engineTouched, inference, savedModels])
+  // A saved model deleted from the comparison panel: back to the default.
+  useEffect(() => {
+    if (savedModelId != null && savedModels.length > 0 && !savedModel) {
+      setEngineTouched(false)
+    }
+  }, [savedModelId, savedModel, savedModels.length])
 
   const loadRuns = async (pid: number) => {
     try {
@@ -242,7 +255,7 @@ export default function RecognizePage() {
   // La disponibilità viene dal ping *live* di `prefill-engines` quando c'è:
   // lo store può essere vecchio (configurata altrove o pagina ricaricata).
   const modelAvailable = engines ? engines.model.available : inference.available
-  const modelReady = engine === 'ocr' ? ocrReady : inference.enabled && modelAvailable
+  const modelReady = engine === 'ocr' ? ocrReady : savedModelId != null ? savedModel != null : inference.enabled && modelAvailable
   // Su una macchina senza CUDA locale «l'endpoint non risponde» è il sintomo,
   // non la causa: mostrarli entrambi manda a controllare un endpoint che non
   // potrà mai rispondere. Vince la causa, che dice anche come uscirne.
@@ -305,7 +318,8 @@ export default function RecognizePage() {
     try {
       const run = await apiPost<RecognitionRun>(`/projects/${projectId}/recognition-runs`, {
         page_ids: [...selected],
-        engine,
+        engine: savedModelId != null ? 'model' : engine,
+        ...(savedModelId != null ? { profile_id: savedModelId } : {}),
         mode,
         model_mode: 'native',
         stop_policy: canManageInference && disableAfter && engine === 'model' ? 'disable_inference' : 'none',
@@ -465,16 +479,30 @@ export default function RecognizePage() {
                 value={engine}
                 onChange={(e) => {
                   setEngineTouched(true)
-                  setEngine(e.target.value as 'model' | 'ocr')
+                  setEngine(e.target.value as RecognitionEngine)
                 }}
                 className="fld"
+                data-testid="engine"
               >
-                <option value="model" disabled={!inference.enabled || !modelAvailable}>{t('recognition.servedModel')}</option>
-                <option value="ocr">{t('recognition.localOcr')}</option>
+                {savedModels.length > 0 && (
+                  <optgroup label={t('recognition.savedModels')}>
+                    {savedModels.map((item) => (
+                      <option key={item.id} value={`profile:${item.id}`}>{item.name}</option>
+                    ))}
+                  </optgroup>
+                )}
+                <optgroup label={t('recognition.otherEngines')}>
+                  <option value="model" disabled={!inference.enabled || !modelAvailable}>
+                    {inference.enabled
+                      ? t('recognition.activeModelNamed', { name: nameOf(inference.adapterId) ?? (inference.model || '—') })
+                      : t('recognition.activeModelOff')}
+                  </option>
+                  <option value="ocr">{t('recognition.localOcr')}</option>
+                </optgroup>
               </select>
             </Field>
             <p className="mt-1 text-[11px] text-[color:var(--color-ink-2)]">
-              {t(engine === 'model' ? 'recognition.servedModelHint' : 'recognition.localOcrHint')}
+              {t(savedModelId != null ? 'recognition.savedModelHint' : engine === 'model' ? 'recognition.servedModelHint' : 'recognition.localOcrHint')}
             </p>
             {engine === 'model' && !inference.isCloud && runtimeWarning?.vram_warning && (
               <Notice tone="warn">{runtimeWarning.vram_warning}</Notice>
@@ -508,11 +536,15 @@ export default function RecognizePage() {
             <div className="mt-3 border-y border-[color:var(--color-rule)] py-2">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-[13px] font-semibold">{engine === 'model' ? nameOf(inference.adapterId) ?? (inference.model || '—') : t('recognition.localOcr')}</div>
+                  <div className="text-[13px] font-semibold">
+                    {savedModel ? savedModel.name : engine === 'model' ? nameOf(inference.adapterId) ?? (inference.model || '—') : t('recognition.localOcr')}
+                  </div>
                   <div className="mono truncate text-[11px] text-[color:var(--color-ink-3)]">
-                    {engine === 'model'
-                      ? inference.provider ? t(`recognition.provider.${inference.provider}`) : t(inference.isCloud ? 'recognition.locationCloud' : 'recognition.locationLocal')
-                      : t('recognition.locationCpu')}
+                    {savedModel
+                      ? `${savedModel.served_model_name} · ${t('recognition.savedModelWhere')}`
+                      : engine === 'model'
+                        ? inference.provider ? t(`recognition.provider.${inference.provider}`) : t(inference.isCloud ? 'recognition.locationCloud' : 'recognition.locationLocal')
+                        : t('recognition.locationCpu')}
                   </div>
                 </div>
                 <Badge tone={modelReady ? 'ok' : 'warn'}>
@@ -527,9 +559,11 @@ export default function RecognizePage() {
                         : t('recognition.modelUnreachable')}
                 </Badge>
               </div>
-              <Link to="/modelli" className="mt-2 inline-block text-[11px] font-semibold no-underline">
-                {inference.enabled ? t('recognition.changeModel') : t('recognition.chooseModel')}
-              </Link>
+              {engine === 'model' && (
+                <Link to="/modelli" className="mt-2 inline-block text-[11px] font-semibold no-underline">
+                  {inference.enabled ? t('recognition.changeModel') : t('recognition.chooseModel')}
+                </Link>
+              )}
             </div>
             {engine === 'model' && canManageInference && (
               <label className="mt-3 flex items-start gap-2 text-[12px]">
@@ -543,6 +577,7 @@ export default function RecognizePage() {
           </Module>
 
           <ConsensusPanel
+            onProfilesChange={setSavedModels}
             projectId={projectId}
             pageIds={[...selected]}
             canManage={canManageInference}

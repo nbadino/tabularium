@@ -54,6 +54,7 @@ export default function ConsensusPanel({
   pageIds,
   canManage,
   currentModel,
+  onProfilesChange,
 }: {
   projectId: number | ''
   pageIds: number[]
@@ -61,6 +62,8 @@ export default function ConsensusPanel({
   canManage: boolean
   /** Display name of the model chosen in Models, proposed as the saved name. */
   currentModel: string
+  /** The saved models after a load, a save or a delete (the Recognition engines). */
+  onProfilesChange?: (items: SavedModel[]) => void
 }) {
   const { t, tn } = useI18n()
   const confirm = useConfirm()
@@ -77,6 +80,8 @@ export default function ConsensusPanel({
   const loadProfiles = useCallback(async () => {
     const out = await apiGet<{ items: SavedModel[] }>('/consensus/profiles')
     setProfiles(out.items)
+    onProfilesChange?.(out.items)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => { void loadProfiles().catch(setError) }, [loadProfiles])
@@ -225,14 +230,16 @@ export default function ConsensusPanel({
       )}
 
       {canManage && (
-        <div className="mt-3 border-t border-[color:var(--color-rule)] pt-2">
-          <label className="block">
+        // Saving is done once per model: kept folded, out of the way of comparing.
+        <details className="mt-3 border-t border-[color:var(--color-rule)] pt-2" data-testid="save-model">
+          <summary className="cursor-pointer text-[11px] font-semibold text-[color:var(--color-ink-2)]">{t('consensus.saveSection')}</summary>
+          <label className="mt-2 block">
             <span className="lbl">{t('consensus.saveName')}</span>
             <input className="fld" value={name} placeholder={currentModel} onChange={(e) => setName(e.target.value)} />
           </label>
           <button type="button" className="btn mt-2 w-full" disabled={busy || !(name || currentModel).trim()} onClick={() => void save()}>{t('consensus.saveCurrent')}</button>
           <p className="mt-1 text-[11px] text-[color:var(--color-ink-3)]">{t('consensus.saveHint')}</p>
-        </div>
+        </details>
       )}
 
       <button type="button" className="btn btn-primary mt-3 w-full" disabled={!canStart} onClick={() => void start()}>
@@ -263,7 +270,8 @@ export default function ConsensusPanel({
                 const left = page.open ? page.open.digits + page.open.text + page.open.missing : 0
                 return (
                   <li key={page.page_id} className="flex flex-wrap items-baseline gap-x-2 border-b border-[color:var(--color-rule)] pb-1 text-[11px]">
-                    <Link to={projectPath(run.project_id, 'studio', { consensus: 1, page: page.page_id })} className="mono min-w-0 flex-1 truncate font-semibold" title={page.name}>
+                    {/* The file on a line of its own: the narrow column truncated it to «L…». */}
+                    <Link to={projectPath(run.project_id, 'studio', { consensus: 1, page: page.page_id })} className="mono block w-full truncate font-semibold" title={page.name}>
                       {page.name.split('/').pop()}
                     </Link>
                     <span className="mono text-[color:var(--color-ink-3)]" title={run.models.map((m) => `${m.name}: ${t(`consensus.state.${page.states[m.key] ?? 'queued'}`)}`).join(' · ')}>
