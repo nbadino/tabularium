@@ -4,22 +4,30 @@
  * selected pages. The run never writes annotations; the Studio shows its result.
  * Once it has ended, one model's reading can become the drafts of the run's pages
  * (*Use as the base*), so the comparison doubles as the recognition.
+ *
+ * A saved model is reached with the API key of the user who starts the run: each
+ * user adds their own here (write-only, never shown back), and a model they have
+ * no key for cannot be picked.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router'
-import { apiDelete, apiGet, apiPost } from '../lib/api'
+import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
 import { useI18n } from '../i18n'
 import { useConfirm } from '../app/confirm'
 import { Badge, ErrorNotice, Module } from '../app/ui'
 import { projectPath } from '../app/projectPaths'
 import type { AdoptResult } from '../studio/consensus'
+import { canUseSavedModel } from '../lib/defaultEngine'
 
 export interface SavedModel {
   id: number
   name: string
   model_adapter_id: string
   served_model_name: string
-  has_credential: boolean
+  /** The model reaches a paid API: a user needs their own key to run it. */
+  key_required: boolean
+  /** The current user has added their own key (its value is never sent back). */
+  has_key: boolean
 }
 
 export interface ConsensusRun {
@@ -139,13 +147,35 @@ export default function ConsensusPanel({
     }
   }
 
+  const saveKey = async (profile: SavedModel, apiKey: string) => {
+    try {
+      await apiPut(`/consensus/profiles/${profile.id}/key`, { api_key: apiKey })
+      await loadProfiles()
+      return true
+    } catch (e) {
+      setError(e)
+      return false
+    }
+  }
+
+  const removeKey = async (profile: SavedModel) => {
+    if (!await confirm({ title: t('consensus.removeKeyTitle'), message: t('consensus.removeKeyConfirm', { name: profile.name }), acceptLabel: t('consensus.removeKey') })) return
+    try {
+      await apiDelete(`/consensus/profiles/${profile.id}/key`)
+      setChosen((prev) => { const next = new Set(prev); next.delete(profile.id); return next })
+      await loadProfiles()
+    } catch (e) {
+      setError(e)
+    }
+  }
+
   const start = async () => {
     if (projectId === '') return
     setBusy(true)
     try {
       setRun(await apiPost<ConsensusRun>(`/projects/${projectId}/consensus-runs`, {
         page_ids: pageIds,
-        profile_ids: [...chosen],
+        profile_ids: profiles.filter((p) => chosen.has(p.id) && canUseSavedModel(p)).map((p) => p.id),
       }))
     } catch (e) {
       setError(e)
@@ -199,7 +229,8 @@ export default function ConsensusPanel({
   const target = compared.find((page) => openCount(page) > 0) ?? compared[0] ?? null
   const targetId = target?.page_id ?? pageIds[0]
 
-  const canStart = chosen.size >= 2 && pageIds.length > 0 && projectId !== '' && !busy && !(run && ACTIVE.has(run.state))
+  const usableChosen = profiles.filter((p) => chosen.has(p.id) && canUseSavedModel(p)).length
+  const canStart = usableChosen >= 2 && pageIds.length > 0 && projectId !== '' && !busy && !(run && ACTIVE.has(run.state))
   const tone = run?.state === 'finished' ? 'ok' : run && (run.state === 'failed' || run.state === 'finished_with_errors') ? 'warn' : 'neutral'
 
   return (
@@ -213,11 +244,12 @@ export default function ConsensusPanel({
       ) : (
         <ul className="mt-1 space-y-1">
           {profiles.map((profile) => (
-            <li key={profile.id} className="flex items-center gap-2 text-[12px]">
+            <li key={profile.id} className="flex flex-wrap items-center gap-x-2 text-[12px]">
               <label className="flex min-w-0 flex-1 items-center gap-2">
                 <input
                   type="checkbox"
-                  checked={chosen.has(profile.id)}
+                  disabled={!canUseSavedModel(profile)}
+                  checked={chosen.has(profile.id) && canUseSavedModel(profile)}
                   onChange={(e) => setChosen((prev) => {
                     const next = new Set(prev)
                     if (e.target.checked) next.add(profile.id)
@@ -231,6 +263,7 @@ export default function ConsensusPanel({
               {canManage && (
                 <button type="button" className="text-[11px] underline" onClick={() => void remove(profile)}>{t('consensus.delete')}</button>
               )}
+              <ModelKey profile={profile} onSave={(key) => saveKey(profile, key)} onRemove={() => void removeKey(profile)} />
             </li>
           ))}
         </ul>
@@ -355,5 +388,72 @@ export default function ConsensusPanel({
         </div>
       )}
     </Module>
+  )
+}
+
+
+/**
+ * The current user's own key for one saved model: whether they have one, and a
+ * write-only field to add or replace it. The key is never read back.
+ */
+function ModelKey({
+  profile,
+  onSave,
+  onRemove,
+}: {
+  profile: SavedModel
+  onSave: (key: string) => Promise<boolean>
+  onRemove: () => void
+}) {
+  const { t } = useI18n()
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState('')
+  const [saving, setSaving] = useState(false)
+  if (!profile.key_required && !profile.has_key && !editing) return null
+
+  const submit = async () => {
+    setSaving(true)
+    const ok = await onSave(value.trim())
+    setSaving(false)
+    if (ok) {
+      setValue('')
+      setEditing(false)
+    }
+  }
+
+  return (
+    <div className="w-full pl-6 text-[11px]">
+      {!editing && (
+        <div className="flex flex-wrap items-center gap-x-3">
+          <span className={profile.has_key ? 'text-[color:var(--color-ink-2)]' : 'text-[color:var(--color-sig-text)]'}>
+            {profile.has_key ? t('consensus.yourKey') : t('consensus.needsKey')}
+          </span>
+          <button type="button" className="underline" onClick={() => setEditing(true)}>
+            {profile.has_key ? t('consensus.replaceKey') : t('consensus.addKey')}
+          </button>
+          {profile.has_key && <button type="button" className="underline" onClick={onRemove}>{t('consensus.removeKey')}</button>}
+        </div>
+      )}
+      {editing && (
+        <form className="mt-1" onSubmit={(e) => { e.preventDefault(); void submit() }}>
+          <label className="block">
+            <span className="lbl">{t('consensus.keyLabel', { name: profile.name })}</span>
+            <input
+              className="fld mono"
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+            />
+          </label>
+          <div className="mt-1 flex gap-2">
+            <button type="submit" className="btn" disabled={saving || !value.trim()}>{t('consensus.saveKey')}</button>
+            <button type="button" className="btn" onClick={() => { setValue(''); setEditing(false) }}>{t('consensus.cancelKey')}</button>
+          </div>
+          <p className="mt-1 text-[color:var(--color-ink-3)]">{t('consensus.keyHint')}</p>
+        </form>
+      )}
+    </div>
   )
 }

@@ -240,6 +240,9 @@ export default function ModelsHubPage() {
         ) : (
           <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('modelsHub.nothingInUseHint')}</p>
         )}
+        {/* The active model is the instance's, with one key for everybody; saved
+            models are the per-user alternative. */}
+        {inUse && <p className="mt-2 text-[11px] text-[color:var(--color-ink-3)]">{t('modelsHub.sharedKeyNote')}</p>}
       </Module>
 
       {/* I tre passi: la linguetta porta la scelta fatta, così tornare

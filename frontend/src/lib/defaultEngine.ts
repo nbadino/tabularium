@@ -16,19 +16,25 @@ export function defaultEngine(
 /** An engine of the Recognition page: the active model, the local OCR, or a saved model. */
 export type RecognitionEngine = 'model' | 'ocr' | `profile:${number}`
 
+/** A saved model this user can run: it needs no key, or they added theirs. */
+export function canUseSavedModel(model: { key_required?: boolean; has_key?: boolean }): boolean {
+  return !model.key_required || !!model.has_key
+}
+
 /**
- * The Recognition page also offers the saved models (API services with their own
- * key, nothing to serve): when the active model is not ready and one is saved,
- * the page opens on it rather than on the local OCR.
+ * The Recognition page also offers the saved models (API services reached with
+ * each user's own key, nothing to serve): when the active model is not ready and
+ * the user can run a saved one, the page opens on it rather than on the local OCR.
  */
 export function defaultRecognitionEngine(
   engines: { recommended: 'model' | 'ocr' | null; ocrAvailable: boolean } | null,
   inference: { enabled: boolean; available: boolean },
-  savedModels: { id: number }[],
+  savedModels: { id: number; key_required?: boolean; has_key?: boolean }[],
 ): RecognitionEngine {
   const base = defaultEngine(engines, inference)
   if (base === 'model' && inference.enabled && inference.available) return 'model'
-  if (savedModels.length > 0) return `profile:${savedModels[0].id}`
+  const usable = savedModels.find(canUseSavedModel)
+  if (usable) return `profile:${usable.id}`
   return base
 }
 

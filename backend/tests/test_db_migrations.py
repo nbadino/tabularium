@@ -195,3 +195,87 @@ def test_db_at_24_gets_the_shared_consensus_decisions():
             "after_json", "comment", "user_id", "created_at", "about_id", "reverted_by",
         } <= cols
         assert conn.execute("SELECT count(*) FROM consensus_runs").fetchone()[0] == 1
+
+
+def test_db_at_25_moves_saved_model_keys_to_their_admin():
+    """Migration 26: a saved model's key belongs to the administrator who saved it.
+
+    The key leaves the profile (where every user could spend it) for that admin's own
+    row in `user_model_keys`, still encrypted, byte for byte: the migration never
+    decrypts. Without a creator in the audit trail, the first active admin gets it; a
+    database with no user at all (local mode) keeps the key on the profile.
+    """
+    with _fresh_conn() as conn:
+        db.init_db()
+        conn.execute("DROP TABLE user_model_keys")
+        conn.execute("ALTER TABLE compute_profiles DROP COLUMN key_required")
+        conn.execute("UPDATE meta SET value='25' WHERE key='schema_version'")
+        conn.execute("DELETE FROM compute_profiles")
+        conn.execute("DELETE FROM users")
+        for uid, name, role in ((10, "first", "admin"), (11, "creator", "admin"), (12, "ed", "editor")):
+            conn.execute(
+                "INSERT INTO users (id, username, password_hash, salt, role) VALUES (?,?,'h','s',?)",
+                (uid, name, role),
+            )
+        profiles = (
+            (1, "Argon", "gemini-argon", "custom", "vault:consensus_profile_aaa"),
+            (2, "OCRia", "llamaindex-ocria-1", "llamaindex", "vault:consensus_profile_bbb"),
+            (3, "Local GPU", "monkeyocrv2-parsing", "local", None),
+            (4, "legacy-active", "monkeyocrv2-parsing", "local", "vault:inference"),
+        )
+        for pid, name, adapter, provider, ref in profiles:
+            conn.execute(
+                "INSERT INTO compute_profiles (id, name, provider, purpose, model_adapter_id, "
+                "served_model_name, endpoint, credential_ref) VALUES (?,?,?,'inference',?,'m','https://x',?)",
+                (pid, name, provider, adapter, ref),
+            )
+        for name, cipher in (("consensus_profile_aaa", "CIPHER-A"), ("consensus_profile_bbb", "CIPHER-B"), ("inference", "CIPHER-I")):
+            conn.execute("INSERT INTO secrets (name, ciphertext) VALUES (?,?)", (name, cipher))
+        conn.execute(
+            "INSERT INTO audit_events (actor_id, action, resource_type, resource_id) "
+            "VALUES (11, 'compute_profile.created', 'compute_profile', 1)"
+        )
+        conn.commit()
+
+    db.init_db()
+
+    with db.connect() as conn:
+        assert _version(conn) == db.SCHEMA_VERSION
+        keys = {
+            (r["user_id"], r["profile_id"]): r["ciphertext"]
+            for r in conn.execute("SELECT * FROM user_model_keys")
+        }
+        assert keys == {(11, 1): "CIPHER-A", (10, 2): "CIPHER-B"}
+        rows = {r["id"]: r for r in conn.execute("SELECT id, credential_ref, key_required FROM compute_profiles")}
+        assert rows[1]["credential_ref"] is None and rows[2]["credential_ref"] is None
+        assert rows[1]["key_required"] == 1 and rows[2]["key_required"] == 1
+        assert rows[3]["key_required"] == 0
+        # The global configuration's key (the active model) is not a saved model's key.
+        assert rows[4]["credential_ref"] == "vault:inference"
+        secrets = {r["name"] for r in conn.execute("SELECT name FROM secrets")}
+        assert secrets == {"inference"}
+
+
+def test_db_at_25_without_users_keeps_the_key_on_the_profile():
+    with _fresh_conn() as conn:
+        db.init_db()
+        conn.execute("DROP TABLE user_model_keys")
+        conn.execute("ALTER TABLE compute_profiles DROP COLUMN key_required")
+        conn.execute("UPDATE meta SET value='25' WHERE key='schema_version'")
+        conn.execute("DELETE FROM compute_profiles")
+        conn.execute("DELETE FROM users")
+        conn.execute(
+            "INSERT INTO compute_profiles (id, name, provider, purpose, model_adapter_id, "
+            "served_model_name, endpoint, credential_ref) VALUES (1,'OCRia','llamaindex','inference',"
+            "'llamaindex-ocria-1','m','https://x','vault:consensus_profile_ccc')"
+        )
+        conn.execute("INSERT INTO secrets (name, ciphertext) VALUES ('consensus_profile_ccc','C')")
+        conn.commit()
+
+    db.init_db()
+
+    with db.connect() as conn:
+        assert conn.execute("SELECT count(*) FROM user_model_keys").fetchone()[0] == 0
+        row = conn.execute("SELECT credential_ref, key_required FROM compute_profiles").fetchone()
+        assert row["credential_ref"] == "vault:consensus_profile_ccc" and row["key_required"] == 1
+        assert conn.execute("SELECT count(*) FROM secrets").fetchone()[0] == 1

@@ -16,7 +16,7 @@ from contextlib import closing
 
 from . import config
 
-SCHEMA_VERSION = "25"
+SCHEMA_VERSION = "26"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -536,6 +536,54 @@ _MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_consensus_decisions_page
             ON consensus_decisions(page_id, run_id, id);
     """),
+    ("26", """
+        -- A saved model's API key belongs to a user, not to the model: each user
+        -- adds their own (Recognition, Saved models) and a run uses the key of the
+        -- user who starts it. The ciphertext is the vault's (Fernet,
+        -- TABULARIUM_VAULT_KEY). `key_required` marks the models that reach a paid
+        -- API: without a key of their own, a user cannot run them.
+        ALTER TABLE compute_profiles ADD COLUMN key_required INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE IF NOT EXISTS user_model_keys (
+            user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            profile_id INTEGER NOT NULL REFERENCES compute_profiles(id) ON DELETE CASCADE,
+            ciphertext TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, profile_id)
+        );
+        UPDATE compute_profiles SET key_required=1
+         WHERE name != 'legacy-active'
+           AND (COALESCE(credential_ref, '') != ''
+                OR model_adapter_id IN ('gemini-argon', 'llamaindex-ocria-1')
+                OR provider = 'llamaindex');
+        -- The key a saved model carried was the key of the admin who saved it (the
+        -- audit trail names them, else the first active admin). It moves, still
+        -- encrypted, to that admin's own row. With no user to give it to (a local,
+        -- single-user database) it stays on the profile, read only in local mode.
+        INSERT OR IGNORE INTO user_model_keys (user_id, profile_id, ciphertext)
+        SELECT owner, id, ciphertext FROM (
+            SELECT p.id AS id, s.ciphertext AS ciphertext, COALESCE(
+                (SELECT a.actor_id FROM audit_events a JOIN users u ON u.id = a.actor_id
+                  WHERE a.action = 'compute_profile.created'
+                    AND a.resource_type = 'compute_profile' AND a.resource_id = p.id
+                  ORDER BY a.id LIMIT 1),
+                (SELECT u.id FROM users u WHERE u.role = 'admin' AND u.active = 1
+                  ORDER BY u.id LIMIT 1)
+            ) AS owner
+              FROM compute_profiles p
+              JOIN secrets s ON 'vault:' || s.name = p.credential_ref
+             WHERE p.name != 'legacy-active'
+               AND p.credential_ref LIKE 'vault:consensus_profile_%'
+        ) WHERE owner IS NOT NULL;
+        DELETE FROM secrets
+         WHERE 'vault:' || name IN (
+            SELECT credential_ref FROM compute_profiles
+             WHERE credential_ref LIKE 'vault:consensus_profile_%'
+               AND id IN (SELECT profile_id FROM user_model_keys));
+        UPDATE compute_profiles SET credential_ref = NULL
+         WHERE credential_ref LIKE 'vault:consensus_profile_%'
+           AND id IN (SELECT profile_id FROM user_model_keys);
+    """),
 ]
 
 
@@ -598,7 +646,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     for version, ddl in sorted(_MIGRATIONS, key=lambda m: int(m[0])):
         if int(version) <= current:
             continue
-        if version in {"16", "17", "18", "21", "22", "23", "24", "25"}:
+        if version in {"16", "17", "18", "21", "22", "23", "24", "25", "26"}:
             _execute_additive_migration(conn, ddl)
             conn.execute("UPDATE meta SET value=? WHERE key='schema_version'", (version,))
             conn.commit()

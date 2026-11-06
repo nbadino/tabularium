@@ -30,7 +30,9 @@ matched at IoU 0.5 (missed blocks stay out of CER and are counted by recall).
 ## Consensus between models
 
 A consensus run (`services/consensus.py`) sends the same pages to two to six saved models
-(inactive `compute_profiles`) through the normal prefill pipeline with a read-only writer
+(inactive `compute_profiles`), each reached with the API key of the user who starts the run
+(`services/model_keys.py`; a retry uses the key of whoever retries; a model the user has no key
+for is refused with `saved_model_key_missing`), through the normal prefill pipeline with a read-only writer
 (`adapters/blocks.py::ReadOnlyPageWriter`): no block, grid or revision is written and the page
 master is never rotated. Each model's blocks go to `consensus_outputs`. One model failing does
 not stop the others; the run ends `finished_with_errors`. *Retry* (`POST …/consensus-runs/{id}/retry`)

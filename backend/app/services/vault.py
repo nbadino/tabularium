@@ -65,6 +65,21 @@ def put(name: str, value: str) -> str:
     return f"vault:{name}"
 
 
+def encrypt(value: str) -> str:
+    """Ciphertext for a secret kept outside the `secrets` table (a user's model key)."""
+    if not value:
+        raise ValueError("secret vuoto")
+    return _fernet().encrypt(value.encode("utf-8")).decode("ascii")
+
+
+def decrypt(ciphertext: str) -> str:
+    """The value of `encrypt`; "" when the current vault key cannot read it."""
+    try:
+        return _fernet().decrypt(ciphertext.encode("ascii")).decode("utf-8")
+    except (InvalidToken, UnicodeError, ValueError):
+        return ""
+
+
 def get(ref: str | None) -> str:
     if not ref or not ref.startswith("vault:"):
         return ""

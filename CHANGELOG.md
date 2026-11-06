@@ -7,6 +7,15 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **Each user runs saved models on their own API key.** A saved model (a Recognition engine and a
+  model in comparisons) no longer carries the key of the administrator who saved it for everyone:
+  each user adds their own key under Recognition › Model comparison › Saved models (stored
+  encrypted, never shown back to anyone, administrators included), and a recognition or comparison
+  uses the key of the user who starts it (a retry, of whoever retries). A model you have no key
+  for cannot be picked and says where to add one; nothing falls back to someone else's key or to
+  the OpenCode key of the server. Migration 26 adds `user_model_keys` and moves each saved
+  model's key to the administrator who saved it. The active model (Models page) stays the
+  instance's shared model, with its own key, and the page now says so.
 - **The Studio follows the comparison in progress.** A page waiting in a running comparison
   shows each model's state (reading this page, queued, read) with a spinner and updates by
   itself, instead of the failure of an older, interrupted run.
@@ -109,6 +118,7 @@ Notable changes to Tabularium. The format follows
   Metric in `docs/spec/71-evaluation.md`.
 
 ### Fixed
+- Retrying a recognition run on a saved model ran the failed pages on the active model instead.
 - Model comparison: tables are aligned row by row, so a model whose grid opens a column
   half-way down no longer turns every later cell into a disagreement (Lloyd's p. 14: 140
   "different numbers" were 3); two cells written as one (`Br *`) are the *merged cells*
