@@ -16,6 +16,12 @@ Notable changes to Tabularium. The format follows
   itself recorded, so it can be reverted too) unless the value changed since; anyone who can edit
   can comment on the page or reply to a decision. Updates arrive live. Migration 25 adds the
   `consensus_decisions` table.
+- **A model out of credits stops instead of failing every page.** After 3 pages in a row with
+  the same error, its remaining pages are marked failed at once with the reason (out of credits
+  or invalid key?); the other model's readings are kept and *Retry* sends the rest again.
+- **Model comparison: progress per model and *Use as the base* while it runs.** The Recognition
+  page shows how many pages each model has read or failed, and the pages a fast model has
+  already read can be written as drafts without waiting for the slower one.
 - **Recognition with a saved model.** The Recognition page offers the saved models (Gemini 4
   Argon, OCRia-1…: API services with their own key) as engines, and opens on one when the active
   model is off, instead of the local OCR. Nothing is started or stopped; the active model stays
