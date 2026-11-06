@@ -5,7 +5,7 @@ import { apiGet, apiPost } from '../lib/api'
 import ConsensusPanel, { type SavedModel } from './ConsensusPanel'
 import { ApiError } from '../lib/api'
 import type { PageItem, PrefillEngines, RecognitionRun, SystemInfo } from '../lib/types'
-import { defaultRecognitionEngine, savedModelOf, type RecognitionEngine } from '../lib/defaultEngine'
+import { canUseSavedModel, defaultRecognitionEngine, savedModelOf, type RecognitionEngine } from '../lib/defaultEngine'
 import { Badge, Collapsible, ErrorNotice, Field, Loading, Modal, Module, Notice, Progress, PageHeader } from '../app/ui'
 import { useProjects, useRouteProjectId, writeActiveProject } from '../app/activeProject'
 import { syncInferenceFromBackend, useInference } from '../app/inference'
@@ -112,11 +112,13 @@ export default function RecognizePage() {
   const [modelRuntime, setModelRuntime] = useState<ModelRuntimeInfo[]>([])
   const [current, setCurrent] = useState<RecognitionRun | null>(null)
   const [engine, setEngine] = useState<RecognitionEngine>(() => defaultRecognitionEngine(null, inference, []))
-  // Saved models (compute profiles): API services with their own key, nothing to
-  // serve or stop. Shared with the comparison panel, which saves and deletes them.
+  // Saved models (compute profiles): API services, reached with each user's own key,
+  // nothing to serve or stop. Shared with the comparison panel, which saves and
+  // deletes them and where each user adds their key.
   const [savedModels, setSavedModels] = useState<SavedModel[]>([])
   const savedModelId = savedModelOf(engine)
   const savedModel = savedModelId == null ? null : savedModels.find((item) => item.id === savedModelId) ?? null
+  const savedModelNoKey = savedModel != null && !canUseSavedModel(savedModel)
   const [disableAfter, setDisableAfter] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
@@ -255,7 +257,7 @@ export default function RecognizePage() {
   // La disponibilità viene dal ping *live* di `prefill-engines` quando c'è:
   // lo store può essere vecchio (configurata altrove o pagina ricaricata).
   const modelAvailable = engines ? engines.model.available : inference.available
-  const modelReady = engine === 'ocr' ? ocrReady : savedModelId != null ? savedModel != null : inference.enabled && modelAvailable
+  const modelReady = engine === 'ocr' ? ocrReady : savedModelId != null ? savedModel != null && !savedModelNoKey : inference.enabled && modelAvailable
   // Su una macchina senza CUDA locale «l'endpoint non risponde» è il sintomo,
   // non la causa: mostrarli entrambi manda a controllare un endpoint che non
   // potrà mai rispondere. Vince la causa, che dice anche come uscirne.
@@ -504,6 +506,7 @@ export default function RecognizePage() {
             <p className="mt-1 text-[11px] text-[color:var(--color-ink-2)]">
               {t(savedModelId != null ? 'recognition.savedModelHint' : engine === 'model' ? 'recognition.servedModelHint' : 'recognition.localOcrHint')}
             </p>
+            {savedModelNoKey && <Notice tone="warn">{t('recognition.savedModelNoKey')}</Notice>}
             {engine === 'model' && !inference.isCloud && runtimeWarning?.vram_warning && (
               <Notice tone="warn">{runtimeWarning.vram_warning}</Notice>
             )}
@@ -552,6 +555,8 @@ export default function RecognizePage() {
                     ? ocrReady
                       ? t('recognition.modelReady')
                       : t('recognition.ocrMissing')
+                    : savedModel
+                      ? savedModelNoKey ? t('recognition.keyMissing') : t('recognition.modelReady')
                     : !inference.enabled
                       ? t('recognition.modelOff')
                       : modelReady

@@ -106,7 +106,10 @@ class FakeArgon:
 
 
 def _fake_clients(monkeypatch):
-    from app.services import consensus, prefill
+    from app.services import consensus, opencode_gateway, prefill
+
+    # Local mode: Argon runs on the OpenCode key this machine keeps.
+    monkeypatch.setattr(opencode_gateway, "read_api_key", lambda: "opencode-machine-key")
 
     def client_for_profile(profile, **_kwargs):
         return FakeOcria() if profile["model_adapter_id"] == "llamaindex-ocria-1" else FakeArgon()
@@ -134,7 +137,9 @@ def test_saving_a_profile_keeps_its_own_key_and_leaves_the_active_model_alone(tm
         argon = _save_profile(client, ARGON, "Argon (test)")
 
         assert ocria["model_adapter_id"] == "llamaindex-ocria-1"
-        assert ocria["has_credential"] is True and ocria["active"] is False
+        # Local mode has one anonymous user: the key stays on the profile.
+        assert ocria["has_key"] is True and ocria["key_required"] is True and ocria["active"] is False
+        assert "has_credential" not in ocria
         assert argon["model_adapter_id"] == "gemini-argon" and argon["active"] is False
 
         # Switching the global model (and its single key) afterwards does not
@@ -147,13 +152,18 @@ def test_saving_a_profile_keeps_its_own_key_and_leaves_the_active_model_alone(tm
 
         # The API never shows the credential reference; the client reads the stored row.
         assert "credential_ref" not in listed[ocria["id"]]
-        ocria_client = inference.client_for_profile(profilestore.get(ocria["id"]))
+        from app.services import model_keys
+
+        ocria_row = profilestore.get(ocria["id"])
+        ocria_client = inference.client_for_profile(ocria_row, api_key=model_keys.key_for(ocria_row, None))
         assert ocria_client.adapter.adapter_id == "llamaindex-ocria-1"
         assert ocria_client.api_key == "llx-ocria-secret"
         assert ocria_client.url.startswith("https://api.cloud.eu.llamaindex.ai")
 
         # Argon was saved without a key: the gateway's key on this machine is used.
-        argon_client = inference.client_for_profile(profilestore.get(argon["id"]))
+        argon_row = profilestore.get(argon["id"])
+        assert argon["has_key"] is True and argon["key_required"] is True
+        argon_client = inference.client_for_profile(argon_row, api_key=model_keys.key_for(argon_row, None))
         assert argon_client.model == "gemini-4-argon"
         assert argon_client.api_key == "opencode-machine-key"
 

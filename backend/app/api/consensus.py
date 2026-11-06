@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from ..services import auth as authsvc
 from ..services import consensus as consensussvc
 from ..services import consensus_decisions as decisionsvc
+from ..services import model_keys
 from ..services.i18n import msg, parse_lang
 from .deps import require_resource
 
@@ -41,14 +42,20 @@ class AdoptBlockRequest(BaseModel):
     index: int = Field(ge=0)
 
 
+class ModelKeyIn(BaseModel):
+    # The user's own key for a saved model. Write-only: no route ever returns it.
+    api_key: str = Field(max_length=4096)
+
+
 class ConsensusRunCreate(BaseModel):
     page_ids: list[int] = Field(min_length=1, max_length=consensussvc.MAX_PAGES)
     profile_ids: list[int] = Field(min_length=1, max_length=consensussvc.MAX_MODELS)
 
 
 @router.get("/api/consensus/profiles")
-def list_profiles() -> dict:
-    return {"items": consensussvc.list_profiles()}
+def list_profiles(user: dict = Depends(authsvc.get_current_user)) -> dict:
+    """The saved models, with whether the current user has added a key for each."""
+    return {"items": consensussvc.list_profiles(user)}
 
 
 def _lang(request: Request) -> str:
@@ -58,6 +65,24 @@ def _lang(request: Request) -> str:
 @router.post("/api/consensus/profiles", status_code=201)
 def save_profile(payload: ProfileCreate, request: Request, user: dict = Depends(_admin)) -> dict:
     return consensussvc.save_current_as_profile(payload.name, actor=user, lang=_lang(request))
+
+
+@router.put("/api/consensus/profiles/{profile_id}/key")
+def set_model_key(
+    profile_id: int, payload: ModelKeyIn, request: Request,
+    user: dict = Depends(authsvc.get_current_user),
+) -> dict:
+    """Store the current user's own API key for a saved model (encrypted, write-only)."""
+    return model_keys.set_key(profile_id, user, payload.api_key, _lang(request))
+
+
+@router.delete("/api/consensus/profiles/{profile_id}/key", status_code=204)
+def delete_model_key(
+    profile_id: int, request: Request, user: dict = Depends(authsvc.get_current_user),
+) -> Response:
+    """Remove the current user's own key; nobody else's is touched."""
+    model_keys.delete_key(profile_id, user, _lang(request))
+    return Response(status_code=204)
 
 
 @router.delete("/api/consensus/profiles/{profile_id}", status_code=204)
@@ -112,10 +137,10 @@ def cancel_run(
 @router.post("/api/projects/{project_id}/consensus-runs/{run_id}/retry", status_code=202)
 def retry_run(
     project_id: int, run_id: int, request: Request,
-    _user: dict = Depends(require_resource(write=True)),
+    user: dict = Depends(require_resource(write=True)),
 ) -> dict:
     _run_of_project(project_id, run_id, request)
-    return consensussvc.retry_failed(run_id, _lang(request))
+    return consensussvc.retry_failed(run_id, _lang(request), user_id=user.get("id"))
 
 
 @router.post("/api/projects/{project_id}/consensus-runs/{run_id}/adopt")

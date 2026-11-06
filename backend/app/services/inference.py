@@ -2195,13 +2195,14 @@ def profile_credential(ref: str | None) -> str:
     return ""
 
 
-def client_for_profile(profile: dict, *, timeout: int | None = None) -> VllmClient:
+def client_for_profile(profile: dict, *, api_key: str, timeout: int | None = None) -> VllmClient:
     """A client for a saved compute profile, without activating it.
 
     The global configuration keeps describing the one active model; a consensus run
-    reaches several models at once, each through its own profile. Key resolution,
-    the OpenCode gateway fallback, the LlamaIndex base URL and the native sidecar
-    follow the same rules as `get_inference_config`.
+    reaches several models at once, each through its own profile. The key is the one
+    of the user the run belongs to, resolved by `model_keys.key_for` (never the key
+    the profile was saved with): the caller passes it, "" for a model without one.
+    The LlamaIndex base URL and the native sidecar follow `get_inference_config`.
     """
     adapter_id = str(profile["model_adapter_id"])
     adapter = get_adapter(adapter_id)
@@ -2209,14 +2210,6 @@ def client_for_profile(profile: dict, *, timeout: int | None = None) -> VllmClie
     url = str(profile["endpoint"])
     if adapter_id == "llamaindex-ocria-1":
         url = _llamaindex_base_url(url)
-    api_key = profile_credential(profile.get("credential_ref"))
-    if not api_key and (
-        provider == "opencode"
-        or getattr(adapter.capabilities, "serve_backend", "") == "opencode-gateway"
-    ):
-        from . import opencode_gateway
-
-        api_key = opencode_gateway.read_api_key()
     return VllmClient(
         url=url,
         model=str(profile["served_model_name"]),

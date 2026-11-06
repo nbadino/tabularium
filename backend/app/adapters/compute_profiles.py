@@ -15,7 +15,7 @@ from ..db import connect
 INSERT_COLUMNS = (
     "name", "provider", "purpose", "model_adapter_id", "model_revision",
     "served_model_name", "endpoint", "credential_ref", "runtime_recipe_id",
-    "generation_profile_id", "image_profile_id", "hardware_profile_json",
+    "generation_profile_id", "image_profile_id", "hardware_profile_json", "key_required",
 )
 
 
@@ -32,6 +32,8 @@ def insert(fields: dict[str, Any], conn=None) -> int:
         column: (
             json.dumps(fields.get("hardware_profile") or {})
             if column == "hardware_profile_json"
+            else int(bool(fields.get(column)))
+            if column == "key_required"
             else fields.get(column)
         )
         for column in INSERT_COLUMNS
@@ -124,3 +126,12 @@ def delete(profile_id: int) -> None:
     """Remove an inactive profile; the active one is refused by the caller."""
     with connect() as conn:
         conn.execute("DELETE FROM compute_profiles WHERE id=? AND active=0", (profile_id,))
+
+
+def set_credential(profile_id: int, ref: str | None) -> None:
+    """Point a profile at its own vault secret (local mode only), or at none."""
+    with connect() as conn:
+        conn.execute(
+            "UPDATE compute_profiles SET credential_ref=?, updated_at=datetime('now') WHERE id=?",
+            (ref, profile_id),
+        )

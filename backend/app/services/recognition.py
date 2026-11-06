@@ -244,16 +244,19 @@ def _create_profile_run(
     owner_id: int | None,
     lang: str | None,
 ) -> dict[str, Any]:
-    """A run on a saved model (a compute profile): an API service with its own key.
+    """A run on a saved model (a compute profile): an API service, reached with the
+    API key of the user who starts the run (`model_keys`).
 
     Nothing is activated, served or stopped: the active model stays as it is, the
     run reaches the saved model as a consensus run does (`client_for_profile`).
     """
     from ..adapters import compute_profiles as profilestore
+    from . import model_keys
 
     profile = profilestore.get(profile_id)
-    if profile is None:
+    if profile is None or profile["name"] == "legacy-active":
         raise HTTPException(status_code=404, detail=msg("saved_model_not_found", lang))
+    model_keys.require_usable(profile, owner_id, lang)
     try:
         run_id = runstore.create(
             project_id,
@@ -400,10 +403,17 @@ def _worker(run_id: int, cancel: threading.Event) -> None:
             else:
                 from ..adapters import compute_profiles as profilestore
 
+                from . import model_keys
+
                 profile = profilestore.get(profile_id)
                 if profile is None:
                     raise RuntimeError("il modello salvato di questa sessione è stato eliminato")
-                client = inference.client_for_profile(profile)
+                try:
+                    key = model_keys.key_for(profile, run["owner_id"])
+                except model_keys.MissingKey as exc:
+                    # Stored in Italian, the source language `localize_detail` reads back.
+                    raise RuntimeError(msg("saved_model_key_missing", "it", name=exc.name)) from exc
+                client = inference.client_for_profile(profile, api_key=key)
         engine = ocrmod.OcrEngine() if run["engine"] == "ocr" else None
         if engine is not None and not engine.available:
             raise RuntimeError("nessun motore OCR locale disponibile")
@@ -522,7 +532,9 @@ def resume_run(run_id: int, lang: str | None = None) -> dict[str, Any]:
     return _set_paused(run_id, False, lang)
 
 
-def retry_failed_run(run_id: int, *, owner_id: int | None = None, allow_stop: bool = False) -> dict[str, Any]:
+def retry_failed_run(
+    run_id: int, *, owner_id: int | None = None, allow_stop: bool = False, lang: str | None = None,
+) -> dict[str, Any]:
     run = get_run(run_id)
     if run["state"] in {"queued", "running"}:
         raise HTTPException(status_code=409, detail="attendi la fine della sessione prima di riprovare")
@@ -533,6 +545,11 @@ def retry_failed_run(run_id: int, *, owner_id: int | None = None, allow_stop: bo
     ]
     if not page_ids:
         raise HTTPException(status_code=409, detail="questa sessione non contiene pagine da riprovare")
+    # A run on a saved model is retried on the same model (with the retrier's key),
+    # never on whatever model is active now.
+    profile_id = (
+        runstore.run_profile_id(run["job_id"]) if run["engine"] == "model" and run.get("job_id") else None
+    )
     return create_run(
         int(run["project_id"]),
         page_ids,
@@ -541,6 +558,8 @@ def retry_failed_run(run_id: int, *, owner_id: int | None = None, allow_stop: bo
         model_mode=str(run["model_mode"]),
         stop_policy=str(run["stop_policy"]) if allow_stop else "none",
         owner_id=owner_id,
+        lang=lang,
+        profile_id=profile_id,
     )
 
 

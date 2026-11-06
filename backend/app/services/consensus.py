@@ -1,7 +1,8 @@
 """Consensus: send the same pages to several models and see where they disagree.
 
-A model taking part is a saved compute profile (endpoint, served model, adapter and its
-own credential), so comparing two models never switches the global inference config.
+A model taking part is a saved compute profile (endpoint, served model, adapter), so
+comparing two models never switches the global inference config. Each model is reached
+with the API key of the user who starts (or retries) the run (`model_keys`).
 A run starts one worker per model; each sends its pages through the prefill pipeline
 with a read-only writer (`blockstore.reading_only`) and keeps the emitted blocks in
 `consensus_outputs`. The annotations are never written. The Studio reads one page back
@@ -12,7 +13,6 @@ from __future__ import annotations
 import json
 import re
 import threading
-import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -22,7 +22,7 @@ from ..adapters import blocks as blockstore
 from ..adapters import compute_profiles as profilestore
 from ..adapters import consensus as runstore
 from ..domain import consensus as metric
-from . import audit, consensus_decisions, inference, prefill
+from . import audit, consensus_decisions, inference, model_keys, prefill
 from .compute_profiles import describe
 from .i18n import localize_detail, msg
 from .model_adapters import get_adapter
@@ -34,7 +34,7 @@ MAX_PAGES = 2000
 # The row the pre-v10 configuration seeded: it mirrors the global config and is not a
 # model the user saved, so it is never offered for a comparison.
 LEGACY_PROFILE = "legacy-active"
-_VAULT_PREFIX = "consensus_profile_"
+_VAULT_PREFIX = model_keys._VAULT_PREFIX
 
 _ACTIVE: dict[int, threading.Event] = {}
 _LOCK = threading.Lock()
@@ -47,23 +47,35 @@ def _now() -> str:
 # --- profiles -------------------------------------------------------------------
 
 
-def list_profiles() -> list[dict[str, Any]]:
-    """The saved models a comparison can use."""
-    return [
-        describe(row)
-        for row in profilestore.list_all()
+def list_profiles(user: dict | None = None) -> list[dict[str, Any]]:
+    """The saved models a comparison can use, with whether `user` has a key for each.
+
+    `has_credential` (the profile's own key) is not shown: what counts is the key of
+    the user looking, and never its value.
+    """
+    rows = [
+        row for row in profilestore.list_all()
         if row["name"] != LEGACY_PROFILE and row["purpose"] in {"inference", "both"}
     ]
+    keys = model_keys.statuses(rows, user)
+    out = []
+    for row in rows:
+        item = describe(row)
+        item.pop("has_credential", None)
+        out.append({**item, **keys[int(row["id"])]})
+    return out
 
 
 def save_current_as_profile(
     name: str, actor: dict | None = None, lang: str | None = None,
 ) -> dict[str, Any]:
-    """Copy the configured model, key included, into a new inactive profile.
+    """Copy the configured model into a new inactive profile; its key becomes the
+    saving administrator's own key for it.
 
-    The key gets its own vault entry: the global config has one slot, which the next
-    model chosen in Models overwrites. A key the OpenCode gateway already keeps on
-    this machine is not copied; the profile reads it from there when it runs.
+    Every other user adds their own key before using the model (`model_keys`). With
+    users, the OpenCode key this machine keeps is the administrator's and is copied
+    too: runs never fall back to it. In local mode it is not copied; the profile
+    reads it from the machine when it runs.
     """
     clean = " ".join(str(name or "").split())
     if not clean or len(clean) > 80:
@@ -74,34 +86,36 @@ def save_current_as_profile(
     endpoint = validate_endpoint(str(cfg["url"]))
     adapter = get_adapter(str(cfg["adapter_id"]))
     key = str(cfg.get("api_key") or "")
-    if key and getattr(adapter.capabilities, "serve_backend", "") == "opencode-gateway":
+    provider = str(cfg.get("provider") or "custom")
+    if getattr(adapter.capabilities, "serve_backend", "") == "opencode-gateway" or provider == "opencode":
         from . import opencode_gateway
 
-        if key == opencode_gateway.read_api_key():
-            key = ""
-    from . import vault
-
-    credential_ref = vault.put(f"{_VAULT_PREFIX}{uuid.uuid4().hex[:16]}", key) if key else None
-    provider = str(cfg.get("provider") or "custom")
-    try:
-        profile_id = profilestore.insert({
-            "name": clean,
-            # The profile table's CHECK lists physical providers; a remote gateway
-            # such as OpenCode is stored as `custom`, as `save_inference_config` does.
-            "provider": provider if provider in inference._PROFILE_PROVIDERS else "custom",
-            "purpose": "inference",
-            "model_adapter_id": adapter.adapter_id,
-            "served_model_name": str(cfg["model"]),
-            "endpoint": endpoint,
-            "credential_ref": credential_ref,
-            "runtime_recipe_id": "consensus",
-            "generation_profile_id": "default",
-            "image_profile_id": "default",
-        })
-    except Exception:
-        if credential_ref:
-            vault.delete(credential_ref)
-        raise
+        machine_key = opencode_gateway.read_api_key()
+        if model_keys._local():
+            key = "" if key == machine_key else key
+        else:
+            key = key or machine_key
+    profile_id = profilestore.insert({
+        "name": clean,
+        # The profile table's CHECK lists physical providers; a remote gateway
+        # such as OpenCode is stored as `custom`, as `save_inference_config` does.
+        "provider": provider if provider in inference._PROFILE_PROVIDERS else "custom",
+        "purpose": "inference",
+        "model_adapter_id": adapter.adapter_id,
+        "served_model_name": str(cfg["model"]),
+        "endpoint": endpoint,
+        "credential_ref": None,
+        "runtime_recipe_id": "consensus",
+        "generation_profile_id": "default",
+        "image_profile_id": "default",
+        "key_required": model_keys.requires_key(adapter.adapter_id, provider, bool(key)),
+    })
+    if key:
+        try:
+            model_keys.save_owner_key(profile_id, actor, key)
+        except Exception:
+            profilestore.delete(profile_id)
+            raise
     from ..db import connect  # noqa: PLC0415 - the audit trail joins the caller's transaction
 
     with connect() as conn:
@@ -109,7 +123,7 @@ def save_current_as_profile(
             conn, actor, "compute_profile.created",
             resource_type="compute_profile", resource_id=profile_id,
         )
-    return describe(profilestore.get(profile_id))
+    return next(item for item in list_profiles(actor) if item["id"] == profile_id)
 
 
 def delete_profile(profile_id: int, actor: dict | None = None, lang: str | None = None) -> None:
@@ -239,6 +253,7 @@ def create_run(
         row = profilestore.get(profile_id)
         if row is None or row["name"] == LEGACY_PROFILE:
             raise HTTPException(status_code=404, detail=msg("consensus_profile_not_found", lang))
+        model_keys.require_usable(row, owner_id, lang)
         models.append({
             "key": _model_key(profile_id),
             "profile_id": profile_id,
@@ -250,20 +265,22 @@ def create_run(
         run_id = runstore.create(project_id, pages, models, owner_id=owner_id)
     except runstore.MissingPages as exc:
         raise HTTPException(status_code=404, detail=msg("consensus_pages_missing", lang)) from exc
-    _start(run_id)
+    _start(run_id, owner_id)
     return get_run(run_id)
 
 
-def _start(run_id: int) -> None:
+def _start(run_id: int, key_user_id: int | None) -> None:
+    """Run in the background; every model is reached with `key_user_id`'s keys."""
     cancel = threading.Event()
     with _LOCK:
         _ACTIVE[run_id] = cancel
     threading.Thread(
-        target=_coordinate, args=(run_id, cancel), name=f"consensus-{run_id}", daemon=True,
+        target=_coordinate, args=(run_id, cancel, key_user_id),
+        name=f"consensus-{run_id}", daemon=True,
     ).start()
 
 
-def _coordinate(run_id: int, cancel: threading.Event) -> None:
+def _coordinate(run_id: int, cancel: threading.Event, key_user_id: int | None = None) -> None:
     """Run every model in parallel, then derive the run's final state."""
     try:
         run = runstore.get(run_id)
@@ -272,7 +289,7 @@ def _coordinate(run_id: int, cancel: threading.Event) -> None:
         runstore.set_state(run_id, "running", started=_now())
         workers = [
             threading.Thread(
-                target=_run_model, args=(run, model, cancel),
+                target=_run_model, args=(run, model, cancel, key_user_id),
                 name=f"consensus-{run_id}-{model['key']}", daemon=True,
             )
             for model in run["models"]
@@ -334,7 +351,9 @@ def _error_signature(error: str) -> str:
     return re.sub(r"\d+", "#", error.strip().lower())[:160]
 
 
-def _run_model(run: dict[str, Any], model: dict[str, Any], cancel: threading.Event) -> None:
+def _run_model(
+    run: dict[str, Any], model: dict[str, Any], cancel: threading.Event, key_user_id: int | None = None,
+) -> None:
     run_id, project_id = int(run["id"]), int(run["project_id"])
     outputs = runstore.outputs_for_model(run_id, model["key"])
     if not any(output["state"] == "queued" for output in outputs):
@@ -343,11 +362,18 @@ def _run_model(run: dict[str, Any], model: dict[str, Any], cancel: threading.Eve
         profile = profilestore.get(int(model["profile_id"]))
         if profile is None:
             raise RuntimeError(f"profile '{model['name']}' was deleted")
-        client = inference.client_for_profile(profile)
+        client = inference.client_for_profile(
+            profile, api_key=model_keys.key_for(profile, key_user_id),
+        )
     except Exception as exc:  # noqa: BLE001
+        # Stored in Italian, the source language `localize_detail` reads back.
+        error = (
+            msg("saved_model_key_missing", "it", name=exc.name)
+            if isinstance(exc, model_keys.MissingKey) else str(exc)
+        )
         for output in outputs:
             if output["state"] == "queued":
-                runstore.mark_output(output["id"], "failed", error=str(exc), ended_at=_now())
+                runstore.mark_output(output["id"], "failed", error=error, ended_at=_now())
         return
     last_error: str | None = None
     streak = 0
@@ -392,16 +418,25 @@ def cancel_run(run_id: int) -> dict[str, Any]:
     return get_run(run_id)
 
 
-def retry_failed(run_id: int, lang: str | None = None) -> dict[str, Any]:
-    """Send again only what failed or was cancelled; finished outputs are kept."""
+def retry_failed(
+    run_id: int, lang: str | None = None, *, user_id: int | None = None,
+) -> dict[str, Any]:
+    """Send again only what failed or was cancelled; finished outputs are kept.
+
+    Whoever retries starts the requests: the models are reached with their keys.
+    """
     run = get_run(run_id, lang)
     with _LOCK:
         active = run_id in _ACTIVE
     if active or run["state"] in {"queued", "running"}:
         raise HTTPException(status_code=409, detail=msg("consensus_run_active", lang))
+    for model in run["models"]:
+        row = profilestore.get(int(model["profile_id"]))
+        if row is not None:
+            model_keys.require_usable(row, user_id, lang)
     if not runstore.requeue_failed(run_id):
         raise HTTPException(status_code=409, detail=msg("consensus_nothing_to_retry", lang))
-    _start(run_id)
+    _start(run_id, user_id)
     return get_run(run_id, lang)
 
 

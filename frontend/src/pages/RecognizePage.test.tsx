@@ -10,14 +10,16 @@ import { setLocale } from '../i18n'
 // Lloyd's: the active model is off; Gemini 4 Argon and OCRia-1 are saved with their
 // own keys. The page opened on «Local OCR» and did not offer them.
 const posted: { path: string; body: unknown }[] = []
+const withKeys = [
+  { id: 1, name: 'Gemini 4 Argon', model_adapter_id: 'gemini-argon', served_model_name: 'gemini-4-argon', key_required: true, has_key: true },
+  { id: 3, name: 'OCRia-1 (LlamaIndex)', model_adapter_id: 'llamaindex-ocria-1', served_model_name: 'ocria-1', key_required: true, has_key: true },
+]
+let savedModels = withKeys
 vi.mock('../lib/api', () => ({
   ApiError: class ApiError extends Error { status = 0 },
   apiGet: vi.fn(async (path: string) => {
     if (path === '/consensus/profiles') {
-      return { items: [
-        { id: 1, name: 'Gemini 4 Argon', model_adapter_id: 'gemini-argon', served_model_name: 'gemini-4-argon', has_credential: true },
-        { id: 3, name: 'OCRia-1 (LlamaIndex)', model_adapter_id: 'llamaindex-ocria-1', served_model_name: 'ocria-1', has_credential: true },
-      ] }
+      return { items: savedModels }
     }
     if (path === '/system/prefill-engines') return { recommended: 'ocr', ocr: { available: true }, model: { available: false } }
     if (path === '/projects/4/pages') return { items: [{ id: 376, rel_path: 'LDI_1920_Apr1_Page_003.tif', status: 'todo', drafts: 0 }] }
@@ -68,5 +70,25 @@ describe('RecognizePage engines', () => {
     await userEvent.selectOptions(engine, 'profile:3')
     await userEvent.click(await screen.findByRole('button', { name: /Avvia/ }))
     await waitFor(() => expect(posted[posted.length - 1]?.body).toMatchObject({ engine: 'model', profile_id: 3, stop_policy: 'none' }))
+  })
+
+  it('does not run a saved model the user has no key for, and says where to add one', async () => {
+    setLocale('it')
+    savedModels = [
+      { ...withKeys[0], has_key: false },
+      { ...withKeys[1], has_key: true },
+    ]
+    try {
+      render(<MemoryRouter initialEntries={['/progetti/4/riconoscimenti?project=4&pages=376']}><RecognizePage /></MemoryRouter>)
+      const engine = await screen.findByTestId('engine')
+      // Opens on the saved model the user can run, not on the one without a key.
+      await waitFor(() => expect(engine).toHaveValue('profile:3'))
+      await userEvent.selectOptions(engine, 'profile:1')
+      expect(await screen.findByText(/Non hai ancora aggiunto la tua chiave API per questo modello/)).toBeInTheDocument()
+      expect(screen.getByText('manca la chiave')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Avvia/ })).toBeDisabled()
+    } finally {
+      savedModels = withKeys
+    }
   })
 })

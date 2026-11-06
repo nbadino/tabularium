@@ -127,6 +127,7 @@ def resume_recognition_run(
 def retry_recognition_run(
     project_id: int,
     run_id: int,
+    request: Request,
     user: dict = Depends(require_resource(write=True)),
 ) -> dict:
     _run_in_project_or_404(run_id, project_id)
@@ -134,6 +135,7 @@ def retry_recognition_run(
         run_id,
         owner_id=user.get("id"),
         allow_stop=authsvc.is_admin(user),
+        lang=parse_lang(request.headers.get("accept-language")),
     )
 
 
