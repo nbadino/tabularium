@@ -192,6 +192,13 @@ export default function ConsensusPanel({
     }
   }
 
+  // Where «Check in the Studio» goes: the first compared page with cells still open,
+  // else the first compared page, else the first page of the run.
+  const compared = runPages.filter((page) => page.agreement != null)
+  const openCount = (page: ConsensusRunPage) => page.open ? page.open.digits + page.open.text + page.open.missing : 0
+  const target = compared.find((page) => openCount(page) > 0) ?? compared[0] ?? null
+  const targetId = target?.page_id ?? pageIds[0]
+
   const canStart = chosen.size >= 2 && pageIds.length > 0 && projectId !== '' && !busy && !(run && ACTIVE.has(run.state))
   const tone = run?.state === 'finished' ? 'ok' : run && (run.state === 'failed' || run.state === 'finished_with_errors') ? 'warn' : 'neutral'
 
@@ -276,8 +283,20 @@ export default function ConsensusPanel({
           <div className="mt-1 flex gap-3">
             {ACTIVE.has(run.state) && <button type="button" className="text-[11px] underline" onClick={() => void cancel()}>{t('consensus.cancel')}</button>}
             {!ACTIVE.has(run.state) && run.failed > 0 && <button type="button" className="text-[11px] font-semibold underline" onClick={() => void retry()}>{t('consensus.retry')}</button>}
-            {runPages.length === 0 && <Link to={projectPath(run.project_id, 'studio', { consensus: 1, page: pageIds[0] })} className="text-[11px] font-semibold">{t('consensus.openStudio')}</Link>}
           </div>
+          {/* Always in view: the list's file names are links too, but they do not read as buttons. */}
+          {targetId != null && (
+            <>
+              <Link to={projectPath(run.project_id, 'studio', { consensus: 1, page: targetId })} className="btn btn-primary mt-2 block w-full text-center" data-testid="check-in-studio">
+                {t('consensus.checkInStudio')}
+              </Link>
+              {target && (
+                <p className="mt-1 text-[11px] text-[color:var(--color-ink-3)]">
+                  {t(openCount(target) > 0 ? 'consensus.checkInStudioHint' : 'consensus.checkInStudioDone', { name: target.name.split('/').pop() ?? target.name })}
+                </p>
+              )}
+            </>
+          )}
           {runPages.length > 0 && (
             <ul className="mt-2 max-h-[260px] space-y-1 overflow-auto" data-testid="run-pages" aria-label={t('consensus.runPages')}>
               {runPages.map((page) => {
@@ -303,6 +322,7 @@ export default function ConsensusPanel({
                         </span>
                       </>
                     )}
+                    <Link to={projectPath(run.project_id, 'studio', { consensus: 1, page: page.page_id })} className="ml-auto font-semibold">{t('consensus.openPage')}</Link>
                     {Object.entries(page.errors).map(([key, message]) => (
                       <span key={key} className="w-full text-[color:var(--color-sig-text)]">{`${run.models.find((m) => m.key === key)?.name ?? key}: ${message}`}</span>
                     ))}

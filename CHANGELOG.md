@@ -7,6 +7,10 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **Check in the Studio, always in view.** The comparison panel on the Recognition page has a
+  button to the first compared page with cells still to check (or the first compared page when
+  all are settled), and each page of the run an *Open ›* link: the file names were the only way
+  to the Studio once the first pages were read.
 - **A model out of credits stops instead of failing every page.** After 3 pages in a row with
   the same error, its remaining pages are marked failed at once with the reason (out of credits
   or invalid key?); the other model's readings are kept and *Retry* sends the rest again.
