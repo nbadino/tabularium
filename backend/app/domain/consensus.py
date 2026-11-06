@@ -45,6 +45,9 @@ LABEL_MISMATCH = 0.5
 # nothing (distance 1) cost the same paired as left apart, so the alignment pairs rows
 # whenever they resemble each other at all.
 GAP_COST = 0.5
+# Cost added, in the row-by-row cell alignment, to a pair of columns the table-wide
+# alignment did not pair: small, so it only breaks ties.
+OFF_MAP = 0.05
 
 _SPACE = re.compile(r"\s+")
 _HEADING = re.compile(r"^#{1,6}\s+")
@@ -193,6 +196,22 @@ def classify_difference(a: str | None, b: str | None) -> dict:
     if not left or not right:
         return {"kind": "missing", "conventions": []}
     return {"kind": "text", "conventions": []}
+
+
+# A table-only rule: two cells of one reading are one cell of another ("Br" | "*"
+# against "Br *"). Not a text transform, so not in `CONVENTIONS`; counted with them.
+RULES = (*CONVENTIONS, "cells")
+
+
+def _with_cells(found: dict, merged: bool) -> dict:
+    """A cell compared across joined or split cells needs the `cells` rule too."""
+    if not merged:
+        return found
+    if found["kind"] == "same":
+        return {"kind": "convention", "conventions": ["cells"]}
+    if found["kind"] == "convention":
+        return {"kind": "convention", "conventions": [*found["conventions"], "cells"]}
+    return found
 
 
 def worst_kind(kinds) -> str:
@@ -392,7 +411,103 @@ def _align_grids(ref: list[list[str]], other: list[list[str]]):
     col_map = {a: b for a, b in col_path if a is not None}
     extra_rows = [j for i, j in row_path if i is None and j is not None]
     extra_cols = [b for a, b in col_path if a is None and b is not None]
-    return row_map, col_map, extra_rows, extra_cols
+
+    # Then each pair of rows is aligned cell by cell. A model's grid can be ragged:
+    # OCRia, half-way down a Lloyd's page, opens an empty column before the flag,
+    # and Gemini writes flag and registry in one cell ("Br *"); one map for the
+    # whole table then compared every later cell with its neighbour (year with
+    # tonnage). The table-wide map breaks the ties (`OFF_MAP`), so a row that fits
+    # it keeps it.
+    cell_maps: dict[int, dict[int, tuple[str, bool]]] = {}
+    stray = 0
+    for i, j in row_pairs:
+        cell_maps[i], unmatched = _align_row(ref[i], other[j], col_map)
+        stray += unmatched
+    return row_map, cell_maps, extra_rows, extra_cols, stray
+
+
+def _split_as(text: str, left: str, right: str) -> tuple[str, str] | None:
+    """`text` cut between two words so that its halves read as `left` and `right`."""
+    words = text.split()
+    for cut in range(1, len(words)):
+        head, tail = " ".join(words[:cut]), " ".join(words[cut:])
+        if canonical_text(head) == canonical_text(left) and canonical_text(tail) == canonical_text(right):
+            return head, tail
+    return None
+
+
+def _align_row(ref: list[str], other: list[str], col_map: dict[int, int]) -> tuple[dict[int, tuple[str, bool]], int]:
+    """Each reference cell's counterpart in the other row: `(text, merged)`.
+
+    Needleman-Wunsch over the cells, with two more moves for a model that writes
+    two cells as one (Gemini's "Br *" for OCRia's "Br" | "*"), both only when the
+    join explains the text exactly (conventions aside): one reference cell against
+    two of the other's joined; two reference cells against one of the other's that
+    cuts between two words into exactly the two (its halves are then the readings). `merged` marks those: the `cells`
+    convention. Also returns how many filled cells of the other row nothing took.
+    """
+    n, m = len(ref), len(other)
+    inf = float("inf")
+    # Two gaps must cost more than one total misreading: `B` read as `R` is a
+    # cell both models have, not one missing on each side.
+    gap = GAP_COST + 0.01
+
+    def pair(a: int, b: int) -> float:
+        return content_distance(ref[a], other[b]) + (0.0 if col_map.get(a) == b else OFF_MAP)
+
+    def join_other(a: int, b: int) -> float:
+        # Only when joining explains the cell: otherwise "Am" | "B" against
+        # "Am R" would hide a misread registry behind a merge.
+        if not other[b].strip() or not other[b + 1].strip():
+            return inf
+        return OFF_MAP if canonical_text(ref[a]) == canonical_text(f"{other[b]} {other[b + 1]}") else inf
+
+    def join_ref(a: int, b: int) -> float:
+        if not ref[a].strip() or not ref[a + 1].strip():
+            return inf
+        return OFF_MAP if _split_as(other[b], ref[a], ref[a + 1]) else inf
+
+    table = [[inf] * (m + 1) for _ in range(n + 1)]
+    move: list[list[str]] = [[""] * (m + 1) for _ in range(n + 1)]
+    table[0][0] = 0.0
+    for a in range(n + 1):
+        for b in range(m + 1):
+            if a == b == 0:
+                continue
+            options = []
+            if a and b:
+                options.append((table[a - 1][b - 1] + pair(a - 1, b - 1), "pair"))
+            if a:
+                options.append((table[a - 1][b] + gap, "gap_ref"))
+            if b:
+                options.append((table[a][b - 1] + gap, "gap_other"))
+            if a and b >= 2:
+                options.append((table[a - 1][b - 2] + join_other(a - 1, b - 2), "join_other"))
+            if a >= 2 and b:
+                options.append((table[a - 2][b - 1] + join_ref(a - 2, b - 1), "join_ref"))
+            # Ties go to the plain pair (listed first): `min` keeps the first.
+            table[a][b], move[a][b] = min(options, key=lambda option: option[0])
+    out: dict[int, tuple[str, bool]] = {}
+    unmatched = 0
+    a, b = n, m
+    while a or b:
+        step = move[a][b]
+        if step == "pair":
+            out[a - 1] = (other[b - 1], False)
+            a, b = a - 1, b - 1
+        elif step == "gap_ref":
+            a -= 1
+        elif step == "gap_other":
+            unmatched += 1 if other[b - 1].strip() else 0
+            b -= 1
+        elif step == "join_other":
+            out[a - 1] = (f"{other[b - 2]} {other[b - 1]}", True)
+            a, b = a - 1, b - 2
+        else:
+            head, tail = _split_as(other[b - 1], ref[a - 2], ref[a - 1]) or (other[b - 1], "")
+            out[a - 2], out[a - 1] = (head, True), (tail, True)
+            a, b = a - 2, b - 1
+    return out, unmatched
 
 
 def compare_tables(grids: dict[str, dict]) -> dict:
@@ -419,18 +534,20 @@ def compare_tables(grids: dict[str, dict]) -> dict:
             continue
         values: dict[str, str | None] = {reference: ref[r][c]}
         distances, raw = [], []
+        merged = False
         for key, matrix in others.items():
-            row_map, col_map, _rows, _cols = alignments[key]
-            j, b = row_map.get(r), col_map.get(c)
-            if j is None or b is None:
+            row_map, cell_maps, _rows, _cols, _stray = alignments[key]
+            found_cell = cell_maps.get(r, {}).get(c) if row_map.get(r) is not None else None
+            if found_cell is None:
                 values[key] = None
                 distances.append(1.0)
                 raw.append(1.0)
             else:
-                values[key] = matrix[j][b]
-                distances.append(content_distance(ref[r][c], matrix[j][b]))
-                raw.append(text_distance(ref[r][c], matrix[j][b]))
-        found = classify_readings([values[reference], *(values[key] for key in others)])
+                values[key], joined = found_cell
+                merged = merged or joined
+                distances.append(content_distance(ref[r][c], values[key]))
+                raw.append(text_distance(ref[r][c], values[key]))
+        found = _with_cells(classify_readings([values[reference], *(values[key] for key in others)]), merged)
         cells.append({
             "r": r,
             "c": c,
@@ -445,14 +562,16 @@ def compare_tables(grids: dict[str, dict]) -> dict:
     extra_rows, extra_cols = [], []
     extra_cells = 0
     for key, matrix in others.items():
-        _row_map, _col_map, rows, cols = alignments[key]
-        width = len(matrix[0]) if matrix else 0
+        _row_map, _cell_maps, rows, cols, stray = alignments[key]
+        # What only this model read counts against the table: the filled cells of
+        # its extra rows, and the filled cells no reference cell took in the rows
+        # both have (an empty column opened half-way down is no disagreement).
         for j in rows:
             extra_rows.append({"model": key, "index": j, "texts": list(matrix[j])})
-            extra_cells += width
+            extra_cells += sum(1 for text in matrix[j] if text.strip())
         for b in cols:
             extra_cols.append({"model": key, "index": b})
-            extra_cells += len(matrix) - len(rows)
+        extra_cells += stray
     total = len(cells) + extra_cells
     score = (sum(cell["score"] for cell in cells) + extra_cells) / total if total else 0.0
     raw_score = (sum(cell["raw_score"] for cell in cells) + extra_cells) / total if total else 0.0
@@ -472,7 +591,7 @@ def compare_tables(grids: dict[str, dict]) -> dict:
 def _tally(cells: list[dict]) -> dict:
     """Cells of each kind of difference, and of each convention rule."""
     kinds = {kind: 0 for kind in DIFFERENCE_KINDS}
-    conventions = {kind: 0 for kind in CONVENTIONS}
+    conventions = {kind: 0 for kind in RULES}
     for cell in cells:
         kinds[cell["kind"]] += 1
         for rule in cell["conventions"]:
@@ -508,21 +627,23 @@ def annotate_grid(reference: dict, grids: dict[str, dict]) -> dict:
         if not (0 <= r < len(ref) and ref and 0 <= c < len(ref[0])):
             continue
         values: dict[str, str | None] = {}
+        merged = False
         for key, matrix in others.items():
-            row_map, col_map, _rows, _cols = alignments[key]
-            j, b = row_map.get(r), col_map.get(c)
-            values[key] = None if j is None or b is None else matrix[j][b]
+            row_map, cell_maps, _rows, _cols, _stray = alignments[key]
+            found_cell = cell_maps.get(r, {}).get(c) if row_map.get(r) is not None else None
+            values[key] = None if found_cell is None else found_cell[0]
+            merged = merged or bool(found_cell and found_cell[1])
         readings = list(values.values())
         if all(value is None for value in readings):
             score = None
             found = {"kind": "same", "conventions": []}
         else:
             score = _mean_pairwise(readings, _pair_distance)
-            found = classify_readings(readings)
+            found = _with_cells(classify_readings(readings), merged)
         cells.append({"r": r, "c": c, "values": values, "score": score, **found})
     extra_rows = [
         {"model": key, "index": j, "texts": list(others[key][j])}
-        for key, (_rm, _cm, rows, _cols) in alignments.items()
+        for key, (_rm, _cm, rows, _cols, _stray) in alignments.items()
         for j in rows
     ]
     return {"cells": cells, "extra_rows": extra_rows}
@@ -616,7 +737,7 @@ def compare_page(outputs: dict[str, list[dict]]) -> dict:
         disagreement = 0.0
     # How often each convention rule turns up on the page: a table's cells one by
     # one, any other block once. It is what the researcher settles rule by rule.
-    conventions = {kind: 0 for kind in CONVENTIONS}
+    conventions = {kind: 0 for kind in RULES}
     for c in clusters:
         if c["table"] is not None:
             for kind, n in c["table"]["conventions"].items():

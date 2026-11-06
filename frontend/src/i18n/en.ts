@@ -205,6 +205,12 @@ export const en: Dict = {
   },
 
   consensus: {
+    runPages: "Pages of the comparison",
+    pageWaiting: "waiting for the second model",
+    pageFailed: "a model did not answer",
+    pageLeft: "to check: {digits} numbers · {text} words · {missing} missing",
+    addTable: "Add {name}'s table",
+    addTableHint: "Only the models have this table. Add one model's reading as your draft: it opens in the table editor, with the disputed cells coloured. Your blocks stay as they are.",
     estimated: "row {row}, column {column} · estimated area: look for the row here",
     confirmMine: "My reading is right",
     confirmMineHint: "Marks the cell as verified and moves to the next one. Only after checking it on the scan.",
@@ -230,7 +236,7 @@ export const en: Dict = {
       missing: { one: "{count} read by one model only", other: "{count} read by one model only" },
       convention: { one: "{count} cell differs by convention only", other: "{count} cells differ by convention only" },
     },
-    rule: { dash: "dash", quotes: "quotes", leaders: "dot leaders", spacing: "spacing", ligature: "ligatures", small_caps: "small caps", case: "upper/lower case" },
+    rule: { dash: "dash", quotes: "quotes", leaders: "dot leaders", spacing: "spacing", ligature: "ligatures", small_caps: "small caps", case: "upper/lower case", cells: "merged cells" },
     offer: "Comparison available: {names}.",
     offerOpen: "Show the comparison",
     mineDiffers: "Your text differs from the models': check it is a correction you meant.",

@@ -31,6 +31,13 @@ class AdoptRequest(BaseModel):
     replace_human: bool = False
 
 
+class AdoptBlockRequest(BaseModel):
+    model_key: str = Field(min_length=1, max_length=64)
+    page_id: int
+    # The block's position in the model's output for the page.
+    index: int = Field(ge=0)
+
+
 class ConsensusRunCreate(BaseModel):
     page_ids: list[int] = Field(min_length=1, max_length=consensussvc.MAX_PAGES)
     profile_ids: list[int] = Field(min_length=1, max_length=consensussvc.MAX_MODELS)
@@ -124,6 +131,20 @@ def adopt_output(
     return out
 
 
+@router.post("/api/projects/{project_id}/consensus-runs/{run_id}/adopt-block")
+def adopt_block(
+    project_id: int, run_id: int, payload: AdoptBlockRequest, request: Request,
+    user: dict = Depends(require_resource(write=True)),
+) -> dict:
+    """One block of a model's reading (a table only the models read) becomes a draft."""
+    _run_of_project(project_id, run_id, request)
+    out = consensussvc.adopt_block(
+        run_id, payload.model_key, payload.page_id, payload.index, actor=user, lang=_lang(request),
+    )
+    _notify_live(payload.page_id, out["annotation_revision"], user)
+    return out
+
+
 def _notify_live(page_id: int, revision: int, user: dict) -> None:
     # A Studio open on the page reloads; a lost event must not fail the write.
     try:
@@ -135,6 +156,16 @@ def _notify_live(page_id: int, revision: int, user: dict) -> None:
         })
     except Exception:  # noqa: BLE001
         pass
+
+
+@router.get("/api/projects/{project_id}/consensus-runs/{run_id}/pages")
+def run_pages(
+    project_id: int, run_id: int, request: Request,
+    _user: dict = Depends(require_resource(write=False)),
+) -> dict:
+    """Each page of the run: the models' states, the agreement, what is left to look at."""
+    _run_of_project(project_id, run_id, request)
+    return {"items": consensussvc.run_pages(run_id, _lang(request))}
 
 
 @router.get("/api/pages/{page_id}/consensus")

@@ -1206,8 +1206,30 @@ export default function AnnotationPage() {
     }
   }
 
+  /** A table only the models read becomes a draft of the page, ready for the table editor. */
+  const addModelBlock = async (cluster: ConsensusCluster, key: string) => {
+    if (!page || projectId === '' || consensus?.run_id == null) return
+    const index = cluster.parts?.[key]?.find((i) => consensus.outputs[key]?.[i]?.label === 'Table') ?? cluster.parts?.[key]?.[0]
+    if (index == null) return
+    setError(null)
+    try {
+      await flushEdits()
+      const out = await apiPost<{ block_id: number }>(
+        `/projects/${projectId}/consensus-runs/${consensus.run_id}/adopt-block`,
+        { model_key: key, page_id: page.id, index },
+      )
+      await applyBlocks(page, ratio)
+      setConsensusSelected(cluster.id)
+      // The new draft row carries «Open the table»: bring it into view once drawn.
+      window.setTimeout(() => document.getElementById(`content-row-draft-${out.block_id}`)?.scrollIntoView?.({ block: 'nearest' }), 150)
+    } catch (e) {
+      setError(e)
+    }
+  }
+
   const consensusActions: ConsensusActions = {
     onAdopt: (key) => void adoptModel(key),
+    onAddBlock: (cluster, key) => void addModelBlock(cluster, key),
     mine: (cluster) => mineByCluster.get(cluster.id) ?? [],
     resolved: consensusResolved,
     canEdit: true,

@@ -152,6 +152,66 @@ def get_run(run_id: int, lang: str | None = None) -> dict[str, Any]:
     return run
 
 
+# Page summaries of a run, by the outputs they were computed from (a retry that
+# finishes a model again changes the key). Bounded: a run has at most MAX_PAGES.
+_SUMMARIES: dict[tuple, dict[str, Any]] = {}
+
+
+def _page_summary(run_id: int, page_id: int, outputs: dict[str, list[dict]]) -> dict[str, Any]:
+    comparison = metric.compare_page(outputs)
+    open_cells = {"digits": 0, "text": 0, "missing": 0}
+    for cluster in comparison["clusters"]:
+        table = cluster["table"]
+        if cluster["missing"]:
+            open_cells["missing"] += 1
+        elif table is not None:
+            for kind in open_cells:
+                open_cells[kind] += table["kinds"][kind]
+        elif cluster["text_kind"] in ("digits", "text"):
+            open_cells[cluster["text_kind"]] += 1
+    return {
+        "agreement": comparison["agreement"],
+        "open": open_cells,
+        "conventions": comparison["conventions"],
+    }
+
+
+def run_pages(run_id: int, lang: str | None = None) -> list[dict[str, Any]]:
+    """Each page of a run: every model's state and, once two models have read it,
+    the agreement and what is left to look at (numbers, words, missing readings)."""
+    get_run(run_id, lang)
+    pages: dict[int, dict[str, Any]] = {}
+    for row in runstore.run_page_states(run_id):
+        page = pages.setdefault(row["page_id"], {
+            "page_id": row["page_id"], "name": row["rel_path"], "states": {}, "errors": {},
+            "agreement": None, "open": None, "conventions": None, "_ended": [],
+        })
+        page["states"][row["model_key"]] = row["state"]
+        if row["error"]:
+            page["errors"][row["model_key"]] = row["error"]
+        if row["state"] == "finished":
+            page["_ended"].append((row["model_key"], row["ended_at"]))
+    out = []
+    for page in pages.values():
+        ended = tuple(sorted(page.pop("_ended")))
+        if len(ended) >= MIN_MODELS:
+            key = (run_id, page["page_id"], ended)
+            summary = _SUMMARIES.get(key)
+            if summary is None:
+                outputs = {
+                    output["model_key"]: output["blocks"]
+                    for output in runstore.page_outputs(run_id, page["page_id"])
+                    if output["state"] == "finished"
+                }
+                summary = _page_summary(run_id, page["page_id"], outputs)
+                if len(_SUMMARIES) > MAX_PAGES:
+                    _SUMMARIES.clear()
+                _SUMMARIES[key] = summary
+            page.update(summary)
+        out.append(page)
+    return out
+
+
 def list_runs(project_id: int) -> list[dict[str, Any]]:
     return [get_run(int(run["id"])) for run in runstore.list_runs(project_id)]
 
@@ -374,6 +434,50 @@ def adopt_output(
             payload={"model": model["name"], "pages": [w["page_id"] for w in written], "replace_human": replace_human},
         )
     return {"run_id": run_id, "model": model, "written": written, "skipped": skipped}
+
+
+def adopt_block(
+    run_id: int,
+    model_key: str,
+    page_id: int,
+    index: int,
+    *,
+    actor: dict | None = None,
+    lang: str | None = None,
+) -> dict[str, Any]:
+    """Add one block of a model's saved reading to the page, as an unverified draft.
+
+    For a table only the models read: the page view does not replace tables (they
+    are corrected cell by cell), so the table, grid included, goes in as a draft
+    the table editor can open. Nothing on the page is removed or changed. The
+    revision advances, so an open Studio reloads.
+    """
+    run = get_run(run_id, lang)
+    model = next((m for m in run["models"] if m["key"] == model_key), None)
+    if model is None:
+        raise HTTPException(status_code=404, detail=msg("consensus_model_not_found", lang))
+    output = next(iter(runstore.finished_outputs(run_id, model_key, [page_id])), None)
+    if output is None or not 0 <= index < len(output["blocks"]):
+        raise HTTPException(status_code=404, detail=msg("consensus_block_not_found", lang))
+    block = output["blocks"][index]
+    with blockstore.writing() as writer:
+        block_id = writer.insert_block(
+            page_id,
+            label=str(block.get("label") or "Text"),
+            points=block["points"],
+            content=str(block.get("content") or ""),
+            order_idx=int(block.get("order_idx") or index + 1),
+            prefill_source=str(block.get("prefill_source") or f"model:{model['name']}"),
+        )
+        grid = block.get("grid")
+        if grid and grid.get("rows"):
+            writer.upsert_grid(block_id, grid)
+        revision = writer.bump_revision(page_id)
+    audit.record_event(
+        "consensus.block_adopted", actor, resource_type="consensus_run", resource_id=run_id,
+        payload={"model": model["name"], "page_id": page_id, "index": index, "block_id": block_id},
+    )
+    return {"run_id": run_id, "model": model, "page_id": page_id, "block_id": block_id, "annotation_revision": revision}
 
 
 def reconcile_runs() -> None:

@@ -52,6 +52,8 @@ export interface ConsensusActions {
   onNext: () => void
   /** The model's whole reading becomes the page's drafts. */
   onAdopt: (model: string) => void
+  /** One block of the model's reading (a table only the models read) becomes a draft. */
+  onAddBlock?: (cluster: ConsensusCluster, model: string) => void
 }
 
 
@@ -347,7 +349,23 @@ export function ClusterDetail({ cluster, page, mine, resolved, actions }: {
       )}
 
       {cluster.table && mine.length === 0 ? (
-        <TableHeatmap key={cluster.id} cluster={cluster} models={models} />
+        <>
+          {actions?.canEdit && actions.onAddBlock && (
+            // The heatmap only shows; the table is worked on in the table editor,
+            // which opens on a block of the page: add the chosen model's table as one.
+            <div className="space-y-1 border border-[color:var(--color-rule-strong)] bg-[color:var(--color-fill)] p-2" data-testid="add-table">
+              <p className="text-[11px] text-[color:var(--color-ink-2)]">{t('consensus.addTableHint')}</p>
+              <div className="flex flex-wrap gap-1">
+                {keys.filter((key) => partsOf(page, cluster, key).some((b) => b.label === 'Table')).map((key) => (
+                  <button key={key} type="button" className="btn btn-primary btn-sm" onClick={() => actions.onAddBlock?.(cluster, key)}>
+                    {t('consensus.addTable', { name: nameOf(key) })}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <TableHeatmap key={cluster.id} cluster={cluster} models={models} />
+        </>
       ) : isTable ? (
         <p className="text-[11px] text-[color:var(--color-ink-2)]">{t('consensus.tableAction')}</p>
       ) : (verdict.kind !== 'agree' || mine.length === 0 || mineDiffers) && (

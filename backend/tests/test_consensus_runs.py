@@ -438,3 +438,71 @@ def test_adopting_a_model_writes_its_reading_as_drafts_and_spares_human_work(tmp
 
         missing = client.post(url, json={"model_key": argon_key, "page_ids": [999999]}).json()
         assert missing["written"] == [] and missing["skipped"][0]["reason"] == "no_result"
+
+
+def test_adding_one_table_of_a_model_keeps_the_users_blocks(tmp_path, monkeypatch):
+    """A table only the models read becomes a draft the table editor can open.
+
+    Lloyd's p. 13: the user drew the headers, the table is only in the models.
+    Adopting the whole reading would skip the page (human work); one block does not.
+    """
+    from app.adapters import blocks as blockstore
+
+    _fake_clients(monkeypatch)
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        with blockstore.writing() as writer:
+            mine = writer.insert_block(
+                page_ids[0], label="Page-header", points=[[1, 1], [50, 10]],
+                content="LLOYD'S DAILY INDEX", order_idx=1, prefill_source=None,
+            )
+            writer.commit()
+        ocria = _save_profile(client, OCRIA, "OCRia-1 (block)")
+        argon = _save_profile(client, ARGON, "Argon (block)")
+        created = client.post(
+            f"/api/projects/{project_id}/consensus-runs",
+            json={"page_ids": page_ids[:1], "profile_ids": [ocria["id"], argon["id"]]},
+        ).json()
+        run = _wait(client, project_id, created["id"])
+        argon_key = next(m["key"] for m in run["models"] if m["profile_id"] == argon["id"])
+        outputs = client.get(f"/api/pages/{page_ids[0]}/consensus").json()["outputs"][argon_key]
+        index = next(i for i, b in enumerate(outputs) if b["label"] == "Table")
+        url = f"/api/projects/{project_id}/consensus-runs/{run['id']}/adopt-block"
+
+        assert client.post(url, json={"model_key": argon_key, "page_id": page_ids[0], "index": 99}).status_code == 404
+        out = client.post(url, json={"model_key": argon_key, "page_id": page_ids[0], "index": index})
+        assert out.status_code == 200, out.text
+
+        blocks = client.get(f"/api/pages/{page_ids[0]}/annotations").json()["items"]
+        assert [b["id"] for b in blocks if b["prefill_source"] is None] == [mine]
+        (table,) = [b for b in blocks if b["label"] == "Table"]
+        assert table["id"] == out.json()["block_id"] and not table["confirmed"]
+        assert table["prefill_source"].startswith("model:")
+        grid = client.get(f"/api/blocks/{table['id']}/table").json()["grid"]
+        assert any(cell["text"] == "Genovo" for cell in grid["cells"])
+
+
+def test_a_run_lists_its_pages_with_states_agreement_and_what_is_left(tmp_path, monkeypatch):
+    """The Recognition page says, page by page, whether the comparison worked."""
+    _fake_clients(monkeypatch)
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        ocria = _save_profile(client, OCRIA, "OCRia-1 (pages)")
+        argon = _save_profile(client, ARGON, "Argon (pages)")
+        created = client.post(
+            f"/api/projects/{project_id}/consensus-runs",
+            json={"page_ids": page_ids, "profile_ids": [ocria["id"], argon["id"]]},
+        ).json()
+        run = _wait(client, project_id, created["id"])
+        out = client.get(f"/api/projects/{project_id}/consensus-runs/{run['id']}/pages")
+        assert out.status_code == 200, out.text
+        items = out.json()["items"]
+        assert sorted(item["page_id"] for item in items) == sorted(page_ids)
+        for item in items:
+            assert set(item["states"].values()) == {"finished"}
+            assert 0.0 <= item["agreement"] <= 1.0
+            assert set(item["open"]) == {"digits", "text", "missing"}
+            assert item["name"]
+        # The fake models read "Genova" and "Genovo": something is left to look at.
+        assert any(sum(item["open"].values()) > 0 for item in items)
+        assert client.get(f"/api/projects/{project_id}/consensus-runs/999999/pages").status_code == 404

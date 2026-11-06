@@ -34,7 +34,20 @@ export interface ConsensusRun {
   error: string | null
 }
 
+/** One page of a run (`GET …/consensus-runs/{id}/pages`). */
+export interface ConsensusRunPage {
+  page_id: number
+  name: string
+  states: Record<string, 'queued' | 'running' | 'finished' | 'failed' | 'cancelled'>
+  errors: Record<string, string>
+  /** Null until two models have read the page. */
+  agreement: number | null
+  open: { digits: number; text: number; missing: number } | null
+}
+
 const ACTIVE = new Set(['queued', 'running'])
+
+const STATE_MARK: Record<string, string> = { queued: '·', running: '…', finished: '✓', failed: '✕', cancelled: '–' }
 
 export default function ConsensusPanel({
   projectId,
@@ -54,6 +67,7 @@ export default function ConsensusPanel({
   const [profiles, setProfiles] = useState<SavedModel[]>([])
   const [chosen, setChosen] = useState<Set<number>>(new Set())
   const [run, setRun] = useState<ConsensusRun | null>(null)
+  const [runPages, setRunPages] = useState<ConsensusRunPage[]>([])
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [base, setBase] = useState('')
@@ -81,6 +95,19 @@ export default function ConsensusPanel({
     }, 2000)
     return () => window.clearInterval(timer)
   }, [run])
+
+  // Page by page: which model has read it, and once two have, how far they agree
+  // and what is left to look at. Refreshed with the run while it is going.
+  const runKey = run ? `${run.id}:${run.state}:${run.succeeded}:${run.failed}` : ''
+  useEffect(() => {
+    if (!run) { setRunPages([]); return }
+    let stale = false
+    void apiGet<{ items: ConsensusRunPage[] }>(`/projects/${run.project_id}/consensus-runs/${run.id}/pages`)
+      .then((out) => { if (!stale) setRunPages(out.items ?? []) })
+      .catch(() => { if (!stale) setRunPages([]) })
+    return () => { stale = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runKey])
 
   const save = async () => {
     setBusy(true)
@@ -228,8 +255,40 @@ export default function ConsensusPanel({
           <div className="mt-1 flex gap-3">
             {ACTIVE.has(run.state) && <button type="button" className="text-[11px] underline" onClick={() => void cancel()}>{t('consensus.cancel')}</button>}
             {!ACTIVE.has(run.state) && run.failed > 0 && <button type="button" className="text-[11px] font-semibold underline" onClick={() => void retry()}>{t('consensus.retry')}</button>}
-            <Link to={projectPath(run.project_id, 'studio', { consensus: 1, page: pageIds[0] })} className="text-[11px] font-semibold">{t('consensus.openStudio')}</Link>
+            {runPages.length === 0 && <Link to={projectPath(run.project_id, 'studio', { consensus: 1, page: pageIds[0] })} className="text-[11px] font-semibold">{t('consensus.openStudio')}</Link>}
           </div>
+          {runPages.length > 0 && (
+            <ul className="mt-2 max-h-[260px] space-y-1 overflow-auto" data-testid="run-pages" aria-label={t('consensus.runPages')}>
+              {runPages.map((page) => {
+                const left = page.open ? page.open.digits + page.open.text + page.open.missing : 0
+                return (
+                  <li key={page.page_id} className="flex flex-wrap items-baseline gap-x-2 border-b border-[color:var(--color-rule)] pb-1 text-[11px]">
+                    <Link to={projectPath(run.project_id, 'studio', { consensus: 1, page: page.page_id })} className="mono min-w-0 flex-1 truncate font-semibold" title={page.name}>
+                      {page.name.split('/').pop()}
+                    </Link>
+                    <span className="mono text-[color:var(--color-ink-3)]" title={run.models.map((m) => `${m.name}: ${t(`consensus.state.${page.states[m.key] ?? 'queued'}`)}`).join(' · ')}>
+                      {run.models.map((m) => STATE_MARK[page.states[m.key] ?? 'queued']).join(' ')}
+                    </span>
+                    {page.agreement == null ? (
+                      <span className="text-[color:var(--color-ink-3)]">{Object.values(page.states).some((state) => state === 'failed') ? t('consensus.pageFailed') : t('consensus.pageWaiting')}</span>
+                    ) : (
+                      <>
+                        <span className="font-semibold">{t('consensus.agreement', { pct: Math.round(page.agreement * 100) })}</span>
+                        <span className={left > 0 ? 'text-[color:var(--color-sig-text)]' : 'text-[color:var(--color-ok)]'}>
+                          {left > 0
+                            ? t('consensus.pageLeft', { digits: page.open!.digits, text: page.open!.text, missing: page.open!.missing })
+                            : t('consensus.allSettled')}
+                        </span>
+                      </>
+                    )}
+                    {Object.entries(page.errors).map(([key, message]) => (
+                      <span key={key} className="w-full text-[color:var(--color-sig-text)]">{`${run.models.find((m) => m.key === key)?.name ?? key}: ${message}`}</span>
+                    ))}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
           {!ACTIVE.has(run.state) && run.succeeded > 0 && (
             <div className="mt-2 border-t border-[color:var(--color-rule)] pt-2" data-testid="adopt-run">
               <label className="block">

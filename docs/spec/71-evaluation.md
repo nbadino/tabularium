@@ -52,7 +52,15 @@ The metric is pure (`domain/consensus.py`), pinned by `tests/test_consensus.py`:
   layout, 0.3), with each model's parts joined in reading order for `text` and their union for
   `layout`, labels not compared; 1 when some model has no block there.
 - **Tables** are compared on their grids, not their raw content: rows are aligned by
-  Needleman–Wunsch on row text (gap cost 0.5), then columns on the aligned cells; each reference
+  Needleman–Wunsch on row text (gap cost 0.5), then columns on the aligned cells; then each
+  pair of rows cell by cell (`_align_row`), the table-wide column map only breaking ties
+  (+0.05 off it; two gaps cost a little more than one total misreading). A model's grid can be
+  ragged (OCRia opens an empty column half-way down a Lloyd's page): one map for the whole
+  table compared the year with the tonnage from there on. Two more moves join cells, only when
+  the join explains the text exactly: one cell against two joined (`Br *` against `Br` | `*`)
+  or two against one that cuts between two words into exactly the two; such cells need the
+  `cells` rule (a table-only convention, `RULES`). The filled cells nothing took in a row
+  both models have count against the table; an empty column does not; each reference
   cell scores the mean distance to the other models' aligned cell (1 if unaligned); rows or
   columns only another model has count as disagreeing cells. The table score is the cluster's
   `text` channel.
@@ -73,7 +81,15 @@ The metric is pure (`domain/consensus.py`), pinned by `tests/test_consensus.py`:
   On Lloyd's Daily Index (1 April 1920, p. 3, OCRia-1 against Gemini 4 Argon) 64 of the 105
   differing cells were conventions; the 26 `digits` cells were the real errors (a year dropped
   on every row with an empty *Reg*, continuation lines on the wrong row).
-- **Page agreement** = 1 − the area-weighted mean cluster score. With fewer than two finished
+- **Page agreement** = 1 − the area-weighted mean cluster score.
+- **Run pages** (`GET …/consensus-runs/{id}/pages`, `services/consensus.py::run_pages`): each
+  page's file, every model's state and error and, once two models have read it, the agreement
+  and the open cells by kind (a table's `digits`/`text`/`missing` cells, a missing block, a
+  block whose text differs); cached by the outputs' end times. The Recognition page lists them
+  with a link to each page.
+- **A table only the models read** (`POST …/consensus-runs/{id}/adopt-block`, `adopt_block`)
+  goes in as one unverified draft with its grid, nothing else on the page touched, so the table
+  editor can open it; the page view offers it as *Add <model>'s table*. With fewer than two finished
   models there is no comparison (`comparison: null`), not an invented agreement.
 
 The Studio colours a score below 0.1 as agreement, below 0.35 as partial, above as disagreement.

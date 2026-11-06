@@ -92,6 +92,24 @@ def test_ocria_keeps_a_table_its_layout_model_did_not_place():
     assert [item["label"] for item in items] == ["Page-header", "Table", "Title", "Page-footer"]
 
 
+def test_ocria_gives_a_table_without_a_box_the_page_width_when_little_was_placed():
+    """Lloyd's p. 13 (consensus run 3): only the centred running head was placed.
+    The register took the head's third of the page, and the comparison saw a table
+    in the wrong place (agreement 31 % for two readings that agree)."""
+    adapter = get_adapter("llamaindex-ocria-1")
+    pages = [{
+        "page_width": 500.0,
+        "page_height": 650.0,
+        "items": [
+            {"type": "header", "bbox": [{"x": 180.0, "y": 28.0, "w": 140.0, "h": 9.0}], "md": "LLOYD'S DAILY INDEX"},
+            {"type": "table", "md": "|STEAMER—Owner|\n|-|\n|Aagot|", "html": "<table><tr><td>Aagot</td></tr></table>"},
+        ],
+    }]
+    (table,) = [item for item in adapter.parse_native_result(pages) if item["label"] == "Table"]
+    x1, _y1, x2, _y2 = table["bbox"]
+    assert (x1, x2) == (0, 1000)
+
+
 def test_ocria_workflow_defaults_validate_and_reset(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "ocria.db")
     init_db()
