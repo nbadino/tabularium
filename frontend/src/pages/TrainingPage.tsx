@@ -253,7 +253,7 @@ export default function TrainingPage() {
         credential_ref: 'vault:vast_api_key',
         max_dph: Math.max(0.1, Number(maxDph) || 1),
         min_gpu_ram_gb: 24,
-        lang: document.documentElement.lang || 'it',
+        lang: document.documentElement.lang || 'en',
       })
       setAutoJob(job)
       window.localStorage.setItem(`tabularium.auto.${projectId}`, job.id)

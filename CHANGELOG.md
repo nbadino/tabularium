@@ -108,6 +108,12 @@ Notable changes to Tabularium. The format follows
   those too (`POST …/consensus-runs/{id}/adopt`).
   Metric in `docs/spec/71-evaluation.md`.
 
+### Changed
+- **English is the default language.** A browser that never picked a language in the menu
+  now gets the English interface (it was Italian), and the server answers in English when a
+  request names no language: error details, and run errors saved in the database (a stopped
+  model in a comparison) shown later. A language chosen in the menu, Italian or French, is kept.
+
 ### Fixed
 - **OCRia: a register without a box was dropped when a strip of the facing page was in the
   scan.** LlamaParse places that strip as one item from the header to the foot; the table got

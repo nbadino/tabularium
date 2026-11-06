@@ -1,15 +1,15 @@
-"""i18n dei messaggi che il backend espone nell'interfaccia.
+"""i18n of the messages the backend shows in the interface.
 
-Il frontend invia `Accept-Language: it|en|fr`; questo modulo localizza i
-messaggi che finiscono sullo schermo (dettagli degli errori HTTP, warning del
-dataset, errori di readiness, reason della coda di annotazione, azioni di
-valutazione e controlli del training). Il fallback è l'italiano, la lingua
-storica delle stringhe utente di questo prodotto.
+The frontend sends `Accept-Language: it|en|fr` (the language chosen in the menu); this
+module localises the messages that reach the screen (HTTP error details, dataset
+warnings, readiness errors, annotation queue reasons, evaluation actions and training
+checks). A reader who chose nothing reads English (`DEFAULT`).
 
-I cataloghi sono chiave -> template con segnaposto `{nome}`. La chiave è il
-codice logico del messaggio; per i dettagli HTTPException il modulo offre
-anche un adattatore inverso che, dato il testo italiano corrente, riconosce il
-codice ed emette la traduzione richiesta.
+The catalogs map a key to a template with `{name}` placeholders. The key is the logical
+code of the message. Many HTTP details are still written as Italian text in the code,
+and some messages are stored in the database and read later: `localize_detail`
+recognises a text written from the Italian (`SOURCE`) or the English catalog and emits
+it in the requested language.
 """
 from __future__ import annotations
 
@@ -17,10 +17,11 @@ import re
 from typing import Any
 
 SUPPORTED = ("it", "en", "fr")
-DEFAULT = "it"
-# A client that names no supported language (curl, a script) gets English: the interface
-# always sends Accept-Language, so only API users see this fallback.
-CLIENT_DEFAULT = "en"
+# What a reader who chose no language gets: the interface without a stored choice, a
+# client without Accept-Language (curl, a script), a background job without a request.
+DEFAULT = "en"
+# The language the details written in the code are in: the reverse adapter's source.
+SOURCE = "it"
 
 _IT: dict[str, str] = {
     "work_conflict": "L’assegnazione è cambiata. Ricarica prima di procedere.",
@@ -984,21 +985,21 @@ CATALOG: dict[str, dict[str, str]] = {"it": _IT, "en": _EN, "fr": _FR}
 
 
 def parse_lang(header: str | None) -> str:
-    """Estrae `it|en|fr` da un header Accept-Language (fallback: italiano)."""
+    """`it|en|fr` from an Accept-Language header; English when none is supported."""
     if not header:
-        return CLIENT_DEFAULT
+        return DEFAULT
     for part in header.split(","):
         code = part.strip().split(";")[0].strip().lower()
         base = code.split("-")[0]
         if base in SUPPORTED:
             return base
-    return CLIENT_DEFAULT
+    return DEFAULT
 
 
 def msg(key: str, lang: str | None = None, **kwargs: Any) -> str:
-    """Rende il messaggio localizzato, interpolando i segnaposto `{nome}`."""
+    """The localised message, `{name}` placeholders filled. No language: English."""
     lang = lang if lang in SUPPORTED else DEFAULT
-    template = CATALOG[lang].get(key) or _IT.get(key) or key
+    template = CATALOG[lang].get(key) or CATALOG[DEFAULT].get(key) or _IT.get(key) or key
     if not kwargs:
         return template
     try:
@@ -1007,9 +1008,11 @@ def msg(key: str, lang: str | None = None, **kwargs: Any) -> str:
         return template
 
 
-# --- adattatore inverso per i dettagli HTTP --------------------------------
-# Dato il `detail` italiano corrente (stringa), riconosce il codice e produce
-# la traduzione per la lingua della richiesta. Usato dal handler di main.py.
+# --- reverse adapter for HTTP details and stored messages --------------------------
+# Given a text rendered from a catalog template (Italian, the language of the details in
+# the code, or English, what a job without a request stores), recognise the code and
+# render it in the reader's language. Used by the handler in main.py and by the views
+# that show stored run errors.
 def _template_pattern(template: str) -> re.Pattern[str] | None:
     try:
         parts = re.split(r"\{(\w+)\}", template)
@@ -1020,31 +1023,34 @@ def _template_pattern(template: str) -> re.Pattern[str] | None:
     pattern = ""
     groups: list[str] = []
     for i, part in enumerate(parts):
-        if i % 2 == 0:  # testo letterale
+        if i % 2 == 0:  # literal text
             pattern += re.escape(part)
-        else:  # nome del gruppo
+        else:  # group name
             groups.append(part)
             pattern += rf"(?P<{part}>.+?)"
+    if not "".join(parts[0::2]).strip():
+        return None  # a bare placeholder would match any text
     try:
         return re.compile(pattern + "$")
     except re.error:
         return None
 
 
-_COMPILED: list[tuple[str, re.Pattern[str]]] = [
-    (code, pat)
-    for code, template in _IT.items()
+_COMPILED: list[tuple[str, str, re.Pattern[str]]] = [
+    (source, code, pat)
+    for source in (SOURCE, DEFAULT)
+    for code, template in CATALOG[source].items()
     if (pat := _template_pattern(template)) is not None
 ]
 
 
 def localize_detail(detail: str, lang: str | None = None) -> str:
-    """Traduce un `detail` HTTPException scritto in italiano."""
+    """Render a catalog text (Italian or English) in `lang`; English when none."""
     lang = lang if lang in SUPPORTED else DEFAULT
-    if lang == DEFAULT:
-        return detail
-    for code, pattern in _COMPILED:
+    for source, code, pattern in _COMPILED:
         match = pattern.match(detail)
         if match:
+            if source == lang:
+                return detail
             return msg(code, lang, **match.groupdict())
     return detail
