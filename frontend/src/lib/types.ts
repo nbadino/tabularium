@@ -1050,6 +1050,8 @@ export interface RecognitionRun {
   started_at: string | null
   heartbeat_at: string | null
   ended_at: string | null
+  /** Paused by the user: the queue waits after the page in hand. */
+  paused?: boolean
   items?: RecognitionRunItem[]
 }
 

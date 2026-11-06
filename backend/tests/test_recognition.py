@@ -524,3 +524,83 @@ def test_run_checks_and_insert_share_one_write_transaction(tmp_path, monkeypatch
             endpoint=None,
         )
     assert seen == [True]
+
+
+def test_a_paused_run_holds_its_queue_until_resumed_or_stopped(tmp_path, monkeypatch):
+    """Pause stops calling the model after the page in hand; resume carries on,
+    and a stop while paused ends the run without reading the rest."""
+    import threading
+
+    from app.services import recognition
+
+    monkeypatch.setattr(recognition.ocrmod, "OcrEngine", FakeOcr)
+    monkeypatch.setattr(recognition, "PAUSE_POLL_S", 0.01)
+    first_page_started = threading.Event()
+    release_first_page = threading.Event()
+    calls: list[int] = []
+
+    def slow(run, item, opts, client, engine, cancel):
+        calls.append(item["page_id"])
+        if len(calls) == 1:
+            first_page_started.set()
+            release_first_page.wait(5)
+        return [], {"detected": 0, "inserted": 0}, None
+
+    monkeypatch.setattr(recognition, "_recognize_page", slow)
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        run_id = _ocr_run(client, project_id, page_ids)
+        assert first_page_started.wait(5)
+
+        paused = client.post(f"/api/projects/{project_id}/recognition-runs/{run_id}/pause")
+        assert paused.status_code == 200, paused.text
+        assert paused.json()["paused"] is True
+        release_first_page.set()
+        time.sleep(0.2)
+        body = client.get(f"/api/projects/{project_id}/recognition-runs/{run_id}").json()
+        assert body["state"] == "running" and body["paused"] is True
+        assert calls == page_ids[:1]
+        assert [item["state"] for item in body["items"]] == ["finished", "queued"]
+
+        resumed = client.post(f"/api/projects/{project_id}/recognition-runs/{run_id}/resume")
+        assert resumed.json()["paused"] is False
+        body = _wait_run(client, project_id, run_id)
+        assert body["state"] == "finished" and body["paused"] is False
+        assert calls == page_ids
+
+        # Nothing to pause once the run has ended.
+        late = client.post(f"/api/projects/{project_id}/recognition-runs/{run_id}/pause")
+        assert late.status_code == 409
+
+
+def test_stopping_a_paused_run_cancels_the_pages_left(tmp_path, monkeypatch):
+    import threading
+
+    from app.services import recognition
+
+    monkeypatch.setattr(recognition.ocrmod, "OcrEngine", FakeOcr)
+    monkeypatch.setattr(recognition, "PAUSE_POLL_S", 0.01)
+    started = threading.Event()
+    release = threading.Event()
+    calls: list[int] = []
+
+    def slow(run, item, opts, client, engine, cancel):
+        calls.append(item["page_id"])
+        started.set()
+        release.wait(5)
+        return [], {"detected": 0, "inserted": 0}, None
+
+    monkeypatch.setattr(recognition, "_recognize_page", slow)
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        run_id = _ocr_run(client, project_id, page_ids)
+        assert started.wait(5)
+        client.post(f"/api/projects/{project_id}/recognition-runs/{run_id}/pause")
+        release.set()
+        time.sleep(0.1)
+        client.post(f"/api/projects/{project_id}/recognition-runs/{run_id}/cancel")
+        body = _wait_run(client, project_id, run_id)
+
+    assert body["state"] == "cancelled"
+    assert calls == page_ids[:1]
+    assert [item["state"] for item in body["items"]] == ["finished", "cancelled"]

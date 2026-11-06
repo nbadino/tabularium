@@ -2343,10 +2343,57 @@ class LlamaIndexOcriaAdapter(_StubAdapter):
             if page_width <= 0 or page_height <= 0:
                 continue
 
+            page_items = page.get("items")
+            # Horizontal extent of everything LlamaParse did place on the page:
+            # the width given to an item that came back without a box.
+            placed = [
+                box for box in (
+                    self._bbox_union(item.get("bbox"))
+                    for item in (page_items if isinstance(page_items, list) else [])
+                    if isinstance(item, dict)
+                )
+                if box is not None
+            ]
+            span_x = (
+                (min(b[0] for b in placed), max(b[2] for b in placed)) if placed else (0.0, page_width)
+            )
+
+            def gap_box(items: list, index: int) -> tuple[float, float, float, float]:
+                """The band between the nearest placed siblings around `items[index]`.
+
+                LlamaParse's layout model can miss a region its vision model still
+                reads: a dense register comes back as a full `table` item (html,
+                md, rows) with `bbox: null` and a `layout_lvm_disagreement`
+                concern. Dropping it lost the whole table; the band it sits in,
+                between the item before and the item after, is where it is.
+                """
+                top, bottom = 0.0, page_height
+                for prev in reversed(items[:index]):
+                    box = self._bbox_union(prev.get("bbox")) if isinstance(prev, dict) else None
+                    if box is not None:
+                        top = box[3]
+                        break
+                for nxt in items[index + 1:]:
+                    box = self._bbox_union(nxt.get("bbox")) if isinstance(nxt, dict) else None
+                    if box is not None:
+                        bottom = box[1]
+                        break
+                if bottom <= top:
+                    top, bottom = 0.0, page_height
+                return span_x[0], top, span_x[1], bottom
+
+            def has_placed_child(item: dict) -> bool:
+                children = item.get("items")
+                return isinstance(children, list) and any(
+                    isinstance(child, dict)
+                    and (self._bbox_union(child.get("bbox")) is not None or has_placed_child(child))
+                    for child in children
+                )
+
             def walk(items: object, *, suppress_children: bool = False) -> None:
                 if not isinstance(items, list):
                     return
-                for item in items:
+                for index, item in enumerate(items):
                     if not isinstance(item, dict):
                         continue
                     kind = str(item.get("type") or "").strip().lower().replace(" ", "_")
@@ -2354,10 +2401,15 @@ class LlamaIndexOcriaAdapter(_StubAdapter):
                     if suppress_children:
                         continue
                     if box is None:
-                        # A container without its own box can still contain
-                        # placeable children; never discard the whole subtree.
-                        walk(item.get("items"))
-                        continue
+                        if has_placed_child(item):
+                            # A container without its own box can still contain
+                            # placeable children; never discard the whole subtree.
+                            walk(item.get("items"))
+                            continue
+                        has_content = kind == "table" and (item.get("html") or item.get("md")) or self._content(item)
+                        if not has_content:
+                            continue
+                        box = gap_box(items, index)
 
                     if kind == "table":
                         label = "Table"
@@ -2404,7 +2456,7 @@ class LlamaIndexOcriaAdapter(_StubAdapter):
                         "header", "page_header", "footer", "page_footer", "list", "list_item",
                     })
 
-            walk(page.get("items"))
+            walk(page_items)
         return result
 
 

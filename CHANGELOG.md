@@ -7,6 +7,11 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **Pause, resume and stop a recognition from anywhere.** While a session runs, the top bar shows
+  its progress (*Recognition 9/557*) with **Pause**, **Resume** and **Stop**; the same buttons are
+  on the Results and Recognition pages. Pause finishes the page in hand and then waits without
+  calling the model; Stop asks first and keeps every page already read
+  (`POST …/recognition-runs/{id}/pause|resume`).
 - Administrators see when a newer release is out: *Update <version> available* in the top bar
   and the latest release, its notes and the upgrade guide in **Settings → Environment**
   (`GET /api/system/update`). The server asks GitHub at most every six hours; offline it shows
@@ -58,6 +63,12 @@ Notable changes to Tabularium. The format follows
   Metric in `docs/spec/71-evaluation.md`.
 
 ### Fixed
+- A recognition started from the project page could not be stopped: it opened the Results page,
+  which had no stop button.
+- OCRia (LlamaIndex) lost whole tables. When LlamaParse's layout model misses a region that its
+  vision model still reads, the table comes back with `bbox: null`; the parser dropped every item
+  without a box. Such items now take the band between the placed items around them, so the table
+  (its HTML intact) lands where it is on the page.
 - LlamaIndex OCRia-1 jobs no longer fail with HTTP 422 on the default *Allowed failure ratio* of 0:
   LlamaCloud wants a ratio above 0, so 0 now leaves the setting to the vendor (one page per job: a
   failed page still fails it). The vendor-schema test checks numeric bounds too.

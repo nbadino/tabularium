@@ -43,9 +43,53 @@ def test_ocria_adapter_maps_native_items_rotation_and_nested_containers():
         {"bbox": [125, 75, 175, 175], "label": "Text", "content": "Rotated text"},
         {"bbox": [20, 200, 920, 700], "label": "Table", "content": "<table><tr><td>A</td></tr></table>"},
         {"bbox": [20, 720, 220, 820], "label": "Picture", "content": ""},
+        # Read but not placed: kept, in the band after the last placed item.
+        {"bbox": [10, 820, 920, 1000], "label": "Text", "content": "No coordinates"},
     ]
     assert supported_prefill_modes(adapter)["supports_native"] is True
     assert prefill.native_mode(adapter) == "official"
+
+
+def test_ocria_keeps_a_table_its_layout_model_did_not_place():
+    """Lloyd's Daily Index p. 10 (run 5): LlamaParse's layout model saw only the
+    header and the adverts, its vision model still read the 67-row register and
+    returned it as a `table` with `bbox: null`. The table must survive, in the
+    band between the header above and the advert below."""
+    adapter = get_adapter("llamaindex-ocria-1")
+    pages = [{
+        "page_width": 509.76,
+        "page_height": 664.8,
+        "items": [
+            {
+                "type": "header",
+                "bbox": [{"x": 42.31, "y": 16.62, "w": 286.49, "h": 15.29}],
+                "md": "Apr. 1, 1920.] **LLOYD'S DAILY INDEX** 9",
+                "items": [{"type": "text", "bbox": [{"x": 42.31, "y": 16.62, "w": 286.49, "h": 15.29}], "value": "x"}],
+            },
+            {
+                "type": "table",
+                "md": "|STEAMER—Owner|Flg Reg|\n|-|-|\n|**Apsley**|Br|",
+                "html": "<table><tr><th>STEAMER—Owner</th></tr><tr><td>Apsley</td></tr></table>",
+                "parse_concerns": [{"type": "layout_lvm_disagreement"}],
+            },
+            {"type": "heading", "level": 2, "bbox": [{"x": 31.1, "y": 559.76, "w": 368.04, "h": 25.26}],
+             "md": "## WATSON & PARKER, MARSEILLES.", "value": "WATSON & PARKER, MARSEILLES."},
+            {"type": "heading", "level": 3, "md": "", "value": ""},
+            {"type": "footer", "bbox": [{"x": 39.76, "y": 612.95, "w": 443.49, "h": 15.95}], "md": "Mar 29"},
+        ],
+    }]
+
+    items = adapter.parse_native_result(pages)
+    table = [item for item in items if item["label"] == "Table"]
+    assert len(table) == 1
+    assert table[0]["content"].startswith("<table>")
+    x1, y1, x2, y2 = table[0]["bbox"]
+    # Below the header (ends at y≈48/1000), above the heading (starts at y≈842/1000).
+    assert (y1, y2) == (48, 842)
+    # As wide as everything placed on the page (heading left edge to footer right edge).
+    assert (x1, x2) == (61, 948)
+    # An empty item without a box adds nothing.
+    assert [item["label"] for item in items] == ["Page-header", "Table", "Title", "Page-footer"]
 
 
 def test_ocria_workflow_defaults_validate_and_reset(tmp_path, monkeypatch):
