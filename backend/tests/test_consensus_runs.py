@@ -39,10 +39,10 @@ ARGON = {
 }
 
 
-def _project(client: TestClient, root: Path) -> tuple[int, list[int]]:
+def _project(client: TestClient, root: Path, pages: int = 2) -> tuple[int, list[int]]:
     archive = root / "archive"
     archive.mkdir(parents=True)
-    for index in range(2):
+    for index in range(pages):
         Image.new("RGB", (200, 300), "white").save(archive / f"p{index}.png")
     project_id = client.post(
         "/api/projects", json={"name": "Consensus", "archive_dir": str(archive)}
@@ -285,6 +285,78 @@ def test_one_model_failing_does_not_stop_the_others(tmp_path, monkeypatch):
         assert "gateway down" in states[argon["id"]]["error"]
         # With one model the page cannot be compared: say so instead of inventing agreement.
         assert page["comparison"] is None
+
+
+def test_a_model_failing_the_same_way_again_and_again_is_stopped(tmp_path, monkeypatch):
+    """Out of credits, every page fails with the same answer: after a few in a row the
+    model stops, says why, and the other model's readings are all kept."""
+    from app.services import consensus
+
+    _fake_clients(monkeypatch)
+    calls = {"argon": 0}
+
+    class BrokeArgon(FakeArgon):
+        def end2end(self, image, **_kwargs):
+            calls["argon"] += 1
+            raise RuntimeError(f"402 insufficient credits (request {calls['argon']})")
+
+    monkeypatch.setattr(
+        consensus.inference,
+        "client_for_profile",
+        lambda profile, **_k: FakeOcria() if profile["model_adapter_id"] == "llamaindex-ocria-1" else BrokeArgon(),
+    )
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path, pages=5)
+        ocria = _save_profile(client, OCRIA, "OCRia-1 (credits)")
+        argon = _save_profile(client, ARGON, "Argon (credits)")
+        created = client.post(
+            f"/api/projects/{project_id}/consensus-runs",
+            json={"page_ids": page_ids, "profile_ids": [ocria["id"], argon["id"]]},
+        )
+        run = _wait(client, project_id, created.json()["id"])
+        assert run["state"] == "finished_with_errors"
+        assert calls["argon"] == consensus.STOP_AFTER_SAME_ERRORS
+        assert run["succeeded"] == 5 and run["failed"] == 5
+
+        pages = client.get(
+            f"/api/projects/{project_id}/consensus-runs/{run['id']}/pages",
+            headers={"Accept-Language": "en"},
+        ).json()["items"]
+        argon_key = f"p{argon['id']}"
+        errors = [page["errors"][argon_key] for page in pages]
+        assert all("insufficient credits" in error for error in errors)
+        assert "stopped" in errors[-1] and "stopped" not in errors[0]
+
+
+def test_different_errors_do_not_stop_a_model(tmp_path, monkeypatch):
+    from app.services import consensus
+
+    _fake_clients(monkeypatch)
+    calls = {"argon": 0}
+
+    class UnluckyArgon(FakeArgon):
+        def end2end(self, image, **kwargs):
+            calls["argon"] += 1
+            if calls["argon"] % 2:
+                raise RuntimeError("timeout" if calls["argon"] % 4 == 1 else "bad gateway")
+            return super().end2end(image, **kwargs)
+
+    monkeypatch.setattr(
+        consensus.inference,
+        "client_for_profile",
+        lambda profile, **_k: FakeOcria() if profile["model_adapter_id"] == "llamaindex-ocria-1" else UnluckyArgon(),
+    )
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path, pages=5)
+        ocria = _save_profile(client, OCRIA, "OCRia-1 (flaky)")
+        argon = _save_profile(client, ARGON, "Argon (flaky)")
+        created = client.post(
+            f"/api/projects/{project_id}/consensus-runs",
+            json={"page_ids": page_ids, "profile_ids": [ocria["id"], argon["id"]]},
+        )
+        run = _wait(client, project_id, created.json()["id"])
+        assert calls["argon"] == 5  # every page was tried
+        assert run["failed"] == 3
 
 
 def test_retrying_a_run_reruns_only_the_failed_outputs(tmp_path, monkeypatch):

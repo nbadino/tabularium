@@ -34,7 +34,12 @@ A consensus run (`services/consensus.py`) sends the same pages to two to six sav
 (`adapters/blocks.py::ReadOnlyPageWriter`): no block, grid or revision is written and the page
 master is never rotated. Each model's blocks go to `consensus_outputs`. One model failing does
 not stop the others; the run ends `finished_with_errors`. *Retry* (`POST …/consensus-runs/{id}/retry`)
-requeues only the failed or cancelled outputs of that run.
+requeues only the failed or cancelled outputs of that run. A model that fails
+`STOP_AFTER_SAME_ERRORS` (3) pages in a row with the same error (numbers ignored: request ids,
+times) is stopped: its remaining pages are marked failed at once with `consensus_model_stopped`
+("out of credits or invalid key?") instead of each costing a request; a retry sends them again.
+Stored errors are Italian catalog messages, localized on read (`run_pages`, `page_comparison`).
+The Recognition page shows each model's progress (pages read, failed) from the run's pages.
 
 The metric is pure (`domain/consensus.py`), pinned by `tests/test_consensus.py`:
 
@@ -124,6 +129,8 @@ confirmed=1`) is skipped as `human_work`, unless `replace_human` asks to replace
 (`replace_all`); a page the model has no finished output for is `no_result`. The coordinates are
 those of the current page master: a consensus run never rotates it. The revision advances, so an
 approval lapses and an open Studio reloads (live `annotations_changed`, action `consensus`).
+It does not wait for the run to end: while it is going, only the pages the model has already
+read are written, and repeating it at the end writes the rest.
 
 **In the table editor** (`POST /api/blocks/{id}/consensus` with the editor's current grid,
 `domain/consensus.py::annotate_grid`) the user's grid is the reference: each finished model's
