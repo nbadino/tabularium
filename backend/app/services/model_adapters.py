@@ -2203,6 +2203,11 @@ class GeminiArgonAdapter(_StubAdapter):
         )
 
 
+# The least height (share of the page) the band of an item without a box may have;
+# a following item starting higher overlaps the region and does not bound it.
+MIN_GAP_BAND = 0.1
+
+
 class LlamaIndexOcriaAdapter(_StubAdapter):
     """OCRia-1 through LlamaCloud's native asynchronous parsing API.
 
@@ -2380,7 +2385,11 @@ class LlamaIndexOcriaAdapter(_StubAdapter):
                         break
                 for nxt in items[index + 1:]:
                     box = self._bbox_union(nxt.get("bbox")) if isinstance(nxt, dict) else None
-                    if box is not None:
+                    # An item that starts right under (or above) the top overlaps the
+                    # region instead of following it: on Lloyd's p. 106 a strip of the
+                    # facing page, placed from the header to the foot, left the
+                    # register a 2/1000 band and it was dropped. Look further down.
+                    if box is not None and box[1] >= top + MIN_GAP_BAND * page_height:
                         bottom = box[1]
                         break
                 if bottom <= top:
