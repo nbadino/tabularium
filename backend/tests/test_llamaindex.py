@@ -92,6 +92,34 @@ def test_ocria_keeps_a_table_its_layout_model_did_not_place():
     assert [item["label"] for item in items] == ["Page-header", "Table", "Title", "Page-footer"]
 
 
+def test_ocria_table_without_a_box_is_not_squeezed_by_an_item_that_overlaps_it():
+    """Lloyd's Daily Index p. 106 (consensus run 5): the scan shows a strip of the
+    facing page, which LlamaParse placed as one `text` item from just under the
+    header to the foot of the page. The 76-row register came back without a box;
+    the band between the header and that item was 2/1000 high, rounded to nothing,
+    and the table was dropped. The band must not end on an item that starts above
+    a sensible table: the table takes the page below the header."""
+    adapter = get_adapter("llamaindex-ocria-1")
+    pages = [{
+        "page_width": 502.8,
+        "page_height": 664.56,
+        "items": [
+            {"type": "header", "bbox": [{"x": 58.32, "y": 20.6, "w": 288.11, "h": 9.97}],
+             "md": "106 LLOYD'S DAILY INDEX [Apr. 1, 1917"},
+            {"type": "table", "md": "|STEAMER—Owner|\n|-|\n|Orion|",
+             "html": "<table><tr><td>Orion</td></tr></table>",
+             "parse_concerns": [{"type": "layout_lvm_disagreement"}]},
+            {"type": "text", "bbox": [{"x": 45.25, "y": 31.9, "w": 456.04, "h": 602.09, "label": "reference"}],
+             "value": "Othello (2)\nOthello"},
+        ],
+    }]
+    items = adapter.parse_native_result(pages)
+    (table,) = [item for item in items if item["label"] == "Table"]
+    _x1, y1, _x2, y2 = table["bbox"]
+    assert y1 == 46  # under the header
+    assert y2 == 1000  # to the foot of the page, not the 2/1000 band
+
+
 def test_ocria_gives_a_table_without_a_box_the_page_width_when_little_was_placed():
     """Lloyd's p. 13 (consensus run 3): only the centred running head was placed.
     The register took the head's third of the page, and the comparison saw a table

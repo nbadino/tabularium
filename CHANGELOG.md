@@ -109,6 +109,10 @@ Notable changes to Tabularium. The format follows
   Metric in `docs/spec/71-evaluation.md`.
 
 ### Fixed
+- **OCRia: a register without a box was dropped when a strip of the facing page was in the
+  scan.** LlamaParse places that strip as one item from the header to the foot; the table got
+  the 2/1000 band before it and was discarded (Lloyd's Daily Index 1920 p. 106 and 155). An
+  item that starts less than a tenth of the page under the band's top no longer bounds it.
 - Model comparison: tables are aligned row by row, so a model whose grid opens a column
   half-way down no longer turns every later cell into a disagreement (Lloyd's p. 14: 140
   "different numbers" were 3); two cells written as one (`Br *`) are the *merged cells*
