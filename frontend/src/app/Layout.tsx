@@ -9,6 +9,7 @@ import { writeActiveProject } from './activeProject'
 import { LOCALES, LOCALE_LABELS, useI18n } from '../i18n'
 import { useAuth } from './auth'
 import { CommandPalette } from './CommandPalette'
+import { ActiveRunsIndicator } from './RunControls'
 import { Menu, PageSkeleton } from './ui'
 import { IconArchive, IconModels } from './icons'
 
@@ -301,6 +302,7 @@ export default function Layout() {
             Tabularium
           </span>
           <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2">
+            <ActiveRunsIndicator />
             <CommandPalette />
             <AccountMenu />
           </div>

@@ -17,6 +17,7 @@ import type { CollectionFilter } from '../app/collections'
 import { pageLabel, pageShortLabel } from '../lib/pageLabel'
 import { runTitle, useModelNames } from '../app/models/names'
 import { API_BASE } from '../lib/endpoints'
+import { RecognitionRunControls } from '../app/RunControls'
 
 function runLabel(run: RecognitionRun, t: (key: string) => string): string {
   const key = {
@@ -27,7 +28,7 @@ function runLabel(run: RecognitionRun, t: (key: string) => string): string {
     failed: 'recognition.statusFailed',
     cancelled: 'recognition.statusCancelled',
   }[run.state]
-  return t(key)
+  return run.paused ? t('recognition.statusPaused') : t(key)
 }
 
 function runTone(run: RecognitionRun): 'neutral' | 'progress' | 'ok' | 'warn' | 'sig' {
@@ -52,7 +53,7 @@ interface ModelRuntimeInfo {
   local?: { runnable: boolean }
 }
 
-function RunSummary({ run, onCancel }: { run: RecognitionRun; onCancel: () => void }) {
+function RunSummary({ run, onChange, onError }: { run: RecognitionRun; onChange: (run: RecognitionRun) => void; onError: (e: unknown) => void }) {
   const { t } = useI18n()
   const nameOf = useModelNames()
   const active = run.state === 'queued' || run.state === 'running'
@@ -89,11 +90,7 @@ function RunSummary({ run, onCancel }: { run: RecognitionRun; onCancel: () => vo
         <Link to={projectPath(run.project_id, `riconoscimenti/${run.id}`)} className="btn btn-primary no-underline">
           {t('recognition.openResults')}
         </Link>
-        {active && (
-          <button type="button" className="btn btn-danger" onClick={onCancel}>
-            {t('recognition.cancel')}
-          </button>
-        )}
+        <RecognitionRunControls run={run} onChange={onChange} onError={onError} />
       </div>
     </Module>
   )
@@ -322,15 +319,6 @@ export default function RecognizePage() {
     }
   }
 
-  const cancel = async () => {
-    if (!current) return
-    try {
-      setCurrent(await apiPost<RecognitionRun>(`/projects/${current.project_id}/recognition-runs/${current.id}/cancel`))
-    } catch (e) {
-      setError(e)
-    }
-  }
-
   return (
     <div className="p-3">
       <PageHeader title={t('recognition.title')} />
@@ -350,7 +338,7 @@ export default function RecognizePage() {
           </Notice>
         </div>
       )}
-      {current && <div className="mb-3"><RunSummary run={current} onCancel={() => void cancel()} /></div>}
+      {current && <div className="mb-3"><RunSummary run={current} onChange={(next) => setCurrent((before) => (before ? { ...before, ...next, items: before.items } : next))} onError={setError} /></div>}
 
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
         <Module tab={t('recognition.pages')} flush aux={<span>{t('recognition.selected', { n: selected.size })} <span className="text-[color:var(--color-ink-3)]">· {t('recognition.rangeHint')}</span></span>}>

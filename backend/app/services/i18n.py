@@ -86,6 +86,7 @@ _IT: dict[str, str] = {
         "riquadri, quindi serve un modello che li sappia restituire (MonkeyOCRv2, "
         "MinerU2.5, Qwen3-VL). Per una pagina intera usa Riconosci."
     ),
+    "run_not_active": "la sessione non è in corso: non si può mettere in pausa né riprendere.",
     "pages_in_active_run": (
         "il riconoscimento #{run} sta già elaborando queste pagine: attendi che "
         "finisca, o annullalo, prima di avviarne un altro."
@@ -401,6 +402,7 @@ _EN: dict[str, str] = {
         "so it needs a model that returns them (MonkeyOCRv2, MinerU2.5, Qwen3-VL). "
         "For a whole page use Recognize."
     ),
+    "run_not_active": "the session is not running: it cannot be paused or resumed.",
     "pages_in_active_run": (
         "recognition #{run} is already processing these pages: wait for it to "
         "finish, or cancel it, before starting another."
@@ -707,6 +709,7 @@ _FR: dict[str, str] = {
         "cadres, il faut donc un modèle qui les renvoie (MonkeyOCRv2, MinerU2.5, Qwen3-VL). "
         "Pour une page entière, utilisez Reconnaître."
     ),
+    "run_not_active": "la session n'est pas en cours : impossible de la mettre en pause ou de la reprendre.",
     "pages_in_active_run": (
         "la reconnaissance n°{run} traite déjà ces pages : attendez qu'elle se "
         "termine, ou annulez-la, avant d'en lancer une autre."

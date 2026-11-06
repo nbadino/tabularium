@@ -98,6 +98,28 @@ def cancel_recognition_run(
     return recognitionsvc.cancel_run(run_id)
 
 
+@router.post("/api/projects/{project_id}/recognition-runs/{run_id}/pause")
+def pause_recognition_run(
+    project_id: int,
+    run_id: int,
+    request: Request,
+    _user: dict = Depends(require_resource(write=True)),
+) -> dict:
+    _run_in_project_or_404(run_id, project_id)
+    return recognitionsvc.pause_run(run_id, parse_lang(request.headers.get("accept-language")))
+
+
+@router.post("/api/projects/{project_id}/recognition-runs/{run_id}/resume")
+def resume_recognition_run(
+    project_id: int,
+    run_id: int,
+    request: Request,
+    _user: dict = Depends(require_resource(write=True)),
+) -> dict:
+    _run_in_project_or_404(run_id, project_id)
+    return recognitionsvc.resume_run(run_id, parse_lang(request.headers.get("accept-language")))
+
+
 @router.post("/api/projects/{project_id}/recognition-runs/{run_id}/retry", status_code=202)
 def retry_recognition_run(
     project_id: int,

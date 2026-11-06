@@ -15,6 +15,7 @@ import { runTitle, useModelNames } from '../app/models/names'
 import { formatShortDate } from '../lib/dates'
 import { statusLabel } from '../lib/vocab'
 import { API_BASE } from '../lib/endpoints'
+import { RecognitionRunControls } from '../app/RunControls'
 
 const isActive = (run: RecognitionRun | null) => run?.state === 'queued' || run?.state === 'running'
 
@@ -211,7 +212,7 @@ export default function ResultsPage() {
           // Resta in vista mentre si scorre l'elenco delle esecuzioni; se è
           // più alta della finestra scorre per conto suo.
           <div className="space-y-6">
-            <Module tab={`${t('recognition.resultsTitle')} · #${run.id}`} aux={<Badge tone={isActive(run) ? 'progress' : run.failed_pages ? 'warn' : 'ok'}>{t(stateKey(run.state))}</Badge>}>
+            <Module tab={`${t('recognition.resultsTitle')} · #${run.id}`} aux={<Badge tone={isActive(run) ? 'progress' : run.failed_pages ? 'warn' : 'ok'}>{run.paused ? t('recognition.statusPaused') : t(stateKey(run.state))}</Badge>}>
               <div className="mb-2 flex flex-wrap items-baseline gap-x-3">
                 <span className="text-[18px] font-bold">{runTitle(run, nameOf)}</span>
                 <span className="mono text-[11px] text-[color:var(--color-ink-3)]">{formatShortDate(run.created_at, locale)}</span>
@@ -221,6 +222,14 @@ export default function ResultsPage() {
                 <span>{t('recognition.progress', { done: run.completed_pages, total: run.total_pages })}</span>
                 <span className="mono text-[11px] text-[color:var(--color-ink-3)]">{providerLabel(run.provider, run.engine, t)} · {run.adapter_id}</span>
                 <span className="ml-auto flex flex-wrap gap-2">
+                  <RecognitionRunControls
+                    run={run}
+                    onChange={(next) => {
+                      setRun((before) => (before ? { ...before, ...next, items: before.items } : next))
+                      setRuns((before) => before.map((item) => (item.id === next.id ? next : item)))
+                    }}
+                    onError={setError}
+                  />
                   {nextReview && (
                     <Link to={projectPath(run.project_id, 'studio', { page: nextReview.page_id, run: run.id })} className="btn btn-primary no-underline">
                       {isActive(run) ? t('recognition.openStudio') : t('recognition.startReview')}

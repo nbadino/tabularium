@@ -22,7 +22,13 @@ from . import inference, ocr as ocrmod, prefill
 from .i18n import msg
 
 _ACTIVE: dict[int, threading.Event] = {}
+# Runs the user paused: the worker finishes the page in hand, then waits here
+# without calling the model. Kept in memory only: a restart ends every run anyway
+# (see `reconcile_runs`), and the pages not done yet can be retried.
+_PAUSED: set[int] = set()
 _LOCK = threading.Lock()
+# How often a paused worker re-checks, and refreshes the heartbeat.
+PAUSE_POLL_S = 1.0
 
 
 def _now() -> str:
@@ -97,6 +103,8 @@ def _run_out(row, *, include_items: bool = True, results: str | int = "all") -> 
     ogni due secondi da una lista che non lo mostra.
     """
     out = dict(row)
+    with _LOCK:
+        out["paused"] = int(row["id"]) in _PAUSED and out.get("state") in {"queued", "running"}
     if not include_items:
         return out
     items = runstore.items_for_run(int(row["id"]))
@@ -340,6 +348,7 @@ def _worker(run_id: int, cancel: threading.Event) -> None:
             raise RuntimeError("nessun motore OCR locale disponibile")
 
         for item in items:
+            _wait_while_paused(run_id, cancel)
             if cancel.is_set():
                 _mark_item(item["id"], "cancelled", ended_at=_now())
                 _refresh_counts(run_id)
@@ -405,6 +414,17 @@ def _worker(run_id: int, cancel: threading.Event) -> None:
     finally:
         with _LOCK:
             _ACTIVE.pop(run_id, None)
+            _PAUSED.discard(run_id)
+
+
+def _wait_while_paused(run_id: int, cancel: threading.Event) -> None:
+    """Hold the queue between two pages while the run is paused (a stop ends it)."""
+    while not cancel.is_set():
+        with _LOCK:
+            if run_id not in _PAUSED:
+                return
+        _refresh_counts(run_id)
+        cancel.wait(PAUSE_POLL_S)
 
 
 def cancel_run(run_id: int) -> dict[str, Any]:
@@ -416,6 +436,29 @@ def cancel_run(run_id: int) -> dict[str, Any]:
     if event is not None:
         event.set()
     return get_run(run_id)
+
+
+def _set_paused(run_id: int, paused: bool, lang: str | None = None) -> dict[str, Any]:
+    run = get_run(run_id, results="none")
+    with _LOCK:
+        live = run_id in _ACTIVE
+        if live and run["state"] in {"queued", "running"}:
+            if paused:
+                _PAUSED.add(run_id)
+            else:
+                _PAUSED.discard(run_id)
+    if not live or run["state"] not in {"queued", "running"}:
+        raise HTTPException(status_code=409, detail=msg("run_not_active", lang))
+    return get_run(run_id, results="none")
+
+
+def pause_run(run_id: int, lang: str | None = None) -> dict[str, Any]:
+    """Stop calling the model after the page in hand; `resume_run` picks up from there."""
+    return _set_paused(run_id, True, lang)
+
+
+def resume_run(run_id: int, lang: str | None = None) -> dict[str, Any]:
+    return _set_paused(run_id, False, lang)
 
 
 def retry_failed_run(run_id: int, *, owner_id: int | None = None, allow_stop: bool = False) -> dict[str, Any]:
