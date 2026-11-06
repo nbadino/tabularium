@@ -20,10 +20,10 @@ _PLACEHOLDER = re.compile(r"\{(\w+)\}")
 
 def test_every_language_has_the_same_keys():
     keys = {lang: set(catalog) for lang, catalog in i18n.CATALOG.items()}
-    reference = keys[i18n.DEFAULT]
+    reference = keys[i18n.SOURCE]
     for lang, actual in keys.items():
         assert actual == reference, (
-            f"chiavi diverse fra {i18n.DEFAULT} e {lang}: "
+            f"chiavi diverse fra {i18n.SOURCE} e {lang}: "
             f"mancanti={sorted(reference - actual)} extra={sorted(actual - reference)}"
         )
 
@@ -31,10 +31,10 @@ def test_every_language_has_the_same_keys():
 def test_placeholders_match_across_languages():
     """`{url}` in italiano e `{lien}` in francese non è una traduzione: è un
     messaggio che perde il valore (o alza) al momento dell'interpolazione."""
-    for key, italian in i18n.CATALOG[i18n.DEFAULT].items():
+    for key, italian in i18n.CATALOG[i18n.SOURCE].items():
         expected = set(_PLACEHOLDER.findall(italian))
         for lang, catalog in i18n.CATALOG.items():
-            if lang == i18n.DEFAULT:
+            if lang == i18n.SOURCE:
                 continue
             found = set(_PLACEHOLDER.findall(catalog[key]))
             assert found == expected, (
@@ -54,18 +54,18 @@ def test_msg_falls_back_to_the_key_when_unknown():
     assert i18n.msg("chiave_che_non_esiste", "it") == "chiave_che_non_esiste"
 
 
-def test_a_missing_translation_falls_back_to_italian():
-    """Se una lingua non copre una chiave, si serve l'italiano: la UI resta
-    leggibile anche prima che la traduzione arrivi."""
-    key = next(iter(i18n.CATALOG[i18n.DEFAULT]))
-    partial = {**i18n.CATALOG["en"]}
-    partial.pop(key, None)
-    original = i18n.CATALOG["en"]
-    i18n.CATALOG["en"] = partial
+def test_a_missing_translation_falls_back_to_english_then_italian():
+    """A language that lacks a key serves English, and English falls back to the
+    Italian source: the UI stays readable before the translation lands."""
+    key = next(iter(i18n.CATALOG[i18n.SOURCE]))
+    originals = {lang: i18n.CATALOG[lang] for lang in ("en", "fr")}
     try:
-        assert i18n.msg(key, "en") == i18n.CATALOG[i18n.DEFAULT][key]
+        i18n.CATALOG["fr"] = {k: v for k, v in originals["fr"].items() if k != key}
+        assert i18n.msg(key, "fr") == originals["en"][key]
+        i18n.CATALOG["en"] = {k: v for k, v in originals["en"].items() if k != key}
+        assert i18n.msg(key, "en") == i18n.CATALOG[i18n.SOURCE][key]
     finally:
-        i18n.CATALOG["en"] = original
+        i18n.CATALOG.update(originals)
 
 
 def test_every_constant_error_detail_is_in_the_catalog():

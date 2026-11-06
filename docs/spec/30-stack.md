@@ -45,6 +45,12 @@ Tabularium prepares itself.
 - React 19 + Vite + TypeScript + Tailwind CSS 4 + React Router 7 + TanStack Query + Recharts.
   Global state via **small modular stores** (`useSyncExternalStore`, no Zustand): `i18n`,
   `app/auth` — `useSyncExternalStore` is the project's canonical pattern.
+- Languages (it/en/fr): the menu choice is kept in the browser (`localStorage`
+  `tabularium.locale`) and sent as `Accept-Language`. Without a choice the UI is English
+  (`i18n/index.ts::DEFAULT_LOCALE`), and so is the backend (`services/i18n.py::DEFAULT`) for a
+  request without the header or a job without a request. HTTP details written in Italian in
+  the code (`SOURCE`) and messages stored in Italian or English are rendered in the reader's
+  language by `localize_detail`.
 - Annotation canvas: **Konva.js** (`react-konva`; shape editing, transformer) for blocks.
 - Table workspace: **Univer** (`@univerjs/presets`, sheets core) —
   `studio/components/UniverSheet.tsx` + `TableWorkspacePanel.tsx`. The data model is not Univer's:

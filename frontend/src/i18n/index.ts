@@ -30,17 +30,22 @@ export const dicts: Record<Locale, Dict> = { it, en, fr }
 
 const KEY = 'tabularium.locale'
 
-function load(): Locale {
+/** What a browser that never chose a language gets. */
+export const DEFAULT_LOCALE: Locale = 'en'
+
+/** The language chosen in the menu, kept in this browser; English without a choice. */
+export function load(): Locale {
   try {
     const v = localStorage.getItem(KEY)
-    if (v === 'en' || v === 'fr') return v
+    if (v === 'it' || v === 'en' || v === 'fr') return v
   } catch {
-    /* storage non disponibile: restiamo su it */
+    /* storage unavailable: no stored choice */
   }
-  return 'it'
+  return DEFAULT_LOCALE
 }
 
 let current: Locale = load()
+if (typeof document !== 'undefined') document.documentElement.lang = current
 const listeners = new Set<() => void>()
 
 function subscribe(fn: () => void): () => void {
@@ -71,10 +76,9 @@ export function setLocale(locale: Locale): void {
   listeners.forEach((fn) => fn())
 }
 
-/** Ordine di fallback: lingua corrente per prima, poi la base italiana. */
+/** Fallback order: the current language first, then English, then the Italian base. */
 function fallbackOrder(): Locale[] {
-  if (current === 'it') return ['it', 'en', 'fr']
-  return [current, 'it', 'en', 'fr']
+  return [current, ...(['en', 'it', 'fr'] as Locale[]).filter((l) => l !== current)]
 }
 
 export type PluralLeaf = { one: string; other: string }

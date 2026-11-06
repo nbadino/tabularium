@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { LOCALES, getLocale, setLocale, t, tn } from './index'
+import { DEFAULT_LOCALE, LOCALES, getLocale, load, setLocale, t, tn } from './index'
 import { it as itDict } from './it'
 
 // Vitest gira in ambiente Node: forniamo solo il frammento DOM usato dal
@@ -16,6 +16,33 @@ const withLocale = (lang: (typeof LOCALES)[number], fn: () => void) => {
     setLocale(prev)
   }
 }
+
+describe('default language', () => {
+  const KEY = 'tabularium.locale'
+  const withStored = (value: string | null, fn: () => void) => {
+    const prev = localStorage.getItem(KEY)
+    if (value === null) localStorage.removeItem(KEY)
+    else localStorage.setItem(KEY, value)
+    try {
+      fn()
+    } finally {
+      if (prev === null) localStorage.removeItem(KEY)
+      else localStorage.setItem(KEY, prev)
+    }
+  }
+
+  it('a browser that never chose a language reads English', () => {
+    expect(DEFAULT_LOCALE).toBe('en')
+    withStored(null, () => expect(load()).toBe('en'))
+    withStored('de', () => expect(load()).toBe('en'))
+  })
+
+  it('a stored choice is kept, Italian included', () => {
+    withStored('it', () => expect(load()).toBe('it'))
+    withStored('fr', () => expect(load()).toBe('fr'))
+    withStored('en', () => expect(load()).toBe('en'))
+  })
+})
 
 describe('i18n', () => {
   it('traduce chiavi semplici in tutte le lingue', () => {

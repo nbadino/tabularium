@@ -73,3 +73,12 @@ import '@testing-library/jest-dom/vitest'
     })
   }
 }
+
+// The component tests were written against the Italian dictionary. A browser that
+// never chose a language gets English (`DEFAULT_LOCALE`, covered by i18n.test.ts);
+// here the suite stores Italian as the chosen language before any module loads.
+try {
+  globalThis.localStorage.setItem('tabularium.locale', 'it')
+} catch {
+  /* storage unavailable: i18n falls back to the default */
+}
