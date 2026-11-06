@@ -40,8 +40,10 @@
   - instance settings (`instance_name`, `allow_registration`, `default_new_user_role`) are a JSON
     value in `meta` (`services/settings.py`).
 - Other tables: `compute_profiles` (active model/provider, v10+; inactive rows are the saved
-  models of a consensus run, each with its own `vault:consensus_profile_*` key), `recognition_runs` /
-  `recognition_run_items`, `consensus_runs` / `consensus_outputs` (v24: each model's blocks for a
+  models of a consensus run, each with its own `vault:consensus_profile_*` key; a recognition run can
+  read with one too: its `profile_id` is in the job's `command_json`, `adapters/runs.py::run_profile_id`,
+  no migration; such a run never stops the active model and does not wait for its runs),
+  `recognition_runs` / `recognition_run_items`, `consensus_runs` / `consensus_outputs` (v24: each model's blocks for a
   page, never written to `blocks`/`tables`), `jobs`, `page_reviews`, `custom_models`, `secrets` (vault),
   `audit_events`, `rate_limits`, `meta`.
 - **Migrations**: up to **baseline 6** they are additive by column presence

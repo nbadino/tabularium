@@ -204,6 +204,7 @@ export const it = {
   },
 
   consensus: {
+    saveSection: "Salva il modello attivo come modello salvato",
     runPages: "Pagine del confronto",
     pageWaiting: "in attesa del secondo modello",
     pageFailed: "un modello non ha risposto",
@@ -396,6 +397,12 @@ export const it = {
     unreachableNotice:
       "L'endpoint {url} non risponde: controlla modello e provider nella pagina Modelli prima di avviare un riconoscimento.",
     localOcr: 'OCR locale',
+    savedModels: "Modelli salvati (servizi via API)",
+    otherEngines: "Altri motori",
+    activeModelNamed: "Modello attivo: {name}",
+    activeModelOff: "Modello attivo (spento)",
+    savedModelHint: "Un modello salvato con la sua chiave: si usa così com'è, senza avviare né spegnere niente. Il modello attivo resta com'è.",
+    savedModelWhere: "via API, chiave propria",
     servedModel: 'Modello configurato',
     engine: 'Motore',
     servedModelHint: 'Usa il modello e la destinazione scelti in Modelli. Il flusso di revisione e export resta invariato.',

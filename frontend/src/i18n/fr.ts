@@ -205,6 +205,7 @@ export const fr: Dict = {
   },
 
   consensus: {
+    saveSection: "Enregistrer le modèle actif comme modèle enregistré",
     runPages: "Pages de la comparaison",
     pageWaiting: "en attente du second modèle",
     pageFailed: "un modèle n'a pas répondu",
@@ -397,6 +398,12 @@ export const fr: Dict = {
     unreachableNotice:
       "Le point d'accès {url} ne répond pas : vérifiez le modèle et le fournisseur dans la page Modèles avant de lancer une reconnaissance.",
     localOcr: 'OCR local',
+    savedModels: "Modèles enregistrés (services API)",
+    otherEngines: "Autres moteurs",
+    activeModelNamed: "Modèle actif : {name}",
+    activeModelOff: "Modèle actif (éteint)",
+    savedModelHint: "Un modèle enregistré avec sa propre clé : utilisé tel quel, rien à démarrer ni à arrêter. Le modèle actif reste tel quel.",
+    savedModelWhere: "via API, sa propre clé",
     servedModel: 'Modèle configuré',
     engine: 'Moteur',
     servedModelHint: 'Utilise le modèle et la destination choisis dans Modèles. Le parcours de révision et d’export reste identique.',

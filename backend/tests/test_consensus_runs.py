@@ -506,3 +506,43 @@ def test_a_run_lists_its_pages_with_states_agreement_and_what_is_left(tmp_path, 
         # The fake models read "Genova" and "Genovo": something is left to look at.
         assert any(sum(item["open"].values()) > 0 for item in items)
         assert client.get(f"/api/projects/{project_id}/consensus-runs/999999/pages").status_code == 404
+
+
+def test_a_recognition_can_read_with_a_saved_model_without_activating_it(tmp_path, monkeypatch, request):
+    """The Recognition page offered only the active model (off) or the local OCR:
+    the saved API models (Gemini, OCRia), each with its own key, were not there.
+    A run on one of them writes drafts and leaves the active model as it was."""
+    from app.services import inference
+
+    _fake_clients(monkeypatch)
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        argon = _save_profile(client, ARGON, "Gemini 4 Argon (recognition)")
+        # The test root is shared by the session: put the active model back after.
+        enabled = inference.get_inference_config().get("enabled", True)
+        request.addfinalizer(lambda: inference.save_inference_config({"enabled": enabled}))
+        inference.save_inference_config({"enabled": False})
+        before = inference.get_inference_config()
+
+        missing = client.post(f"/api/projects/{project_id}/recognition-runs", json={
+            "page_ids": page_ids[:1], "engine": "model", "profile_id": 999999, "stop_policy": "none",
+        })
+        assert missing.status_code == 404
+
+        created = client.post(f"/api/projects/{project_id}/recognition-runs", json={
+            "page_ids": page_ids[:1], "engine": "model", "profile_id": argon["id"], "stop_policy": "none",
+        })
+        assert created.status_code == 202, created.text
+        run_id = created.json()["id"]
+        body: dict = {}
+        for _ in range(200):
+            body = client.get(f"/api/projects/{project_id}/recognition-runs/{run_id}").json()
+            if body["state"] not in {"queued", "running"}:
+                break
+            time.sleep(0.02)
+        assert body["state"] == "finished", body
+        assert body["model_name"] == "Gemini 4 Argon (recognition)"
+        blocks = client.get(f"/api/pages/{page_ids[0]}/annotations").json()["items"]
+        assert {b["label"] for b in blocks} >= {"Title", "Table"}
+        assert inference.get_inference_config()["enabled"] is False
+        assert inference.get_inference_config() == before

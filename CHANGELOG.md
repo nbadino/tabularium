@@ -7,6 +7,11 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **Recognition with a saved model.** The Recognition page offers the saved models (Gemini 4
+  Argon, OCRia-1…: API services with their own key) as engines, and opens on one when the active
+  model is off, instead of the local OCR. Nothing is started or stopped; the active model stays
+  as it is (`profile_id` on `POST …/recognition-runs`). Saving the active model as a saved model
+  is folded away in the comparison panel.
 - **Model comparison, page by page, on the Recognition page**: each page of the run with every
   model's state (✓ … ✕), the agreement and what is left to check (numbers, words, missing), and
   a link to open it in the Studio.
