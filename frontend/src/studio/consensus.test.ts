@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cellBand, confirmGroups, disputedCells, estimateRowBand, isOpen, nextDisputedCell, byDisagreement, charDiff, mineFor, nextOpen, overlayRects, readingDistance, verdictOf, verdictColor, STRUCTURE_COLOR, scoreBand, BAND_COLOR, RESOLVED_COLOR, type ConsensusCluster, type MineItem, type PageConsensus } from './consensus'
+import { activeRunToFollow, pageInRun, cellBand, confirmGroups, disputedCells, estimateRowBand, isOpen, nextDisputedCell, byDisagreement, charDiff, mineFor, nextOpen, overlayRects, readingDistance, verdictOf, verdictColor, STRUCTURE_COLOR, scoreBand, BAND_COLOR, RESOLVED_COLOR, type ConsensusCluster, type MineItem, type PageConsensus } from './consensus'
 
 function cluster(id: number, score: number, members: Record<string, number | null>, bbox: [number, number, number, number]): ConsensusCluster {
   return {
@@ -208,5 +208,23 @@ describe('verdicts', () => {
     const groups = confirmGroups(cells, (r, c) => mine[`${r}:${c}`] ?? '', ['p3', 'p1'])
     // The empty cell of mine is never confirmed; a reading no model shares is no group.
     expect(groups).toEqual([{ column: 3, agree: ['p3'], differ: ['p1'], cells: [{ r: 2, c: 3 }, { r: 3, c: 3 }] }])
+  })
+})
+
+describe('following the run in progress', () => {
+  const runs = [{ id: 5, state: 'running' as const }, { id: 4, state: 'failed' as const }]
+  it('follows a newer run still going when the page has no comparison', () => {
+    expect(activeRunToFollow({ run_id: 4, comparison: null }, runs)).toBe(5)
+    expect(activeRunToFollow({ run_id: null, comparison: null }, runs)).toBe(5)
+  })
+  it('keeps a comparison the page already has, and an older run never wins', () => {
+    const comparison = { models: [], agreement: 1, clusters: [], conventions: {} }
+    expect(activeRunToFollow({ run_id: 4, comparison }, runs)).toBeNull()
+    expect(activeRunToFollow({ run_id: 5, comparison: null }, runs)).toBeNull()
+    expect(activeRunToFollow({ run_id: 6, comparison: null }, runs)).toBeNull()
+    expect(activeRunToFollow({ run_id: 4, comparison: null }, [{ id: 4, state: 'failed' }])).toBeNull()
+  })
+  it('a run without the page does not count', () => {
+    expect(pageInRun({ models: [{ key: 'p1', profile_id: 1, name: 'A', adapter_id: '', model_name: '', state: 'missing', error: null }] })).toBe(false)
   })
 })

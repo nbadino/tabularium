@@ -591,3 +591,27 @@ export function confirmGroups(
   }
   return [...groups.values()].filter((group) => group.cells.length >= 2).sort((a, b) => b.cells.length - a.cells.length || a.column - b.column)
 }
+
+/** A comparison run as `GET /projects/{id}/consensus-runs` lists it (newest first). */
+export interface ConsensusRunRef {
+  id: number
+  state: 'queued' | 'running' | 'finished' | 'finished_with_errors' | 'failed' | 'cancelled'
+}
+
+/**
+ * The run the Studio should follow instead of the one the page came with: a newer run
+ * still going, when the page has no comparison yet. Without it a page waiting for a
+ * model in the new run shows the error of an older, interrupted one.
+ */
+export function activeRunToFollow(page: Pick<PageConsensus, 'run_id' | 'comparison'>, runs: ConsensusRunRef[]): number | null {
+  if (page.comparison) return null
+  const active = runs.find((run) => run.state === 'queued' || run.state === 'running')
+  if (!active || active.id === page.run_id) return null
+  if (page.run_id != null && active.id < page.run_id) return null
+  return active.id
+}
+
+/** Whether a run's reading of the page includes it at all (a run covers chosen pages only). */
+export function pageInRun(page: Pick<PageConsensus, 'models'>): boolean {
+  return page.models.some((m) => m.state !== 'missing')
+}

@@ -7,6 +7,9 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **The Studio follows the comparison in progress.** A page waiting in a running comparison
+  shows each model's state (reading this page, queued, read) with a spinner and updates by
+  itself, instead of the failure of an older, interrupted run.
 - **Model comparison decisions are shared, with a history you can revert and comment.** What
   anyone settles in a comparison (*Fine as it is*, a model's reading for an area or a cell, *My
   reading is right*, a column confirmed at once, a model's table added, a model's reading adopted)

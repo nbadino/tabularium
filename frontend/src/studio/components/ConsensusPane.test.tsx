@@ -112,6 +112,27 @@ describe('ConsensusSummary', () => {
   })
 })
 
+describe('ConsensusSummary while a run is reading the page', () => {
+  it('says which model is reading, which is queued, and that the comparison will appear', () => {
+    setLocale('it')
+    const waiting: PageConsensus = {
+      run_id: 5,
+      models: [
+        { ...page.models[0], state: 'finished' },
+        { ...page.models[1], state: 'running' },
+      ],
+      outputs: {},
+      comparison: null,
+    }
+    render(<ConsensusSummary page={waiting} loading={false} view="disagreement" onView={() => {}} onClose={() => {}} />)
+    const box = screen.getByTestId('consensus-waiting')
+    expect(box).toHaveTextContent('OCRia-1: letta')
+    expect(box).toHaveTextContent('Argon: sta leggendo questa pagina…')
+    expect(box).toHaveTextContent('Il confronto compare da solo')
+    expect(screen.queryByText(/Servono almeno due modelli/)).toBeNull()
+  })
+})
+
 describe('ClusterDetail', () => {
   it('says the text is the same when only the class differs, and in grey', () => {
     setLocale('en')
