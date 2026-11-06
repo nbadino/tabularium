@@ -16,9 +16,12 @@ import { labelName } from '../../i18n/labelName'
 import {
   BAND_CLASS,
   BAND_COLOR,
+  CONVENTION_COLOR,
   RESOLVED_COLOR,
   STRUCTURE_COLOR,
+  cellBand,
   charDiff,
+  disputedCells,
   isTableCluster,
   openCounts,
   partsOf,
@@ -28,6 +31,8 @@ import {
   verdictOf,
   type ConsensusCluster,
   type ConsensusModel,
+  type ConsensusTable,
+  type ConventionRule,
   type ConsensusView,
   type MineItem,
   type PageConsensus,
@@ -51,6 +56,34 @@ export interface ConsensusActions {
 
 
 const pct = (value: number) => Math.round(value * 100)
+
+type T = (key: string, vars?: Record<string, string | number>) => string
+
+/** The convention rules, named, with how many cells (or blocks) need each. */
+function rulesText(rules: Partial<Record<ConventionRule, number>> | ConventionRule[], t: T): string {
+  const entries = Array.isArray(rules) ? rules.map((rule) => [rule, 0] as const) : Object.entries(rules) as [ConventionRule, number][]
+  return entries.map(([rule, n]) => n ? `${t(`consensus.rule.${rule}`)} ${n}` : t(`consensus.rule.${rule}`)).join(' · ')
+}
+
+/** A table's cells by kind of difference: numbers, words, missing; then the conventions apart. */
+function CellKinds({ table }: { table: ConsensusTable }) {
+  const { t, tn } = useI18n()
+  const { digits, text, missing, convention } = table.kinds
+  return (
+    <div className="space-y-0.5 text-[11px]" data-testid="cell-kinds">
+      <div className="flex flex-wrap gap-x-3">
+        {digits > 0 && <span className="font-semibold" style={{ color: BAND_COLOR.disagree }}>{tn('consensus.kindCount.digits', digits)}</span>}
+        {text > 0 && <span className="font-semibold text-[color:var(--color-warn)]">{tn('consensus.kindCount.text', text)}</span>}
+        {missing > 0 && <span className="font-semibold text-[color:var(--color-sig-text)]">{tn('consensus.kindCount.missing', missing)}</span>}
+      </div>
+      {convention > 0 && (
+        <div className="text-[color:var(--color-ink-2)]">
+          {tn('consensus.kindCount.convention', convention)}: {rulesText(table.conventions, t)}
+        </div>
+      )}
+    </div>
+  )
+}
 
 const kbd = (key: string) => <kbd className="mono text-[10px] text-[color:var(--color-ink-3)]">{key}</kbd>
 
@@ -106,12 +139,13 @@ function TableHeatmap({ cluster, models }: { cluster: ConsensusCluster; models: 
     }
   }
   const selected = cell ? byPos.get(`${cell.r}:${cell.c}`) : undefined
-  // A long register hides its few disagreements: count them and step through them.
-  const disputed = table.cells.filter((item) => scoreBand(item.score) !== 'agree')
+  // A long register hides its few disagreements: count them and step through them,
+  // numbers first. A cell that differs only by a convention is not one of them.
+  const disputed = disputedCells(table.cells)
   const next = () => {
     if (!disputed.length) return
-    const at = cell ? disputed.findIndex((item) => item.r > cell.r || (item.r === cell.r && item.c > cell.c)) : 0
-    const target = disputed[at < 0 ? 0 : at]
+    const at = cell ? disputed.findIndex((item) => item.r === cell.r && item.c === cell.c) : -1
+    const target = disputed[(at + 1) % disputed.length]
     setCell({ r: target.r, c: target.c })
     document.querySelector(`[data-testid="cell-${target.r}-${target.c}"]`)?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
   }
@@ -123,6 +157,7 @@ function TableHeatmap({ cluster, models }: { cluster: ConsensusCluster; models: 
         <span className="text-[11px] text-[color:var(--color-ink-2)]" data-testid="disputed-count">{t('consensus.disputedCells', { n: disputed.length })}</span>
         {disputed.length > 0 && <button type="button" className="btn ml-auto" onClick={next}>{t('consensus.nextCell')}</button>}
       </div>
+      <CellKinds table={table} />
       <div className="max-h-[360px] overflow-auto border border-[color:var(--color-rule)]">
         <table className="w-full border-collapse text-[11px]">
           <tbody>
@@ -140,8 +175,8 @@ function TableHeatmap({ cluster, models }: { cluster: ConsensusCluster; models: 
                       key={c}
                       rowSpan={item.rowspan}
                       colSpan={item.colspan}
-                      className={`cursor-pointer border p-1 align-top ${BAND_CLASS[scoreBand(item.score)]} ${active ? 'border-2 border-[color:var(--color-ink)]' : 'border-[color:var(--color-rule)]'}`}
-                      title={`${pct(item.score)}%`}
+                      className={`cursor-pointer border p-1 align-top ${BAND_CLASS[cellBand(item)]} ${active ? 'border-2 border-[color:var(--color-ink)]' : 'border-[color:var(--color-rule)]'}`}
+                      title={cellTitle(item, t)}
                       data-testid={`cell-${r}-${c}`}
                       onClick={() => setCell({ r, c })}
                     >
@@ -162,9 +197,17 @@ function TableHeatmap({ cluster, models }: { cluster: ConsensusCluster; models: 
       {Object.entries(table.extra_cols.reduce<Record<string, number>>((acc, col) => ({ ...acc, [col.model]: (acc[col.model] ?? 0) + 1 }), {})).map(([model, n]) => (
         <div key={model} className="text-[11px] text-[color:var(--color-sig-text)]">{t('consensus.extraCols', { name: nameOf(model), n })}</div>
       ))}
+      {selected && selected.kind !== 'same' && <p className="text-[11px] font-semibold" data-testid="cell-kind">{cellTitle(selected, t)}</p>}
       {selected ? <Readings values={selected.values} models={models} /> : <p className="text-[11px] text-[color:var(--color-ink-3)]">{t('consensus.cellHint')}</p>}
     </div>
   )
+}
+
+/** What kind of difference a cell is, in words: "numero diverso", "convenzione: lineetta". */
+function cellTitle(cell: ConsensusTable['cells'][number], t: T): string {
+  if (cell.kind === 'same') return t('consensus.kind.same')
+  if (cell.kind === 'convention') return `${t('consensus.kind.convention')}: ${rulesText(cell.conventions, t)}`
+  return `${t(`consensus.kind.${cell.kind}`)} (${pct(cell.score)}%)`
 }
 
 /** Joined labels of a model's blocks in the area, in the user's language. */
@@ -181,11 +224,13 @@ export function verdictTag(cluster: ConsensusCluster, page: PageConsensus, t: (k
     return t('consensus.tagOnlyIn', { names: found.map(nameOf).join(', ') })
   }
   if (verdict.kind === 'text') {
-    return cluster.table ? t('consensus.tagCells', { n: cluster.table.cells.filter((c) => scoreBand(c.score) !== 'agree').length }) : t('consensus.tagText', { pct: pct(cluster.text) })
+    if (cluster.table) return t('consensus.tagCells', { n: disputedCells(cluster.table.cells).length })
+    return verdict.digits ? t('consensus.tagDigits') : t('consensus.tagText', { pct: pct(cluster.text) })
   }
   if (verdict.kind === 'structure') {
     return verdict.split ? t('consensus.tagSplit') : verdict.labelsDiffer ? t('consensus.tagLabel') : t('consensus.tagLayout')
   }
+  if (verdict.kind === 'convention') return t('consensus.tagConvention', { rules: rulesText(cluster.conventions, t) })
   return t('consensus.tagAgree')
 }
 
@@ -194,6 +239,7 @@ const CHIP_CLASS: Record<string, string> = {
   partly: 'border-[color:var(--color-warn-rule)] text-[color:var(--color-warn)] bg-[color:var(--color-warn-wash)]',
   missing: 'border-dashed border-[color:var(--color-sig)] text-[color:var(--color-sig-text)]',
   structure: 'border-[color:var(--color-rule-strong)] text-[color:var(--color-ink-2)] bg-[color:var(--color-fill)]',
+  convention: 'border-dotted border-[color:var(--color-rule-strong)] text-[color:var(--color-ink-2)]',
   agree: 'border-[color:var(--color-ok-rule)] text-[color:var(--color-ok)]',
   resolved: 'border-[#7c3aed] text-[#5b21b6] bg-[rgba(124,58,237,0.08)]',
 }
@@ -208,7 +254,9 @@ export function ClusterChip({ cluster, page, resolved, selected, onSelect }: {
 }) {
   const { t } = useI18n()
   const verdict = verdictOf(cluster)
-  const tone = resolved ? 'resolved' : verdict.kind === 'text' && scoreBand(cluster.text) === 'partly' ? 'partly' : verdict.kind
+  const tone = resolved ? 'resolved'
+    : verdict.kind === 'text' && !verdict.digits && scoreBand(cluster.text) !== 'disagree' ? 'partly'
+      : verdict.kind
   return (
     <button
       type="button"
@@ -248,11 +296,12 @@ export function ClusterDetail({ cluster, page, mine, resolved, actions }: {
   const verdict = verdictOf(cluster)
   const found = keys.filter((key) => partsOf(page, cluster, key).length > 0)
   const isTable = isTableCluster(page, cluster, mine)
-  const disputedCells = cluster.table?.cells.filter((c) => scoreBand(c.score) !== 'agree').length ?? 0
+  const disputed = cluster.table ? disputedCells(cluster.table.cells).length : 0
   const headline = verdict.kind === 'missing' ? t('consensus.headMissing', { names: found.map(nameOf).join(', ') })
-    : verdict.kind === 'text' ? t(isTable ? 'consensus.headCells' : 'consensus.headText')
+    : verdict.kind === 'text' ? t(isTable ? 'consensus.headCells' : verdict.digits ? 'consensus.headDigits' : 'consensus.headText')
       : verdict.kind === 'structure' ? t('consensus.headStructure')
-        : t('consensus.headAgree')
+        : verdict.kind === 'convention' ? t('consensus.headConvention')
+          : t('consensus.headAgree')
   const perModel = (render: (key: string) => string) => keys.map((key) => `${nameOf(key)}: ${render(key)}`).join(' · ')
   const readings = Object.fromEntries(keys.map((key) => {
     const parts = partsOf(page, cluster, key)
@@ -267,13 +316,18 @@ export function ClusterDetail({ cluster, page, mine, resolved, actions }: {
       <p className="font-semibold" style={{ color: verdictColor(cluster, resolved) }}>{headline}</p>
       {verdict.kind !== 'missing' && (
         <ul className="space-y-0.5 text-[12px]" aria-label={t('consensus.aspects')}>
-          <Aspect ok={verdict.text === 'same' || verdict.text === 'close'} name={t('consensus.text')}>
+          <Aspect ok={isTable ? disputed === 0 : !verdict.digits && (verdict.text === 'same' || verdict.text === 'close')} name={t('consensus.text')}>
             {isTable
-              ? t('consensus.cellsDiffer', { n: disputedCells, total: cluster.table?.cells.length ?? 0 })
+              ? t('consensus.cellsDiffer', { n: disputed, total: cluster.table?.cells.length ?? 0 })
               : t(`consensus.degree.${verdict.text}`, { pct: pct(cluster.text) })}
             {isTable && cluster.table && cluster.table.extra_rows.length > 0 && ` · ${t('consensus.extraRowsCount', { n: cluster.table.extra_rows.length })}`}
             {verdict.split && !isTable && ` ${t('consensus.anyOrder')}`}
           </Aspect>
+          {cluster.conventions.length > 0 && (
+            <Aspect ok name={t('consensus.conventionsAspect')}>
+              {cluster.table ? rulesText(cluster.table.conventions, t) : rulesText(cluster.conventions, t)}
+            </Aspect>
+          )}
           <Aspect ok={verdict.layout !== 'different'} name={t('consensus.layout')}>
             {t(`consensus.layoutDegree.${verdict.layout}`)}
           </Aspect>
@@ -395,10 +449,17 @@ export function ConsensusSummary({ page, loading, view, onView, onClose, actions
               </button>
             )}
           </div>
+          {Object.keys(page.comparison.conventions).length > 0 && (
+            // Not a misreading: the same print written two ways, to be settled once per rule.
+            <p className="text-[11px] text-[color:var(--color-ink-2)]" data-testid="page-conventions">
+              <span className="font-semibold">{t('consensus.pageConventions')}</span> {rulesText(page.comparison.conventions, t)}
+            </p>
+          )}
           <p className="text-[11px] text-[color:var(--color-ink-3)]">{t(actions?.canEdit ? 'consensus.workHint' : 'consensus.readOnly')}</p>
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[color:var(--color-ink-2)]">
             <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5" style={{ background: BAND_COLOR.disagree }} />{t('consensus.legendText')}</span>
             <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5" style={{ background: STRUCTURE_COLOR }} />{t('consensus.legendStructure')}</span>
+            <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5" style={{ background: CONVENTION_COLOR }} />{t('consensus.legendConvention')}</span>
             <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5" style={{ background: BAND_COLOR.agree }} />{t('consensus.legendAgree')}</span>
             {actions && <span className="inline-flex items-center gap-1"><span className="inline-block h-2.5 w-2.5" style={{ background: RESOLVED_COLOR }} />{t('consensus.legendResolved')}</span>}
             <span>{t('consensus.legendDashed')}</span>

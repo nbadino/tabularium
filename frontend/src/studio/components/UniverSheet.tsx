@@ -236,6 +236,10 @@ export interface SheetSelection {
  *  azzerare scroll, selezione o cronologia visibile all'annotatore. */
 export interface UniverController {
   applyGrid: (grid: TableGrid) => boolean
+  /** Selects a cell and scrolls it into view (the consensus *Next cell*). */
+  select: (row: number, column: number) => boolean
+  /** True while a cell is being typed in: shortcuts must not act on its old text. */
+  isEditing: () => boolean
 }
 
 /** Una tinta su un insieme di celle — le sospette dei controlli aritmetici,
@@ -747,7 +751,17 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
           refreshActive()
           return true
         }
-        controllerChangeRef.current?.({ applyGrid })
+        const select = (row: number, column: number): boolean => {
+          const sheet = api.getActiveWorkbook()?.getActiveSheet()
+          if (!sheet) return false
+          sheet.getRange(row, column).activate()
+          // `scrollToCell` comes from the sheets-ui facade mixin, absent from the core type.
+          ;(sheet as unknown as { scrollToCell?: (r: number, c: number) => void }).scrollToCell?.(row, column)
+          refreshActive({ startRow: row, startColumn: column })
+          return true
+        }
+        const isEditing = () => Boolean(api.getActiveWorkbook()?.isCellEditing())
+        controllerChangeRef.current?.({ applyGrid, select, isEditing })
 
         const verify = (verified: boolean) => {
           const next = setVerified(gridRef.current, selection(), verified)

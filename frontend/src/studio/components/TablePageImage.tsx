@@ -9,6 +9,16 @@ interface ImageView {
   scale: number
 }
 
+/** An area of the image to show, as fractions of its width and height. */
+export interface ImageFocus {
+  x0: number
+  y0: number
+  x1: number
+  y1: number
+  /** Words drawn on the frame ("estimated position"). */
+  label: string
+}
+
 /** Scansione intera accanto al foglio, con gesti da visualizzatore documenti. */
 export default function TablePageImage({
   src,
@@ -16,12 +26,15 @@ export default function TablePageImage({
   imageSize,
   mode = 'crop',
   onModeChange,
+  focus = null,
 }: {
   src: string
   pageId?: number | null
   imageSize?: { w: number; h: number } | null
   mode?: 'crop' | 'page'
   onModeChange?: (mode: 'crop' | 'page') => void
+  /** Framed and brought into view whenever it changes (the cell being compared). */
+  focus?: ImageFocus | null
 }) {
   const { t } = useI18n()
   const viewport = useRef<HTMLDivElement>(null)
@@ -106,6 +119,19 @@ export default function TablePageImage({
     }
     return visible
   }, [natural, pageId, size, tileView])
+
+  // The focus is brought into view once per change: full width readable, its
+  // band centred. Panning and zooming afterwards stay the annotator's.
+  const focusKey = focus ? `${focus.x0}:${focus.y0}:${focus.x1}:${focus.y1}` : ''
+  useEffect(() => {
+    if (!focus || !natural.w || !natural.h || !size.w || !size.h) return
+    const bandHeight = (focus.y1 - focus.y0) * natural.h
+    const scale = Math.min(4, Math.max(size.w / natural.w * 0.96, bandHeight > 0 ? 48 / bandHeight : 0))
+    const cx = (focus.x0 + focus.x1) / 2 * natural.w
+    const cy = (focus.y0 + focus.y1) / 2 * natural.h
+    setView({ scale, x: size.w / 2 - cx * scale, y: size.h / 2 - cy * scale })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusKey, natural.w, natural.h, size.w, size.h])
 
   const zoomAt = (factor: number, point?: { x: number; y: number }) => {
     const rect = viewport.current?.getBoundingClientRect()
@@ -313,6 +339,20 @@ export default function TablePageImage({
             }}
           />
         ))}
+        {focus && natural.w > 0 && (
+          <div
+            data-testid="image-focus"
+            className="pointer-events-none absolute border-2 border-dashed border-[#a3000e] bg-[rgba(163,0,14,0.08)]"
+            style={{
+              left: view.x + focus.x0 * natural.w * view.scale,
+              top: view.y + focus.y0 * natural.h * view.scale,
+              width: (focus.x1 - focus.x0) * natural.w * view.scale,
+              height: (focus.y1 - focus.y0) * natural.h * view.scale,
+            }}
+          >
+            <span className="absolute -top-5 left-0 whitespace-nowrap bg-[#a3000e] px-1 text-[10px] font-semibold text-white">{focus.label}</span>
+          </div>
+        )}
       </div>
     </section>
   )

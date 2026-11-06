@@ -20,14 +20,21 @@ vi.mock('./UniverSheet', () => ({
     disagreements,
     cellHint,
     cellChoices,
+    grid,
   }: {
+    grid?: { cells: { r: number; c: number; verified?: boolean }[] }
     suspects?: [number, number][]
     onSelectionChange?: (s: { startRow: number; startColumn: number; endRow: number; endColumn: number }) => void
     disagreements?: { partly: [number, number][]; disagree: [number, number][] }
     cellHint?: (row: number, column: number) => React.ReactNode
     cellChoices?: (row: number, column: number) => { label: string; value: string }[]
   }) => (
-    <div data-testid="univer-sheet" data-suspects={JSON.stringify(suspects ?? [])} data-disagreements={JSON.stringify(disagreements ?? null)}>
+    <div
+      data-testid="univer-sheet"
+      data-suspects={JSON.stringify(suspects ?? [])}
+      data-disagreements={JSON.stringify(disagreements ?? null)}
+      data-verified={JSON.stringify((grid?.cells ?? []).filter((cell) => cell.verified).map((cell) => [cell.r, cell.c]))}
+    >
       <div data-testid="hint-1-1">{cellHint?.(1, 1)}</div>
       <ul data-testid="choices-1-1">{(cellChoices?.(1, 1) ?? []).map((choice) => <li key={choice.label}>{choice.label}</li>)}</ul>
       <button type="button" onClick={() => onSelectionChange?.({ startRow: 2, startColumn: 3, endRow: 2, endColumn: 3 })}>
@@ -185,6 +192,60 @@ describe('ContentPane', () => {
     expect(screen.getByText('Summation Error in column (4) ≠ column (2) + (3)')).toBeTruthy()
   })
 
+  // Lloyd's Daily Index, 1 April 1920: Gemini drops the year where Reg is blank.
+  it('confronto modelli: conta per tipo, va alla cella successiva (numeri prima) e conferma la mia lettura', async () => {
+    const grid = emptyGrid(4, 4)
+    const mine: Record<string, string> = { '0:0': 'STEAMER—Owner', '0:3': 'Year', '1:1': 'Genva', '2:3': '18', '3:3': '06' }
+    grid.cells = grid.cells.map((cell) => ({ ...cell, text: mine[`${cell.r}:${cell.c}`] ?? cell.text, source: 'ocr' as const }))
+    const consensus = {
+      run_id: 2,
+      models: [{ key: 'p3', name: 'OCRia-1' }, { key: 'p1', name: 'Gemini' }],
+      cells: [
+        { r: 0, c: 0, values: { p3: 'STEAMER—Owner', p1: 'STEAMER-Owner' }, score: 0, kind: 'convention', conventions: ['dash'] },
+        { r: 1, c: 1, values: { p3: 'Genova', p1: '' }, score: 1, kind: 'missing', conventions: [] },
+        { r: 2, c: 3, values: { p3: '18', p1: '' }, score: 1, kind: 'digits', conventions: [] },
+        { r: 3, c: 3, values: { p3: '06', p1: '' }, score: 1, kind: 'digits', conventions: [] },
+      ],
+      extra_rows: [],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(
+            String(url).includes('/consensus') ? consensus
+              : String(url).includes('/tables/checks') ? { checks: [], passed: 0, failed: 0, suspects: [] }
+                : { grid },
+          ),
+        }),
+      ),
+    )
+    render(<ContentPane blocks={[makeBlock({ label: 'Table' })]} drafts={[]} labels={[]} selectedId={null} working={null} {...noop} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Apri la tabella' }))
+    const bar = await screen.findByTestId('consensus-bar')
+    await waitFor(() => expect(bar).toHaveTextContent('3 celle in disaccordo'))
+    expect(bar).toHaveTextContent('2 numeri diversi')
+    expect(bar).toHaveTextContent('1 letta da un modello solo')
+    expect(bar).toHaveTextContent('1 cella diversa solo per convenzione')
+    // The convention is not painted; a reading missing is red like a number.
+    expect(screen.getByTestId('univer-sheet')).toHaveAttribute('data-disagreements', JSON.stringify({ partly: [], disagree: [[2, 3], [3, 3], [1, 1]], resolved: [] }))
+    // The same slip twice in one column: offered as a group.
+    expect(screen.getByTestId('confirm-groups')).toHaveTextContent('Colonna D (Year): 2 numeri che leggi come OCRia-1 e che Gemini lascia vuoti.')
+    // Hover says what kind of difference; emptying the cell is said as such, and offered last.
+    expect(screen.getByTestId('hint-1-1')).toHaveTextContent('lettura mancante')
+    expect(screen.getByTestId('hint-1-1')).toHaveTextContent('Gemini: (vuota)')
+    expect(screen.getByTestId('choices-1-1').textContent).toBe('Usa OCRia-1: «Genova»Svuota la cella (Gemini non legge niente)')
+    // Next goes to the numbers first; confirming marks the cell verified and moves on.
+    await userEvent.click(screen.getByRole('button', { name: /Cella successiva/ }))
+    await userEvent.click(screen.getByRole('button', { name: /La mia lettura è giusta/ }))
+    await waitFor(() => expect(screen.getByTestId('univer-sheet')).toHaveAttribute('data-verified', '[[2,3]]'))
+    await waitFor(() => expect(bar).toHaveTextContent('2 celle in disaccordo'))
+    await userEvent.click(screen.getByRole('button', { name: /La mia lettura è giusta/ }))
+    await waitFor(() => expect(screen.getByTestId('univer-sheet')).toHaveAttribute('data-verified', '[[2,3],[3,3]]'))
+    expect(bar).toHaveTextContent('2 corrette')
+  })
+
   it('confronto modelli: le celle in disaccordo si colorano nel foglio e il passaggio del mouse mostra le letture', async () => {
     const grid = emptyGrid(3, 4)
     grid.cells = grid.cells.map((cell) =>
@@ -196,9 +257,9 @@ describe('ContentPane', () => {
       run_id: 2,
       models: [{ key: 'p3', name: 'OCRia-1' }, { key: 'p1', name: 'Argon' }],
       cells: [
-        { r: 0, c: 0, values: { p3: 'Nave', p1: 'Nave' }, score: 0 },
-        { r: 1, c: 1, values: { p3: 'Genova', p1: 'Genovo' }, score: 0.17 },
-        { r: 2, c: 2, values: { p3: '1523', p1: null }, score: 1 },
+        { r: 0, c: 0, values: { p3: 'Nave', p1: 'Nave' }, score: 0, kind: 'same', conventions: [] },
+        { r: 1, c: 1, values: { p3: 'Genova', p1: 'Genovo' }, score: 0.17, kind: 'text', conventions: [] },
+        { r: 2, c: 2, values: { p3: '1523', p1: null }, score: 1, kind: 'digits', conventions: [] },
       ],
       extra_rows: [],
     }
