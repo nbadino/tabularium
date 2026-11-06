@@ -46,4 +46,14 @@ describe('ConsensusPanel', () => {
     expect(going).toHaveTextContent('… ✓')
     expect(going).toHaveTextContent('in attesa del secondo modello')
   })
+
+  it('shows the progress of each model and lets the pages already read be used while it runs', async () => {
+    setLocale('it')
+    render(<MemoryRouter><ConsensusPanel projectId={4} pageIds={[1]} canManage={false} currentModel="" /></MemoryRouter>)
+    const progress = await screen.findByTestId('model-progress')
+    expect(progress).toHaveTextContent('Gemini 4 Argon 1/2')
+    expect(progress).toHaveTextContent('OCRia-1 2/2')
+    const adopt = screen.getByTestId('adopt-run')
+    expect(adopt).toHaveTextContent('solo le pagine già lette')
+  })
 })

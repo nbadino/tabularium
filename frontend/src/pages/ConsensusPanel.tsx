@@ -258,6 +258,20 @@ export default function ConsensusPanel({
             {t('consensus.progress', { done: run.succeeded + run.failed, total: run.total })}
             {run.failed > 0 && <span className="ml-2 text-[color:var(--color-sig-text)]">{t('consensus.failedCount', { n: run.failed })}</span>}
           </div>
+          {runPages.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-x-3 text-[11px] text-[color:var(--color-ink-2)]" data-testid="model-progress">
+              {run.models.map((m) => {
+                const done = runPages.filter((page) => page.states[m.key] === 'finished').length
+                const failed = runPages.filter((page) => page.states[m.key] === 'failed').length
+                return (
+                  <span key={m.key}>
+                    {t('consensus.modelProgress', { name: m.name, done, total: runPages.length })}
+                    {failed > 0 && <span className="ml-1 text-[color:var(--color-sig-text)]">{tn('consensus.modelFailedPages', failed)}</span>}
+                  </span>
+                )
+              })}
+            </div>
+          )}
           {run.error && <p className="text-[11px] text-[color:var(--color-sig-text)]">{run.error}</p>}
           <div className="mt-1 flex gap-3">
             {ACTIVE.has(run.state) && <button type="button" className="text-[11px] underline" onClick={() => void cancel()}>{t('consensus.cancel')}</button>}
@@ -297,7 +311,8 @@ export default function ConsensusPanel({
               })}
             </ul>
           )}
-          {!ACTIVE.has(run.state) && run.succeeded > 0 && (
+          {/* Usable while the run goes on: only the pages this model has already read are written. */}
+          {run.succeeded > 0 && (
             <div className="mt-2 border-t border-[color:var(--color-rule)] pt-2" data-testid="adopt-run">
               <label className="block">
                 <span className="lbl">{t('consensus.adoptRunLabel')}</span>
@@ -307,6 +322,7 @@ export default function ConsensusPanel({
               </label>
               <button type="button" className="btn mt-2 w-full" disabled={busy} onClick={() => void adopt()}>{t('consensus.adoptRun')}</button>
               <p className="mt-1 text-[11px] text-[color:var(--color-ink-3)]">{t('consensus.adoptRunHint')}</p>
+              {ACTIVE.has(run.state) && <p className="mt-1 text-[11px] text-[color:var(--color-ink-2)]">{t('consensus.adoptWhileRunning')}</p>}
               {adopted && (
                 <p className="mt-1 text-[11px] text-[color:var(--color-ink-2)]" data-testid="adopt-result">
                   {tn('consensus.adoptWritten', adopted.written)}

@@ -10,6 +10,7 @@ with `page_comparison`, which applies the pure metric in `domain/consensus.py`.
 from __future__ import annotations
 
 import json
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -23,7 +24,7 @@ from ..adapters import consensus as runstore
 from ..domain import consensus as metric
 from . import audit, inference, prefill
 from .compute_profiles import describe
-from .i18n import msg
+from .i18n import localize_detail, msg
 from .model_adapters import get_adapter
 from .url_security import validate_endpoint
 
@@ -188,7 +189,7 @@ def run_pages(run_id: int, lang: str | None = None) -> list[dict[str, Any]]:
         })
         page["states"][row["model_key"]] = row["state"]
         if row["error"]:
-            page["errors"][row["model_key"]] = row["error"]
+            page["errors"][row["model_key"]] = localize_detail(row["error"], lang)
         if row["state"] == "finished":
             page["_ended"].append((row["model_key"], row["ended_at"]))
     out = []
@@ -323,6 +324,16 @@ def _recognize(project_id: int, page_id: int, client, cancel: threading.Event):
     return blocks, failure
 
 
+# A model failing this many pages in a row with the same error stops: the rest of
+# its pages are marked failed at once instead of each costing a request.
+STOP_AFTER_SAME_ERRORS = 3
+
+
+def _error_signature(error: str) -> str:
+    """Two errors are the same when they differ only in numbers (request ids, times)."""
+    return re.sub(r"\d+", "#", error.strip().lower())[:160]
+
+
 def _run_model(run: dict[str, Any], model: dict[str, Any], cancel: threading.Event) -> None:
     run_id, project_id = int(run["id"]), int(run["project_id"])
     outputs = runstore.outputs_for_model(run_id, model["key"])
@@ -338,11 +349,17 @@ def _run_model(run: dict[str, Any], model: dict[str, Any], cancel: threading.Eve
             if output["state"] == "queued":
                 runstore.mark_output(output["id"], "failed", error=str(exc), ended_at=_now())
         return
+    last_error: str | None = None
+    streak = 0
+    stopped: str | None = None
     for output in outputs:
         if output["state"] != "queued":
             continue  # finished in an earlier attempt of this run
         if cancel.is_set():
             runstore.mark_output(output["id"], "cancelled", ended_at=_now())
+            continue
+        if stopped is not None:
+            runstore.mark_output(output["id"], "failed", error=stopped, ended_at=_now())
             continue
         runstore.mark_output(output["id"], "running", started_at=_now())
         blocks, failure = _recognize(project_id, int(output["page_id"]), client, cancel)
@@ -355,6 +372,16 @@ def _run_model(run: dict[str, Any], model: dict[str, Any], cancel: threading.Eve
             runstore.mark_output(output["id"], "cancelled", ended_at=_now())
         else:
             runstore.mark_output(output["id"], "failed", error=failure, ended_at=_now())
+            signature = _error_signature(failure)
+            streak = streak + 1 if signature == last_error else 1
+            last_error = signature
+            if streak >= STOP_AFTER_SAME_ERRORS:
+                # Out of credits, a revoked key, a model gone: every page left would
+                # fail the same way, one request at a time. Stop and say why; a retry
+                # sends them again once the cause is fixed.
+                stopped = msg("consensus_model_stopped", None, n=streak, error=failure)
+            continue
+        last_error, streak = None, 0
 
 
 def cancel_run(run_id: int) -> dict[str, Any]:
@@ -514,7 +541,8 @@ def page_comparison(
     for model in run["models"]:
         row = by_key.get(model["key"])
         state = row["state"] if row else "missing"
-        models.append({**model, "state": state, "error": row["error"] if row else None})
+        error = localize_detail(row["error"], lang) if row and row["error"] else None
+        models.append({**model, "state": state, "error": error})
         if row and state == "finished":
             outputs[model["key"]] = row["blocks"]
     comparison = metric.compare_page(outputs) if len(outputs) >= MIN_MODELS else None
