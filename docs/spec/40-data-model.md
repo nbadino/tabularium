@@ -44,7 +44,12 @@
   read with one too: its `profile_id` is in the job's `command_json`, `adapters/runs.py::run_profile_id`,
   no migration; such a run never stops the active model and does not wait for its runs),
   `recognition_runs` / `recognition_run_items`, `consensus_runs` / `consensus_outputs` (v24: each model's blocks for a
-  page, never written to `blocks`/`tables`), `jobs`, `page_reviews`, `custom_models`, `secrets` (vault),
+  page, never written to `blocks`/`tables`), `consensus_decisions` (v25: what people settled in a
+  comparison, shared by the project: run, page, area `cluster_id` or table `block_id`, `kind`
+  ∈ resolved/reopened/use_model/removed/confirm_mine/group_confirm/add_table/adopt_page/revert/comment,
+  `model_key`, `before_json`/`after_json`, `comment`, `user_id`, `created_at`; `about_id` is the
+  decision a revert or a comment is about, `reverted_by` the revert that took it back; owned by
+  `adapters/consensus.py`, rules in `services/consensus_decisions.py`), `jobs`, `page_reviews`, `custom_models`, `secrets` (vault),
   `audit_events`, `rate_limits`, `meta`.
 - **Migrations**: up to **baseline 6** they are additive by column presence
   (`db.py::_ensure_columns`); from then on every schema change is a **versioned, ordered**
@@ -63,7 +68,7 @@
   database last ran from; when it differs from `config.ROOT_DIR`, paths under the old root are
   rewritten after a `pre-relocation` backup. Paths outside the root (server folders) are left
   alone, and so are paths inside `jobs.command_json`.
-  Current `SCHEMA_VERSION`: **23**. Upgrade tests in `tests/test_db_migrations.py`. The historical
+  Current `SCHEMA_VERSION`: **25**. Upgrade tests in `tests/test_db_migrations.py`. The historical
   test suite runs with `TABULARIUM_AUTH=off`; `test_auth.py` turns it `on` with a fixture.
 
 ---

@@ -22,7 +22,7 @@ from ..adapters import blocks as blockstore
 from ..adapters import compute_profiles as profilestore
 from ..adapters import consensus as runstore
 from ..domain import consensus as metric
-from . import audit, inference, prefill
+from . import audit, consensus_decisions, inference, prefill
 from .compute_profiles import describe
 from .i18n import localize_detail, msg
 from .model_adapters import get_adapter
@@ -455,6 +455,11 @@ def adopt_output(
                     writer.upsert_grid(block_id, grid)
             revision = writer.bump_revision(page_id)
             written.append({"page_id": page_id, "blocks": len(output["blocks"]), "annotation_revision": revision})
+    for page in written:
+        consensus_decisions.record_adoption(
+            run, page["page_id"], "adopt_page", model_key, actor=actor,
+            after={"blocks": page["blocks"], "replace_human": replace_human},
+        )
     if written:
         audit.record_event(
             "consensus.adopted", actor, resource_type="consensus_run", resource_id=run_id,
@@ -500,6 +505,10 @@ def adopt_block(
         if grid and grid.get("rows"):
             writer.upsert_grid(block_id, grid)
         revision = writer.bump_revision(page_id)
+    consensus_decisions.record_adoption(
+        run, page_id, "add_table", model_key, block_id=block_id, actor=actor,
+        after={"block_id": block_id, "index": index},
+    )
     audit.record_event(
         "consensus.block_adopted", actor, resource_type="consensus_run", resource_id=run_id,
         payload={"model": model["name"], "page_id": page_id, "index": index, "block_id": block_id},
@@ -532,7 +541,7 @@ def page_comparison(
     """
     chosen = run_id if run_id is not None else runstore.latest_run_for_page(page_id)
     if chosen is None:
-        return {"run_id": None, "models": [], "outputs": {}, "comparison": None}
+        return {"run_id": None, "models": [], "outputs": {}, "comparison": None, "resolved": []}
     run = runstore.get(chosen)
     if run is None:
         raise HTTPException(status_code=404, detail=msg("consensus_run_not_found", lang))
@@ -546,7 +555,9 @@ def page_comparison(
         if row and state == "finished":
             outputs[model["key"]] = row["blocks"]
     comparison = metric.compare_page(outputs) if len(outputs) >= MIN_MODELS else None
-    return {"run_id": chosen, "models": models, "outputs": outputs, "comparison": comparison}
+    # The areas settled so far, by anyone: shared, never kept in one browser.
+    resolved = consensus_decisions.resolved_for(chosen, page_id)
+    return {"run_id": chosen, "models": models, "outputs": outputs, "comparison": comparison, "resolved": resolved}
 
 
 # Overlap a model's table needs with the user's table block to be "the same table".

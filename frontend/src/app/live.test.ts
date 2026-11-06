@@ -5,8 +5,10 @@ import {
   disconnectPage,
   notifyEditing,
   onAnnotationsChanged,
+  onConsensusDecision,
   useLive,
   type AnnotationsChanged,
+  type ConsensusDecisionEvent,
 } from './live'
 
 /** WebSocket finto: il test guida a mano open/message/close. */
@@ -105,6 +107,24 @@ describe('live client', () => {
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({ pageId: 1, revision: 7, authorId: 2, authorName: 'bella' })
     off()
+  })
+
+  it('passes a comparison decision to its listeners, apart from the annotations', () => {
+    const decisions: ConsensusDecisionEvent[] = []
+    const changes: AnnotationsChanged[] = []
+    const off = onConsensusDecision((e) => decisions.push(e))
+    const offChanges = onAnnotationsChanged((e) => changes.push(e))
+    act(() => connectPage(1))
+    const ws = lastFakeWS()
+    act(() => ws.open())
+    act(() =>
+      ws.emit({ type: 'consensus_decision', page_id: 1, run_id: 4, decision_id: 12, kind: 'resolved', author: { id: 2, username: 'bella' } }),
+    )
+    expect(decisions).toEqual([{ pageId: 1, runId: 4, decisionId: 12, authorId: 2 }])
+    // A settled area changes no annotation: the canvas must not reload.
+    expect(changes).toHaveLength(0)
+    off()
+    offChanges()
   })
 
   it('segnala la scrittura agli altri quando è aperto', () => {

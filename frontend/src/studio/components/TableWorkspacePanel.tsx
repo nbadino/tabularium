@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { MutableRefObject } from 'react'
 import type { HeaderTemplate, KnownTableHeader, KnownTableHeadersOut, TableCell, TableGrid, TableGridOut, TableCheck, TableChecksOut } from '../../lib/types'
 import { applyHeaderTemplate, setVerified, deleteTrack, emptyGrid, extractHeaderTemplate, fillDown, insertTrack, joinColumns, mergeKeepsEveryText, mergeRange, normalizeColumn, fractionsColumn, splitCell, transformColumnCase } from '../../lib/grid'
-import type { ColumnOp, SheetSelection, TrackOp, UniverController } from './UniverSheet'
+import type { CellChoice, ColumnOp, SheetSelection, TrackOp, UniverController } from './UniverSheet'
 import { useConfirm } from '../../app/confirm'
 import { univerGridSignature } from '../../lib/univerGrid'
 import { apiGet, apiPost } from '../../lib/api'
@@ -14,6 +14,7 @@ import TablePageImage from './TablePageImage'
 import Splitter from './Splitter'
 import KnownHeaderDialog from './KnownHeaderDialog'
 import { API_BASE } from '../../lib/endpoints'
+import { describeError } from '../../lib/errors'
 import { cellBand, charDiff, confirmGroups, disputedCells, estimateRowBand, nextDisputedCell, type GridConsensus } from '../consensus'
 const UniverSheet = lazy(() => import('./UniverSheet'))
 
@@ -259,8 +260,8 @@ export function TableWorkspacePanel({
           const value = cell.values[model.key]
           if (value == null || value === mine) return []
           return [value.trim()
-            ? { label: t('consensus.useModel', { name: model.name, value }), value }
-            : { label: t('consensus.useModelEmpty', { name: model.name }), value }]
+            ? { label: t('consensus.useModel', { name: model.name, value }), value, model: model.key }
+            : { label: t('consensus.useModelEmpty', { name: model.name }), value, model: model.key }]
         })
         return [...choices.filter((choice) => choice.value.trim()), ...choices.filter((choice) => !choice.value.trim())]
       }
@@ -313,6 +314,36 @@ export function TableWorkspacePanel({
   }
   const goNext = () => goToCell(nextDisputedCell(open, active))
   const myText = (r: number, c: number) => (gridRef.current ?? grid)?.cells.find((cell) => cell.r === r && cell.c === c)?.text ?? ''
+  // Each choice made here is recorded for everyone on the page (who, which model,
+  // before and after), so it shows in the comparison's history and can be reverted.
+  const cellState = (r: number, c: number) => {
+    const cell = (gridRef.current ?? grid)?.cells.find((item) => item.r === r && item.c === c)
+    return { r, c, text: cell?.text ?? '', verified: Boolean(cell?.verified), source: cell?.source ?? 'manual' }
+  }
+  const recordCells = (
+    kind: 'use_model' | 'confirm_mine' | 'group_confirm',
+    before: ReturnType<typeof cellState>[],
+    after: { r: number; c: number; text?: string; verified?: boolean }[],
+    modelKey?: string,
+  ) => {
+    if (pageId == null || consensus?.run_id == null || before.length === 0) return
+    apiPost(`/pages/${pageId}/consensus/decisions`, {
+      run_id: consensus.run_id, kind, block_id: serverId,
+      ...(modelKey ? { model_key: modelKey } : {}),
+      before: { cells: before }, after: { cells: after },
+    }).catch((e) => setNotice(t('consensus.history.recordFailed', { error: describeError(e).messaggio })))
+  }
+  const onCellChoice = (row: number, column: number, choice: CellChoice) => {
+    const before = cellState(row, column)
+    if (before.text === choice.value) return
+    recordCells('use_model', [before], [{ r: row, c: column, text: choice.value }], choice.model)
+  }
+  /** Confirms cells and records it; only the cells that were not verified yet count. */
+  const confirmCells = (kind: 'confirm_mine' | 'group_confirm', cells: { r: number; c: number }[]) => {
+    const before = cells.map((cell) => cellState(cell.r, cell.c)).filter((cell) => !cell.verified)
+    verifyCells(cells)
+    recordCells(kind, before, before.map((cell) => ({ r: cell.r, c: cell.c, text: cell.text, verified: true })))
+  }
   const verifyCells = (cells: { r: number; c: number }[]) => {
     const current = gridRef.current
     if (!current || !cells.length) return
@@ -324,7 +355,7 @@ export function TableWorkspacePanel({
   const confirmAndNext = () => {
     if (!active || !myText(active.r, active.c).trim()) return
     const after = nextDisputedCell(open, active)
-    verifyCells([active])
+    confirmCells('confirm_mine', [active])
     if (after && (after.r !== active.r || after.c !== active.c)) goToCell(after)
   }
   const activeConsensus = active ? consensusCells.get(`${active.r}:${active.c}`) : undefined
@@ -348,7 +379,7 @@ export function TableWorkspacePanel({
       }),
       acceptLabel: t('consensus.groupAccept', { n: group.cells.length }),
     })
-    if (ok) verifyCells(group.cells)
+    if (ok) confirmCells('group_confirm', group.cells)
   }
   const keysRef = useRef<{ goNext: () => void; confirmAndNext: () => void; editing: () => boolean }>({ goNext, confirmAndNext, editing: () => false })
   keysRef.current = { goNext, confirmAndNext, editing: () => sheetController?.isEditing() ?? false }
@@ -965,6 +996,7 @@ export function TableWorkspacePanel({
                 disagreements={disagreements}
                 cellHint={cellHint}
                 cellChoices={cellChoices}
+                onCellChoice={onCellChoice}
                 onControllerChange={setSheetController}
                 onUndo={undo}
                 onRedo={redo}

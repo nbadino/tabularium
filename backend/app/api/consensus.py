@@ -1,11 +1,14 @@
 """Consensus API: saved model profiles, runs over pages, one page's comparison."""
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from ..services import auth as authsvc
 from ..services import consensus as consensussvc
+from ..services import consensus_decisions as decisionsvc
 from ..services.i18n import msg, parse_lang
 from .deps import require_resource
 
@@ -196,3 +199,90 @@ def block_consensus(
     """The models' readings for the table being edited; `grid` is the editor's current one."""
     return consensussvc.block_comparison(block_id, grid, _lang(request))
 
+
+
+# --- shared decisions --------------------------------------------------------------
+
+
+class CellState(BaseModel):
+    r: int = Field(ge=0, le=100_000)
+    c: int = Field(ge=0, le=10_000)
+    text: str | None = Field(default=None, max_length=4000)
+    verified: bool | None = None
+    source: str | None = Field(default=None, max_length=120)
+
+
+class BlockState(BaseModel):
+    # A saved block's id, or the editor's local id for one not saved yet.
+    id: str | None = Field(default=None, max_length=64)
+    label: str = Field(default="", max_length=80)
+    content: str = Field(default="", max_length=20_000)
+
+
+class DecisionState(BaseModel):
+    cells: list[CellState] | None = Field(default=None, max_length=5000)
+    blocks: list[BlockState] | None = Field(default=None, max_length=200)
+
+
+class DecisionCreate(BaseModel):
+    run_id: int
+    kind: Literal["resolved", "reopened", "use_model", "removed", "confirm_mine", "group_confirm", "comment"]
+    cluster_id: int | None = Field(default=None, ge=0)
+    block_id: int | None = None
+    model_key: str | None = Field(default=None, min_length=1, max_length=64)
+    before: DecisionState | None = None
+    after: DecisionState | None = None
+    comment: str | None = Field(default=None, max_length=2000)
+    # For a comment: the decision it answers.
+    about_id: int | None = None
+
+
+class RevertRequest(BaseModel):
+    comment: str | None = Field(default=None, max_length=2000)
+
+
+@router.get("/api/pages/{page_id}/consensus/decisions")
+def page_decisions(
+    page_id: int,
+    request: Request,
+    run_id: int | None = None,
+    _user: dict = Depends(require_resource(write=False)),
+) -> dict:
+    """Who settled what on the page in a comparison (newest first), and the areas settled."""
+    from ..adapters import consensus as runstore  # noqa: PLC0415
+    from ..adapters import pages as pagestore  # noqa: PLC0415
+
+    lang = _lang(request)
+    if run_id is None:
+        run_id = runstore.latest_run_for_page(page_id)
+    else:
+        run = consensussvc.get_run(run_id, lang)
+        if int(run["project_id"]) != pagestore.project_of_page(page_id):
+            raise HTTPException(status_code=404, detail=msg("consensus_run_not_found", lang))
+    return decisionsvc.page_state(run_id, page_id)
+
+
+@router.post("/api/pages/{page_id}/consensus/decisions")
+def record_decision(
+    page_id: int,
+    payload: DecisionCreate,
+    request: Request,
+    response: Response,
+    user: dict = Depends(require_resource(write=True)),
+) -> dict:
+    """Record a decision taken in the Studio; 200 with no decision when it changes nothing."""
+    out = decisionsvc.record(page_id, payload.model_dump(exclude_none=True), user, _lang(request))
+    response.status_code = 201 if out["decision"] is not None else 200
+    return out
+
+
+@router.post("/api/pages/{page_id}/consensus/decisions/{decision_id}/revert", status_code=201)
+def revert_decision(
+    page_id: int,
+    decision_id: int,
+    payload: RevertRequest,
+    request: Request,
+    user: dict = Depends(require_resource(write=True)),
+) -> dict:
+    """Put back the value the decision replaced; the revert is a decision too."""
+    return decisionsvc.revert(page_id, decision_id, payload.comment, user, _lang(request))

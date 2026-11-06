@@ -7,6 +7,15 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **Model comparison decisions are shared, with a history you can revert and comment.** What
+  anyone settles in a comparison (*Fine as it is*, a model's reading for an area or a cell, *My
+  reading is right*, a column confirmed at once, a model's table added, a model's reading adopted)
+  is saved on the server with who, when, the value before and after, and an optional comment, so
+  everyone on the page sees the same settled areas (they used to live in one browser). The
+  comparison has a *Decision history* at its foot: *Revert* puts the previous value back (and is
+  itself recorded, so it can be reverted too) unless the value changed since; anyone who can edit
+  can comment on the page or reply to a decision. Updates arrive live. Migration 25 adds the
+  `consensus_decisions` table.
 - **Check in the Studio, always in view.** The comparison panel on the Recognition page has a
   button to the first compared page with cells still to check (or the first compared page when
   all are settled), and each page of the run an *Open ›* link: the file names were the only way

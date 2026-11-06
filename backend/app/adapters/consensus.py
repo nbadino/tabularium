@@ -217,3 +217,73 @@ def reconcile(active_ids: set[int], *, message: str, ended: str) -> None:
                 (message, ended, run_id),
             )
         conn.commit()
+
+
+# --- decisions --------------------------------------------------------------------
+# `consensus_decisions`: what people settled in a comparison, shared by the project.
+# The writes take the caller's connection, so a revert changes the annotations and
+# records itself in one transaction (`services/consensus_decisions.py` decides).
+
+_DECISION_COLUMNS = (
+    "d.id, d.run_id, d.page_id, d.cluster_id, d.block_id, d.kind, d.model_key, "
+    "d.before_json, d.after_json, d.comment, d.user_id, u.username, d.created_at, "
+    "d.about_id, d.reverted_by"
+)
+
+
+def _decision_out(row) -> dict[str, Any]:
+    out = dict(row)
+    out["before"] = json.loads(out.pop("before_json") or "null")
+    out["after"] = json.loads(out.pop("after_json") or "null")
+    return out
+
+
+def insert_decision(conn, values: dict[str, Any]) -> int:
+    cursor = conn.execute(
+        "INSERT INTO consensus_decisions (run_id, page_id, cluster_id, block_id, kind, model_key, "
+        "before_json, after_json, comment, user_id, about_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            values["run_id"], values["page_id"], values.get("cluster_id"), values.get("block_id"),
+            values["kind"], values.get("model_key"),
+            json.dumps(values.get("before"), ensure_ascii=False),
+            json.dumps(values.get("after"), ensure_ascii=False),
+            values.get("comment"), values.get("user_id"), values.get("about_id"),
+        ),
+    )
+    return int(cursor.lastrowid or 0)
+
+
+def mark_reverted(conn, decision_id: int, by: int) -> bool:
+    """Point a decision at its revert; False when someone reverted it first."""
+    cursor = conn.execute(
+        "UPDATE consensus_decisions SET reverted_by=? WHERE id=? AND reverted_by IS NULL",
+        (by, decision_id),
+    )
+    return bool(cursor.rowcount)
+
+
+def get_decision(decision_id: int, conn=None) -> dict[str, Any] | None:
+    query = (
+        f"SELECT {_DECISION_COLUMNS} FROM consensus_decisions d "
+        "LEFT JOIN users u ON u.id = d.user_id WHERE d.id=?"
+    )
+    if conn is not None:
+        row = conn.execute(query, (decision_id,)).fetchone()
+    else:
+        with connect() as own:
+            row = own.execute(query, (decision_id,)).fetchone()
+    return _decision_out(row) if row is not None else None
+
+
+def page_decisions(run_id: int, page_id: int, conn=None) -> list[dict[str, Any]]:
+    """Every decision of a run on a page, oldest first."""
+    query = (
+        f"SELECT {_DECISION_COLUMNS} FROM consensus_decisions d "
+        "LEFT JOIN users u ON u.id = d.user_id WHERE d.run_id=? AND d.page_id=? ORDER BY d.id"
+    )
+    if conn is not None:
+        rows = conn.execute(query, (run_id, page_id)).fetchall()
+    else:
+        with connect() as own:
+            rows = own.execute(query, (run_id, page_id)).fetchall()
+    return [_decision_out(row) for row in rows]

@@ -16,7 +16,7 @@ from contextlib import closing
 
 from . import config
 
-SCHEMA_VERSION = "24"
+SCHEMA_VERSION = "25"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -506,6 +506,36 @@ _MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_consensus_outputs_page
             ON consensus_outputs(page_id, run_id);
     """),
+    ("25", """
+        -- Consensus decisions, shared by everyone on the project: what a person
+        -- settled in a comparison (an area fine as it is, a model's reading taken,
+        -- their own reading confirmed, a column confirmed at once, a model's table
+        -- added, a model's reading adopted for the page), with the value before
+        -- and after so it can be reverted. A revert or a comment is a row too
+        -- (about_id names the decision it is about). The settled state of an
+        -- area is derived from these rows, never kept in a browser.
+        CREATE TABLE IF NOT EXISTS consensus_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL REFERENCES consensus_runs(id) ON DELETE CASCADE,
+            page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+            cluster_id INTEGER,
+            block_id INTEGER REFERENCES blocks(id) ON DELETE SET NULL,
+            kind TEXT NOT NULL CHECK(kind IN (
+                'resolved','reopened','use_model','removed','confirm_mine',
+                'group_confirm','add_table','adopt_page','revert','comment'
+            )),
+            model_key TEXT,
+            before_json TEXT NOT NULL DEFAULT 'null',
+            after_json TEXT NOT NULL DEFAULT 'null',
+            comment TEXT,
+            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            about_id INTEGER REFERENCES consensus_decisions(id) ON DELETE SET NULL,
+            reverted_by INTEGER REFERENCES consensus_decisions(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_consensus_decisions_page
+            ON consensus_decisions(page_id, run_id, id);
+    """),
 ]
 
 
@@ -568,7 +598,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     for version, ddl in sorted(_MIGRATIONS, key=lambda m: int(m[0])):
         if int(version) <= current:
             continue
-        if version in {"16", "17", "18", "21", "22", "23", "24"}:
+        if version in {"16", "17", "18", "21", "22", "23", "24", "25"}:
             _execute_additive_migration(conn, ddl)
             conn.execute("UPDATE meta SET value=? WHERE key='schema_version'", (version,))
             conn.commit()

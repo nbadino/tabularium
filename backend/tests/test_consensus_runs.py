@@ -249,7 +249,7 @@ def test_a_page_without_consensus_says_so(tmp_path):
     with TestClient(app) as client:
         _project_id, page_ids = _project(client, tmp_path)
         body = client.get(f"/api/pages/{page_ids[0]}/consensus").json()
-        assert body == {"run_id": None, "models": [], "outputs": {}, "comparison": None}
+        assert body == {"run_id": None, "models": [], "outputs": {}, "comparison": None, "resolved": []}
 
 
 def test_one_model_failing_does_not_stop_the_others(tmp_path, monkeypatch):

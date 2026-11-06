@@ -102,6 +102,60 @@ export interface PageConsensus {
     /** How often each convention rule turns up on the page (table cells one by one). */
     conventions: Partial<Record<ConventionRule, number>>
   } | null
+  /** The areas settled so far, by anyone on the project (derived from the decisions). */
+  resolved?: number[]
+}
+
+/** What a person settled in the comparison; a revert and a comment are decisions too. */
+export type DecisionKind =
+  | 'resolved' | 'reopened' | 'use_model' | 'removed' | 'confirm_mine'
+  | 'group_confirm' | 'add_table' | 'adopt_page' | 'revert' | 'comment'
+
+export interface DecisionCell { r: number; c: number; text?: string; verified?: boolean; source?: string }
+export interface DecisionBlock { id?: string; label: string; content: string }
+export interface DecisionState {
+  resolved?: boolean
+  cells?: DecisionCell[]
+  blocks?: DecisionBlock[]
+  block_id?: number
+  index?: number
+  replace_human?: boolean
+}
+
+/** One row of the shared history (`GET /pages/{id}/consensus/decisions`). */
+export interface ConsensusDecision {
+  id: number
+  run_id: number
+  page_id: number
+  cluster_id: number | null
+  block_id: number | null
+  kind: DecisionKind
+  /** For a revert: the kind of the decision it takes back. */
+  target_kind: DecisionKind
+  model_key: string | null
+  model_name: string | null
+  before: DecisionState | null
+  after: DecisionState | null
+  comment: string | null
+  about_id: number | null
+  reverted_by: number | null
+  created_at: string
+  user: { id: number | null; username: string | null }
+  revertible: boolean
+}
+
+export interface DecisionsOut {
+  run_id: number | null
+  /** Newest first. */
+  items: ConsensusDecision[]
+  resolved: number[]
+}
+
+/** `POST /pages/{id}/consensus/decisions` and `…/revert`. */
+export interface DecisionResult {
+  decision: ConsensusDecision | null
+  resolved: number[]
+  annotation_revision?: number | null
 }
 
 /** The models' readings laid on the user's own table (`POST /blocks/{id}/consensus`). */

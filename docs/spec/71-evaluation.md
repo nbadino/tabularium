@@ -114,7 +114,8 @@ then `missing`, then `structure`. A table cell is coloured by its kind (`cellBan
 and `missing` red, `text` amber or red by its distance, `convention` grey; *Next cell* and the
 table editor's painted cells cover `digits`, `text` and `missing` only, in that order.
 
-**Settling a block in the Studio** (`studio/consensus.ts`, `AnnotationPage.tsx`). The user's
+**Settling a block in the Studio** (`studio/consensus.ts`, `AnnotationPage.tsx`; each choice is a
+shared decision, below). The user's
 blocks and unverified drafts that read a cluster's area are found with the same thresholds as
 the matching (IoU ≥ 0.5, or ≥ 70 % of the user's block inside the cluster; a block that merely
 contains the cluster, a whole Column, is not the user's reading of it). *Use <model>* with one
@@ -156,5 +157,34 @@ the models (one undo step). On the right click a model that read nothing is offe
 *Empty the cell*. The `spacing` rule keeps a space between two digits: `1523` and `15 23`
 are a `digits` difference. The sheet paints partial and disagreeing
 cells and shows the readings on hover.
+
+**Shared decisions** (`consensus_decisions`, `services/consensus_decisions.py`). Every choice made
+while working through a comparison is recorded on the server with who, when, the value before
+and after, and an optional comment, so another person on the page (or the same person on another
+device) sees it. The Studio records `resolved`/`reopened` (*Fine as it is*, A), `use_model` (an
+area: the user's and the model's blocks; a table cell: the cell before and the model's text,
+from the right-click choice), `removed` (X), `confirm_mine` (Alt+V) and `group_confirm` through
+`POST /api/pages/{id}/consensus/decisions` (write access); the adopt endpoints record `add_table`
+and `adopt_page` themselves. Nothing is kept in the browser: the settled areas are derived from
+the decisions (the last standing decision on an area with `after.resolved` says whether it is
+settled) and come with the page's comparison (`resolved` in `GET /api/pages/{id}/consensus`) and
+with the history (`GET /api/pages/{id}/consensus/decisions`, newest first, read access). A comment
+is a decision of kind `comment`, on the page or `about_id` another decision.
+
+*Revert* (`POST …/consensus/decisions/{id}/revert`, optional comment) puts the value before back
+and is a decision itself (kind `revert`, before and after swapped, `about_id` the decision), so it
+can be reverted in turn; a decision is reverted once (409 after). It is refused (409) when the
+value after is no longer there — the area was reopened, the cell's text or verified flag, or the
+block's text, changed since — rather than overwrite later work (R9). Revertible: settling and
+reopening, a model's reading put into one block in place, every cell decision, and an added
+table (deleted again only while no cell is verified or typed in and the block is not confirmed).
+Not revertible from the history: `adopt_page`, `removed` and a model's blocks swapped for the
+user's (the before value is not one the server can put back); they stay recorded and commentable.
+A revert that changes the annotations advances the page revision. Every decision is announced on
+the page's live channel as `consensus_decision` (the histories reload); a revert that changed the
+annotations also sends `annotations_changed` (action `consensus_revert`), so open editors reload.
+The history panel sits at the foot of the comparison in the content rail (`ConsensusHistory.tsx`):
+the revert asks first, inline, with an optional reason. The audit events `consensus.adopted` and
+`consensus.block_adopted` are still written.
 
 ---
