@@ -204,6 +204,12 @@ export const it = {
   },
 
   consensus: {
+    runPages: "Pagine del confronto",
+    pageWaiting: "in attesa del secondo modello",
+    pageFailed: "un modello non ha risposto",
+    pageLeft: "da controllare: {digits} numeri · {text} parole · {missing} mancanti",
+    addTable: "Aggiungi la tabella di {name}",
+    addTableHint: "Questa tabella c'è solo nei modelli. Aggiungi la lettura di uno dei due come tua bozza: si apre nell'editor della tabella, con le celle in disaccordo colorate. I tuoi blocchi restano come sono.",
     estimated: "riga {row}, colonna {column} · zona stimata: cerca la riga qui",
     confirmMine: "La mia lettura è giusta",
     confirmMineHint: "Segna la cella come verificata e passa alla successiva. Solo dopo averla controllata sulla scansione.",
@@ -229,7 +235,7 @@ export const it = {
       missing: { one: "{count} letta da un modello solo", other: "{count} lette da un modello solo" },
       convention: { one: "{count} cella diversa solo per convenzione", other: "{count} celle diverse solo per convenzione" },
     },
-    rule: { dash: "lineetta", quotes: "virgolette", leaders: "puntini di guida", spacing: "spazi", ligature: "legature", small_caps: "maiuscoletto", case: "maiuscole/minuscole" },
+    rule: { dash: "lineetta", quotes: "virgolette", leaders: "puntini di guida", spacing: "spazi", ligature: "legature", small_caps: "maiuscoletto", case: "maiuscole/minuscole", cells: "celle unite" },
     offer: "Confronto disponibile: {names}.",
     offerOpen: "Mostra il confronto",
     mineDiffers: "Il tuo testo è diverso da quello dei modelli: controlla che sia una correzione voluta.",

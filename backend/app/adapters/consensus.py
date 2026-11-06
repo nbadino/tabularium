@@ -161,6 +161,18 @@ def page_outputs(run_id: int, page_id: int) -> list[dict[str, Any]]:
     return out
 
 
+def run_page_states(run_id: int) -> list[dict[str, Any]]:
+    """Every output of a run without its blocks: page, file, model, state, error, end."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT o.page_id, p.rel_path, o.model_key, o.state, o.error, o.ended_at "
+            "FROM consensus_outputs o JOIN pages p ON p.id = o.page_id "
+            "WHERE o.run_id=? ORDER BY p.rel_path, o.page_id, o.id",
+            (run_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def finished_outputs(run_id: int, model_key: str, page_ids: list[int] | None = None) -> list[dict[str, Any]]:
     """One model's finished pages of a run (all, or those in `page_ids`), with their blocks."""
     query = (

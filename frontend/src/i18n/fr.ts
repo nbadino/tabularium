@@ -205,6 +205,12 @@ export const fr: Dict = {
   },
 
   consensus: {
+    runPages: "Pages de la comparaison",
+    pageWaiting: "en attente du second modèle",
+    pageFailed: "un modèle n'a pas répondu",
+    pageLeft: "à vérifier : {digits} nombres · {text} mots · {missing} manquants",
+    addTable: "Ajouter le tableau de {name}",
+    addTableHint: "Seuls les modèles ont ce tableau. Ajoutez la lecture de l'un d'eux comme brouillon : il s'ouvre dans l'éditeur de tableau, avec les cellules en désaccord colorées. Vos blocs restent tels quels.",
     estimated: "ligne {row}, colonne {column} · zone estimée : cherchez la ligne ici",
     confirmMine: "Ma lecture est juste",
     confirmMineHint: "Marque la cellule comme vérifiée et passe à la suivante. Seulement après l'avoir contrôlée sur le scan.",
@@ -230,7 +236,7 @@ export const fr: Dict = {
       missing: { one: "{count} lue par un seul modèle", other: "{count} lues par un seul modèle" },
       convention: { one: "{count} cellule diffère par convention seulement", other: "{count} cellules diffèrent par convention seulement" },
     },
-    rule: { dash: "tiret", quotes: "guillemets", leaders: "points de conduite", spacing: "espaces", ligature: "ligatures", small_caps: "petites capitales", case: "majuscules/minuscules" },
+    rule: { dash: "tiret", quotes: "guillemets", leaders: "points de conduite", spacing: "espaces", ligature: "ligatures", small_caps: "petites capitales", case: "majuscules/minuscules", cells: "cellules fusionnées" },
     offer: "Comparaison disponible : {names}.",
     offerOpen: "Afficher la comparaison",
     mineDiffers: "Votre texte diffère de celui des modèles : vérifiez que c’est une correction voulue.",

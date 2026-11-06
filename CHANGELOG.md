@@ -7,6 +7,11 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **Model comparison, page by page, on the Recognition page**: each page of the run with every
+  model's state (✓ … ✕), the agreement and what is left to check (numbers, words, missing), and
+  a link to open it in the Studio.
+- **A table only the models read can be opened in the table editor**: *Add <model>'s table*
+  adds that model's reading as a draft (your blocks stay), instead of the read-only heatmap.
 - **Model comparison tells conventions from misreadings.** Each difference between two readings
   now has a kind: a *number* read differently or dropped, *different words*, a reading only one
   model has, or a *convention only*: the same print written another way (dash, dot leaders,
@@ -77,6 +82,12 @@ Notable changes to Tabularium. The format follows
   Metric in `docs/spec/71-evaluation.md`.
 
 ### Fixed
+- Model comparison: tables are aligned row by row, so a model whose grid opens a column
+  half-way down no longer turns every later cell into a disagreement (Lloyd's p. 14: 140
+  "different numbers" were 3); two cells written as one (`Br *`) are the *merged cells*
+  convention, not misreadings.
+- OCRia-1: a table returned without a box got the width of the few items placed on the page
+  (a centred running head); it now gets the page's width when those cover less than 60 %.
 - A recognition started from the project page could not be stopped: it opened the Results page,
   which had no stop button.
 - OCRia (LlamaIndex) lost whole tables. When LlamaParse's layout model misses a region that its

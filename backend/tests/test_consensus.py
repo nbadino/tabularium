@@ -379,3 +379,58 @@ def test_the_table_editor_cells_carry_their_kind():
     assert by_pos[(1, 1)]["kind"] == "digits"
     assert by_pos[(0, 0)]["kind"] == "convention" and by_pos[(0, 0)]["conventions"] == ["case"]
     assert by_pos[(0, 0)]["score"] == 0.0
+
+
+# --- ragged rows and merged cells (Lloyd's p. 14, OCRia-1 against Gemini) ---
+
+
+def test_a_column_opened_half_way_down_does_not_shift_the_rest():
+    """OCRia opens an empty column before the flag from some row on; each row is
+    aligned on its own, so the year is still compared with the year."""
+    a = _grid([
+        ["Austria", "Fr", "v", "01", "7588"],
+        ["Avona", "No", "N", "91", "2896"],
+        ["Avonwood", "Br", "*", "15", "864"],
+    ])
+    b = _grid([
+        ["Austria", "Fr", "v", "01", "7588", ""],
+        ["Avona", "", "No", "N", "91", "2896"],
+        ["Avonwood", "", "Br", "*", "15", "864"],
+    ])
+    table = cs.compare_tables({"A": a, "B": b})
+    assert table["kinds"]["digits"] == 0 and table["kinds"]["text"] == 0
+    by_pos = {(c["r"], c["c"]): c for c in table["cells"]}
+    assert by_pos[(2, 3)]["values"]["B"] == "15"
+    # The empty column is no disagreement.
+    assert table["score"] == 0.0
+
+
+def test_two_cells_written_as_one_are_the_cells_convention_both_ways():
+    one = _grid([["Avilesino", "No N", "19"], ["Avena", "Sw *", "73"]])
+    two = _grid([["Avilesino", "No", "N", "19"], ["Avena", "Sw", "*", "73"]])
+    joined = cs.compare_tables({"A": one, "B": two})
+    by_pos = {(c["r"], c["c"]): c for c in joined["cells"]}
+    assert by_pos[(0, 1)]["values"]["B"] == "No N"
+    assert by_pos[(0, 1)]["kind"] == "convention" and by_pos[(0, 1)]["conventions"] == ["cells"]
+    assert by_pos[(0, 2)]["values"]["B"] == "19"
+    split = cs.compare_tables({"B": two, "A": one})
+    by_pos = {(c["r"], c["c"]): c for c in split["cells"]}
+    # The one cell is cut into the two readings it holds.
+    assert by_pos[(1, 1)]["values"]["A"] == "Sw" and by_pos[(1, 2)]["values"]["A"] == "*"
+    assert by_pos[(1, 2)]["conventions"] == ["cells"]
+    assert split["conventions"] == {"cells": 4}
+
+
+def test_a_misread_cell_is_not_hidden_by_a_merge_or_a_gap():
+    # "Am" | "B" against "Am" | "R": a misread registry, not a merged cell, not two gaps.
+    table = cs.compare_tables({
+        "A": _grid([["Aculeo", "Am", "B", "19"]]),
+        "B": _grid([["Aculeo", "Am", "R", "19"]]),
+    })
+    by_pos = {(c["r"], c["c"]): c for c in table["cells"]}
+    assert by_pos[(0, 2)]["values"]["B"] == "R" and by_pos[(0, 2)]["kind"] == "text"
+    merged = cs.compare_tables({
+        "A": _grid([["Aculeo", "Am", "B", "19"]]),
+        "B": _grid([["Aculeo", "Am R", "19"]]),
+    })
+    assert merged["kinds"]["convention"] == 0

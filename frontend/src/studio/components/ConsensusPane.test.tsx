@@ -185,6 +185,21 @@ describe('ModelOnlyClusters', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Next cell' }))
     expect(screen.getByTestId('reading-p2').querySelector('ins')).toHaveTextContent('u')
   })
+
+  // Lloyd's p. 13: the table is only in the models; the heatmap only shows it.
+  it("offers to add a model's table as a draft, to open it in the table editor", async () => {
+    setLocale('en')
+    const onAddBlock = vi.fn()
+    render(<ModelOnlyClusters page={page} clusters={[clusterOf(page, 1)]} selected={1} onSelect={() => {}} actions={actions({ onAddBlock })} />)
+    const add = screen.getByTestId('add-table')
+    expect(add).toHaveTextContent('Only the models have this table')
+    await userEvent.click(within(add).getByRole('button', { name: "Add Argon's table" }))
+    expect(onAddBlock).toHaveBeenCalledWith(clusterOf(page, 1), 'p2')
+    // A reader cannot add anything.
+    cleanup()
+    render(<ModelOnlyClusters page={page} clusters={[clusterOf(page, 1)]} selected={1} onSelect={() => {}} actions={actions({ onAddBlock, canEdit: false })} />)
+    expect(screen.queryByTestId('add-table')).toBeNull()
+  })
 })
 
 describe('Conventions', () => {

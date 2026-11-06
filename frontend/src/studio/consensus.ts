@@ -35,6 +35,8 @@ export type DifferenceKind = 'same' | 'convention' | 'missing' | 'text' | 'digit
 
 /** The rules a `convention` difference needs, in the backend's order. */
 export type ConventionRule = 'dash' | 'quotes' | 'leaders' | 'spacing' | 'ligature' | 'small_caps' | 'case'
+  /** Tables only: two cells of one reading are one cell of another ("Br" | "*" against "Br *"). */
+  | 'cells'
 
 export interface ConsensusCell {
   r: number

@@ -2357,6 +2357,11 @@ class LlamaIndexOcriaAdapter(_StubAdapter):
             span_x = (
                 (min(b[0] for b in placed), max(b[2] for b in placed)) if placed else (0.0, page_width)
             )
+            # Placed items that cover little of the width say nothing about it: on
+            # Lloyd's p. 13 only the centred running head was placed, and the
+            # register got the head's third of the page. Then the page's width.
+            if span_x[1] - span_x[0] < 0.6 * page_width:
+                span_x = (0.0, page_width)
 
             def gap_box(items: list, index: int) -> tuple[float, float, float, float]:
                 """The band between the nearest placed siblings around `items[index]`.
