@@ -75,6 +75,10 @@ def main() -> int:
         created = requests.post(f"{BASE}/api/projects", json={"name": "E2E temporary project", "archive_dir": str(root)}, timeout=10)
         assert created.status_code == 201, created.text
         project_id = int(created.json()["id"])
+        # The steps below find buttons by their Italian text; a browser that never
+        # chose a language now gets English, so choose Italian as a user would.
+        driver.get(f"{BASE}/")
+        driver.execute_script("localStorage.setItem('tabularium.locale', 'it')")
         driver.get(f"{BASE}/progetti/{project_id}")
         wait_for(driver, EC.presence_of_element_located((By.XPATH, "//button[contains(., 'Registra pagine dalla cartella')]")))
         wait_for(driver, EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Registra pagine dalla cartella')]"))).click()
