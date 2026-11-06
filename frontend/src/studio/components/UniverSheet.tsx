@@ -323,12 +323,17 @@ interface UniverSheetProps {
    *  `resolved` are disputed cells the user has since edited or verified. */
   disagreements?: Disagreements
   /** Quick values offered on right click for a cell (consensus: each model's reading). */
-  cellChoices?: (row: number, column: number) => { label: string; value: string }[]
+  cellChoices?: (row: number, column: number) => CellChoice[]
+  /** Called with the chosen quick value just before it is written into the cell. */
+  onCellChoice?: (row: number, column: number, choice: CellChoice) => void
   /** What to show when the pointer rests on a cell; null shows nothing. */
   cellHint?: (row: number, column: number) => ReactNode | null
 }
 
-export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp, onSaveHeader, onApplyHeader, suspects, onSelectionChange, onControllerChange, onUndo, onRedo, intro = false, disagreements, cellHint, cellChoices }: UniverSheetProps) {
+/** A quick value for a cell; `model` names the compared model it comes from. */
+export interface CellChoice { label: string; value: string; model?: string }
+
+export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp, onSaveHeader, onApplyHeader, suspects, onSelectionChange, onControllerChange, onUndo, onRedo, intro = false, disagreements, cellHint, cellChoices, onCellChoice }: UniverSheetProps) {
   const { t, locale } = useI18n()
   const host = useRef<HTMLDivElement | null>(null)
   const [failed, setFailed] = useState(false)
@@ -364,6 +369,8 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
   const paintDisagreementsRef = useRef<((value: Disagreements) => void) | null>(null)
   const choicesRef = useRef(cellChoices)
   choicesRef.current = cellChoices
+  const onChoiceRef = useRef(onCellChoice)
+  onChoiceRef.current = onCellChoice
   // Hovered cell and pointer position (relative to the sheet) for the hint.
   const [hover, setHover] = useState<{ row: number; column: number } | null>(null)
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null)
@@ -885,6 +892,7 @@ export default function UniverSheet({ grid, onGridChange, onColumnOp, onTrackOp,
               const choice = choicesHere()[i]
               const at = selection()
               if (!choice) return false
+              onChoiceRef.current?.(at.startRow, at.startColumn, choice)
               void api.getActiveWorkbook()?.getActiveSheet().getRange(at.startRow, at.startColumn).setValue(choice.value)
               return true
             },

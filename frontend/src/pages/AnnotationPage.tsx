@@ -26,6 +26,7 @@ import {
   verdictTag,
   type ConsensusActions,
 } from '../studio/components/ConsensusPane'
+import { ConsensusHistory } from '../studio/components/ConsensusHistory'
 import {
   boxOf,
   isOpen,
@@ -36,7 +37,10 @@ import {
   partsOf,
   type ConsensusCluster,
   type AdoptResult,
+  type ConsensusDecision,
   type ConsensusView,
+  type DecisionResult,
+  type DecisionsOut,
   type MineItem,
   type PageConsensus,
 } from '../studio/consensus'
@@ -47,7 +51,7 @@ import {
 import { useProjects, useRouteProjectId, writeActiveProject } from '../app/activeProject'
 import { projectPath } from '../app/projectPaths'
 import { useConfirm } from '../app/confirm'
-import { connectPage, disconnectPage, notifyEditing, onAnnotationsChanged, useLive } from '../app/live'
+import { connectPage, disconnectPage, notifyEditing, onAnnotationsChanged, onConsensusDecision, useLive } from '../app/live'
 import { initialsOf } from '../lib/avatar'
 import type { DisplayBlock, LivePrefillOutput, PrefillDraft, Tool } from '../studio/types'
 import type { PrefillEngines, TableDetectOut, TableDetectRequest, TableGrid, TableSaveOut } from '../lib/types'
@@ -196,8 +200,10 @@ export default function AnnotationPage() {
   const [consensusLoading, setConsensusLoading] = useState(false)
   const [consensusView, setConsensusView] = useState<ConsensusView>('disagreement')
   const [consensusSelected, setConsensusSelected] = useState<number | null>(null)
-  // Blocks the user has settled, per comparison run and page; kept in this browser.
+  // Areas settled by anyone on the project, and the shared history of the decisions
+  // (who, what, when, why): both come from the server, so every browser agrees.
   const [consensusResolved, setConsensusResolved] = useState<Set<number>>(() => new Set())
+  const [consensusDecisions, setConsensusDecisions] = useState<ConsensusDecision[]>([])
   const prefillAbortRef = useRef<AbortController | null>(null)
 
   /** Modifica al testo di una bozza: aggiorna il pannello subito e il
@@ -346,24 +352,62 @@ export default function AnnotationPage() {
     return () => { alive = false; window.clearTimeout(timer) }
   }, [page?.id])
 
-  const resolvedKey = consensus?.run_id != null && page ? `tabularium.consensus.resolved.${consensus.run_id}.${page.id}` : null
   useEffect(() => {
-    let ids: number[] = []
+    setConsensusResolved(new Set(consensus?.resolved ?? []))
+  }, [consensus])
+  const consensusRun = consensus?.run_id ?? null
+  // The history follows the page and its run; a decision anyone records (a live
+  // event, our own included) reads it again with the areas settled.
+  const decisionsFor = useRef<string | null>(null)
+  const loadDecisions = async (pageId: number, runId: number) => {
+    const out = await apiGet<DecisionsOut>(`/pages/${pageId}/consensus/decisions?run_id=${runId}`)
+    if (decisionsFor.current !== `${pageId}:${runId}`) return
+    setConsensusDecisions(out.items)
+    setConsensusResolved(new Set(out.resolved))
+  }
+  useEffect(() => {
+    setConsensusDecisions([])
+    if (!page || consensusRun == null) {
+      decisionsFor.current = null
+      return
+    }
+    const pageId = page.id
+    decisionsFor.current = `${pageId}:${consensusRun}`
+    void loadDecisions(pageId, consensusRun).catch(() => { /* the history is a help: the comparison still works */ })
+    return onConsensusDecision((ev) => {
+      if (ev.pageId !== pageId || (ev.runId != null && ev.runId !== consensusRun)) return
+      void loadDecisions(pageId, consensusRun).catch(() => {})
+    })
+  }, [page?.id, consensusRun])
+  const refreshDecisions = () => {
+    if (page && consensusRun != null) void loadDecisions(page.id, consensusRun).catch(() => {})
+  }
+  /** Records a decision for everyone on the page; the local change is already applied.
+   *  False when it was not saved (the error is shown). */
+  const recordDecision = async (body: Record<string, unknown>): Promise<boolean> => {
+    if (!page || consensusRun == null) return false
+    const pageId = page.id
     try {
-      if (resolvedKey) ids = JSON.parse(localStorage.getItem(resolvedKey) ?? '[]') as number[]
-    } catch { /* storage blocked or stale: start from none settled */ }
-    setConsensusResolved(new Set(Array.isArray(ids) ? ids : []))
-  }, [resolvedKey])
-  const settle = (cluster: number, on: boolean) => {
+      const out = await apiPost<DecisionResult>(`/pages/${pageId}/consensus/decisions`, { run_id: consensusRun, ...body })
+      if (decisionsFor.current === `${pageId}:${consensusRun}`) setConsensusResolved(new Set(out.resolved))
+      refreshDecisions()
+      return true
+    } catch (e) {
+      setError(e)
+      return false
+    }
+  }
+  const markResolved = (cluster: number, on: boolean) => {
     setConsensusResolved((prev) => {
       const next = new Set(prev)
       if (on) next.add(cluster)
       else next.delete(cluster)
-      try {
-        if (resolvedKey) localStorage.setItem(resolvedKey, JSON.stringify([...next]))
-      } catch { /* not kept past this page view */ }
       return next
     })
+  }
+  const settle = (cluster: number, on: boolean) => {
+    markResolved(cluster, on)
+    void recordDecision({ kind: on ? 'resolved' : 'reopened', cluster_id: cluster })
   }
   const draftEdits = useDraftEdits((id, content) => ann.runExternal(() => apiPatch<BlockOut>(`/blocks/${id}?expected_revision=${ann.getRevision()}`, { content })), (e) => setError(e))
   const flushEdits = async () => { await draftEdits.flush(); await ann.flush() }
@@ -1134,20 +1178,31 @@ export default function AnnotationPage() {
     const target = first ? `content-row-${first.kind === 'block' ? first.id : `draft-${first.id}`}` : `consensus-area-${id}`
     window.requestAnimationFrame(() => document.getElementById(target)?.scrollIntoView?.({ block: 'nearest' }))
   }
-  const settleAndAdvance = (cluster: number) => {
-    settle(cluster, true)
+  /** Settles the area and moves on; `recorded` when the decision that settles it is already sent. */
+  const settleAndAdvance = (cluster: number, recorded = false) => {
+    if (recorded) markResolved(cluster, true)
+    else settle(cluster, true)
     selectCluster(nextOpen(consensusClusters, new Set([...consensusResolved, cluster]), cluster))
   }
+
+  /** The block's server id for a decision (a revert writes there); a block not saved yet keeps its local id. */
+  const decisionId = (item: MineItem) =>
+    item.kind === 'draft' ? item.id : String(ann.blocks.find((b) => b.id === item.id)?.serverId ?? item.id)
 
   const applyModelReading = (cluster: ConsensusCluster, model: string) => {
     if (!consensus) return
     const parts = partsOf(consensus, cluster, model)
     const mine = mineByCluster.get(cluster.id) ?? []
     if (parts.length === 0 || isTableCluster(consensus, cluster, mine)) return
+    const before = mine.map((item) => ({ id: decisionId(item), label: item.label, content: item.content }))
     if (mine.length === 1 && parts.length === 1) {
       // Same area, one block each: the model's text and class, the user's box.
       const [item] = mine
       const [part] = parts
+      void recordDecision({
+        kind: 'use_model', cluster_id: cluster.id, model_key: model,
+        before: { blocks: before }, after: { blocks: [{ id: decisionId(item), label: part.label, content: part.content }] },
+      })
       if (item.kind === 'block') ann.applyReading({ patch: [{ id: item.id, label: part.label, content: part.content }] })
       else {
         onDraftContent(Number(item.id), part.content)
@@ -1155,6 +1210,10 @@ export default function AnnotationPage() {
       }
     } else {
       // Missing, or segmented differently: the model's blocks take the place of the user's.
+      void recordDecision({
+        kind: 'use_model', cluster_id: cluster.id, model_key: model,
+        before: { blocks: before }, after: { blocks: parts.map((part) => ({ label: part.label, content: part.content })) },
+      })
       for (const item of mine) if (item.kind === 'draft') void onDraftReject(Number(item.id))
       ann.applyReading({
         remove: mine.filter((item) => item.kind === 'block').map((item) => item.id),
@@ -1164,12 +1223,16 @@ export default function AnnotationPage() {
         }),
       })
     }
-    settleAndAdvance(cluster.id)
+    settleAndAdvance(cluster.id, true)
   }
 
   const removeMine = (cluster: ConsensusCluster) => {
     const mine = mineByCluster.get(cluster.id) ?? []
     if (mine.length === 0) return
+    void recordDecision({
+      kind: 'removed', cluster_id: cluster.id,
+      before: { blocks: mine.map((item) => ({ id: decisionId(item), label: item.label, content: item.content })) },
+    })
     for (const item of mine) if (item.kind === 'draft') void onDraftReject(Number(item.id))
     const blocks = mine.filter((item) => item.kind === 'block')
     if (blocks.length) {
@@ -1178,7 +1241,7 @@ export default function AnnotationPage() {
       setDeleteToast({ label: blocks.length === 1 ? blocks[0].label : tn('consensus.removedBlocks', blocks.length) })
       toastTimer.current = setTimeout(() => setDeleteToast(null), 6000)
     }
-    settleAndAdvance(cluster.id)
+    settleAndAdvance(cluster.id, true)
   }
 
   /** The model's whole reading becomes this page's drafts: the comparison doubles as the recognition. */
@@ -1201,6 +1264,7 @@ export default function AnnotationPage() {
         out = await apiPost<AdoptResult>(url, { model_key: key, page_ids: [page.id], replace_human: true })
       }
       if (out.written.length) await applyBlocks(page, ratio)
+      refreshDecisions()
     } catch (e) {
       setError(e)
     }
@@ -1219,11 +1283,35 @@ export default function AnnotationPage() {
         { model_key: key, page_id: page.id, index },
       )
       await applyBlocks(page, ratio)
+      refreshDecisions()
       setConsensusSelected(cluster.id)
       // The new draft row carries «Open the table»: bring it into view once drawn.
       window.setTimeout(() => document.getElementById(`content-row-draft-${out.block_id}`)?.scrollIntoView?.({ block: 'nearest' }), 150)
     } catch (e) {
       setError(e)
+    }
+  }
+
+  /** Takes a decision back for everyone; what it changed on the page is reloaded. */
+  const revertDecision = async (decision: ConsensusDecision, comment: string) => {
+    if (!page) return
+    setError(null)
+    try {
+      await flushEdits()
+      const out = await apiPost<DecisionResult>(
+        `/pages/${page.id}/consensus/decisions/${decision.id}/revert`, comment ? { comment } : {},
+      )
+      setConsensusResolved(new Set(out.resolved))
+      refreshDecisions()
+      if (out.annotation_revision != null) await refreshRemote(page, ratio)
+    } catch (e) {
+      setError(e)
+      throw e  // the panel keeps the confirmation open
+    }
+  }
+  const commentDecision = async (text: string, aboutId: number | null) => {
+    if (!await recordDecision({ kind: 'comment', comment: text, ...(aboutId != null ? { about_id: aboutId } : {}) })) {
+      throw new Error('comment not saved')  // the panel keeps the text
     }
   }
 
@@ -1281,13 +1369,23 @@ export default function AnnotationPage() {
       }
     },
     footer: consensus && (
-      <ModelOnlyClusters
-        page={consensus}
-        clusters={consensusClusters.filter((c) => (mineByCluster.get(c.id) ?? []).length === 0)}
-        selected={consensusSelected}
-        onSelect={selectCluster}
-        actions={consensusActions}
-      />
+      <>
+        <ModelOnlyClusters
+          page={consensus}
+          clusters={consensusClusters.filter((c) => (mineByCluster.get(c.id) ?? []).length === 0)}
+          selected={consensusSelected}
+          onSelect={selectCluster}
+          actions={consensusActions}
+        />
+        {consensus.run_id != null && (
+          <ConsensusHistory
+            items={consensusDecisions}
+            canEdit={consensusActions.canEdit}
+            onRevert={revertDecision}
+            onComment={commentDecision}
+          />
+        )}
+      </>
     ),
   }
 

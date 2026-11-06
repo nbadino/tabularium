@@ -7,6 +7,15 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **Model comparison decisions are shared, with a history you can revert and comment.** What
+  anyone settles in a comparison (*Fine as it is*, a model's reading for an area or a cell, *My
+  reading is right*, a column confirmed at once, a model's table added, a model's reading adopted)
+  is saved on the server with who, when, the value before and after, and an optional comment, so
+  everyone on the page sees the same settled areas (they used to live in one browser). The
+  comparison has a *Decision history* at its foot: *Revert* puts the previous value back (and is
+  itself recorded, so it can be reverted too) unless the value changed since; anyone who can edit
+  can comment on the page or reply to a decision. Updates arrive live. Migration 25 adds the
+  `consensus_decisions` table.
 - **Recognition with a saved model.** The Recognition page offers the saved models (Gemini 4
   Argon, OCRia-1…: API services with their own key) as engines, and opens on one when the active
   model is off, instead of the local OCR. Nothing is started or stopped; the active model stays

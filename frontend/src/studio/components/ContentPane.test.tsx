@@ -20,6 +20,7 @@ vi.mock('./UniverSheet', () => ({
     disagreements,
     cellHint,
     cellChoices,
+    onCellChoice,
     grid,
   }: {
     grid?: { cells: { r: number; c: number; verified?: boolean }[] }
@@ -27,7 +28,8 @@ vi.mock('./UniverSheet', () => ({
     onSelectionChange?: (s: { startRow: number; startColumn: number; endRow: number; endColumn: number }) => void
     disagreements?: { partly: [number, number][]; disagree: [number, number][] }
     cellHint?: (row: number, column: number) => React.ReactNode
-    cellChoices?: (row: number, column: number) => { label: string; value: string }[]
+    cellChoices?: (row: number, column: number) => { label: string; value: string; model?: string }[]
+    onCellChoice?: (row: number, column: number, choice: { label: string; value: string; model?: string }) => void
   }) => (
     <div
       data-testid="univer-sheet"
@@ -37,6 +39,9 @@ vi.mock('./UniverSheet', () => ({
     >
       <div data-testid="hint-1-1">{cellHint?.(1, 1)}</div>
       <ul data-testid="choices-1-1">{(cellChoices?.(1, 1) ?? []).map((choice) => <li key={choice.label}>{choice.label}</li>)}</ul>
+      <button type="button" onClick={() => { const choice = cellChoices?.(1, 1)[0]; if (choice) onCellChoice?.(1, 1, choice) }}>
+        scegli B2
+      </button>
       <button type="button" onClick={() => onSelectionChange?.({ startRow: 2, startColumn: 3, endRow: 2, endColumn: 3 })}>
         seleziona D3
       </button>
@@ -244,6 +249,57 @@ describe('ContentPane', () => {
     await userEvent.click(screen.getByRole('button', { name: /La mia lettura è giusta/ }))
     await waitFor(() => expect(screen.getByTestId('univer-sheet')).toHaveAttribute('data-verified', '[[2,3],[3,3]]'))
     expect(bar).toHaveTextContent('2 corrette')
+  })
+
+  it('model comparison: a reading taken and a cell confirmed are recorded for everyone on the page', async () => {
+    const grid = emptyGrid(4, 4)
+    const mine: Record<string, string> = { '1:1': 'Genva', '2:3': '18' }
+    grid.cells = grid.cells.map((cell) => ({ ...cell, text: mine[`${cell.r}:${cell.c}`] ?? cell.text, source: 'ocr' as const, verified: false }))
+    const consensus = {
+      run_id: 2,
+      models: [{ key: 'p3', name: 'OCRia-1' }, { key: 'p1', name: 'Gemini' }],
+      cells: [
+        { r: 1, c: 1, values: { p3: 'Genova', p1: 'Genva' }, score: 0.2, kind: 'text', conventions: [] },
+        { r: 2, c: 3, values: { p3: '18', p1: '13' }, score: 1, kind: 'digits', conventions: [] },
+      ],
+      extra_rows: [],
+    }
+    const fetchMock = vi.fn().mockImplementation((url: string) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(
+          String(url).includes('/consensus/decisions') ? { decision: null, resolved: [] }
+            : String(url).includes('/consensus') ? consensus
+              : String(url).includes('/tables/checks') ? { checks: [], passed: 0, failed: 0, suspects: [] }
+                : { grid },
+        ),
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ContentPane blocks={[makeBlock({ label: 'Table' })]} drafts={[]} labels={[]} selectedId={null} working={null} pageId={5} {...noop} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Apri la tabella' }))
+    await screen.findByTestId('consensus-bar')
+    const decisions = () => fetchMock.mock.calls
+      .filter(([url]) => String(url).includes('/pages/5/consensus/decisions'))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)))
+
+    await userEvent.click(screen.getByRole('button', { name: 'scegli B2' }))
+    await waitFor(() => expect(decisions()).toHaveLength(1))
+    expect(decisions()[0]).toEqual({
+      run_id: 2, kind: 'use_model', block_id: 11, model_key: 'p3',
+      before: { cells: [{ r: 1, c: 1, text: 'Genva', verified: false, source: 'ocr' }] },
+      after: { cells: [{ r: 1, c: 1, text: 'Genova' }] },
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /Cella successiva/ }))
+    await userEvent.click(screen.getByRole('button', { name: /La mia lettura è giusta/ }))
+    await waitFor(() => expect(decisions()).toHaveLength(2))
+    expect(decisions()[1]).toEqual({
+      run_id: 2, kind: 'confirm_mine', block_id: 11,
+      before: { cells: [{ r: 2, c: 3, text: '18', verified: false, source: 'ocr' }] },
+      after: { cells: [{ r: 2, c: 3, text: '18', verified: true }] },
+    })
   })
 
   it('confronto modelli: le celle in disaccordo si colorano nel foglio e il passaggio del mouse mostra le letture', async () => {

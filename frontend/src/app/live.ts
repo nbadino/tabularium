@@ -49,8 +49,17 @@ export interface AnnotationsChanged {
   authorName: string | null
 }
 
+/** Someone recorded, reverted or commented a decision of the page's model comparison. */
+export interface ConsensusDecisionEvent {
+  pageId: number
+  runId: number | null
+  decisionId: number | null
+  authorId: number | null
+}
+
 type Listener = () => void
 type ChangeListener = (ev: AnnotationsChanged) => void
+type DecisionListener = (ev: ConsensusDecisionEvent) => void
 
 const INITIAL: LiveState = {
   pageId: null,
@@ -63,6 +72,7 @@ const INITIAL: LiveState = {
 let state: LiveState = INITIAL
 const listeners = new Set<Listener>()
 const changeListeners = new Set<ChangeListener>()
+const decisionListeners = new Set<DecisionListener>()
 
 let socket: WebSocket | null = null
 let currentPage: number | null = null
@@ -92,6 +102,14 @@ export function onAnnotationsChanged(fn: ChangeListener): () => void {
   changeListeners.add(fn)
   return () => {
     changeListeners.delete(fn)
+  }
+}
+
+/** Ascolta le decisioni del confronto modelli registrate da chiunque (anche da sé). */
+export function onConsensusDecision(fn: DecisionListener): () => void {
+  decisionListeners.add(fn)
+  return () => {
+    decisionListeners.delete(fn)
   }
 }
 
@@ -176,6 +194,19 @@ function handleMessage(raw: string): void {
         authorName: typeof author.username === 'string' ? author.username : null,
       }
       changeListeners.forEach((fn) => fn(ev))
+      break
+    }
+    case 'consensus_decision': {
+      const pageId = typeof msg.page_id === 'number' ? msg.page_id : currentPage
+      if (pageId == null) break
+      const author = (msg.author ?? {}) as Record<string, unknown>
+      const ev: ConsensusDecisionEvent = {
+        pageId,
+        runId: typeof msg.run_id === 'number' ? msg.run_id : null,
+        decisionId: typeof msg.decision_id === 'number' ? msg.decision_id : null,
+        authorId: typeof author.id === 'number' ? author.id : null,
+      }
+      decisionListeners.forEach((fn) => fn(ev))
       break
     }
     default:

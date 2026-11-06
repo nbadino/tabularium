@@ -124,7 +124,7 @@ def test_additive_migrations_have_no_semicolon_in_comments():
     comment cuts a statement in half (it broke migration 22 once)."""
     import re as _re
 
-    additive = {"16", "17", "18", "21", "22"}
+    additive = {"16", "17", "18", "21", "22", "25"}
     for version, ddl in db._MIGRATIONS:
         if version not in additive:
             continue
@@ -172,3 +172,26 @@ def test_db_from_070_at_23_gets_consensus_tables():
     with db.connect() as conn:
         tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert {"consensus_runs", "consensus_outputs"} <= tables
+
+
+def test_db_at_24_gets_the_shared_consensus_decisions():
+    """Migration 25: the decisions taken in a comparison move from each browser to the
+    database, so a database at 24 gets the table and keeps its runs."""
+    with _fresh_conn() as conn:
+        db.init_db()
+        conn.execute("DROP TABLE consensus_decisions")
+        conn.execute("UPDATE meta SET value='24' WHERE key='schema_version'")
+        conn.execute("INSERT INTO projects (name, root_dir) VALUES ('p', '/tmp/p')")
+        conn.execute("INSERT INTO consensus_runs (project_id, state) VALUES (1, 'finished')")
+        conn.commit()
+
+    db.init_db()
+
+    with db.connect() as conn:
+        assert _version(conn) == db.SCHEMA_VERSION
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(consensus_decisions)")}
+        assert {
+            "run_id", "page_id", "cluster_id", "block_id", "kind", "model_key", "before_json",
+            "after_json", "comment", "user_id", "created_at", "about_id", "reverted_by",
+        } <= cols
+        assert conn.execute("SELECT count(*) FROM consensus_runs").fetchone()[0] == 1
