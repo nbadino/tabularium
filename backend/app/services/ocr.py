@@ -100,7 +100,11 @@ class OcrEngine:
         arr = np.asarray(image.convert("RGB"))
         if self.name == "rapidocr":
             out = []
-            for box, text, score in _rapid_rows(self._impl(arr)):
+            # Explicit on every call: rapidocr 3.x keeps the `use_*` flags of the
+            # last call on the engine, so reading one table cell (`use_det=False`,
+            # see `recognize_line`) would leave every later page undetected.
+            got = self._impl(arr, use_det=True, use_cls=True, use_rec=True)
+            for box, text, score in _rapid_rows(got):
                 xs = [float(p[0]) for p in box]
                 ys = [float(p[1]) for p in box]
                 out.append(
