@@ -124,6 +124,10 @@ Notable changes to Tabularium. The format follows
   model in a comparison) shown later. A language chosen in the menu, Italian or French, is kept.
 
 ### Fixed
+- Local OCR (RapidOCR) stopped reading after the first page promoted to a table: pages came back
+  *finished* with no blocks and no error. Reading a table cell switches text detection off, and
+  rapidocr 3.x keeps that setting on the engine for the next pages. Detection now asks for its
+  steps explicitly on every call.
 - Retrying a recognition run on a saved model ran the failed pages on the active model instead.
 - **OCRia: a register without a box was dropped when a strip of the facing page was in the
   scan.** LlamaParse places that strip as one item from the header to the foot; the table got

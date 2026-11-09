@@ -80,3 +80,29 @@ def test_an_empty_read_is_empty_not_an_error():
     engine = _engine(_Nothing())
     assert engine.detect(Image.new("RGB", (40, 20), "white")) == []
     assert engine.recognize_line(Image.new("RGB", (40, 20), "white")) == ("", 0.0)
+
+
+def test_reading_a_cell_does_not_switch_off_detection_for_the_next_page():
+    """rapidocr 3.x keeps the `use_*` flags of the last call on the engine, so
+    one table cell read with `use_det=False` left a whole bulk run finding
+    nothing: 184 of 189 pages came back "finished" with no blocks."""
+
+    class _Sticky:
+        """Like rapidocr 3.10's `update_params`: an explicit flag persists."""
+
+        def __init__(self):
+            self.use_det, self.use_cls, self.use_rec = True, True, True
+
+        def __call__(self, _arr, use_det=None, use_cls=None, use_rec=None):
+            self.use_det = self.use_det if use_det is None else use_det
+            self.use_cls = self.use_cls if use_cls is None else use_cls
+            self.use_rec = self.use_rec if use_rec is None else use_rec
+            if not self.use_det:
+                return _RecOutput(txts=("258,403",), scores=(0.93,))
+            return _NewOutput(boxes=np.array([BOX]), txts=("139,545",), scores=(0.97,))
+
+    engine = _engine(_Sticky())
+    page = Image.new("RGB", (200, 60), "white")
+    assert len(engine.detect(page)) == 1
+    assert engine.recognize_line(Image.new("RGB", (120, 40), "white")) == ("258,403", 0.93)
+    assert engine.detect(page) == [{"bbox": [10.0, 25.0, 128.0, 43.0], "text": "139,545", "score": 0.97}]
