@@ -361,31 +361,34 @@ def _settle_item(run_id: int, item, blocks, summary, failure, cancel: threading.
 
 
 def _document_key(item) -> str:
-    """Pages of one PDF share its path; scanned images share their folder."""
+    """A collection is one document; otherwise a PDF, or the folder of scanned images."""
+    if item.get("collection_id") is not None:
+        return f"collection:{item['collection_id']}"
     rel_path = str(item["rel_path"])
     return rel_path if item.get("pdf_page") is not None else str(PurePosixPath(rel_path).parent)
 
 
-def _work_units(items: list[dict], opts, client) -> list[list[dict]]:
-    """What the worker requests at a time: one page, or the pages of one document.
+def _page_order(item) -> tuple[str, int]:
+    """The project's page order (`ORDER BY rel_path, pdf_page`)."""
+    pdf_page = item.get("pdf_page")
+    return str(item["rel_path"]), -1 if pdf_page is None else int(pdf_page)
 
-    Consecutive pages of a document stay in run order, which is page order; a group
-    never exceeds what one request can hold.
+
+def _work_units(items: list[dict], opts, client) -> list[list[dict]]:
+    """What the worker requests at a time: one page, or all the pages of one document.
+
+    A document goes whole, in page order, however long: the server splits it into
+    page windows itself. Documents follow the run order of their first page.
     """
     document_scope = getattr(getattr(client, "adapter", None), "document_scope", None)
     if not callable(document_scope) or opts.model_mode not in {"native", "end2end"}:
         return [[item] for item in items]
-    enabled, limit = document_scope()
-    if not enabled:
+    if not document_scope():
         return [[item] for item in items]
-    groups: list[list[dict]] = []
+    groups: dict[str, list[dict]] = {}
     for item in items:
-        last = groups[-1] if groups else None
-        if last and len(last) < limit and _document_key(last[-1]) == _document_key(item):
-            last.append(item)
-        else:
-            groups.append([item])
-    return groups
+        groups.setdefault(_document_key(item), []).append(item)
+    return [sorted(group, key=_page_order) for group in groups.values()]
 
 
 class _DocumentPageClient:
@@ -753,6 +756,51 @@ def export_run_text(run_id: int, scope: str, collection: int | str | None = None
         ]
         sections.append(f"=== {page['rel_path']} ===\n" + "\n\n".join(content))
     return "\n\n".join(sections).rstrip() + "\n"
+
+
+def export_run_markdown(run_id: int, scope: str, collection: int | str | None = None) -> str:
+    """One Markdown file: each document (collection, PDF or folder, as a document-mode
+    run groups them) converted with the rules of Unlimited-OCR-2's converter.
+
+    `reviewed` uses the blocks and table grids as corrected; a block keeps the native
+    facts (chains, title level) its recognition recorded while it exists.
+    """
+    from ..adapters import collections as collectionstore  # noqa: PLC0415
+    from ..domain import markdown_export  # noqa: PLC0415
+
+    exported = export_run(run_id, scope, collection)
+    run_items = {item["page_id"]: item for item in get_run(run_id)["items"]}
+    names = collectionstore.names(int(exported["run"]["project_id"]))
+    documents: dict[str, list[dict[str, Any]]] = {}
+    for page in exported["pages"]:
+        item = run_items[page["page_id"]]
+        recognized = {
+            block.get("id"): block for block in (item.get("result") or {}).get("blocks") or []
+        }
+        grids = runstore.page_grids(page["page_id"]) if scope == "reviewed" else {}
+        blocks = []
+        for block in page["blocks"]:
+            value = dict(block)
+            source = recognized.get(block.get("id"), {})
+            if source.get("native"):
+                value["native"] = source["native"]
+            if scope == "reviewed":
+                value["grid"] = grids.get(block.get("id"))
+            blocks.append(value)
+        documents.setdefault(_document_key(item), []).append(
+            {"item": item, "blocks": blocks, "width": item.get("width"), "height": item.get("height")}
+        )
+    sections = []
+    for key, pages in documents.items():
+        pages.sort(key=lambda page: _page_order(page["item"]))
+        body = markdown_export.document_markdown(pages)
+        if len(documents) > 1:
+            name = key
+            if key.startswith("collection:"):
+                name = names.get(int(key.split(":", 1)[1])) or key
+            body = f"<!-- document: {name} -->\n\n{body}"
+        sections.append(body)
+    return "\n\n---\n\n".join(sections).rstrip() + "\n"
 
 
 def export_run_csv(run_id: int, scope: str, collection: int | str | None = None) -> str:

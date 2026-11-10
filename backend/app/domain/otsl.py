@@ -291,3 +291,28 @@ def html_to_otsl(source: str) -> str:
             index += 1
         output.append("".join(tokens))
     return "<nl>".join(output)
+
+
+def grid_to_html(grid: dict) -> str:
+    """The grid as an HTML table: the first `header_rows` rows in `<th>`, spans kept."""
+    from html import escape
+
+    rows = int(grid.get("rows", 0))
+    header_rows = int(grid.get("header_rows") or 0)
+    starts: dict[int, list[dict]] = {}
+    for cell in grid.get("cells", []):
+        starts.setdefault(int(cell.get("r", 0)), []).append(cell)
+    out = ["<table>"]
+    for r in range(rows):
+        tag = "th" if r < header_rows else "td"
+        cells = []
+        for cell in sorted(starts.get(r, []), key=lambda c: int(c.get("c", 0))):
+            attrs = "".join(
+                f' {name}="{int(cell.get(name, 1))}"'
+                for name in ("rowspan", "colspan")
+                if int(cell.get(name, 1) or 1) > 1
+            )
+            cells.append(f"<{tag}{attrs}>{escape(str(cell.get('text') or ''), quote=False)}</{tag}>")
+        out.append("<tr>" + "".join(cells) + "</tr>")
+    out.append("</table>")
+    return "".join(out)

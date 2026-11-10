@@ -82,7 +82,8 @@ def test_services_reach_the_database_only_through_adapters() -> None:
 def test_domain_modules_are_actually_used() -> None:
     # A pure module nobody imports is dead weight pretending to be an architecture.
     assert sorted(path.stem for path in DOMAIN.glob("*.py") if path.name != "__init__.py") == [
-        "consensus", "inference", "otsl", "prefill", "table_headers", "table_similarity", "vram",
+        "consensus", "inference", "markdown_export", "otsl", "prefill", "table_headers",
+        "table_similarity", "vram",
     ]
 
 

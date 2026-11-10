@@ -129,14 +129,14 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
     unlimited = model_settings.get_settings("unlimited-ocr-2")
     assert unlimited["recommended"]["workflow"] == {
         "image_mode": "gundam", "ngram_size": 35, "window_size": 128, "max_page_tokens": 20000,
-        "request_scope": "page", "document_window_size": 1024, "document_max_pages": 20,
+        "request_scope": "page", "document_window_size": 1024,
     }
     tuned = model_settings.save_settings("unlimited-ocr-2", {
         "workflow": {"ngram_size": 40, "window_size": 1024, "image_mode": "base"},
     })
     assert tuned["effective"]["workflow"] == {
         "image_mode": "base", "ngram_size": 40, "window_size": 1024, "max_page_tokens": 20000,
-        "request_scope": "page", "document_window_size": 1024, "document_max_pages": 20,
+        "request_scope": "page", "document_window_size": 1024,
     }
     with pytest.raises(HTTPException, match="image_mode deve essere uno tra"):
         model_settings.save_settings("unlimited-ocr-2", {"workflow": {"image_mode": "crop"}})

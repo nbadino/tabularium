@@ -421,6 +421,7 @@ def model_prelabel_events(
                         "bbox": bbox,
                         "label": resolved,
                         "content": str(item.get("content") or "").strip(),
+                        **({"native": item["native"]} if item.get("native") else {}),
                     }
                 )
 
@@ -586,6 +587,8 @@ def model_prelabel_events(
                         "prefill_source": f"model:{client.model}:{page_mode}",
                         "grid": grid_json,
                         "error": k.get("error"),
+                        # Kept in the run's result for the Markdown export.
+                        **({"native": k["native"]} if k.get("native") else {}),
                     },
                 }
 

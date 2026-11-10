@@ -145,7 +145,7 @@ def export_recognition_run(
     run_id: int,
     request: Request,
     scope: Literal["raw", "reviewed"] = "reviewed",
-    format: Literal["json", "text", "csv"] = "json",
+    format: Literal["json", "text", "csv", "markdown"] = "json",
     # Only the pages of one collection: its id, or `none` for the pages without one.
     collection: str | None = None,
     _user: dict = Depends(require_resource(write=False)),
@@ -162,6 +162,14 @@ def export_recognition_run(
             recognitionsvc.export_run_text(run_id, scope, collection),
             headers={
                 "Content-Disposition": f'attachment; filename="tabularium-run-{run_id}-{scope}.txt"'
+            },
+        )
+    if format == "markdown":
+        return Response(
+            recognitionsvc.export_run_markdown(run_id, scope, collection),
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="tabularium-run-{run_id}-{scope}.md"'
             },
         )
     if format == "csv":

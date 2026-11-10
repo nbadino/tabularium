@@ -148,10 +148,9 @@ SPEC = ModelSpec(
             # The vendor's n-gram window for more than one page.
             WorkflowField("document_window_size", "int", default=1024, minimum=1, maximum=2048,
                           label="settings.unlimited2DocumentWindowSize"),
-            # Tabularium's guard, not the vendor's: every page reserves output tokens and
-            # image tokens in the 131072-token context this recipe serves.
-            WorkflowField("document_max_pages", "int", default=20, minimum=2, maximum=32,
-                          label="settings.unlimited2DocumentMaxPages"),
+            # No page cap: the server splits a long document into page windows
+            # (`SGLANG_UOCR_EANABLE_DOC_LIMIT`, `doc_split.plan_batches`), each within
+            # the served context, and carries the KV tail from one window to the next.
         ),
         workflow_intro="settings.unlimited2WorkflowIntro",
     )),

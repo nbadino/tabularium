@@ -109,6 +109,15 @@ def test_bulk_run_persists_pages_and_exports_raw_and_reviewed(tmp_path, monkeypa
         assert "rel_path" in csv_export.text
         assert "Recognized text" in csv_export.text
 
+        # One folder of scans is one document: one Markdown body, no document separators.
+        markdown = client.get(
+            f"/api/projects/{project_id}/recognition-runs/{run_id}/export?scope=raw&format=markdown"
+        )
+        assert markdown.status_code == 200
+        assert markdown.headers["content-type"].startswith("text/markdown")
+        assert markdown.headers["content-disposition"].endswith('.md"')
+        assert markdown.text == "Recognized text\n\nRecognized text\n"
+
 
 def test_ocr_run_does_not_inherit_cloud_provider(tmp_path, monkeypatch):
     from app.db import connect

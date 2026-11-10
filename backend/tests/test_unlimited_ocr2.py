@@ -25,7 +25,7 @@ def test_unlimited2_parses_the_vendor_block_format():
         "<BLOCK>text[500,500,400,600]<FORK>inverted box"
         "<BLOCK>text<FORK>no box"
     )
-    assert items == [
+    assert [{k: v for k, v in item.items() if k != "native"} for item in items] == [
         {"bbox": [100, 40, 900, 90], "label": "Title", "content": "HISTORIC SHIPPING INDEX"},
         {"bbox": [10, 5, 300, 30], "label": "Page-header", "content": "Lloyd's"},
         {"bbox": [100, 100, 900, 200], "label": "Text", "content": "Arrived at Genoa"},
@@ -115,7 +115,7 @@ def test_unlimited2_parser_applies_the_vendor_cleanup():
         "<BLOCK>text[10,60,100,90]<FORK>Keep\n[1,2,3,4]\nthis"
         "<BLOCK>picture[10,100,100,190]<FORK>[image]"
     )
-    assert items == [
+    assert [{k: v for k, v in item.items() if k != "native"} for item in items] == [
         {"bbox": [10, 60, 100, 90], "label": "Text", "content": "Keep\n\nthis"},
         {"bbox": [10, 100, 100, 190], "label": "Picture", "content": ""},
     ]
@@ -143,10 +143,11 @@ def test_unlimited2_document_request_follows_the_readme(monkeypatch):
     assert adapter.document_prompt(3) == "<PAGE><image><PAGE><image><PAGE><image>Multi page parsing."
     assert adapter.request_overrides("document")["custom_params"]["window_size"] == 1024
     assert adapter.request_overrides("end2end")["custom_params"]["window_size"] == 128
-    # tokens_per_page * pages, until the served context is what limits it.
+    # tokens_per_page * pages for the whole request: the server splits a long document
+    # into page windows and spends the budget across them, so the context does not cap it.
     assert adapter.document_budget(2) == 16000
-    assert adapter.document_budget(32) == 131072 - 2048 - 2200 * 32
-    assert adapter.document_scope() == (False, 20)
+    assert adapter.document_budget(300) == 2_400_000
+    assert adapter.document_scope() is False
 
 
 class _Stream:
@@ -238,31 +239,77 @@ def test_end2end_document_ignores_pages_beyond_the_request(monkeypatch):
     assert pages == [0, 1]
 
 
-def _item(ident, rel_path, pdf_page=None):
-    return {"id": ident, "page_id": ident, "rel_path": rel_path, "pdf_page": pdf_page}
+def _item(ident, rel_path, pdf_page=None, collection_id=None):
+    return {"id": ident, "page_id": ident, "rel_path": rel_path, "pdf_page": pdf_page,
+            "collection_id": collection_id}
 
 
-def test_work_units_group_pages_by_document():
+class _DocumentScope:
+    class adapter:  # noqa: N801
+        @staticmethod
+        def document_scope():
+            return True
+
+
+class _Native:
+    model_mode = "native"
+
+
+def test_work_units_send_each_document_whole():
+    """No page cap: 300 pages of one PDF are one request (the server windows them)."""
     from app.services import recognition
 
-    class Adapter:
-        def document_scope(self):
-            return True, 2
+    items = [_item(i, "big.pdf", i - 1) for i in range(1, 301)] + [
+        _item(301, "b.pdf", 0),
+        _item(302, "issue1/p1.png"), _item(303, "issue1/p2.png"), _item(304, "issue2/p1.png"),
+    ]
+    groups = recognition._work_units(items, _Native, _DocumentScope)
+    assert [len(group) for group in groups] == [300, 1, 2, 1]
 
-    class Client:
-        adapter = Adapter()
 
-    class Opts:
-        model_mode = "native"
+def test_work_units_read_a_collection_as_one_document_in_page_order():
+    """A collection spans folders and PDFs; its pages go together, in project order."""
+    from app.services import recognition
 
     items = [
-        _item(1, "a.pdf", 0), _item(2, "a.pdf", 1), _item(3, "a.pdf", 2),
-        _item(4, "b.pdf", 0),
-        _item(5, "issue1/p1.png"), _item(6, "issue1/p2.png"), _item(7, "issue2/p1.png"),
+        _item(1, "1920/p2.tif", collection_id=7),
+        _item(2, "loose/x.png"),
+        _item(3, "1919/a.pdf", 1, collection_id=7),
+        _item(4, "1920/p1.tif", collection_id=7),
+        _item(5, "1919/a.pdf", 0, collection_id=7),
+        _item(6, "1920/p3.tif", collection_id=8),
     ]
-    assert [[i["id"] for i in group] for group in recognition._work_units(items, Opts, Client)] == [
-        [1, 2], [3], [4], [5, 6], [7],
-    ]
+    groups = recognition._work_units(items, _Native, _DocumentScope)
+    assert [[i["id"] for i in group] for group in groups] == [[5, 3, 4, 1], [2], [6]]
+
+
+def test_document_pages_are_sent_as_lossless_grey_when_they_are_grey():
+    import base64
+    import io
+
+    from PIL import Image
+
+    from app.services import inference as infmod
+
+    client = infmod.VllmClient(url="http://127.0.0.1:9/v1", model="Unlimited-OCR-2",
+                               adapter=get_adapter("unlimited-ocr-2"))
+
+    def decoded(uri):
+        return Image.open(io.BytesIO(base64.b64decode(uri.split(",", 1)[1])))
+
+    grey = Image.linear_gradient("L").convert("RGB")
+    sent = decoded(client.encode_page(grey))
+    assert sent.mode == "L"
+    assert sent.convert("RGB").tobytes() == grey.tobytes()
+    colour = grey.copy()
+    colour.putpixel((3, 3), (255, 0, 0))
+    assert decoded(client.encode_page(colour)).mode == "RGB"
+    # A bilevel register scan, as loaded (mode "1") or after an RGB round trip.
+    bilevel = Image.linear_gradient("L").point(lambda v: 255 if v > 127 else 0).convert("1")
+    for page in (bilevel, bilevel.convert("RGB")):
+        sent = decoded(client.encode_page(page))
+        assert sent.mode == "1"
+        assert sent.convert("RGB").tobytes() == bilevel.convert("RGB").tobytes()
 
 
 def test_work_units_stay_per_page_when_the_scope_is_page():

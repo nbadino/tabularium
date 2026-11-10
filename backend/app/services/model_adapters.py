@@ -567,24 +567,25 @@ class UnlimitedOcr2Adapter(_StubAdapter):
     # The README's `pdf_to_images(..., dpi=300)`. Only the request uses these pixels; the
     # answer is normalised to 0-1000, so the blocks still land on the page as displayed.
     pdf_render_dpi = 300
-    # Upper estimate of a gundam page's image tokens, reserved in the served context: the
-    # server's processor allows up to 16 tiles of 640 px plus the 1024 px global view.
-    _DOCUMENT_IMAGE_TOKENS = 2200
 
-    def document_scope(self) -> tuple[bool, int]:
-        """Whether a run parses whole documents, and how many pages fit one request."""
+    def document_scope(self) -> bool:
+        """Whether a run parses each document (PDF, folder or collection) in one request."""
         from . import model_settings
 
         workflow = model_settings.get_settings(self.adapter_id)["effective"]["workflow"]
-        return workflow["request_scope"] == "document", int(workflow["document_max_pages"])
+        return workflow["request_scope"] == "document"
 
     def document_prompt(self, pages: int) -> str:
         return "<PAGE><image>" * pages + "Multi page parsing."
 
     def document_budget(self, pages: int) -> int:
-        """The README's `tokens_per_page * pages`, inside the context the recipe serves."""
-        room = self.capabilities.max_model_len - 2048 - self._DOCUMENT_IMAGE_TOKENS * pages
-        return max(1, min(self.end2end_max_tokens * pages, room))
+        """The README's `tokens_per_page * pages`, for the whole request.
+
+        The context does not bound it: the server splits the document into page
+        windows and spends this budget across them (`BUDGET_POLICY`
+        "global-cumulative-v1" in the wheel's `doc_split.py`).
+        """
+        return self.end2end_max_tokens * pages
 
     def prompt_for(self, task: str, label: str | None = None) -> str | None:
         if task == "end2end":
@@ -643,15 +644,26 @@ class UnlimitedOcr2Adapter(_StubAdapter):
 
         return self._SPAN.sub(repl, html)
 
+    _MERGE = re.compile(r"<\s*/?\s*MERGE\s*>", re.I)
+
     def parse_layout(self, raw: str) -> list[dict]:
+        """Blocks with Tabularium labels, each with the `native` facts the vendor's
+        Markdown converter groups by: its own kind, the `cross_`/`append_` chain it
+        belongs to, the title level and a `<MERGE>` with the block before."""
         text = self._bare_blocks(raw or "")
         matches = list(self._BLOCK.finditer(text))
         items = []
+        merge_prev = False
         for index, match in enumerate(matches):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            region = text[match.end():end]
+            # `_parse_blocks`: a `<MERGE>` after a block joins it to the next one.
+            merged, merge_prev = merge_prev, bool(self._MERGE.search(region))
             kind = match.group(1).lower()
+            chain = None
             for prefix in ("append_", "cross_"):
                 if kind.startswith(prefix):
-                    kind = kind[len(prefix):]
+                    kind, chain = kind[len(prefix):], prefix[:-1]
             label = self._LABEL_MAP.get(kind)
             coords = match.group(3, 4, 5, 6) if match.group(3) is not None else match.group(7, 8, 9, 10)
             if label is None or coords[0] is None:
@@ -659,8 +671,10 @@ class UnlimitedOcr2Adapter(_StubAdapter):
             bbox = [max(0, min(1000, int(value))) for value in coords]
             if bbox[0] >= bbox[2] or bbox[1] >= bbox[3]:
                 continue
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-            content = self._BBOX_LINE.sub("", self._STRAY.sub("", text[match.end():end])).strip()
+            level = match.group(2) if match.group(2) is not None else match.group(11)
+            native = {"kind": kind, "chain": chain, "level": int(level) if level else None,
+                      "merge_prev": merged}
+            content = self._BBOX_LINE.sub("", self._STRAY.sub("", region)).strip()
             if label == "Picture" or content.lower() in self._NOISE:
                 content = ""
             # `_render_blocks`: only an image (every `IMAGE_LABELS` kind maps to
@@ -669,7 +683,7 @@ class UnlimitedOcr2Adapter(_StubAdapter):
                 continue
             if label == "Table":
                 content = self._span_attrs(content)
-            items.append({"bbox": bbox, "label": label, "content": content})
+            items.append({"bbox": bbox, "label": label, "content": content, "native": native})
         return items
 
 

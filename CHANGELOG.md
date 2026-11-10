@@ -7,9 +7,19 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
-- **Unlimited-OCR-2 document mode.** A new "Recognition unit" setting sends the pages of a
-  document (one PDF, or one folder of scans) in a single request, as the model card recommends,
-  so the model reads across pages. Each page's blocks are saved as soon as the page is complete;
+- **Single-file Markdown export.** A recognition run can be downloaded as one Markdown file
+  (Results › export format *Single document (.md)*): one document per collection, PDF or folder,
+  with the rules of Unlimited-OCR-2's own converter (`process_unlimitedOCR2.py`). Headings follow
+  the model's title levels, a table that runs across pages becomes one table without the header
+  rows it repeats, text continued on the next page is joined, and images become placeholders.
+  The *reviewed* export uses your corrections, table grids included. The continuation facts come
+  from Unlimited-OCR-2; with other models each block keeps its own place.
+- **Unlimited-OCR-2 document mode.** A new "Recognition unit" setting sends each document in a
+  single request, as the model card recommends, so the model reads across pages: a collection
+  (its pages in project order), otherwise one PDF or one folder of scans. There is no page limit:
+  the vendor's server reads a long document in windows of 10 pages and carries the context from
+  one window to the next. Grey and black-and-white scans travel as one-channel PNG: the same
+  pixels in half the bytes or less. Each page's blocks are saved as soon as the page is complete;
   a page the request did not read (returned empty, or cut by the token budget) is read again on
   its own with the single-page request; if the request itself fails, the unread pages are marked
   failed and can be retried. Tables that continue across pages stay as one block per page.
