@@ -25,7 +25,6 @@ from ..models.paddleocr_vl import PADDLE_LABELS
 from ..models.qwen3_vl_8b import QWEN3_LABELS
 from ..models.teleocr import TELEOCR_LABELS
 from ..models.surya_ocr import SURYA_LABELS
-from ..models.unlimited_ocr import UNLIMITED_LABELS
 from ..models.unlimited_ocr2 import UNLIMITED2_LABELS
 from .labeling import PUBLIC_LABELS
 

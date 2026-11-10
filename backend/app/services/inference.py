@@ -67,6 +67,15 @@ _LLAMAINDEX_REGION: dict[str, str] = {}
 
 
 
+# The timeout of the vendor's client, for one document in one request.
+DOCUMENT_TIMEOUT_S = 6000
+# urllib3 sends the request body under the *connect* timeout. A document carries every
+# page (about 6 MB of PNG each), and over an SSH tunnel 10 s without progress cut a
+# four-page request on a real A40 run; this is how long the upload may stall instead.
+DOCUMENT_UPLOAD_STALL_S = 120
+CONNECT_TIMEOUT_S = 10
+
+
 class OutputTruncated(RuntimeError):
     """La generazione ha esaurito i token prima di chiudere l'output."""
 
@@ -828,34 +837,7 @@ class VllmClient:
         """
         return ".modal.run" in self.url.lower()
 
-    def _chat(
-        self,
-        image: Image.Image,
-        prompt: str,
-        max_tokens: int = 4096,
-        min_pixels: int | None = None,
-        max_pixels: int | None = _CLIENT_MAX_PIXELS,
-        total_timeout: float | None = None,
-        stop_when_complete_list: bool = False,
-        sampling: dict | None = None,
-        on_delta: Callable[[str], None] | None = None,
-        *,
-        task: str = "text",
-        cancel_event: threading.Event | None = None,
-    ) -> str:
-        # Alcuni modelli chiusi (Gemini 4 Argon) non parlano OpenAI: il loro
-        # endpoint è il `generateContent` di Google. Il resto della pipeline
-        # non cambia — stesso prompt dall'adapter, stessa risposta di testo.
-        if getattr(self.adapter, "chat_protocol", "") == "google-generatecontent":
-            return self._generate_content(
-                image,
-                prompt,
-                max_tokens=max_tokens,
-                total_timeout=total_timeout,
-                sampling=sampling,
-                on_delta=on_delta,
-                cancel_event=cancel_event,
-            )
+    def _single_image_content(self, image: Image.Image, prompt: str, min_pixels, max_pixels) -> list[dict]:
         buf = io.BytesIO()
         # Cap effettivo: default storico = tetto del client (MOCR2-style);
         # `None` esplicito = nessun ridimensionamento client-side (il cap vero
@@ -875,16 +857,51 @@ class VllmClient:
         prepared = _fit_pixels(image, min_pixels=min_pixels, max_pixels=cap)
         prepared.convert("RGB").save(buf, format="PNG")
         data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
-        # Alcuni client upstream usano risposte OpenAI non-streaming. Manteniamo
-        # il loro protocollo; gli adapter senza preferenza dichiarata conservano
-        # lo streaming usato dalla UI.
-        stream_response = bool(getattr(self.adapter, "stream_response", True))
         prompt_prefix = str(getattr(self.adapter, "image_prompt_prefix", "") or "")
-        content = protocol.openai_content(
+        return protocol.openai_content(
             data_uri,
             prompt,
             prompt_prefix=prompt_prefix,
             text_first=getattr(self.adapter, "multimodal_content_order", "image-text") == "text-image",
+        )
+
+    def _chat(
+        self,
+        image: Image.Image,
+        prompt: str,
+        max_tokens: int = 4096,
+        min_pixels: int | None = None,
+        max_pixels: int | None = _CLIENT_MAX_PIXELS,
+        total_timeout: float | None = None,
+        stop_when_complete_list: bool = False,
+        sampling: dict | None = None,
+        on_delta: Callable[[str], None] | None = None,
+        *,
+        task: str = "text",
+        cancel_event: threading.Event | None = None,
+        encoded_images: list[str] | None = None,
+    ) -> str:
+        # Alcuni modelli chiusi (Gemini 4 Argon) non parlano OpenAI: il loro
+        # endpoint è il `generateContent` di Google. Il resto della pipeline
+        # non cambia — stesso prompt dall'adapter, stessa risposta di testo.
+        if getattr(self.adapter, "chat_protocol", "") == "google-generatecontent":
+            return self._generate_content(
+                image,
+                prompt,
+                max_tokens=max_tokens,
+                total_timeout=total_timeout,
+                sampling=sampling,
+                on_delta=on_delta,
+                cancel_event=cancel_event,
+            )
+        # Alcuni client upstream usano risposte OpenAI non-streaming. Manteniamo
+        # il loro protocollo; gli adapter senza preferenza dichiarata conservano
+        # lo streaming usato dalla UI.
+        stream_response = bool(getattr(self.adapter, "stream_response", True))
+        content = (
+            protocol.openai_document_content(encoded_images, prompt)
+            if encoded_images is not None
+            else self._single_image_content(image, prompt, min_pixels, max_pixels)
         )
         payload = protocol.openai_request(
             self.model,
@@ -909,7 +926,8 @@ class VllmClient:
             scanner = _OuterListScanner()
             logical_done = False
             try:
-                with self._post_chat(payload, stream_response) as resp:
+                send_timeout = DOCUMENT_UPLOAD_STALL_S if encoded_images is not None else CONNECT_TIMEOUT_S
+                with self._post_chat(payload, stream_response, send_timeout=send_timeout) as resp:
                     resp.raise_for_status()
                     if not stream_response:
                         event = resp.json()
@@ -1120,19 +1138,20 @@ class VllmClient:
         parse = getattr(self.adapter, "parse_layout", None)
         return parse(raw) if callable(parse) else _tolerant_items(raw)
 
-    def _post_chat(self, payload: dict, stream: bool):
+    def _post_chat(self, payload: dict, stream: bool, *, send_timeout: float = CONNECT_TIMEOUT_S):
         """POST a chat completion, following Modal's long-request redirect.
 
         A Modal web endpoint answers a request that runs over 150 s with a 303 to the
         same URL plus a call id; that result URL blocks until the call completes and can
         be followed again (Modal's guide allows up to 20 hops). The redirect is followed
         only on the same host: the credentials never go anywhere else, which is why
-        `requests`' own redirect handling stays off.
+        `requests`' own redirect handling stays off. `send_timeout` bounds the connection
+        and the upload of the body (see `DOCUMENT_UPLOAD_STALL_S`).
         """
         url = f"{self.url}/chat/completions"
         headers = self._headers()
         resp = requests.post(
-            url, json=payload, headers=headers, timeout=(10, self.timeout),
+            url, json=payload, headers=headers, timeout=(send_timeout, self.timeout),
             stream=stream, allow_redirects=False,
         )
         origin = urlsplit(url).netloc
@@ -1145,7 +1164,7 @@ class VllmClient:
                 raise RuntimeError(f"redirect to another host refused: {urlsplit(target).netloc}")
             resp.close()
             resp = requests.get(
-                target, headers=headers, timeout=(10, self.timeout),
+                target, headers=headers, timeout=(CONNECT_TIMEOUT_S, self.timeout),
                 stream=stream, allow_redirects=False,
             )
         return resp
@@ -1344,7 +1363,7 @@ class VllmClient:
         # Other adapters own their own generation protocol and must not get a
         # Tabularium-invented second sampling pass.
         monkey_native_retry = getattr(self.adapter, "adapter_id", None) == "monkeyocrv2-parsing"
-        # Grounded-markdown (Unlimited-OCR) is a native protocol, not a JSON
+        # Grounded-markdown (Unlimited-OCR-2) is a native protocol, not a JSON
         # list. An empty parsed bbox list must not trigger the generic
         # MonkeyOCR retry: the raw response is still the authoritative output
         # to inspect and a second 8 GB generation can exceed the request
@@ -1403,6 +1422,74 @@ class VllmClient:
                 }
             )
         return cleaned
+
+    def encode_page(self, image: Image.Image) -> str:
+        """A page as a data URI, so a long document does not hold its pixels in memory."""
+        buf = io.BytesIO()
+        _fit_pixels(image, max_pixels=self.max_pixels).convert("RGB").save(buf, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+    def end2end_document(
+        self,
+        encoded_pages: list[str],
+        on_page: Callable[[int, list[dict]], None],
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> int:
+        """Parse a whole document in one request and hand over each page as it completes.
+
+        A `<PAGE>` marker opens a page, so the text before it is the finished previous
+        page: `on_page(index, items)` runs while the model keeps generating, and pages
+        already parsed survive a later failure. A last page cut off by the token budget
+        is not delivered. Returns how many pages were delivered.
+        """
+        adapter = self.adapter
+        pages = len(encoded_pages)
+        buffer = ""
+        opened = False
+        delivered = 0
+
+        def deliver(segment: str) -> None:
+            nonlocal delivered
+            if delivered < pages:
+                on_page(delivered, self._page_items(segment))
+                delivered += 1
+
+        def feed(delta: str) -> None:
+            nonlocal buffer, opened
+            # Rescan only the tail that can hold a marker split across two deltas.
+            start = max(0, len(buffer) - 16)
+            buffer += delta
+            while (match := adapter.page_marker.search(buffer, start)) is not None:
+                segment, buffer = buffer[:match.start()], buffer[match.end():]
+                start = 0
+                # Like the vendor's parser: an empty head is not a page, a non-empty one is.
+                if opened or segment.strip():
+                    deliver(segment)
+                opened = True
+
+        self._chat(
+            None,
+            adapter.document_prompt(pages),
+            task="document",
+            max_tokens=adapter.document_budget(pages),
+            total_timeout=DOCUMENT_TIMEOUT_S,
+            stop_when_complete_list=False,
+            sampling=self._sampling_for("end2end"),
+            on_delta=feed,
+            cancel_event=cancel_event,
+            encoded_images=encoded_pages,
+        )
+        if (opened or buffer.strip()) and self.last_trace.get("finish_reason") != "length":
+            deliver(buffer)
+        return delivered
+
+    def _page_items(self, raw: str) -> list[dict]:
+        return [
+            {"bbox": [float(value) for value in item["bbox"]], "label": str(item["label"]),
+             "content": str(item.get("content") or "").strip()}
+            for item in self._parse_items(raw)
+        ]
 
     def recognize(
         self,
@@ -2012,7 +2099,7 @@ def _adapter_for_endpoint(model: str, url: str) -> str | None:
     """
     value = f"{model} {url}".lower()
     aliases = (
-        ("unlimited-ocr", "unlimited-ocr"),
+        ("unlimited-ocr-2", "unlimited-ocr-2"),
         ("paddleocr-vl", "paddleocr-vl"),
         ("paddleocr_vl", "paddleocr-vl"),
         ("mineru", "mineru2.5"),

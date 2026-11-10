@@ -231,16 +231,6 @@ def _local_runner(adapter_id: str):
     def _standard(model_path: str, port: int, overrides: dict) -> list[str]:
         return mlx_runtime.serve_argv(model_path, port=port, settings=overrides)
 
-    def _unlimited(model_path: str, port: int, overrides: dict) -> list[str]:
-        # The standard MLX server does not inject the image for this architecture
-        # (v. `unlimited_ocr_mlx_server.py`): it needs the dedicated one, and below
-        # 12 GB of memory the buffer cache must be off — on an 8 GB M1 with the
-        # browser open the GPU timed out with the cache on.
-        memory_gb = hardware.summary().get("memory_gb") or 0
-        return mlx_runtime.unlimited_ocr_serve_argv(
-            model_path, port=port, cache_limit_gb=0 if 0 < memory_gb <= 12 else None,
-        )
-
     kinds = {
         "": (mlx_runtime.log_tail, mlx_runtime.ensure_ready, _standard),
         "mlx": (mlx_runtime.log_tail, mlx_runtime.ensure_ready, _standard),
@@ -251,7 +241,6 @@ def _local_runner(adapter_id: str):
                 model_path, port=port, settings=overrides
             ),
         ),
-        "mlx-unlimited": (local_runtime.log_tail, mlx_runtime.ensure_ready, _unlimited),
     }
     recipe = serve_recipes.RECIPES.get(adapter_id)
     kind = getattr(recipe, "local_serve", "") if recipe is not None else ""
@@ -481,7 +470,7 @@ def _is_our_serving_process(pid: str | int) -> bool:
         return False
     if str(config.MODELS_DIR) in cmdline:
         return True
-    markers = ("vllm serve", "serve.py", "vllm/vllm-openai", "mlx_vlm.server", "mineru_mlx_gateway.py", "unlimited_ocr_mlx_server.py")
+    markers = ("vllm serve", "serve.py", "vllm/vllm-openai", "mlx_vlm.server", "mineru_mlx_gateway.py")
     return any(marker in cmdline for marker in markers)
 
 
@@ -728,10 +717,10 @@ def start(
 
         image = adapter.capabilities.serve_image
         if image and argv[0] == "docker":
-            # L'immagine vLLM dedicata (Unlimited-OCR) pesa una decina di GB e
-            # al primo avvio `docker run` la scarica in silenzio: senza questa
-            # fase l'utente vedrebbe "launching" fermo per parecchi minuti,
-            # senza sapere perché. La scarichiamo noi, dichiarandolo.
+            # A dedicated vLLM image weighs about ten GB and `docker run` pulls it
+            # silently on the first start: without this phase the user would see
+            # "launching" stuck for minutes with no reason given. We pull it
+            # ourselves, and say so.
             if not _docker_image_present(image):
                 _set_phase(adapter_id, "preparing_image")
                 _docker_pull(image, adapter_id)
@@ -743,11 +732,11 @@ def start(
             # non tocca la qualità. Un adapter che dichiara già il proprio
             # `--cpu-offload-gb` decide da sé.
             #
-            # La condizione è la presenza di `--gpu-memory-utilization`, non
-            # `argv[0] == "vllm"`: vale anche per gli adapter che lanciano vLLM
-            # dentro l'immagine Docker ufficiale (Unlimited-OCR), dove gli
-            # argomenti dopo il nome immagine sono comunque quelli di
-            # `vllm serve`. Il wrapper di MonkeyOCRv2 non espone quel flag
+            # The condition is the presence of `--gpu-memory-utilization`, not
+            # `argv[0] == "vllm"`: it also holds for adapters that launch vLLM
+            # inside an official Docker image, where the arguments after the
+            # image name are still those of `vllm serve`.
+            # Il wrapper di MonkeyOCRv2 non espone quel flag
             # nell'argv e resta fuori, correttamente: entra in VRAM da solo.
             offload = cpu_offload_gib(install_state(adapter_id).get("size_bytes"))
             if offload:

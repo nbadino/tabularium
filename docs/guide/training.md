@@ -23,7 +23,7 @@ The design rationale is in [AGENTS.md](https://github.com/nbadino/tabularium/blo
 1. **One recipe per adapter, and the recipe is the vendor documentation.** The
    generator knows no model by name; it dispatches on the recipe's toolchain.
 2. **No invented numbers.** When the vendor publishes hyperparameters, they are
-   the defaults. When it does not (Unlimited-OCR, dots.ocr, DeepSeek-OCR-2), the
+   the defaults. When it does not (dots.ocr, DeepSeek-OCR-2), the
    recipe says so and falls back to the toolchain defaults, marked
    `experimental`.
 3. **Fail explicitly.** A recipe that is documented but not runnable (MinerU2.5,
@@ -45,7 +45,6 @@ flags, official notes and `script_ready`.
 |---|---|---|---|---|---|
 | `monkeyocrv2-parsing` | `zenosai/MonkeyOCRv2-B-Parsing` | ms-swift (bundled fork) | LoRA, full | `ms-swift-jsonl` | **verified** (1-step run + merge) |
 | `qwen3-vl-8b` | `Qwen/Qwen3-VL-8B-Instruct` | ms-swift | LoRA, full | `ms-swift-jsonl` | **verified** (3-step run + merge) |
-| `unlimited-ocr` | `baidu/Unlimited-OCR` | ms-swift | LoRA, full | `ms-swift-jsonl` | **verified** (3-step run + merge) |
 | `deepseek-ocr` | `deepseek-ai/DeepSeek-OCR-2` | ms-swift | LoRA, full | `ms-swift-jsonl` | **verified** (3-step run + merge) |
 | `dots-ocr` | `dots-studio/dots.mocr` | ms-swift | LoRA, full | `ms-swift-jsonl` | **verified** (3-step run + merge) |
 | `glm-ocr` | `zai-org/GLM-OCR` | LLaMA-Factory | LoRA, full | `llamafactory-sharegpt` | **verified** (2-step run + merge) |
@@ -143,17 +142,15 @@ Source: [MinerU lesson 04](https://github.com/opendatalab/mineru-tutorials/tree/
   prompts (`\nTable Recognition:`, etc.) are ready for when the bundle can be
   declared as a checkout.
 
-### Unlimited-OCR, dots.ocr, DeepSeek-OCR-2 — ms-swift integration, experimental
+### dots.ocr, DeepSeek-OCR-2 — ms-swift integration, experimental
 
-- Unlimited-OCR's repository says only that the model “supports training with
-  ms-swift”; it publishes no command or hyperparameters.
 - dots.ocr's repository is inference-only; the community training script and
   ms-swift both exist, but neither is vendor documentation.
 - DeepSeek-OCR-2 documents inference only. Unsloth publishes a notebook with a
   different data format (roles `<|User|>`/`<|Assistant|>`, r16/α16 on seven
   modules) and a collator that is not portable to ms-swift.
 
-Tabularium offers the ms-swift path for these three because it is executable and
+Tabularium offers the ms-swift path for these two because it is executable and
 the framework registers them, but labels it `experimental`: the numbers are
 toolchain defaults, not a vendor recipe.
 
@@ -205,7 +202,7 @@ prompts are restored; otherwise the canonical ones are kept.
 ## Known limits
 
 - **Table crops are trained in OTSL for every model.** It is the vendor-recommended format for
-  MonkeyOCRv2 and PaddleOCR-VL. Qwen3-VL, dots.ocr, Unlimited-OCR and DeepSeek-OCR-2 generate HTML
+  MonkeyOCRv2 and PaddleOCR-VL. Qwen3-VL, dots.ocr and DeepSeek-OCR-2 generate HTML
   or grounded Markdown at inference, and their native path is full-page end-to-end: the per-crop
   OTSL recipe improves recognition when those prompts are used, but it does not train the native
   full-page parser. `verified` covers the per-crop recipe that was actually run, not the native
@@ -223,10 +220,10 @@ prompts are restored; otherwise the canonical ones are kept.
   flash-attn build can take 20–30 minutes and is the slowest profile. Manual rent still prepares
   only MonkeyOCRv2; other recipes use the automatic card.
 - **Environment pins are per model, not per toolchain.** Qwen3-VL needs transformers ≥ 5;
-  Unlimited-OCR and DeepSeek-OCR-2 only import on 4.46.3 (their remote code still uses
+  DeepSeek-OCR-2 only imports on 4.46.3 (its remote code still uses
   `is_torch_fx_available` / `LlamaFlashAttention2`); GLM-OCR's LLaMA-Factory path needs
   transformers ≤ 5.8 (`warmup_ratio` is gone in 5.20); PaddleOCR-VL needs Triton. The recipe
-  carries these pins in `environment`; installing one ms-swift env for all five models cannot work.
+  carries these pins in `environment`; installing one ms-swift env for all of them cannot work.
 
 ## Environment
 
@@ -242,7 +239,7 @@ model's environment.
 
 These are the toolchain environments. The **exact pins are per recipe** (`environment` in
 `GET /api/system/train-recipes`), because two models can need incompatible transformers:
-Qwen3-VL needs ≥ 5, Unlimited-OCR/DeepSeek-OCR-2 need 4.46.3 with ms-swift 4.6.0, GLM-OCR needs
+Qwen3-VL needs ≥ 5, DeepSeek-OCR-2 needs 4.46.3 with ms-swift 4.6.0, GLM-OCR needs
 ≤ 5.8, dots.ocr needs 4.51.0 plus flash-attn, PaddleOCR-VL needs Triton. The measured values are
 in the test log below.
 
@@ -344,7 +341,7 @@ repository to use:
 |---|---|---|
 | `monkey` | MonkeyOCRv2 | **prebuilt image** `ghcr.io/nbadino/tabularium-train-monkey:monkey-v3`: torch 2.6.0, transformers 4.57.1, bundled ms-swift fork (no runtime pip) |
 | `qwen` | Qwen3-VL | prebuilt `tabularium-train-qwen:qwen-v1`; upstream ms-swift 4.6, transformers 5.20 |
-| `legacy` | Unlimited-OCR, DeepSeek-OCR-2 | prebuilt `tabularium-train-legacy:legacy-v1`; ms-swift 4.6, transformers 4.46.3 |
+| `legacy` | DeepSeek-OCR-2 | prebuilt `tabularium-train-legacy:legacy-v1`; ms-swift 4.6, transformers 4.46.3 |
 | `dots` | dots.ocr | **runtime provisioning** (flash-attn ABI still blocks a reliable image); ms-swift 4.6, transformers 4.57.1 |
 | `glm` | GLM-OCR | prebuilt `tabularium-train-glm:glm-v1`; LLaMA-Factory, transformers 5.8 |
 | `paddle` | PaddleOCR-VL | prebuilt `tabularium-train-paddle:paddle-v1`; PaddleFormers, Triton |
@@ -463,7 +460,6 @@ code as a consequence.
 | Adapter | Toolchain | Environment actually used | Steps | Train loss | Peak | Merge |
 |---|---|---|---|---|---|---|
 | `qwen3-vl-8b` | ms-swift | transformers 5.20.2, torch 2.11+cu128 | 3 | 1.476 (eval 0.693) | 24.2 GiB | `swift export` 17 GB |
-| `unlimited-ocr` | ms-swift 4.6.0 | transformers 4.46.3, torch 2.11 | 3 | 3.287 (eval 2.447) | 19.1 GiB | `swift export` 6.3 GB |
 | `deepseek-ocr` | ms-swift 4.6.0 | transformers 4.46.3, torch 2.11 | 3 | 2.523 | 15.6 GiB | `swift export` 6.4 GB |
 | `dots-ocr` | ms-swift 4.6.0 | transformers 4.57.1, flash-attn 2.8.3, torch 2.11 | 3 | 2.170 (eval 2.983) | 16.9 GiB | `swift export` 5.7 GB |
 | `glm-ocr` | LLaMA-Factory 0.9.6 | transformers 5.8.0, torch 2.11 | 2 | 5.406 (eval 0.682) | — | `llamafactory-cli export` 2.1 GB |
@@ -475,9 +471,9 @@ not measure quality**.
 
 **Found and fixed as a consequence**
 
-1. **A per-model environment is mandatory.** One ms-swift venv cannot train all five:
-   - Unlimited-OCR and DeepSeek-OCR-2 import `is_torch_fx_available` and `LlamaFlashAttention2`
-     from transformers 4.46, removed in 5.x; they need `ms-swift==4.6.0` + `transformers==4.46.3`.
+1. **A per-model environment is mandatory.** One ms-swift venv cannot train them all:
+   - DeepSeek-OCR-2 imports `is_torch_fx_available` and `LlamaFlashAttention2`
+     from transformers 4.46, removed in 5.x; it needs `ms-swift==4.6.0` + `transformers==4.46.3`.
    - Qwen3-VL needs transformers ≥ 5.
    - GLM-OCR's LLaMA-Factory path uses `warmup_ratio`, removed in transformers 5.20: pin 5.8.0.
    - dots.ocr declares 4.51 but its custom code breaks on ms-swift 4.6 with 4.51; 4.57.1 works.
@@ -596,10 +592,10 @@ checkpoint logs are opened on demand with dedicated buttons. The download progre
 | `stima VRAM non disponibile` | model geometry unknown | only free memory is checked; set `model_path` so the estimate can read `config.json` |
 | OOM on a small card | logits dominate at long sequences | lower `max_length`, batch 1, raise `grad_accum`; the preflight suggests the largest fitting length for known geometries |
 | `JSONDecodeError` in `register_dataset_info` when `swift sft` starts | the MonkeyOCRv2 fork does not ship `swift/llm/dataset/data/dataset_info.json` | re-run `scripts/cloud/setup_cloud_train.sh`: it creates the empty registry; local JSONL datasets do not need any entry |
-| `ImportError: cannot import name 'is_torch_fx_available'` or `LlamaFlashAttention2` | Unlimited-OCR / DeepSeek-OCR-2 remote code predates transformers 5 | install the recipe's `environment` (`ms-swift==4.6.0`, `transformers==4.46.3`) |
+| `ImportError: cannot import name 'is_torch_fx_available'` or `LlamaFlashAttention2` | DeepSeek-OCR-2 remote code predates transformers 5 | install the recipe's `environment` (`ms-swift==4.6.0`, `transformers==4.46.3`) |
 | `ValueError: Some keys are not used by the HfArgumentParser: ['warmup_ratio']` | transformers newer than LLaMA-Factory supports | pin `transformers==5.8.0` for GLM-OCR |
 | `NameError: name 'triton' is not defined` in PaddleOCR-VL modeling | PaddleFormers imports Triton kernels unconditionally | install `triton>=3.1` and `use-triton-in-paddle`, or use the official Paddle image |
-| `expanded size ... must match the existing size` at the second step | `max_length` truncated the image tokens, the vision tower emitted more | use the recipe's `max_length` (8192 for Unlimited-OCR and DeepSeek-OCR-2) instead of shrinking it |
+| `expanded size ... must match the existing size` at the second step | `max_length` truncated the image tokens, the vision tower emitted more | use the recipe's `max_length` (8192 for DeepSeek-OCR-2) instead of shrinking it |
 | The model is downloaded again on every run | old generated scripts put the cache inside the run | fixed: the cache is shared (`$HOME/.cache/modelscope` remote, `<data>/cache/modelscope` local); override with `model_cache` |
 | The checkpoint cannot be prepared | no remote run left and the local toolchain is missing | the panel says which command/environment is missing; install it or keep the remote host until preparation ends |
 | “run remota non è più raggiungibile” when preparing | the remote run directory was cleaned or the host is gone | do not clean before preparation, or install the toolchain locally and retry |

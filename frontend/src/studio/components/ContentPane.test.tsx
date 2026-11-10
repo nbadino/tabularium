@@ -428,7 +428,7 @@ describe('ContentPane', () => {
         labels={[]}
         selectedId={null}
         working={{
-          engine: 'Unlimited-OCR',
+          engine: 'Unlimited-OCR-2',
           startedAt: Date.now(),
           blocks: 0,
           last: null,
@@ -449,7 +449,7 @@ describe('ContentPane', () => {
         labels={[]}
         selectedId={null}
         working={{
-          engine: 'Unlimited-OCR',
+          engine: 'Unlimited-OCR-2',
           startedAt: Date.now(),
           blocks: 0,
           last: null,
@@ -594,7 +594,7 @@ describe('ContentPane', () => {
         labels={[]}
         selectedId={null}
         working={{
-          engine: 'Unlimited-OCR',
+          engine: 'Unlimited-OCR-2',
           startedAt: Date.now(),
           blocks: 0,
           last: null,

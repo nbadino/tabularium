@@ -1,6 +1,7 @@
 """Test per il registro modelli: adapter aggiuntivi, stato installazione, API."""
 from __future__ import annotations
 
+import dataclasses
 from types import SimpleNamespace
 
 import pytest
@@ -73,7 +74,7 @@ def test_supports_export_probes_prompt_for_per_family():
     assert model_adapters.supports_export(model_adapters.get_adapter("mineru2.5"))
     assert not model_adapters.supports_export(model_adapters.get_adapter("dots-ocr"))
     assert not model_adapters.supports_export(model_adapters.get_adapter("paddleocr-vl"))
-    assert not model_adapters.supports_export(model_adapters.get_adapter("unlimited-ocr"))
+    assert not model_adapters.supports_export(model_adapters.get_adapter("unlimited-ocr-2"))
     assert model_adapters.supports_export(model_adapters.get_adapter("glm-ocr"))
     assert model_adapters.supports_export(model_adapters.get_adapter("deepseek-ocr"))
     assert model_adapters.supports_export(model_adapters.get_adapter("qwen3-vl-8b"))
@@ -103,7 +104,6 @@ def test_new_adapters_are_registered_alongside_monkeyocrv2():
     assert "monkeyocrv2-parsing" in ids
     for expected in (
         "mineru2.5",
-        "unlimited-ocr",
         "dots-ocr",
         "glm-ocr",
         "deepseek-ocr",
@@ -305,59 +305,23 @@ def test_alternative_adapters_are_servable_and_have_structured_prompts():
         assert adapter.prompt_for("text")
 
 
-def test_unlimited_ocr_serves_locally_via_dedicated_docker_image():
-    # L'architettura non è nella wheel pip stabile di vLLM: il serve locale
-    # passa dall'immagine Docker dedicata, non da `vllm serve` diretto.
-    adapter = model_adapters.get_adapter("unlimited-ocr")
-    cmd = adapter.serve_command("/weights/unlimited-ocr", 8888)
-    assert cmd[:2] == ["docker", "run"]
-    assert "vllm/vllm-openai:unlimited-ocr" in cmd
-    assert "/weights/unlimited-ocr:/model" in cmd
-
-
-def test_unlimited_ocr_has_a_local_mlx_path_with_selectable_variants():
-    # Da `mlx-vlm` 0.6.4 esiste `unlimited_ocr` con la R-SWA di upstream: il
-    # modello ha quindi un percorso locale Apple Silicon, a differenza di
-    # quando la sua ricetta (il n-gram processor di vLLM) lo rendeva solo remoto.
-    adapter = model_adapters.get_adapter("unlimited-ocr")
-    assert "mlx-vlm" in adapter.capabilities.local_runtimes
-    assert adapter.capabilities.local_mlx_repo == "mlx-community/Unlimited-OCR-bf16"
-    variants = dict(adapter.capabilities.local_mlx_repo_choices)
-    assert variants == {
-        "bf16": "mlx-community/Unlimited-OCR-bf16",
-        "8bit": "mlx-community/Unlimited-OCR-8bit",
-    }
-    assert adapter.capabilities.local_mlx_repetition_penalty == 1.1
-    assert adapter.capabilities.local_mlx_repetition_context_size == 128
-
-    from app.services.hardware import plan_local
-
-    mac = {
-        "apple_silicon": True,
-        "cuda": {"devices": []},
-        "memory_gb": 24.0,
-        "runtimes": {"vllm": {"supported": False}, "mlx-vlm": {"supported": True}},
-        "usable_runtimes": ["mlx-vlm"],
-    }
-    plan = plan_local(
-        adapter.capabilities.local_runtimes,
-        machine=mac,
-        approx_size_gb=adapter.capabilities.approx_size_gb,
-        mlx_weight_factor=adapter.capabilities.local_mlx_weight_factor,
-    )
-    assert plan["runnable"] is True
-    assert plan["runtime"] == "mlx-vlm"
-
-
-
-def test_unlimited_ocr_picks_the_largest_mlx_variant_that_fits_this_mac():
+def test_the_largest_mlx_variant_that_fits_this_mac_is_picked():
     # Il verdetto guardava solo il bf16 di default: su un Mac da 8 GB il
     # modello risultava «memoria insufficiente» e «Questo Mac» restava spento,
     # quindi la scelta della variante — che viene dopo — non si raggiungeva mai,
     # anche se l'8-bit ci sta.
     from app.services.hardware import mlx_variant_fits, pick_mlx_repo, plan_local, mlx_variant_factor
 
-    cap = model_adapters.get_adapter("unlimited-ocr").capabilities
+    # No built-in model declares MLX variants at the moment: the selection logic is
+    # generic, so it is exercised on a declaration made here.
+    cap = dataclasses.replace(
+        model_adapters.get_adapter("paddleocr-vl").capabilities,
+        approx_size_gb=6.0,
+        local_mlx_repo="mlx-community/Example-bf16",
+        local_mlx_repo_choices=(("bf16", "mlx-community/Example-bf16"), ("8bit", "mlx-community/Example-8bit")),
+        local_mlx_weight_factor=1.05,
+        local_mlx_variant_weight_factors=(("mlx-community/Example-bf16", 1.05), ("mlx-community/Example-8bit", 0.6)),
+    )
 
     def mac(memory_gb: float) -> dict:
         return {
@@ -369,13 +333,13 @@ def test_unlimited_ocr_picks_the_largest_mlx_variant_that_fits_this_mac():
         }
 
     small, large = mac(8.0), mac(24.0)
-    assert not mlx_variant_fits(cap, "mlx-community/Unlimited-OCR-bf16", small)
-    assert mlx_variant_fits(cap, "mlx-community/Unlimited-OCR-8bit", small)
+    assert not mlx_variant_fits(cap, "mlx-community/Example-bf16", small)
+    assert mlx_variant_fits(cap, "mlx-community/Example-8bit", small)
 
     # Senza una scelta salvata: un Mac grande resta sul bf16, uno da 8 GB passa all'8-bit.
-    assert pick_mlx_repo(cap, large) == "mlx-community/Unlimited-OCR-bf16"
+    assert pick_mlx_repo(cap, large) == "mlx-community/Example-bf16"
     picked = pick_mlx_repo(cap, small)
-    assert picked == "mlx-community/Unlimited-OCR-8bit"
+    assert picked == "mlx-community/Example-8bit"
     plan = plan_local(
         cap.local_runtimes, machine=small, approx_size_gb=cap.approx_size_gb,
         mlx_weight_factor=mlx_variant_factor(cap, picked),
@@ -383,7 +347,7 @@ def test_unlimited_ocr_picks_the_largest_mlx_variant_that_fits_this_mac():
     assert plan["runnable"] is True and plan["runtime"] == "mlx-vlm"
 
     # Una scelta salvata vince sempre, anche se non ci sta: il verdetto lo dirà.
-    assert pick_mlx_repo(cap, small, saved="mlx-community/Unlimited-OCR-bf16") == "mlx-community/Unlimited-OCR-bf16"
+    assert pick_mlx_repo(cap, small, saved="mlx-community/Example-bf16") == "mlx-community/Example-bf16"
     # Nessuna variante entra: resta il default.
     assert pick_mlx_repo(cap, mac(4.0)) == cap.local_mlx_repo
 
@@ -399,9 +363,6 @@ def test_list_models_api_merges_capabilities_and_install_state():
         assert by_id["mineru2.5"]["hf_repo"] == "opendatalab/MinerU2.5-Pro-2605-1.2B"
         assert by_id["dots-ocr"]["hf_repo"] == "dots-studio/dots.mocr"
         assert by_id["dots-ocr"]["download_only"] is False
-        assert by_id["unlimited-ocr"]["cloud_serve_ready"] is True
-        assert by_id["unlimited-ocr"]["cloud_template"] == "unlimited-ocr"
-        assert by_id["unlimited-ocr"]["download_only"] is False
         assert by_id["deepseek-ocr"]["hf_repo"] == "deepseek-ai/DeepSeek-OCR-2"
         # Ora servibile in locale (vllm serve generico): non più "solo download".
         assert by_id["glm-ocr"]["download_only"] is False

@@ -43,7 +43,7 @@ def test_essential_workflow_fields_are_declared_by_the_spec():
         for field in model_settings.get_settings("monkeyocrv2-parsing")["workflow_fields"]
     }
     assert fields == {"dflash_enabled": True, "dflash_num_speculative_tokens": False}
-    unlimited = {f["key"]: f["essential"] for f in model_settings.get_settings("unlimited-ocr")["workflow_fields"]}
+    unlimited = {f["key"]: f["essential"] for f in model_settings.get_settings("unlimited-ocr-2")["workflow_fields"]}
     assert unlimited["image_mode"] is True and unlimited["ngram_size"] is False
 
 

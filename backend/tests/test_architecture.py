@@ -244,7 +244,7 @@ def test_the_serving_dispatch_names_no_model() -> None:
     code = "\n".join(
         line for line in source.splitlines() if not line.lstrip().startswith("#")
     )
-    for adapter_id in ("mineru2.5", "unlimited-ocr"):
+    for adapter_id in ("mineru2.5",):
         assert f'"{adapter_id}"' not in code, (
             f"serve_manager names {adapter_id}: declare `local_serve` on its recipe "
             "and dispatch on it"

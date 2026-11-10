@@ -84,7 +84,13 @@ def save_current_as_profile(
         raise HTTPException(status_code=409, detail=msg("consensus_profile_exists", lang))
     cfg = inference.get_inference_config()
     endpoint = validate_endpoint(str(cfg["url"]))
-    adapter = get_adapter(str(cfg["adapter_id"]))
+    try:
+        adapter = get_adapter(str(cfg["adapter_id"]))
+    except ValueError as exc:
+        # The configured model can outlive its adapter (a removed model).
+        raise HTTPException(
+            status_code=409, detail=msg("profile_adapter_unavailable", lang, name=cfg["adapter_id"]),
+        ) from exc
     key = str(cfg.get("api_key") or "")
     provider = str(cfg.get("provider") or "custom")
     if getattr(adapter.capabilities, "serve_backend", "") == "opencode-gateway" or provider == "opencode":

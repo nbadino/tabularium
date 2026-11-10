@@ -283,6 +283,14 @@ def llamaindex_configuration(workflow: dict[str, Any]) -> tuple[dict[str, Any], 
     return payload, total_timeout
 
 
+def openai_document_content(data_uris: list[str], prompt: str) -> list[dict[str, Any]]:
+    """One user message with the page images, in page order, then the prompt."""
+    return [
+        *({"type": "image_url", "image_url": {"url": uri}} for uri in data_uris),
+        {"type": "text", "text": prompt},
+    ]
+
+
 def openai_content(
     data_uri: str,
     prompt: str,

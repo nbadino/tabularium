@@ -23,7 +23,7 @@ to guide the next annotation round.
 Layout is measured at two thresholds: IoU 0.5 (`layout`) and **IoU 0.75** (`layout_strict`, the
 layout reward rule of LightOnOCR-3), with overall and per-label precision/recall/**F1**. At 0.5 a
 `Table` covering only the left column still passes; at 0.75 it does not. **END2END-only** models
-(LightOnOCR-3, Unlimited-OCR, DeepSeek-OCR, dots.mocr) have no layout or crop prompt: they are
+(LightOnOCR-3, Unlimited-OCR-2, DeepSeek-OCR, dots.mocr) have no layout or crop prompt: they are
 evaluated on their native generation, and text and tables are the content of the predicted block
 matched at IoU 0.5 (missed blocks stay out of CER and are counted by recall).
 

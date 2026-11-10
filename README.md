@@ -128,7 +128,6 @@ listed as verified only after it has been run on real pages.
 | PaddleOCR-VL | ✅ | ✅ |
 | MinerU2.5 | ✅ | 🧪 |
 | Qwen3-VL | ✅ | 🧪 |
-| Unlimited-OCR | ✅ | 🧪 |
 | DeepSeek-OCR-2, GLM-OCR, dots.mocr | ✅ | — |
 | Any Hugging Face repo you register | ✅ | — |
 

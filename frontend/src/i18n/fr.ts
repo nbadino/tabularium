@@ -2777,8 +2777,6 @@ export const fr: Dict = {
         'Profil performance : B-Parsing + draft DFlash, vLLM 0.25.1/CUDA 12.9 et conteneur chaud pour supprimer les cold starts. La qualité du modèle cible est préservée ; DFlash est pris en charge uniquement par B-Parsing.',
       modalMineruCaveat:
         'MinerU2.5 fonctionne avec la reconnaissance de la page (vérifié sur des pages entièrement tabulaires, comme le corpus Historic Shipping Index). Les pages à mise en page mixte (titres, paragraphes et tableaux ensemble) n’ont pas encore été vérifiées.',
-      modalUnlimitedCaveat:
-        'Unlimited-OCR (Baidu, 3B) utilise l\u2019image vLLM dédiée, un cache persistant et un conteneur chaud par défaut. La reconnaissance de la page l\u2019utilise en mode end-to-end natif : les marqueurs de grounding deviennent des brouillons de blocs modifiables.',
       modalTokenOk: 'Connecté',
       modalTokenMissing: 'Non connecté',
       modalCliMissing:
@@ -3039,9 +3037,13 @@ export const fr: Dict = {
     teleocrLayoutOfficial: 'Le mode sélectionné modifie le prompt de mise en page TeleOCR utilisé pendant la reconnaissance de la page.',
     glmWorkflowIntro: 'GLM-OCR utilise le décodage spéculatif MTP de la recette vLLM officielle. Davantage de jetons spéculatifs peut accélérer la génération, avec une mémoire accrue ; mesurez la meilleure valeur sur votre GPU.',
     deepseekWorkflowIntro: 'DeepSeek-OCR-2 utilise le flux officiel Markdown ancré et le processeur n-gram de vLLM. Ces valeurs règlent le processeur contre les répétitions.',
-    unlimitedWorkflowIntro: 'Utilisez les réglages officiels Unlimited-OCR pour une page : gundam est le mode de recadrage par défaut ; window_size 1024 est recommandé pour plusieurs pages.',
-    unlimited2WorkflowIntro: 'Réglages officiels Unlimited-OCR-2 pour une page : gundam (tuiles) par défaut, window_size 128 ; le fournisseur utilise 1024 seulement pour les documents de plusieurs pages.',
+    unlimited2WorkflowIntro: 'Réglages officiels Unlimited-OCR-2 : gundam (tuiles) est le défaut pour une page, avec window_size 128. En mode document, les pages partent en une seule requête, avec window_size 1024.',
     unlimited2MaxPageTokens: 'Jetons max par page',
+    unlimited2RequestScope: 'Unité de reconnaissance',
+    unlimited2ScopePageHint: 'une requête par page : plus de résolution et des reprises individuelles',
+    unlimited2ScopeDocumentHint: 'toutes les pages du document en une requête : contexte entre les pages ; une page que le modèle saute est relue seule',
+    unlimited2DocumentWindowSize: 'Fenêtre n-gram du document',
+    unlimited2DocumentMaxPages: 'Pages maximales par requête',
     xiaomiWorkflowIntro: 'Mode par régions officiel de Xiaomi-OCR-0 : PP-DocLayoutV3 trouve les blocs et chaque découpe est lue avec le prompt de sa tâche. Le fournisseur recommande la page entière pour les livres anciens et les mises en page irrégulières, mais ce mode ne renvoie pas de cadres.',
     xiaomiLayoutThreshold: 'Seuil de mise en page (PP-DocLayoutV3)',
     xiaomiRetryRepetitive: 'Relancer les régions qui bouclent',

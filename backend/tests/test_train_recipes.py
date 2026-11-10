@@ -25,7 +25,7 @@ def test_closed_model_is_not_trainable():
 def test_known_trainable_set():
     trainable = set(train_recipes.trainable_adapters())
     assert {
-        "monkeyocrv2-parsing", "unlimited-ocr", "qwen3-vl-8b", "paddleocr-vl",
+        "monkeyocrv2-parsing", "unlimited-ocr-2", "qwen3-vl-8b", "paddleocr-vl",
         "deepseek-ocr", "glm-ocr", "mineru2.5", "dots-ocr",
     } <= trainable
     # Chiusi: niente ricetta.
@@ -52,11 +52,11 @@ def test_every_toolchain_uses_its_vendor_documented_recipe():
 
 
 def test_end2end_only_adapters_get_a_coherent_training_prompt():
-    """Unlimited-OCR e dots.mocr non hanno prompt per-task: il builder non deve esplodere."""
+    """Unlimited-OCR-2 e dots.mocr non hanno prompt per-task: il builder non deve esplodere."""
     from app.services.dataset_builder import _training_prompt
     from app.services.model_adapters import get_adapter
 
-    for adapter_id in ("unlimited-ocr", "dots-ocr"):
+    for adapter_id in ("unlimited-ocr-2", "dots-ocr"):
         adapter = get_adapter(adapter_id)
         recipe = train_recipes.get_recipe(adapter_id)
         prompt = _training_prompt(recipe, adapter, "table")
@@ -113,9 +113,9 @@ def test_generate_script_dispatches_by_recipe(tmp_path):
     script = trainer_script.generate_script(cfg("qwen3-vl-8b"), tmp_path, tmp_path / "t.jsonl", tmp_path / "v.jsonl")
     assert "--model_type qwen3_vl" in script
 
-    # Unlimited-OCR: ms-swift ufficiale (model_type/template `unlimited_ocr`).
-    script = trainer_script.generate_script(cfg("unlimited-ocr"), tmp_path, tmp_path / "t.jsonl", tmp_path / "v.jsonl")
-    assert "--model_type unlimited_ocr" in script and "--template unlimited_ocr" in script
+    # Unlimited-OCR-2: ms-swift main, `unlimited-ocr` with a hyphen ("not a typo").
+    script = trainer_script.generate_script(cfg("unlimited-ocr-2"), tmp_path, tmp_path / "t.jsonl", tmp_path / "v.jsonl")
+    assert "--model_type unlimited-ocr" in script and "--template unlimited_ocr" in script
 
     # PaddleOCR-VL: PaddleFormers, non più un toolchain esterno non eseguito.
     script = trainer_script.generate_script(

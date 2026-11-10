@@ -13,7 +13,7 @@
   cannot be trained instead of disappearing.
 - **The toolchain is per model, not one global choice**:
   - `ms-swift` — MonkeyOCRv2 (the **bundled fork** in `parsing/train/ms-swift`, where the flag is
-    `--train_type`; upstream uses `--tuner_type`), Qwen3-VL, Unlimited-OCR, DeepSeek-OCR-2,
+    `--train_type`; upstream uses `--tuner_type`), Qwen3-VL, Unlimited-OCR-2, DeepSeek-OCR-2,
     dots.ocr. The other four use upstream ms-swift; MonkeyOCRv2 must use its fork, whose
     `<|image_pad|>` template is not upstream's `<|IMAGE|>` encoder template.
   - `llama-factory` — GLM-OCR, as `examples/finetune/README.md` documents; ShareGPT view + the
@@ -30,10 +30,10 @@
   prompts to the model being trained, whatever adapter built the snapshot. Recognition-only models
   (GLM-OCR, PaddleOCR-VL) do not get the layout family: their protocol has no bbox.
 - **The environment is per model, not per toolchain.** The recipe declares the pins measured on
-  a real run (`environment`): Qwen3-VL needs transformers ≥ 5; Unlimited-OCR and DeepSeek-OCR-2
-  only import on 4.46.3 (their remote code still calls `is_torch_fx_available` and
+  a real run (`environment`): Qwen3-VL needs transformers ≥ 5; DeepSeek-OCR-2
+  only imports on 4.46.3 (its remote code still calls `is_torch_fx_available` and
   `LlamaFlashAttention2`) with ms-swift 4.6.0; GLM-OCR needs transformers ≤ 5.8 (`warmup_ratio`);
-  dots.ocr needs flash-attn; PaddleOCR-VL needs Triton. One ms-swift venv cannot train all five,
+  dots.ocr needs flash-attn; PaddleOCR-VL needs Triton. One ms-swift venv cannot train them all,
   and the preflight must not pretend otherwise.
 - `services/trainer_script.py` generates the script from the recipe and **fails explicitly** on
   anything it cannot run — never a wrong script silently. The VRAM estimate uses the recipe's own

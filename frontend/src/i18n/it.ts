@@ -2777,8 +2777,6 @@ export const it = {
         'Profilo performance: B-Parsing + draft DFlash, vLLM 0.25.1/CUDA 12.9 e container caldo per eliminare il cold start. La qualità resta quella del modello target; DFlash è supportato solo da B-Parsing.',
       modalMineruCaveat:
         'MinerU2.5 è usabile per il riconoscimento della pagina (verificato su pagine a tabella piena, come il corpus Historic Shipping Index). Pagine con layout misto (titoli, paragrafi e tabelle insieme) non sono ancora state verificate.',
-      modalUnlimitedCaveat:
-        'Unlimited-OCR (Baidu, 3B) usa l\u2019immagine vLLM dedicata, cache persistente e un container caldo di default. Il riconoscimento della pagina lo usa in modalità end2end: i marker di grounding vengono convertiti in bozze di blocchi modificabili.',
       modalTokenOk: 'Connesso',
       modalTokenMissing: 'Non connesso',
       modalCliMissing:
@@ -3039,9 +3037,13 @@ export const it = {
     teleocrLayoutOfficial: 'La modalità selezionata cambia il prompt layout TeleOCR inviato durante il riconoscimento della pagina.',
     glmWorkflowIntro: 'GLM-OCR usa il decoding speculativo MTP della ricetta vLLM ufficiale. Più token speculativi possono aumentare la velocità, con un uso maggiore di memoria; misura il valore migliore sulla tua GPU.',
     deepseekWorkflowIntro: 'DeepSeek-OCR-2 usa il workflow ufficiale grounded Markdown e il logits processor n-gram di vLLM. Questi valori regolano il processor per limitare le ripetizioni.',
-    unlimitedWorkflowIntro: 'Usa i parametri ufficiali Unlimited-OCR per la singola pagina: gundam è la modalità crop predefinita; window_size 1024 è raccomandato per input multi-pagina.',
-    unlimited2WorkflowIntro: 'Parametri ufficiali Unlimited-OCR-2 per la singola pagina: gundam (tile) è il default, window_size 128; il vendor usa 1024 solo per documenti multi-pagina.',
+    unlimited2WorkflowIntro: 'Parametri ufficiali Unlimited-OCR-2: gundam (tile) è il default a pagina singola, con window_size 128. In modalità documento le pagine partono in una richiesta sola, con window_size 1024.',
     unlimited2MaxPageTokens: 'Token massimi per pagina',
+    unlimited2RequestScope: 'Unità di riconoscimento',
+    unlimited2ScopePageHint: 'una richiesta per pagina: più risoluzione e retry singoli',
+    unlimited2ScopeDocumentHint: 'tutte le pagine del documento in una richiesta: contesto tra le pagine; una pagina che il modello salta viene riletta da sola',
+    unlimited2DocumentWindowSize: 'Finestra n-gram per documento',
+    unlimited2DocumentMaxPages: 'Pagine massime per richiesta',
     xiaomiWorkflowIntro: 'Modalità a regioni ufficiale di Xiaomi-OCR-0: PP-DocLayoutV3 individua i blocchi e ogni ritaglio viene letto con il prompt del suo task. Il vendor consiglia la pagina intera per libri storici e layout irregolari, ma quella modalità non produce riquadri.',
     xiaomiLayoutThreshold: 'Soglia del layout (PP-DocLayoutV3)',
     xiaomiRetryRepetitive: 'Rilancia le regioni che si ripetono',

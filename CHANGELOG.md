@@ -7,6 +7,12 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **Unlimited-OCR-2 document mode.** A new "Recognition unit" setting sends the pages of a
+  document (one PDF, or one folder of scans) in a single request, as the model card recommends,
+  so the model reads across pages. Each page's blocks are saved as soon as the page is complete;
+  a page the request did not read (returned empty, or cut by the token budget) is read again on
+  its own with the single-page request; if the request itself fails, the unread pages are marked
+  failed and can be retried. Tables that continue across pages stay as one block per page.
 - **Each user runs saved models on their own API key.** A saved model (a Recognition engine and a
   model in comparisons) no longer carries the key of the administrator who saved it for everyone:
   each user adds their own key under Recognition › Model comparison › Saved models (stored
@@ -118,12 +124,20 @@ Notable changes to Tabularium. The format follows
   Metric in `docs/spec/71-evaluation.md`.
 
 ### Changed
+- Unlimited-OCR-2 receives PDF pages rendered at 300 DPI, as in the vendor's example. The page
+  shown in the Studio keeps its 200 DPI rendering.
 - **English is the default language.** A browser that never picked a language in the menu
   now gets the English interface (it was Italian), and the server answers in English when a
   request names no language: error details, and run errors saved in the database (a stopped
   model in a comparison) shown later. A language chosen in the menu, Italian or French, is kept.
 
 ### Fixed
+- Unlimited-OCR-2's parser follows the vendor's post-processor on placeholder content
+  (`[unreadable]`, `[non-text]`…), bare coordinate lines and the `picture`/`img` labels, and
+  drops blocks without content (images excepted) instead of saving them as empty boxes: a page
+  where the model looped used to fill the Studio with hundreds of them.
+- Unlimited-OCR-2 can be prepared on a rented Vast.ai GPU: the setup script read the SGLang
+  recipe as "vLLM already in the image" and stopped at the preflight before installing anything.
 - Local OCR (RapidOCR) stopped reading after the first page promoted to a table: pages came back
   *finished* with no blocks and no error. Reading a table cell switches text detection off, and
   rapidocr 3.x keeps that setting on the engine for the next pages. Detection now asks for its
@@ -154,6 +168,16 @@ Notable changes to Tabularium. The format follows
   `unexpected keyword argument 'on_delta'`: its native runner now takes the same callbacks as the others.
 - A database that ran a pre-release build of the model comparison (which used migration 23 for
   its tables) gets the `users.email_confirmed` column of the real migration 23 at upgrade.
+
+### Removed
+- **Unlimited-OCR v1 is gone, replaced by Unlimited-OCR-2.** The `unlimited-ocr` model
+  (`baidu/Unlimited-OCR`) no longer appears in the model library, and its serving paths went
+  with it: the local Docker image, the Apple Silicon MLX path (with its dedicated server) and the
+  Modal template. Use `unlimited-ocr-2`, which is served with SGLang and has no MLX or Modal path.
+  Stored references to the old id (active model, per-model settings, saved compute profiles,
+  custom models, past recognition runs) stay in the database without breaking anything: the
+  model settings are ignored, a saved profile that points at it cannot be activated and says so,
+  and past runs keep their history.
 
 ## [0.7.0] - 2026-11-05
 

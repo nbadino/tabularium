@@ -107,3 +107,257 @@ def test_unlimited2_trains_with_ms_swift_main_and_its_own_profile():
     assert recipe.defaults_for("lora")["grad_accum"] == 16
     assert recipe.environment["transformers"] == "==4.52.1"
     assert auto_training.profile_for("unlimited-ocr-2") == "uocr2"
+
+
+def test_unlimited2_parser_applies_the_vendor_cleanup():
+    items = get_adapter("unlimited-ocr-2").parse_layout(
+        "<PAGE><BLOCK>text[10,10,100,50]<FORK>[unreadable]"
+        "<BLOCK>text[10,60,100,90]<FORK>Keep\n[1,2,3,4]\nthis"
+        "<BLOCK>picture[10,100,100,190]<FORK>[image]"
+    )
+    assert items == [
+        {"bbox": [10, 60, 100, 90], "label": "Text", "content": "Keep\n\nthis"},
+        {"bbox": [10, 100, 100, 190], "label": "Picture", "content": ""},
+    ]
+
+
+def test_unlimited2_parser_drops_blocks_without_content():
+    """`_render_blocks` skips a block with no content unless it is an image.
+
+    Seen on a real A40 run: a Lloyd's register page ended in ~460 empty
+    `text` blocks, which became empty boxes in the editor.
+    """
+    raw = "<PAGE><BLOCK>text[10,10,100,50]<FORK>Agawam" + "".join(
+        f"<BLOCK>text[434,{y},529,{y + 10}]<FORK>\n" for y in range(100, 400, 10)
+    ) + "<BLOCK>figure[10,500,100,600]<FORK><BLOCK>table[10,700,900,800]<FORK><table></table>"
+    items = get_adapter("unlimited-ocr-2").parse_layout(raw)
+    assert [(item["label"], item["content"]) for item in items] == [
+        ("Text", "Agawam"),
+        ("Picture", ""),
+        ("Table", "<table></table>"),
+    ]
+
+
+def test_unlimited2_document_request_follows_the_readme(monkeypatch):
+    adapter = get_adapter("unlimited-ocr-2")
+    assert adapter.document_prompt(3) == "<PAGE><image><PAGE><image><PAGE><image>Multi page parsing."
+    assert adapter.request_overrides("document")["custom_params"]["window_size"] == 1024
+    assert adapter.request_overrides("end2end")["custom_params"]["window_size"] == 128
+    # tokens_per_page * pages, until the served context is what limits it.
+    assert adapter.document_budget(2) == 16000
+    assert adapter.document_budget(32) == 131072 - 2048 - 2200 * 32
+    assert adapter.document_scope() == (False, 20)
+
+
+class _Stream:
+    status_code = 200
+    headers: dict = {}
+
+    def __init__(self, deltas, finish="stop"):
+        self.deltas, self.finish = deltas, finish
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def raise_for_status(self):
+        return None
+
+    def iter_lines(self, decode_unicode=True):
+        for delta in self.deltas:
+            yield "data: " + json.dumps({"choices": [{"delta": {"content": delta}}]})
+        yield "data: " + json.dumps({"choices": [{"delta": {}, "finish_reason": self.finish}]})
+        yield "data: [DONE]"
+
+
+def _document_client(monkeypatch, deltas, finish="stop"):
+    from app.services import inference as infmod
+
+    sent = {}
+
+    def post(url, json=None, **kwargs):  # noqa: A002
+        sent.update(json)
+        sent["_timeout"] = kwargs.get("timeout")
+        return _Stream(deltas, finish)
+
+    monkeypatch.setattr(infmod.requests, "post", post)
+    client = infmod.VllmClient(url="http://127.0.0.1:9/v1", model="Unlimited-OCR-2", adapter=get_adapter("unlimited-ocr-2"))
+    return client, sent
+
+
+def test_end2end_document_tolerates_a_slow_upload(monkeypatch):
+    """urllib3 sends the body under the connect timeout: 10 s of stall cut a 26 MB,
+    four-page request over an SSH tunnel on a real A40 run (`ClientDisconnect`)."""
+    from app.services import inference as infmod
+
+    client, sent = _document_client(monkeypatch, ["<PAGE><BLOCK>text[0,0,10,10]<FORK>one"])
+    client.end2end_document(["a"], lambda index, items: None)
+    assert sent["_timeout"][0] == infmod.DOCUMENT_UPLOAD_STALL_S >= 120
+    client.end2end(__import__("PIL.Image", fromlist=["Image"]).new("RGB", (10, 10)))
+    assert sent["_timeout"][0] == 10
+
+
+def test_end2end_document_splits_pages_while_streaming(monkeypatch):
+    client, sent = _document_client(monkeypatch, [
+        "<PAGE><BLOCK>text[0,0,10,10]<FORK>one",
+        "<PA",  # a marker split across two deltas
+        "GE><BLOCK>append_table[0,0,20,20]<FORK><table></table>",
+        "<PAGE><BLOCK>text[0,0,30,30]<FORK>three",
+    ])
+    pages = []
+    delivered = client.end2end_document(["a", "b", "c"], lambda index, items: pages.append((index, items)))
+    assert delivered == 3
+    assert [(i, [b["label"] for b in items]) for i, items in pages] == [(0, ["Text"]), (1, ["Table"]), (2, ["Text"])]
+    assert pages[0][1][0]["content"] == "one"
+    content = sent["messages"][0]["content"]
+    assert [part["type"] for part in content] == ["image_url", "image_url", "image_url", "text"]
+    assert content[-1]["text"] == "<PAGE><image>" * 3 + "Multi page parsing."
+    assert sent["custom_params"]["window_size"] == 1024
+    assert sent["max_tokens"] == 24000
+    assert sent["temperature"] == 0.0
+    assert sent["stream"] is True
+
+
+def test_end2end_document_withholds_a_page_cut_off_by_the_budget(monkeypatch):
+    client, _ = _document_client(
+        monkeypatch,
+        ["<PAGE><BLOCK>text[0,0,10,10]<FORK>one<PAGE><BLOCK>text[0,0,10,10]<FORK>cut of"],
+        finish="length",
+    )
+    pages = []
+    assert client.end2end_document(["a", "b"], lambda index, items: pages.append(index)) == 1
+    assert pages == [0]
+
+
+def test_end2end_document_ignores_pages_beyond_the_request(monkeypatch):
+    client, _ = _document_client(monkeypatch, ["<PAGE>x<PAGE>y<PAGE>z"])
+    pages = []
+    assert client.end2end_document(["a", "b"], lambda index, items: pages.append(index)) == 2
+    assert pages == [0, 1]
+
+
+def _item(ident, rel_path, pdf_page=None):
+    return {"id": ident, "page_id": ident, "rel_path": rel_path, "pdf_page": pdf_page}
+
+
+def test_work_units_group_pages_by_document():
+    from app.services import recognition
+
+    class Adapter:
+        def document_scope(self):
+            return True, 2
+
+    class Client:
+        adapter = Adapter()
+
+    class Opts:
+        model_mode = "native"
+
+    items = [
+        _item(1, "a.pdf", 0), _item(2, "a.pdf", 1), _item(3, "a.pdf", 2),
+        _item(4, "b.pdf", 0),
+        _item(5, "issue1/p1.png"), _item(6, "issue1/p2.png"), _item(7, "issue2/p1.png"),
+    ]
+    assert [[i["id"] for i in group] for group in recognition._work_units(items, Opts, Client)] == [
+        [1, 2], [3], [4], [5, 6], [7],
+    ]
+
+
+def test_work_units_stay_per_page_when_the_scope_is_page():
+    from app.services import recognition
+
+    adapter = get_adapter("unlimited-ocr-2")
+
+    class Client:
+        pass
+
+    Client.adapter = adapter
+
+    class Opts:
+        model_mode = "native"
+
+    items = [_item(1, "a.pdf", 0), _item(2, "a.pdf", 1)]
+    assert [len(group) for group in recognition._work_units(items, Opts, Client)] == [1, 1]
+
+
+def _document_harness(monkeypatch):
+    from app.services import prefill, recognition
+
+    marks = []
+    monkeypatch.setattr(recognition, "_mark_item", lambda ident, state, **v: marks.append((ident, state, v)))
+    monkeypatch.setattr(recognition, "_refresh_counts", lambda run_id: None)
+    monkeypatch.setattr(prefill, "document_page_input", lambda project, page, opts, client: f"uri{page}")
+    seen = []
+
+    def page(run, item, opts, client, engine, cancel):
+        alone = not getattr(client, "precomputed", False)
+        seen.append((item["id"], "alone" if alone else client.end2end(None)))
+        return [{"id": 1}], {"detected": 1, "inserted": 1}, None
+
+    monkeypatch.setattr(recognition, "_recognize_page", page)
+    return recognition, marks, seen
+
+
+_RUN = {"id": 7, "project_id": 3, "provider": "vast", "engine": "model", "adapter_id": "unlimited-ocr-2"}
+_TEXT = [{"bbox": [0, 0, 1, 1], "label": "Text", "content": "x"}]
+
+
+def test_recognize_document_reads_alone_the_pages_it_did_not_return(monkeypatch):
+    """Seen on a real A40 run: a page looping until `max_page_tokens` made the model
+    emit `<PAGE><PAGE></td>` and stop, so the next page came back empty, unread."""
+    import threading
+
+    recognition, marks, seen = _document_harness(monkeypatch)
+
+    class Client:
+        def end2end_document(self, encoded, on_page, cancel_event=None):
+            assert encoded == ["uri1", "uri2", "uri3"]
+            on_page(0, _TEXT)
+            on_page(1, [])  # empty: not read
+            return 2  # page 3 never delivered (budget)
+
+    group = [_item(1, "a.pdf", 0), _item(2, "a.pdf", 1), _item(3, "a.pdf", 2)]
+    recognition._recognize_document(_RUN, group, object(), Client(), threading.Event())
+    assert seen == [(1, _TEXT), (2, "alone"), (3, "alone")]
+    assert {ident: state for ident, state, _v in marks} == {1: "finished", 2: "finished", 3: "finished"}
+
+
+def test_recognize_document_fails_the_unread_pages_when_the_request_fails(monkeypatch):
+    import threading
+
+    recognition, marks, seen = _document_harness(monkeypatch)
+
+    class Client:
+        def end2end_document(self, encoded, on_page, cancel_event=None):
+            on_page(0, _TEXT)
+            raise RuntimeError("server gone")
+
+    recognition._recognize_document(_RUN, [_item(1, "a.pdf", 0), _item(2, "a.pdf", 1)], object(), Client(), threading.Event())
+    assert seen == [(1, _TEXT)]
+    final = {ident: state for ident, state, _v in marks}
+    assert final == {1: "finished", 2: "failed"}
+    assert [v["error"] for ident, state, v in marks if state == "failed"] == ["server gone"]
+
+
+def test_pdf_pages_reach_the_model_at_the_vendor_resolution(monkeypatch):
+    from PIL import Image
+
+    from app.services import pages as pagesvc
+
+    displayed = Image.new("RGB", (10, 10))
+    hires = Image.new("RGB", (30, 30))
+    calls = []
+    monkeypatch.setattr(pagesvc.scanmod, "render_pdf_page", lambda path, index, dpi: calls.append((index, dpi)) or (hires, (30, 30)))
+    monkeypatch.setattr(pagesvc.Path, "exists", lambda self: True)
+    active = {"value": None}
+    monkeypatch.setattr(pagesvc, "_active_transform_path", lambda page_id: active["value"])
+    page = {"id": 1, "source_kind": "pdf", "abs_path": "/x.pdf", "pdf_page": 4}
+
+    assert pagesvc.model_input_image(page, displayed, dpi=300) is hires
+    assert calls == [(4, 300)]
+    assert pagesvc.model_input_image(page, displayed, dpi=None) is displayed
+    assert pagesvc.model_input_image({**page, "source_kind": "image"}, displayed, dpi=300) is displayed
+    active["value"] = "/deskewed.png"
+    assert pagesvc.model_input_image(page, displayed, dpi=300) is displayed

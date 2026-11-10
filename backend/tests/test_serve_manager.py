@@ -7,6 +7,7 @@ stop-before-start, arresto) senza dipendere da pesi scaricati o GPU.
 """
 from __future__ import annotations
 
+import dataclasses
 import shutil
 import sys
 import threading
@@ -18,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.db import init_db
-from app.services import model_registry, serve_manager
+from app.services import model_adapters, model_registry, serve_manager
 
 
 @pytest.fixture(autouse=True)
@@ -579,10 +580,23 @@ def test_no_gpu_detected_means_no_offload_guess(monkeypatch):
     assert serve_manager.cpu_offload_gib(10 * 1024 ** 3) == 0
 
 
+def _fake_docker_model(monkeypatch) -> None:
+    """A docker-backed adapter launched with `docker run`: no built-in model is at
+    the moment, so the Docker image the generic path handles comes from here."""
+    from app.services import model_adapters
+
+    _fake_installed("surya-ocr-2.5")
+    monkeypatch.setattr(
+        model_adapters.get_adapter("surya-ocr-2.5"),
+        "serve_command",
+        lambda model_path, port: ["docker", "run", "--rm", "vllm/vllm-openai:v0.25.1", "/model"],
+    )
+
+
 def test_docker_backed_adapter_pulls_its_image_as_a_declared_phase(monkeypatch):
     """L'immagine vLLM dedicata pesa una decina di GB: senza una fase propria,
     `docker run` la scarica in silenzio e l'avvio sembra bloccato."""
-    _fake_installed("unlimited-ocr")
+    _fake_docker_model(monkeypatch)
     monkeypatch.setattr(serve_manager, "docker_gpu_blocker", lambda: None)
     pulled: list[str] = []
     monkeypatch.setattr(serve_manager, "_docker_image_present", lambda image: False)
@@ -606,15 +620,15 @@ def test_docker_backed_adapter_pulls_its_image_as_a_declared_phase(monkeypatch):
 
     monkeypatch.setattr("app.services.serve_manager.subprocess.Popen", FakeProc)
 
-    serve_manager.start("unlimited-ocr", port=18899)
+    serve_manager.start("surya-ocr-2.5", port=18899)
 
-    assert pulled == ["vllm/vllm-openai:unlimited-ocr"]
+    assert pulled == ["vllm/vllm-openai:v0.25.1"]
     assert "preparing_image" in phases
     assert "preparing_image" in serve_manager.PHASES
 
 
 def test_an_already_present_image_is_not_pulled_again(monkeypatch):
-    _fake_installed("unlimited-ocr")
+    _fake_docker_model(monkeypatch)
     monkeypatch.setattr(serve_manager, "docker_gpu_blocker", lambda: None)
     pulled: list[str] = []
     monkeypatch.setattr(serve_manager, "_docker_image_present", lambda image: True)
@@ -631,7 +645,7 @@ def test_an_already_present_image_is_not_pulled_again(monkeypatch):
 
     monkeypatch.setattr("app.services.serve_manager.subprocess.Popen", FakeProc)
 
-    serve_manager.start("unlimited-ocr", port=18900)
+    serve_manager.start("surya-ocr-2.5", port=18900)
 
     assert pulled == []
 
@@ -640,14 +654,14 @@ def test_docker_adapter_refuses_with_an_actionable_message_without_the_nvidia_to
     """`docker run --gpus all` esce con codice 125 e «could not select device
     driver»: illeggibile. Il prerequisito è di sistema e non possiamo
     installarlo noi, ma possiamo dirlo prima di spendere l'avvio."""
-    _fake_installed("unlimited-ocr")
+    _fake_docker_model(monkeypatch)
     monkeypatch.setattr(
         "app.services.serve_manager.shutil.which",
         lambda name: "/usr/bin/docker" if name == "docker" else None,
     )
 
     with pytest.raises(RuntimeError) as exc:
-        serve_manager.start("unlimited-ocr", port=18901)
+        serve_manager.start("surya-ocr-2.5", port=18901)
 
     message = str(exc.value)
     assert "nvidia-container-toolkit" in message
@@ -655,11 +669,11 @@ def test_docker_adapter_refuses_with_an_actionable_message_without_the_nvidia_to
 
 
 def test_docker_adapter_refuses_when_docker_itself_is_absent(monkeypatch):
-    _fake_installed("unlimited-ocr")
+    _fake_docker_model(monkeypatch)
     monkeypatch.setattr("app.services.serve_manager.shutil.which", lambda name: None)
 
     with pytest.raises(RuntimeError) as exc:
-        serve_manager.start("unlimited-ocr", port=18902)
+        serve_manager.start("surya-ocr-2.5", port=18902)
 
     assert "Docker non è installato" in str(exc.value)
 
@@ -670,7 +684,7 @@ def test_prerequisites_are_declared_in_the_registry_before_the_click(monkeypatch
         lambda name: "/usr/bin/docker" if name == "docker" else None,
     )
     items = {m["adapter_id"]: m for m in model_registry.list_models()}
-    assert items["unlimited-ocr"]["local_serve_blocker"] == "nvidia_container_toolkit_missing"
+    assert items["surya-ocr-2.5"]["local_serve_blocker"] == "nvidia_container_toolkit_missing"
     # Gli adapter che non passano da Docker non ereditano il blocco.
     assert items["monkeyocrv2-parsing"]["local_serve_blocker"] is None
 
@@ -878,60 +892,6 @@ def test_apple_silicon_serves_through_mlx_and_does_not_need_the_registry_downloa
     ], argv
 
 
-def test_apple_silicon_serves_unlimited_ocr_through_the_dedicated_server(monkeypatch):
-    """Il server MLX standard non inietta l'immagine per l'architettura
-    `unlimited_ocr` (misurato: `prompt_tokens` resta pari al solo testo).
-    Unlimited-OCR usa quindi un server dedicato, che espone la stessa
-    interfaccia OpenAI ma si regge sull'API `mlx_vlm.generate`; il default è la
-    variante bf16."""
-    from app.services import mlx_runtime
-
-    monkeypatch.setattr(
-        serve_manager.hardware,
-        "pick_serve_runtime",
-        lambda capabilities, machine=None: serve_manager.hardware.RUNTIME_MLX,
-    )
-    monkeypatch.setattr(mlx_runtime, "ensure_ready", lambda: None)
-    monkeypatch.setattr(mlx_runtime, "python_bin", lambda: Path("/tmp/mlx-python"))
-    # La variante dipende dalla memoria: su un Mac da 24 GB entra il bf16.
-    monkeypatch.setattr(
-        serve_manager.hardware,
-        "summary",
-        lambda: {
-            "apple_silicon": True, "cuda": {"devices": []}, "memory_gb": 24.0,
-            "runtimes": {"vllm": {"supported": False}, "mlx-vlm": {"supported": True}},
-            "usable_runtimes": ["mlx-vlm"],
-        },
-    )
-
-    captured: dict = {}
-
-    class FakeProc:
-        pid = 4322
-
-        def poll(self):
-            return None
-
-    def fake_popen(argv, **kwargs):
-        captured["argv"] = argv
-        return FakeProc()
-
-    monkeypatch.setattr(serve_manager.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(serve_manager, "_reclaim_port", lambda port, settle=10.0: None)
-    monkeypatch.setattr(serve_manager, "_set_phase", lambda *a, **k: None)
-    monkeypatch.setattr(serve_manager, "is_installed", lambda adapter_id: False)
-    monkeypatch.setattr(serve_manager, "_pid_alive", lambda pid: True)
-
-    serve_manager.start("unlimited-ocr", port=18908)
-
-    argv = captured["argv"]
-    assert argv[1].endswith("unlimited_ocr_mlx_server.py"), argv
-    assert argv[argv.index("--model") + 1] == "mlx-community/Unlimited-OCR-bf16"
-    # Su un Mac grande la cache di MLX resta com'è.
-    assert "--cache-limit-gb" not in argv
-    assert argv[argv.index("--port") + 1] == "18908"
-
-
 def test_serve_start_names_the_mlx_variant_the_server_loads(monkeypatch):
     """Il nome chiesto al server deve essere la variante che il server carica:
     senza scelta salvata, su un Mac da 8 GB è l'8-bit, non il bf16 di default
@@ -945,6 +905,16 @@ def test_serve_start_names_the_mlx_variant_the_server_loads(monkeypatch):
     }
     monkeypatch.setattr(hardware, "summary", lambda: small_mac)
     monkeypatch.setattr(hardware, "pick_serve_runtime", lambda capabilities, machine=None: hardware.RUNTIME_MLX)
+    # No built-in model declares MLX variants at the moment: a declaration made here.
+    adapter = model_adapters.get_adapter("paddleocr-vl")
+    monkeypatch.setattr(adapter, "capabilities", dataclasses.replace(
+        adapter.capabilities,
+        approx_size_gb=6.0,
+        local_mlx_repo="mlx-community/Example-bf16",
+        local_mlx_repo_choices=(("bf16", "mlx-community/Example-bf16"), ("8bit", "mlx-community/Example-8bit")),
+        local_mlx_weight_factor=1.05,
+        local_mlx_variant_weight_factors=(("mlx-community/Example-bf16", 1.05), ("mlx-community/Example-8bit", 0.6)),
+    ))
     monkeypatch.setattr(
         serve_manager, "start_async",
         lambda adapter_id, port, owner_id=None: serve_manager.ServeStatus(
@@ -952,50 +922,6 @@ def test_serve_start_names_the_mlx_variant_the_server_loads(monkeypatch):
         ),
     )
     with TestClient(app) as client:
-        res = client.post("/api/models/unlimited-ocr/serve/start", json={"port": 18911})
+        res = client.post("/api/models/paddleocr-vl/serve/start", json={"port": 18911})
         assert res.status_code == 202
-        assert infmod.get_inference_config()["model"] == "mlx-community/Unlimited-OCR-8bit"
-
-
-def test_small_mac_serves_unlimited_ocr_without_the_mlx_buffer_cache(monkeypatch):
-    """Su 8 GB la cache dei buffer di MLX porta il GPU in timeout: il server
-    dedicato parte con la cache spenta, e con la variante 8-bit."""
-    from app.services import mlx_runtime
-
-    monkeypatch.setattr(
-        serve_manager.hardware, "pick_serve_runtime",
-        lambda capabilities, machine=None: serve_manager.hardware.RUNTIME_MLX,
-    )
-    monkeypatch.setattr(
-        serve_manager.hardware, "summary",
-        lambda: {
-            "apple_silicon": True, "cuda": {"devices": []}, "memory_gb": 8.0,
-            "runtimes": {"vllm": {"supported": False}, "mlx-vlm": {"supported": True}},
-            "usable_runtimes": ["mlx-vlm"],
-        },
-    )
-    monkeypatch.setattr(mlx_runtime, "ensure_ready", lambda: None)
-    monkeypatch.setattr(mlx_runtime, "python_bin", lambda: Path("/tmp/mlx-python"))
-    captured: dict = {}
-
-    class FakeProc:
-        pid = 4323
-
-        def poll(self):
-            return None
-
-    def fake_popen(argv, **kwargs):
-        captured["argv"] = argv
-        return FakeProc()
-
-    monkeypatch.setattr(serve_manager.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(serve_manager, "_reclaim_port", lambda port, settle=10.0: None)
-    monkeypatch.setattr(serve_manager, "_set_phase", lambda *a, **k: None)
-    monkeypatch.setattr(serve_manager, "is_installed", lambda adapter_id: False)
-    monkeypatch.setattr(serve_manager, "_pid_alive", lambda pid: True)
-
-    serve_manager.start("unlimited-ocr", port=18912)
-
-    argv = captured["argv"]
-    assert argv[argv.index("--model") + 1] == "mlx-community/Unlimited-OCR-8bit"
-    assert argv[argv.index("--cache-limit-gb") + 1] == "0"
+        assert infmod.get_inference_config()["model"] == "mlx-community/Example-8bit"

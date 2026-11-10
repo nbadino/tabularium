@@ -6,7 +6,7 @@ OTSL. Ogni toolchain però vuole una forma diversa degli stessi campioni:
 
 | Vista | File | Consumatori |
 |---|---|---|
-| `ms-swift-jsonl` | `train.jsonl`, `val.jsonl` | MonkeyOCRv2, Qwen3-VL, Unlimited-OCR, DeepSeek-OCR-2, dots.ocr, MinerU2.5 |
+| `ms-swift-jsonl` | `train.jsonl`, `val.jsonl` | MonkeyOCRv2, Qwen3-VL, Unlimited-OCR-2, DeepSeek-OCR-2, dots.ocr, MinerU2.5 |
 | `paddleformers-messages` | `train.jsonl`, `val.jsonl` | PaddleOCR-VL (`paddleformers-cli`) |
 | `llamafactory-sharegpt` | `train.json`, `val.json`, `dataset_info.json` | GLM-OCR (`llamafactory-cli`) |
 

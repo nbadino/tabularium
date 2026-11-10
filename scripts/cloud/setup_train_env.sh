@@ -111,8 +111,8 @@ case "$PROFILE" in
     python -m pip install "deepspeed==0.17.1"
     ;;
   legacy)
-    # Unlimited-OCR / DeepSeek-OCR-2: il remote code usa API rimosse in
-    # transformers 5; 4.46.3 è l'ultima che importa entrambi.
+    # DeepSeek-OCR-2: the remote code uses APIs removed in transformers 5; 4.46.3 is
+    # the latest release that imports it.
     REPO="$ROOT"
     python -m pip install "ms-swift==4.6.0" "transformers==4.46.3"
     install_common

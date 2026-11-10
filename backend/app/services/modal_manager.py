@@ -73,12 +73,6 @@ TEMPLATES: dict[str, ModalTemplate] = {
             script=REPO_ROOT / "scripts" / "cloud" / "modal_mineru.py",
         ),
         ModalTemplate(
-            id="unlimited-ocr",
-            label="Unlimited-OCR",
-            app_name="tabularium-unlimited-ocr",
-            script=REPO_ROOT / "scripts" / "cloud" / "modal_unlimited_ocr.py",
-        ),
-        ModalTemplate(
             id="dots-ocr",
             label="dots.mocr",
             app_name="tabularium-dots-ocr",

@@ -28,6 +28,8 @@ UNLIMITED2_LABELS: dict[str, str] = {
     "page_number": "Page-footer",
     "image": "Picture",
     "figure": "Picture",
+    "picture": "Picture",  # `IMAGE_LABELS` of the post-processor, like `img`
+    "img": "Picture",
     "chart": "Picture",
     "seal": "Picture",
     "table": "Table",
@@ -139,6 +141,17 @@ SPEC = ModelSpec(
                           label="settings.unlimitedWindowSize"),
             WorkflowField("max_page_tokens", "int", default=20000, minimum=0, maximum=131072,
                           label="settings.unlimited2MaxPageTokens"),
+            WorkflowField("request_scope", "enum", default="page", values=("page", "document"), essential=True,
+                          label="settings.unlimited2RequestScope",
+                          hints=(("page", "settings.unlimited2ScopePageHint"),
+                                 ("document", "settings.unlimited2ScopeDocumentHint"))),
+            # The vendor's n-gram window for more than one page.
+            WorkflowField("document_window_size", "int", default=1024, minimum=1, maximum=2048,
+                          label="settings.unlimited2DocumentWindowSize"),
+            # Tabularium's guard, not the vendor's: every page reserves output tokens and
+            # image tokens in the 131072-token context this recipe serves.
+            WorkflowField("document_max_pages", "int", default=20, minimum=2, maximum=32,
+                          label="settings.unlimited2DocumentMaxPages"),
         ),
         workflow_intro="settings.unlimited2WorkflowIntro",
     )),

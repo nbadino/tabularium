@@ -41,7 +41,7 @@ FORMULA_PROMPT = (
 def _training_prompt(recipe, adapter, task: str, label: str | None = None) -> str:
     """Prompt di training: ricetta → adapter → canonico.
 
-    Some adapters are end-to-end only (`unlimited-ocr`, `dots.mocr`) and raise on
+    Some adapters are end-to-end only (`unlimited-ocr-2`, `dots.mocr`) and raise on
     a per-task prompt: they used to make the whole dataset build fail. The
     recipe's prompts are the model-specific truth; the canonical prompts keep
     the builder usable when a model has none. Inference prompts are a separate

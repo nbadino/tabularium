@@ -140,41 +140,6 @@ def test_teleocr_native_gateway_posts_binary_image_with_requests_data(monkeypatc
     assert blocks == [{"bbox": [100, 200, 900, 800], "label": "Text", "content": "native"}]
 
 
-def test_unlimited_ocr_uses_official_vllm_recipe_and_parses_grounding():
-    adapter = model_adapters.get_adapter("unlimited-ocr")
-    assert adapter.prompt_for("end2end").startswith("<image>")
-    assert adapter.request_overrides("end2end") == {
-        "skip_special_tokens": False,
-        "images_config": {"image_mode": "gundam"},
-        "mm_processor_kwargs": {"crop_mode": True},
-        "vllm_xargs": {"ngram_size": 35, "window_size": 128},
-    }
-    parsed = adapter.parse_layout(
-        "<|det|>text [10,20,300,400]<|/det|>Hello <|ref|>x<|/ref|>\n"
-        "<|det|>image [1,2,3]<|/det|>ignored"
-    )
-    assert parsed == [{"bbox": [10.0, 20.0, 300.0, 400.0], "label": "text", "content": "Hello"}]
-
-
-def test_unlimited_ocr_settings_reach_the_official_request_overrides(tmp_path, monkeypatch):
-    from app import config
-    from app.db import init_db
-    from app.services import model_settings
-
-    monkeypatch.setattr(config, "DB_PATH", tmp_path / "unlimited-settings.db")
-    init_db()
-    model_settings.save_settings("unlimited-ocr", {
-        "workflow": {"ngram_size": 42, "window_size": 1024, "image_mode": "base"},
-    })
-    adapter = model_adapters.get_adapter("unlimited-ocr")
-    assert adapter.request_overrides("end2end") == {
-        "skip_special_tokens": False,
-        "images_config": {"image_mode": "base"},
-        "mm_processor_kwargs": {"crop_mode": False},
-        "vllm_xargs": {"ngram_size": 42, "window_size": 1024},
-    }
-
-
 def test_mineru_ngram_override_reaches_vllm_xargs(tmp_path, monkeypatch):
     from app import config
     from app.db import init_db
@@ -552,7 +517,7 @@ def test_chat_forwards_each_accepted_delta_to_live_output(monkeypatch):
     assert output == ["hello", " world"]
 
 
-def test_unlimited_end2end_accepts_grounded_markdown_until_server_finish(monkeypatch):
+def test_unlimited2_end2end_accepts_the_block_protocol_until_server_finish(monkeypatch):
     class Response:
         def __enter__(self):
             return self
@@ -566,7 +531,7 @@ def test_unlimited_end2end_accepts_grounded_markdown_until_server_finish(monkeyp
         def iter_lines(self, decode_unicode=True):
             del decode_unicode
             yield "data: " + json.dumps({
-                "choices": [{"delta": {"content": "<|det|>text [1,2,300,400]<|/det|>Hello"}}],
+                "choices": [{"delta": {"content": "<PAGE><BLOCK>text[1,2,300,400]<FORK>Hello"}}],
             })
             yield "data: [DONE]"
 
@@ -579,17 +544,16 @@ def test_unlimited_end2end_accepts_grounded_markdown_until_server_finish(monkeyp
     monkeypatch.setattr(infmod.requests, "post", post)
     client = infmod.VllmClient(
         url="https://workspace--unlimited.modal.run/v1",
-        adapter=model_adapters.get_adapter("unlimited-ocr"),
+        adapter=model_adapters.get_adapter("unlimited-ocr-2"),
     )
     items = client.end2end(Image.new("RGB", (16, 16), "white"), total_timeout=5)
 
-    assert items[0]["label"] == "text"
     assert items[0]["content"] == "Hello"
     assert requests_seen[0]["skip_special_tokens"] is False
-    assert requests_seen[0]["images_config"] == {"image_mode": "gundam"}
-    assert requests_seen[0]["max_tokens"] == 8192
-    assert requests_seen[0]["messages"][0]["content"][0]["type"] == "text"
-    assert requests_seen[0]["messages"][0]["content"][1]["type"] == "image_url"
+    assert requests_seen[0]["images_config"] == {"crop_mode": True}
+    assert requests_seen[0]["max_tokens"] == 8000
+    assert requests_seen[0]["messages"][0]["content"][0]["type"] == "image_url"
+    assert requests_seen[0]["messages"][0]["content"][1]["type"] == "text"
 
 
 def test_deepseek_end2end_uses_official_grounded_prompt_and_vllm_sampling(monkeypatch, tmp_path):

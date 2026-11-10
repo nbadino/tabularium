@@ -26,7 +26,6 @@ def test_monkeyocr_adapter_contract():
         ("monkeyocrv2-parsing", "two_stage"),
         ("mineru2.5", "official"),
         ("teleocr", "official"),
-        ("unlimited-ocr", "end2end"),
         ("deepseek-ocr", "end2end"),
         ("dots-ocr", "end2end"),
         ("paddleocr-vl", "official"),

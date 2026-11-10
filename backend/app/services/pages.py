@@ -198,6 +198,20 @@ def load_original_source_image(page: sqlite3.Row) -> Image.Image | None:
     return _load_source_image(page, use_deskew=False)
 
 
+def model_input_image(page: sqlite3.Row, image: Image.Image, *, dpi: int | None) -> Image.Image:
+    """The pixels to send to a model that declares its own PDF rendering resolution.
+
+    Only a PDF page shown as rendered qualifies: a deskewed or dewarped page must reach
+    the model as the canvas shows it. The canvas keeps its own resolution either way.
+    """
+    if not dpi or page["source_kind"] != "pdf" or _active_transform_path(page["id"]) is not None:
+        return image
+    if not Path(page["abs_path"]).exists():
+        return image
+    rendered = scanmod.render_pdf_page(page["abs_path"], page["pdf_page"] or 0, dpi=int(dpi))
+    return rendered[0] if rendered is not None else image
+
+
 def maybe_auto_deskew(
     page: sqlite3.Row, threshold: float = 0.10, *, may_transform: bool = True
 ) -> tuple[Image.Image, float]:

@@ -31,7 +31,6 @@ from .trainer_script import _now
 PROFILES = {
     "monkeyocrv2-parsing": "monkey",
     "qwen3-vl-8b": "qwen",
-    "unlimited-ocr": "legacy",
     "unlimited-ocr-2": "uocr2",
     "deepseek-ocr": "legacy",
     "dots-ocr": "dots",

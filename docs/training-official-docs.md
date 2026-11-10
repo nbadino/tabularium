@@ -306,50 +306,7 @@ embedding/reranker variants.)
 
 ---
 
-## 3. Unlimited-OCR (baidu/Unlimited-OCR)
-
-**Status: absent.** The official repository documents inference only. Fine-tuning appears exactly
-once, as a news line, with no command, no dataset, no toolchain script:
-
-> "- [2026/07/21] 🤝 Thanks to the [ms-swift community](https://github.com/modelscope/ms-swift) for
-> their support, our model now supports training with [ms-swift](https://github.com/modelscope/ms-swift)."
->
-> — <https://github.com/baidu/Unlimited-OCR#readme> (identical line in
-> <https://huggingface.co/baidu/Unlimited-OCR>)
-
-The repo has 12 files, no `train/`, no scheduler, no JSONL schema, no hyperparameters.
-
-**Toolchain: ms-swift only** (as a pointer). There is **no** `examples/models/unlimited_ocr/` in
-ms-swift either, so even the framework ships no runnable script for it — only registration:
-`swift/template/templates/deepseek.py` (`MLLMTemplateType.unlimited_ocr`, a `DeepseekOCR` subclass
-with an R-SWA windowed `data_collator`, `no_repeat_ngram_size` / `ngram_window` generation env args,
-and official `re_match`/`process_image_with_refs` post-processing), plus
-`swift/model/model_arch.py` (`MLLMModelArch.unlimited_ocr`).
-
-**Vendor inference prompts** (the only place prompt strings appear — these are what training
-targets would have to match, but the vendor does not say so):
-
-```
-'<image>document parsing.'
-'<image>Multi page parsing.'
-```
-
-with `generate(..., image_mode="gundam", ngram_window=128)`.
-
-**ms-swift table row:**
-
-```
-|[PaddlePaddle/Unlimited-OCR](https://modelscope.cn/models/PaddlePaddle/Unlimited-OCR)|unlimited_ocr|unlimited_ocr||transformers==4.46.3, easydict|✘|vision|[PaddlePaddle/Unlimited-OCR](https://huggingface.co/PaddlePaddle/Unlimited-OCR)|
-```
-
-(the Modelscope id is `PaddlePaddle/Unlimited-OCR` while the GitHub/HF org is `baidu`; the HF link in
-that row 401s — the live card is `baidu/Unlimited-OCR`).
-
-**Any `swift sft` command for Unlimited-OCR is a reconstruction, not a vendor recipe.**
-
----
-
-## 4. dots.ocr / dots.mocr (rednote-hilab)
+## 3. dots.ocr / dots.mocr (rednote-hilab)
 
 **Status: absent (vendor), registration-only (ms-swift).**
 
@@ -380,7 +337,7 @@ README shows the format but never states it as a training target.)
 
 ---
 
-## 5. GLM-OCR (zai-org/GLM-OCR) — LLaMA-Factory
+## 4. GLM-OCR (zai-org/GLM-OCR) — LLaMA-Factory
 
 **Status: vendor.** Official `examples/finetune/README.md` (announced 2026.2.12), with two YAMLs and
 example data in the repo.
@@ -539,7 +496,7 @@ is no OTSL mention anywhere in GLM-OCR docs.
 
 ---
 
-## 6. DeepSeek-OCR-2
+## 5. DeepSeek-OCR-2
 
 **Status: integration + third-party vendor.** deepseek-ai's own card documents **inference only** —
 no training section at all (<https://huggingface.co/deepseek-ai/DeepSeek-OCR-2>). The two recipes
@@ -694,7 +651,7 @@ list with `r=16/alpha=16` (not `all-linear`, not 8/32); `lr 2e-4` (10–100× th
 
 ---
 
-## 7. MinerU2.5 (opendatalab)
+## 6. MinerU2.5 (opendatalab)
 
 **Status: vendor, but with a private config.** Official lesson 04 of the MinerU training camp,
 `04课：MinerU 1.2B 模型微调` in <https://github.com/opendatalab/mineru-tutorials>.
@@ -790,7 +747,7 @@ python mineru_ext/scripts/run_mineru_vllm_singletask.py -i "输入的图片路�
 
 ---
 
-## 8. PaddleOCR-VL (PaddlePaddle) — PaddleFormers + ERNIEKit
+## 7. PaddleOCR-VL (PaddlePaddle) — PaddleFormers + ERNIEKit
 
 **Status: vendor.** There is no standalone `PaddleOCR-VL` repository (404); the weights live at
 `PaddlePaddle/PaddleOCR-VL` and fine-tuning is documented in two Paddle repositories.
@@ -847,7 +804,7 @@ Tabularium uses **8.1**: it documents LoRA as well as full SFT and its dataset s
 canonical one. ERNIEKit's `image_info` exporter was removed rather than kept as a second source of
 truth.
 
-## 9. TeleOCR and LightOnOCR-3 — no training code
+## 8. TeleOCR and LightOnOCR-3 — no training code
 
 - TeleOCR (<https://github.com/caipeng328/TeleOCR>): inference only. The paper describes four
   training stages (VL alignment, deformation-aware, content-structure decoupled, GRPO) and even

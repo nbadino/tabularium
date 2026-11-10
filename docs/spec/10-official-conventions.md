@@ -278,3 +278,27 @@ away from the others. `Title`, `Page-header`, `Section-header` and `List-item` e
 taxonomy for this reason.
 
 ---
+
+## Unlimited-OCR-2 request protocol
+
+Primary sources: the model card of `baidu/Unlimited-OCR-2` (revision `c14071b`; later commits
+changed only the README), `infer.py` and `utils/process_unlimitedOCR2.py` in
+`github.com/baidu/Unlimited-OCR`, and the vendor's SGLang wheel.
+
+| Fact | Value |
+|---|---|
+| Serving | the vendor's SGLang wheel, flags and environment in `backend/app/models/unlimited_ocr2.py` |
+| Prompt | `"<PAGE><image>" * pages + "Multi page parsing."`, images first, in page order |
+| Request | `temperature` 0, `skip_special_tokens` false, `images_config.crop_mode` (true = gundam), streaming |
+| N-gram window | 128 for one page, 1024 for several (`custom_params.window_size`) |
+| Output budget | 8000 tokens per page, per-page guard `max_page_tokens` 20000, client timeout 6000 s |
+| PDF rendering | 300 DPI in the vendor's example |
+| Output | blocks `<BLOCK>label[x1,y1,x2,y2]<FORK>content`, one `<PAGE>` per input page |
+| Empty blocks | dropped, except image kinds (`_render_blocks`) |
+
+Tabularium's own choices, not the vendor's: a document is one PDF or one folder of scans, a
+request holds at most `document_max_pages` pages (default 20, within the served 131072-token
+context), `cross_`/`append_` fragments stay as one block per page, and a page the document
+request did not read (empty, or cut by the budget) is read again with the single-page request.
+Measured on an A40 (2026-11-10): after a page looped up to `max_page_tokens`, the model emitted
+`<PAGE><PAGE></td>` and stopped, leaving the next page unread.

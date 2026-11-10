@@ -346,7 +346,7 @@ def test_recovery_restarts_only_a_dead_local_server(monkeypatch):
 
     monkeypatch.setattr(serve_manager, "start_async", fake_start)
     cancel = _threading.Event()
-    local = {"engine": "model", "provider": "local", "adapter_id": "unlimited-ocr",
+    local = {"engine": "model", "provider": "local", "adapter_id": "unlimited-ocr-2",
              "endpoint": "http://127.0.0.1:8889/v1", "owner_id": 1}
 
     # Remoto: non si riavvia niente da qui.
@@ -354,7 +354,7 @@ def test_recovery_restarts_only_a_dead_local_server(monkeypatch):
     assert started == []
     # Locale e morto: si riavvia sulla stessa porta e si aspetta che risponda.
     assert recognition._recover_local_server(local, cancel) is True
-    assert started == [("unlimited-ocr", 8889)]
+    assert started == [("unlimited-ocr-2", 8889)]
 
 
 def test_playground_reads_headers_and_table_with_end2end_model(tmp_path, monkeypatch):

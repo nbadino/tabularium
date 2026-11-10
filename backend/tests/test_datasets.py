@@ -148,10 +148,10 @@ def test_build_datasets(tmp_path: Path):
 
         # Un adapter end2end-only non deve far fallire la build: i suoi
         # prompt per-task vengono dalla ricetta (canonici), non da
-        # `adapter.prompt_for`, che per Unlimited-OCR/dots.mocr non esiste.
+        # `adapter.prompt_for`, che per dots.mocr non esiste.
         e2e = client.post(
             f"/api/projects/{pid}/datasets/build",
-            json={"split_ratio": 0.5, "seed": 42, "approved_only": False, "adapter_id": "unlimited-ocr"},
+            json={"split_ratio": 0.5, "seed": 42, "approved_only": False, "adapter_id": "dots-ocr"},
         )
         assert e2e.status_code == 200, e2e.text
         e2e_table = [

@@ -12,6 +12,7 @@ from ..adapters import compute_profiles as profilestore
 from ..adapters import store
 from ..db import connect
 from . import audit
+from .i18n import msg
 from .inference import VllmClient
 from .model_adapters import get_adapter
 from .url_security import validate_endpoint
@@ -100,7 +101,13 @@ def activate(profile_id: int, actor: dict | None = None) -> dict:
         if row is None:
             raise HTTPException(status_code=404, detail="profilo compute non trovato")
         endpoint = validate_endpoint(row["endpoint"])
-        adapter = get_adapter(row["model_adapter_id"])
+        try:
+            adapter = get_adapter(row["model_adapter_id"])
+        except ValueError as exc:
+            # A stored profile can outlive its model (a removed adapter).
+            raise HTTPException(
+                status_code=409, detail=msg("profile_adapter_unavailable", "it", name=row["model_adapter_id"]),
+            ) from exc
         key = _credential(row["credential_ref"])
         if row["credential_ref"] == "meta:inference_api_key":
             from . import inference

@@ -126,20 +126,22 @@ def test_model_settings_persist_validate_and_reset(tmp_path, monkeypatch):
         })
     with pytest.raises(HTTPException, match="richiede un logits processor"):
         model_settings.save_settings("paddleocr-vl", {"generation": {"no_repeat_ngram_size": 100}})
-    unlimited = model_settings.get_settings("unlimited-ocr")
+    unlimited = model_settings.get_settings("unlimited-ocr-2")
     assert unlimited["recommended"]["workflow"] == {
-        "ngram_size": 35, "window_size": 128, "image_mode": "gundam",
+        "image_mode": "gundam", "ngram_size": 35, "window_size": 128, "max_page_tokens": 20000,
+        "request_scope": "page", "document_window_size": 1024, "document_max_pages": 20,
     }
-    tuned = model_settings.save_settings("unlimited-ocr", {
+    tuned = model_settings.save_settings("unlimited-ocr-2", {
         "workflow": {"ngram_size": 40, "window_size": 1024, "image_mode": "base"},
     })
     assert tuned["effective"]["workflow"] == {
-        "ngram_size": 40, "window_size": 1024, "image_mode": "base",
+        "image_mode": "base", "ngram_size": 40, "window_size": 1024, "max_page_tokens": 20000,
+        "request_scope": "page", "document_window_size": 1024, "document_max_pages": 20,
     }
     with pytest.raises(HTTPException, match="image_mode deve essere uno tra"):
-        model_settings.save_settings("unlimited-ocr", {"workflow": {"image_mode": "crop"}})
+        model_settings.save_settings("unlimited-ocr-2", {"workflow": {"image_mode": "crop"}})
     with pytest.raises(HTTPException, match="richiede un logits processor"):
-        model_settings.save_settings("unlimited-ocr", {"generation": {"no_repeat_ngram_size": 35}})
+        model_settings.save_settings("unlimited-ocr-2", {"generation": {"no_repeat_ngram_size": 35}})
 
     reset = model_settings.save_settings("teleocr", {})
     assert reset["overrides"] == {}
@@ -319,33 +321,41 @@ def test_mlx_model_settings_reject_unsupported_models_and_values(tmp_path, monke
         model_settings.save_settings("paddleocr-vl", {"mlx": {"kv_bits": 9}})
 
 
-def test_unlimited_ocr_mlx_variant_and_repetition_guard(tmp_path, monkeypatch):
-    # La variante MLX (bf16 vs 8-bit) e il guard anti-loop sono opzioni del
-    # modello `unlimited-ocr`, l'unico che dichiara le varianti e la penalità.
-    monkeypatch.setattr(config, "DB_PATH", tmp_path / "unlimited-mlx.db")
+def test_mlx_variant_and_repetition_guard(tmp_path, monkeypatch):
+    # No built-in model declares both MLX variants and a repetition guard at the
+    # moment: the options are generic, so they are exercised on a declaration made here.
+    from dataclasses import replace
+    from app.services import model_adapters
+
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "mlx-variants.db")
     init_db()
-    settings = model_settings.get_settings("unlimited-ocr")
-    assert settings["recommended"]["mlx"]["repetition_penalty"] == 1.1
-    assert settings["recommended"]["mlx"]["repetition_context_size"] == 128
+    adapter = model_adapters.get_adapter("qwen3-vl-8b")
+    monkeypatch.setattr(adapter, "capabilities", replace(
+        adapter.capabilities,
+        local_mlx_repo_choices=(("bf16", "mlx-community/Example-bf16"), ("8bit", "mlx-community/Example-8bit")),
+    ))
+    settings = model_settings.get_settings("qwen3-vl-8b")
+    assert settings["recommended"]["mlx"]["repetition_penalty"] == adapter.capabilities.local_mlx_repetition_penalty
+    assert settings["recommended"]["mlx"]["repetition_context_size"] == adapter.capabilities.local_mlx_repetition_context_size
     assert {choice["repo"] for choice in settings["mlx_repo_choices"]} == {
-        "mlx-community/Unlimited-OCR-bf16",
-        "mlx-community/Unlimited-OCR-8bit",
+        "mlx-community/Example-bf16",
+        "mlx-community/Example-8bit",
     }
 
-    saved = model_settings.save_settings("unlimited-ocr", {
+    saved = model_settings.save_settings("qwen3-vl-8b", {
         "mlx": {
-            "repo": "mlx-community/Unlimited-OCR-8bit",
+            "repo": "mlx-community/Example-8bit",
             "repetition_penalty": 1.15,
             "repetition_context_size": 256,
         },
     })
     assert saved["restart_required"] is True
-    assert saved["effective"]["mlx"]["repo"] == "mlx-community/Unlimited-OCR-8bit"
+    assert saved["effective"]["mlx"]["repo"] == "mlx-community/Example-8bit"
     assert saved["effective"]["mlx"]["repetition_penalty"] == 1.15
     assert saved["effective"]["mlx"]["repetition_context_size"] == 256
 
     with pytest.raises(HTTPException, match="variante"):
-        model_settings.save_settings("unlimited-ocr", {"mlx": {"repo": "mlx-community/nope"}})
+        model_settings.save_settings("qwen3-vl-8b", {"mlx": {"repo": "mlx-community/nope"}})
     # Un modello che non dichiara il guard non accetta i suoi campi.
     with pytest.raises(HTTPException, match="non riconosciuto"):
         model_settings.save_settings("paddleocr-vl", {"mlx": {"repetition_penalty": 1.1}})

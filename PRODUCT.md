@@ -76,9 +76,9 @@ del pipeline.
   NVIDIA il percorso è vLLM; su Apple Silicon è MLX (`mlx-vlm`), con un server
   OpenAI-compatibile che copre i modelli il cui percorso è stato **verificato su una pagina
   vera**: PaddleOCR-VL e Qwen3-VL. MonkeyOCRv2 e MinerU2.5 non hanno un port MLX;
-  DeepSeek-OCR-2 e Unlimited-OCR richiedono un vincolo di decodifica (il logits processor
+  DeepSeek-OCR-2 richiede un vincolo di decodifica (il logits processor
   n-gram di vLLM) che MLX non espone; dots.mocr e GLM-OCR si caricano ma non completano una
-  pagina (fallimento rumoroso e successo vuoto, rispettivamente). Tutti e sei restano remoti
+  pagina (fallimento rumoroso e successo vuoto, rispettivamente). Tutti e cinque restano remoti
   su un Mac, e la UI lo dice per modello, con la causa, invece di offrire un comando che
   fallisce. Su Windows il percorso è WSL2. Il runtime locale (venv vLLM, venv MLX, pipeline
   Paddle per il percorso ufficiale di PaddleOCR-VL) lo prepara Tabularium al primo avvio:

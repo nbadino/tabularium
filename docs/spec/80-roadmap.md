@@ -146,15 +146,7 @@
   - **Which models are local, and why the others are not** — always a **measurement**, made by
     actually serving the model on a page. MinerU2.5 uses the vendor's isolated native `MinerUClient`
     MLX runtime (2.0.5), verified on corpus scans with a complete layout and valid HTML tables; dense
-    tables are still to be evaluated against gold annotations. **Unlimited-OCR** runs locally since
-    `mlx-vlm` 0.6.4 ships `unlimited_ocr` with `RingSlidingKVCache` (upstream R-SWA) — measured
-    2026-10-13 on an M5 Pro / 24 GB with `mlx_vlm 0.7.1`: 265.6 tok/s, TTFT 1.2 s, 5.8 GB,
-    grounded-markdown output with HTML `<table>`. Since the n-gram processor is still missing, its MLX
-    recipe includes a repetition penalty with a 128-token window (without it generation loops: one
-    line repeated 23 times), it is served by a dedicated server
-    (`services/unlimited_ocr_mlx_server.py`, because `mlx_vlm.server` does not inject the image for
-    this architecture), and on Macs up to 12 GB it starts with MLX's buffer cache off and clears it
-    after each page (otherwise the GPU timed out on the first page). Remote only: **MonkeyOCRv2**
+    tables are still to be evaluated against gold annotations. Remote only: **MonkeyOCRv2**
     (`mlx-vlm` has no such architecture), **DeepSeek-OCR-2** (its verified recipe relies on vLLM's
     n-gram logits processor), **dots.mocr** (END2END generation stops at 682 characters and the run
     fails), **GLM-OCR** (the run "succeeds" with **zero** blocks inserted — an empty success, worse than
@@ -351,8 +343,8 @@
     documented real run**; otherwise `experimental`. No recipe without official documentation behind
     it. The status matrix lives in `docs/guide/training.md`.
   - **Current state (to verify, not to assume).** The toolchain is the one the vendor documents:
-    MonkeyOCRv2 uses its bundled ms-swift fork; Qwen3-VL, Unlimited-OCR, DeepSeek-OCR-2 and dots.ocr
-    use upstream ms-swift (`qwen3_vl`, `unlimited_ocr`, `deepseek_ocr2`, `dots_ocr`); GLM-OCR uses
+    MonkeyOCRv2 uses its bundled ms-swift fork; Qwen3-VL, Unlimited-OCR-2, DeepSeek-OCR-2 and dots.ocr
+    use upstream ms-swift (`qwen3_vl`, `unlimited-ocr`, `deepseek_ocr2`, `dots_ocr`); GLM-OCR uses
     LLaMA-Factory (`template: glm_ocr`); PaddleOCR-VL uses PaddleFormers (full and LoRA). MinerU2.5
     forbids `swift sft` and its config ships only in `mineru_sft_code.zip`, so it is `planned`.
     TeleOCR and LightOnOCR-3 ship inference only and are `inference-only`. Only MonkeyOCRv2 is

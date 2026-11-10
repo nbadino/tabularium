@@ -29,7 +29,7 @@ from .. import config
 
 # `mlx-vlm` è l'unico pacchetto necessario: porta con sé `mlx`, `mlx-lm`,
 # `transformers` e il server FastAPI. Pinned to the release the MLX paths were measured
-# on (Unlimited-OCR, Qwen3-VL, PaddleOCR-VL: mlx_vlm 0.7.1); mineru-vl-utils' [mlx]
+# on (Qwen3-VL, PaddleOCR-VL: mlx_vlm 0.7.1); mineru-vl-utils' [mlx]
 # extra accepts 0.7.x too.
 PACKAGES = ["mlx-vlm==0.7.1"]
 
@@ -154,30 +154,6 @@ def ensure_ready() -> None:
         _write_state(state="error", error="mlx_vlm non importabile dopo l'installazione")
         raise RuntimeError("installazione dell'ambiente MLX incompleta")
     _write_state(state="ready", error=None)
-
-
-def unlimited_ocr_serve_argv(
-    repo: str, *, port: int, host: str = "127.0.0.1", cache_limit_gb: float | None = None,
-) -> list[str]:
-    """Comando del server MLX dedicato di Unlimited-OCR.
-
-    Non usa `mlx_vlm.server`: per l'architettura `unlimited_ocr` quel server
-    non inietta l'immagine (v. `unlimited_ocr_mlx_server.py`). Il server
-    dedicato espone la stessa interfaccia OpenAI ma usa l'API `mlx_vlm.generate`
-    che funziona. Gira comunque nel venv MLX, come il server generico.
-    """
-    script = Path(__file__).with_name("unlimited_ocr_mlx_server.py")
-    return [
-        str(python_bin()),
-        str(script),
-        "--model",
-        repo,
-        "--host",
-        host,
-        "--port",
-        str(int(port)),
-        *(["--cache-limit-gb", f"{cache_limit_gb:g}"] if cache_limit_gb is not None else []),
-    ]
 
 
 def serve_argv(

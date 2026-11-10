@@ -27,7 +27,7 @@ def test_only_instruction_adapters_accept_prompt_hint():
         "monkeyocrv2-parsing",
         "paddleocr-vl",
         "mineru2.5",
-        "unlimited-ocr",
+        "unlimited-ocr-2",
         "deepseek-ocr",
     ):
         assert _adapter(adapter_id).capabilities.accepts_prompt_hint is False
