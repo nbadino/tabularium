@@ -47,7 +47,7 @@ class PrelabelOptions:
     confidence: float = 0.5
     min_size: int = 10
     # Il percorso nativo evita un secondo giro quando il modello restituisce
-    # già struttura e contenuto (Unlimited-OCR, MonkeyOCRv2 END2END).
+    # già struttura e contenuto (Unlimited-OCR-2, MonkeyOCRv2 END2END).
     model_mode: str = "native"
     table_promote: bool = True
     # Presente quando l'orchestrazione arriva da una run bulk persistente.
@@ -214,6 +214,30 @@ def _project_table_hint(project_id: int) -> str:
     return table_hint.get_table_hint(projectstore.settings_json(project_id))
 
 
+def _end2end_input(page, image, client):
+    """The pixels of an end-to-end call: what the page shows, or the model's own rendering."""
+    if getattr(client, "precomputed", False):
+        return image
+    return pagesvc.model_input_image(page, image, dpi=getattr(getattr(client, "adapter", None), "pdf_render_dpi", None))
+
+
+def document_page_input(project_id: int, page_id: int, opts: PrelabelOptions, client) -> str | None:
+    """A page as the model must see it, encoded for a document request; None if unavailable.
+
+    The same deskew decision as the page pipeline: running it first means that pipeline
+    finds the transform already in place and the blocks land on the pixels the model read.
+    """
+    with blockstore.reading_only() as conn:
+        page = conn.page(page_id, project_id)
+        if page is None:
+            return None
+        keeps_blocks = conn.has_blocks(page_id)
+    image, _angle = pagesvc.maybe_auto_deskew(
+        page, may_transform=opts.mode in {"replace", "replace_all"} or not keeps_blocks
+    )
+    return client.encode_page(_end2end_input(page, image, client)) if image is not None else None
+
+
 def model_prelabel_events(
     project_id: int,
     page_ids: list[int],
@@ -325,7 +349,7 @@ def model_prelabel_events(
                     try:
                         items = call_live(
                             client.end2end,
-                            image,
+                            _end2end_input(page, image, client),
                             phase="end2end",
                             on_retry=lambda: on_output and on_output({
                                 "type": "output_reset", "page_id": pid, "phase": "end2end"
@@ -397,6 +421,7 @@ def model_prelabel_events(
                         "bbox": bbox,
                         "label": resolved,
                         "content": str(item.get("content") or "").strip(),
+                        **({"native": item["native"]} if item.get("native") else {}),
                     }
                 )
 
@@ -562,6 +587,8 @@ def model_prelabel_events(
                         "prefill_source": f"model:{client.model}:{page_mode}",
                         "grid": grid_json,
                         "error": k.get("error"),
+                        # Kept in the run's result for the Markdown export.
+                        **({"native": k["native"]} if k.get("native") else {}),
                     },
                 }
 

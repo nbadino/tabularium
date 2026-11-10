@@ -47,7 +47,6 @@ PUBLIC_SCORES: dict[str, PublicScore | NotApplicable] = {
         94.02, "vendor", "https://arxiv.org/abs/2610.39308",
         note="technical report, not on the leaderboard",
     ),
-    "unlimited-ocr": PublicScore(94.00, "leaderboard", LEADERBOARD),
     "monkeyocrv2-parsing": PublicScore(
         91.80, "leaderboard", LEADERBOARD,
         note="leaderboard row MonkeyOCR V2, which does not name the S or B Parsing variant",

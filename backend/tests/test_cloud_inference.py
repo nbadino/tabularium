@@ -1601,11 +1601,10 @@ def test_docker_only_model_rents_its_own_image():
     nessuno tenti di reinstallare vLLM sopra."""
     from app.services import cloud_manager as cm
 
-    recipe = cm.build_provision_recipe("unlimited-ocr")
-    assert recipe["docker_image"] == "vllm/vllm-openai:unlimited-ocr"
+    recipe = cm.build_provision_recipe("surya-ocr-2.5")
+    assert recipe["docker_image"] == "vllm/vllm-openai:v0.25.1"
     assert recipe["install_vllm"] is False
     assert recipe["argv"][:3] == ["-m", "vllm.entrypoints.cli.main", "serve"]
-    assert "--logits_processors" in recipe["argv"]
 
 
 def test_rent_uses_the_image_the_model_requires(monkeypatch):
@@ -1613,8 +1612,8 @@ def test_rent_uses_the_image_the_model_requires(monkeypatch):
 
     calls: list = []
     _fake_vast_client(monkeypatch, {("PUT", "/asks/7/"): {"new_contract": 12}}, calls)
-    cm.rent_vast_instance("token", 7, adapter_id="unlimited-ocr", cuda_max_good=13.0)
-    assert calls[0]["json"]["image"] == "vllm/vllm-openai:unlimited-ocr"
+    cm.rent_vast_instance("token", 7, adapter_id="surya-ocr-2.5", cuda_max_good=13.0)
+    assert calls[0]["json"]["image"] == "vllm/vllm-openai:v0.25.1"
 
     # Un modello senza immagine propria resta sulla scelta guidata dal CUDA.
     calls.clear()
@@ -1713,6 +1712,28 @@ def test_setup_checks_the_driver_cuda_before_downloading():
     # Deve precedere l'installazione, altrimenti non risparmia nulla: il
     # messaggio d'errore compare prima del primo pip install pesante.
     assert script.index("Max CUDA") < script.index("Installazione dipendenze Python")
+
+
+def test_sglang_recipe_is_not_mistaken_for_an_image_with_vllm():
+    """SGLang recipes have `install_vllm` false but bring their own runtime.
+
+    The preflight used to read that flag as "vLLM is in the image" and stopped
+    Unlimited-OCR-2 on every stock Vast image before installing anything.
+    """
+    import subprocess
+
+    script = (Path(__file__).resolve().parents[2] / "scripts" / "cloud" / "setup_cloud_vllm.sh").read_text()
+    lines = [line for line in script.splitlines() if "command -v vllm" in line and line.startswith("if ")]
+    assert len(lines) == 1
+    condition = lines[0][len("if "):].split("; then")[0]
+
+    def stops(runtime: str, install_vllm: str) -> bool:
+        probe = f'RECIPE_RUNTIME={runtime}; RECIPE_INSTALL_VLLM={install_vllm}; PATH=/nonexistent; if {condition}; then echo stop; fi'
+        return subprocess.run(["/bin/bash", "-c", probe], capture_output=True, text=True).stdout.strip() == "stop"
+
+    assert not stops("sglang", "0")
+    assert stops("docker", "0")
+    assert not stops("vllm", "1")
 
 
 def test_native_gateway_setup_has_a_default_log_path():

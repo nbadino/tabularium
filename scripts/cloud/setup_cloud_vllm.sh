@@ -137,7 +137,8 @@ EOF
   VENV_DIR=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('venv_dir') or '$VENV_DIR')")
   # A fresh environment needs room for framework wheels as well as model files.
   # A previously installed exact environment only needs the model headroom.
-  if [ "$RECIPE_INSTALL_VLLM" = "0" ] || [ -x "$VENV_DIR/bin/python" ]; then
+  # SGLang recipes do not install vLLM but still build their own environment.
+  if { [ "$RECIPE_INSTALL_VLLM" = "0" ] && [ "$RECIPE_RUNTIME" != "sglang" ]; } || [ -x "$VENV_DIR/bin/python" ]; then
     if [ -f "$MODEL_DIR/config.json" ]; then
       RECIPE_MIN_DISK_GB="$RECIPE_MIN_DISK_GB_CACHED"
     else
@@ -205,7 +206,9 @@ if ! command -v nvidia-smi >/dev/null 2>&1; then
   echo "!! Preflight fallito: nvidia-smi non trovato, GPU NVIDIA non visibile al container." >&2
   exit 2
 fi
-if [ "$RECIPE_INSTALL_VLLM" = "0" ] && ! command -v vllm >/dev/null 2>&1; then
+# Only image-provided vLLM recipes need the binary up front: SGLang recipes
+# (`install_vllm` false as well) install their own runtime further down.
+if [ "$RECIPE_INSTALL_VLLM" = "0" ] && [ "$RECIPE_RUNTIME" != "sglang" ] && ! command -v vllm >/dev/null 2>&1; then
   echo "!! Preflight fallito: la ricetta richiede un'immagine con vLLM già installato, ma il comando vllm non esiste." >&2
   exit 2
 fi
@@ -431,9 +434,9 @@ if [ "$RECIPE_RUNTIME" = "sglang" ]; then
   uv pip install --python "$PY_BIN" --quiet "huggingface_hub" $RECIPE_PIP_EXTRA
   RECIPE_PIP_EXTRA=""
 elif [ "$RECIPE_INSTALL_VLLM" = "0" ]; then
-  # Immagine dedicata (es. Unlimited-OCR): vLLM e la sua architettura sono già
-  # dentro. Un venv isolato li nasconderebbe e una wheel pip li sostituirebbe
-  # con una build che quel modello non ha.
+  # Dedicated image: vLLM and its architecture are already inside. An isolated venv
+  # would hide them, and a pip wheel would replace them with a build that model
+  # does not have.
   PY_BIN="$(command -v python3)"
   echo ">> vLLM fornito dall'immagine del container: nessuna installazione."
   "$PY_BIN" -m pip install --quiet --upgrade "huggingface_hub" > /dev/null 2>&1 || true

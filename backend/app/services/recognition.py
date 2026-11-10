@@ -13,6 +13,7 @@ import io
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import PurePosixPath
 from typing import Any
 
 from fastapi import HTTPException
@@ -340,6 +341,130 @@ def _recognize_page(run, item, opts, client, engine, cancel: threading.Event):
     return blocks, summary, failure
 
 
+def _settle_item(run_id: int, item, blocks, summary, failure, cancel: threading.Event) -> None:
+    """Record how one page ended."""
+    if cancel.is_set() and summary is None:
+        _mark_item(item["id"], "cancelled", ended_at=_now())
+    elif failure or summary is None:
+        _mark_item(item["id"], "failed", error=failure or "nessun risultato", ended_at=_now())
+    else:
+        raw = {"summary": summary, "blocks": blocks}
+        _mark_item(
+            item["id"],
+            "finished",
+            detected=int(summary.get("detected", 0)),
+            inserted=int(summary.get("inserted", 0)),
+            result_json=json.dumps(raw, ensure_ascii=False),
+            ended_at=_now(),
+        )
+    _refresh_counts(run_id)
+
+
+def _document_key(item) -> str:
+    """A collection is one document; otherwise a PDF, or the folder of scanned images."""
+    if item.get("collection_id") is not None:
+        return f"collection:{item['collection_id']}"
+    rel_path = str(item["rel_path"])
+    return rel_path if item.get("pdf_page") is not None else str(PurePosixPath(rel_path).parent)
+
+
+def _page_order(item) -> tuple[str, int]:
+    """The project's page order (`ORDER BY rel_path, pdf_page`)."""
+    pdf_page = item.get("pdf_page")
+    return str(item["rel_path"]), -1 if pdf_page is None else int(pdf_page)
+
+
+def _work_units(items: list[dict], opts, client) -> list[list[dict]]:
+    """What the worker requests at a time: one page, or all the pages of one document.
+
+    A document goes whole, in page order, however long: the server splits it into
+    page windows itself. Documents follow the run order of their first page.
+    """
+    document_scope = getattr(getattr(client, "adapter", None), "document_scope", None)
+    if not callable(document_scope) or opts.model_mode not in {"native", "end2end"}:
+        return [[item] for item in items]
+    if not document_scope():
+        return [[item] for item in items]
+    groups: dict[str, list[dict]] = {}
+    for item in items:
+        groups.setdefault(_document_key(item), []).append(item)
+    return [sorted(group, key=_page_order) for group in groups.values()]
+
+
+class _DocumentPageClient:
+    """The client seen by the page pipeline for a page already parsed in its document."""
+
+    precomputed = True
+
+    def __init__(self, client, items: list[dict]) -> None:
+        self._client = client
+        self._items = items
+
+    def __getattr__(self, name: str):
+        return getattr(self._client, name)
+
+    def end2end(self, image, **_kwargs) -> list[dict]:
+        return self._items
+
+
+def _recognize_document(run, group: list[dict], opts, client, cancel: threading.Event) -> None:
+    """Parse the pages of one document in one request, settling each as it arrives."""
+    run_id = run["id"]
+    ready: list[dict] = []
+    encoded: list[str] = []
+    for item in group:
+        _mark_item(item["id"], "running", started_at=_now(), error=None)
+        try:
+            data = prefill.document_page_input(run["project_id"], item["page_id"], opts, client)
+        except HTTPException as exc:
+            _settle_item(run_id, item, [], None, str(exc.detail), cancel)
+            continue
+        if data is None:
+            _settle_item(run_id, item, [], None, msg("image_not_available", "it"), cancel)
+            continue
+        ready.append(item)
+        encoded.append(data)
+    _refresh_counts(run_id)
+    settled: set[int] = set()
+
+    def on_page(index: int, items: list[dict]) -> None:
+        item = ready[index]
+        if not items:
+            # Read alone below: after a page loops up to `max_page_tokens` the model
+            # can close the next page without reading it (seen on an A40 run).
+            return
+        blocks, summary, failure = _recognize_page(
+            run, item, opts, _DocumentPageClient(client, items), None, cancel
+        )
+        _settle_item(run_id, item, blocks, summary, failure, cancel)
+        settled.add(item["id"])
+
+    def request() -> str | None:
+        try:
+            client.end2end_document(encoded, on_page, cancel_event=cancel)
+        except RuntimeError as exc:
+            return str(exc)
+        return None
+
+    if not ready:
+        return
+    error = request()
+    # As for a single page: a local server that died is restarted once, only if the
+    # failed attempt wrote nothing.
+    if error and not settled and not cancel.is_set() and _recover_local_server(run, cancel):
+        error = request()
+    for item in ready:
+        if item["id"] in settled:
+            continue
+        if error or cancel.is_set():
+            _settle_item(run_id, item, [], None, error, cancel)
+            continue
+        # The request ended but did not read this page (empty, or cut by the token
+        # budget): the single-page request of the model card reads it instead.
+        blocks, summary, failure = _recognize_page(run, item, opts, client, None, cancel)
+        _settle_item(run_id, item, blocks, summary, failure, cancel)
+
+
 # Quanto aspettare che il server locale riavviato risponda: con i pesi già in
 # cache MLX ci mette 20–60 s; il margine copre un Mac lento o sotto pressione.
 RECOVERY_READY_TIMEOUT_S = 240
@@ -418,12 +543,17 @@ def _worker(run_id: int, cancel: threading.Event) -> None:
         if engine is not None and not engine.available:
             raise RuntimeError("nessun motore OCR locale disponibile")
 
-        for item in items:
+        for group in _work_units(items, opts, client):
             _wait_while_paused(run_id, cancel)
             if cancel.is_set():
-                _mark_item(item["id"], "cancelled", ended_at=_now())
+                for item in group:
+                    _mark_item(item["id"], "cancelled", ended_at=_now())
                 _refresh_counts(run_id)
                 continue
+            if len(group) > 1:
+                _recognize_document(run, group, opts, client, cancel)
+                continue
+            item = group[0]
             _mark_item(item["id"], "running", started_at=_now(), error=None)
             blocks, summary, failure = _recognize_page(run, item, opts, client, engine, cancel)
             # Un server locale morto a metà (su un Mac piccolo il GPU può andare
@@ -433,22 +563,7 @@ def _worker(run_id: int, cancel: threading.Event) -> None:
             if failure and not blocks and not cancel.is_set() and _recover_local_server(run, cancel):
                 _mark_item(item["id"], "running", error=None)
                 blocks, summary, failure = _recognize_page(run, item, opts, client, engine, cancel)
-
-            if cancel.is_set() and summary is None:
-                _mark_item(item["id"], "cancelled", ended_at=_now())
-            elif failure or summary is None:
-                _mark_item(item["id"], "failed", error=failure or "nessun risultato", ended_at=_now())
-            else:
-                raw = {"summary": summary, "blocks": blocks}
-                _mark_item(
-                    item["id"],
-                    "finished",
-                    detected=int(summary.get("detected", 0)),
-                    inserted=int(summary.get("inserted", 0)),
-                    result_json=json.dumps(raw, ensure_ascii=False),
-                    ended_at=_now(),
-                )
-            _refresh_counts(run_id)
+            _settle_item(run_id, item, blocks, summary, failure, cancel)
 
         counts = runstore.count_items(run_id)
         if cancel.is_set():
@@ -641,6 +756,51 @@ def export_run_text(run_id: int, scope: str, collection: int | str | None = None
         ]
         sections.append(f"=== {page['rel_path']} ===\n" + "\n\n".join(content))
     return "\n\n".join(sections).rstrip() + "\n"
+
+
+def export_run_markdown(run_id: int, scope: str, collection: int | str | None = None) -> str:
+    """One Markdown file: each document (collection, PDF or folder, as a document-mode
+    run groups them) converted with the rules of Unlimited-OCR-2's converter.
+
+    `reviewed` uses the blocks and table grids as corrected; a block keeps the native
+    facts (chains, title level) its recognition recorded while it exists.
+    """
+    from ..adapters import collections as collectionstore  # noqa: PLC0415
+    from ..domain import markdown_export  # noqa: PLC0415
+
+    exported = export_run(run_id, scope, collection)
+    run_items = {item["page_id"]: item for item in get_run(run_id)["items"]}
+    names = collectionstore.names(int(exported["run"]["project_id"]))
+    documents: dict[str, list[dict[str, Any]]] = {}
+    for page in exported["pages"]:
+        item = run_items[page["page_id"]]
+        recognized = {
+            block.get("id"): block for block in (item.get("result") or {}).get("blocks") or []
+        }
+        grids = runstore.page_grids(page["page_id"]) if scope == "reviewed" else {}
+        blocks = []
+        for block in page["blocks"]:
+            value = dict(block)
+            source = recognized.get(block.get("id"), {})
+            if source.get("native"):
+                value["native"] = source["native"]
+            if scope == "reviewed":
+                value["grid"] = grids.get(block.get("id"))
+            blocks.append(value)
+        documents.setdefault(_document_key(item), []).append(
+            {"item": item, "blocks": blocks, "width": item.get("width"), "height": item.get("height")}
+        )
+    sections = []
+    for key, pages in documents.items():
+        pages.sort(key=lambda page: _page_order(page["item"]))
+        body = markdown_export.document_markdown(pages)
+        if len(documents) > 1:
+            name = key
+            if key.startswith("collection:"):
+                name = names.get(int(key.split(":", 1)[1])) or key
+            body = f"<!-- document: {name} -->\n\n{body}"
+        sections.append(body)
+    return "\n\n---\n\n".join(sections).rstrip() + "\n"
 
 
 def export_run_csv(run_id: int, scope: str, collection: int | str | None = None) -> str:

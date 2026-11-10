@@ -258,7 +258,7 @@ def test_reconcile_never_kills_a_recycled_pid(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "app.services.process_probe.process_cmdline",
-        lambda pid: "/x/.venv/bin/python /x/app/services/unlimited_ocr_mlx_server.py --model m --port 1",
+        lambda pid: "/x/.venv/bin/python -m mlx_vlm.server --model m --port 1",
     )
     state.write_text(json.dumps({"state": "running", "serve_pid": 4242}), encoding="utf-8")
     benchmod.reconcile_benchmarks()

@@ -131,9 +131,7 @@ def _start_local(adapter_id: str, log_dir: Path) -> dict | None:
     if not repo:
         return None
     port = _free_port()
-    if adapter_id == "unlimited-ocr":
-        argv = mlx_runtime.unlimited_ocr_serve_argv(repo, port=port)
-    elif adapter_id == "mineru2.5":
+    if adapter_id == "mineru2.5":
         argv = mineru_mlx_runtime.serve_argv(repo, port=port)
     else:
         argv = mlx_runtime.serve_argv(repo, port=port)

@@ -111,7 +111,9 @@ def iter_pdf_pages(pdf_path: str | Path):
 
 
 
-def render_pdf_page(pdf_path: str | Path, index: int) -> tuple[object, tuple[int, int]] | None:
+def render_pdf_page(
+    pdf_path: str | Path, index: int, *, dpi: int = 200
+) -> tuple[object, tuple[int, int]] | None:
     """Renderizza una sola pagina: preview/riconoscimento non devono renderizzare
     l'intero PDF a ogni click."""
     try:
@@ -124,7 +126,7 @@ def render_pdf_page(pdf_path: str | Path, index: int) -> tuple[object, tuple[int
             return None
         page = pdf[index]
         try:
-            bitmap = page.render(scale=200 / 72)
+            bitmap = page.render(scale=dpi / 72)
             try:
                 pil = bitmap.to_pil().convert("RGB")
                 return pil, (pil.width, pil.height)

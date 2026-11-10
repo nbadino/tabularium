@@ -231,7 +231,6 @@ export function resolveSshEndpoint(
 export function guessModalTemplate(url: string): string {
   if (url.includes('paddleocr')) return 'paddleocr-vl'
   if (url.includes('mineru')) return 'mineru'
-  if (url.includes('unlimited-ocr')) return 'unlimited-ocr'
   if (url.includes('dots-ocr')) return 'dots-ocr'
   if (url.includes('glm-ocr')) return 'glm-ocr'
   if (url.includes('deepseek-ocr')) return 'deepseek-ocr'
@@ -245,7 +244,6 @@ export const MODAL_TEMPLATE_TARGET: Record<string, { model: string; adapterId: s
   monkeyocrv2: { model: 'MonkeyOCRv2', adapterId: DEFAULT_MODEL_ID },
   'paddleocr-vl': { model: 'PaddleOCR-VL-1.6', adapterId: 'paddleocr-vl' },
   mineru: { model: 'mineru2.5', adapterId: 'mineru2.5' },
-  'unlimited-ocr': { model: 'Unlimited-OCR', adapterId: 'unlimited-ocr' },
   'dots-ocr': { model: 'dots-mocr', adapterId: 'dots-ocr' },
   'glm-ocr': { model: 'glm-ocr', adapterId: 'glm-ocr' },
   'deepseek-ocr': { model: 'deepseek-ocr-2', adapterId: 'deepseek-ocr' },
@@ -264,7 +262,7 @@ const TEMPLATE_BY_ADAPTER: Record<string, string> = Object.fromEntries(
  * prefill pagina intera. GLM-OCR/DeepSeek-OCR-2/Qwen3-VL sono deployabili
  * (v. docs/guide/local-inference.md) ma non ancora integrati nel prefill: la GPU
  * si può comunque accendere e testare via playground/valutazione. */
-export const PREFILL_MODAL_TEMPLATES = ['monkeyocrv2', 'paddleocr-vl', 'mineru', 'unlimited-ocr', 'dots-ocr']
+export const PREFILL_MODAL_TEMPLATES = ['monkeyocrv2', 'paddleocr-vl', 'mineru', 'dots-ocr']
 
 /** Elenco statico: rispecchia `modal_manager.TEMPLATES` sul backend, non
  *  dipende dal primo round-trip di stato per apparire nella UI. */
@@ -272,7 +270,6 @@ export const MODAL_TEMPLATES = [
   { id: 'monkeyocrv2', label: 'MonkeyOCRv2-Parsing' },
   { id: 'paddleocr-vl', label: 'PaddleOCR-VL-1.6' },
   { id: 'mineru', label: 'MinerU2.5' },
-  { id: 'unlimited-ocr', label: 'Unlimited-OCR' },
   { id: 'dots-ocr', label: 'dots.mocr' },
   { id: 'glm-ocr', label: 'GLM-OCR' },
   { id: 'deepseek-ocr', label: 'DeepSeek-OCR-2' },
@@ -2282,11 +2279,6 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
                 {t('cloud.control.modalMineruCaveat')}
               </p>
             )}
-            {effectiveModalTemplate === 'unlimited-ocr' && (
-              <p className="border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-2 text-[12px] text-[color:var(--color-ink-2)]">
-                {t('cloud.control.modalUnlimitedCaveat')}
-              </p>
-            )}
 
             <label className="flex cursor-pointer items-start gap-2 border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-2 text-[12px]">
               <input
@@ -2406,7 +2398,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
                   <input
                     value={manualModel}
                     onChange={(e) => setManualModel(e.target.value)}
-                    placeholder="Unlimited-OCR"
+                    placeholder="Unlimited-OCR-2"
                     className="fld fld-mono"
                   />
                 </Field>

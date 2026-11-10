@@ -120,7 +120,7 @@ QWEN3_VL_8B_ARCH = {
 # formato che a runtime non usa (v. AGENTS.md §2.3).
 # ---------------------------------------------------------------------------
 # Prompt canonici di training per i modelli che non hanno prompt per-task
-# (Unlimited-OCR e dots.mocr sono end2end-only; Qwen3-VL usa un preset HTML
+# (dots.mocr is end2end-only; Qwen3-VL usa un preset HTML
 # full-page). Sono i prompt ufficiali §2.3, con il target OTSL del dataset:
 # coerenti con ciò che il builder scrive, anche dove l'inferenza nativa usa
 # un altro protocollo (limite noto, v. docs/guide/training.md).

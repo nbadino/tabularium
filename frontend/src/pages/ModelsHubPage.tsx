@@ -53,7 +53,7 @@ export default function ModelsHubPage() {
   const [error, setError] = useState<unknown>(null)
   const [caps, setCaps] = useState<SystemInfo['capabilities'] | null>(null)
   const [remoteDone, setRemoteDone] = useState(false)
-  // Un modello con più varianti MLX pubblicate (es. Unlimited-OCR bf16/8-bit)
+  // Un modello con più varianti MLX pubblicate (es. bf16/8-bit)
   // chiede quale quantizzazione usare nel momento in cui si sceglie «locale»:
   // la variante decide i pesi scaricati, quindi appartiene a quella decisione.
   const [variantPrompt, setVariantPrompt] = useState(false)

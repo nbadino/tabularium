@@ -30,21 +30,11 @@ def test_deepseek_ocr2_asks_for_the_official_output_budget():
     assert client._output_budget(adapter.end2end_max_tokens) == adapter.capabilities.max_model_len - 2048
 
 
-def test_unlimited_ocr_decodes_greedily():
-    # vLLM `unlimited_ocr.py` example and the recipe use temperature=0.0; the
-    # checkpoint's generation_config.json has none, so vLLM would default to 1.0.
-    adapter = model_adapters.get_adapter("unlimited-ocr")
+def test_unlimited_ocr2_decodes_greedily():
+    # The vendor's SGLang example uses temperature 0; without it the server samples.
+    adapter = model_adapters.get_adapter("unlimited-ocr-2")
     client = infmod.VllmClient(url="https://example.invalid/v1", adapter=adapter)
     assert client._sampling_for("end2end")["temperature"] == 0.0
-
-
-def test_unlimited_ocr_image_mode_reaches_the_vllm_processor():
-    # vLLM's processor reads `crop_mode` from the multimodal kwargs
-    # (`mm_kwargs.get("crop_mode", CROP_MODE)`); `images_config` is the SGLang field.
-    adapter = model_adapters.get_adapter("unlimited-ocr")
-    overrides = adapter.request_overrides("end2end")
-    assert overrides["mm_processor_kwargs"] == {"crop_mode": True}
-    assert overrides["images_config"] == {"image_mode": "gundam"}
 
 
 def test_lightonocr3_pins_the_transformers_its_vllm_needs():
@@ -196,7 +186,7 @@ def test_public_scores_match_the_omnidocbench_v16_leaderboard():
 
     leaderboard = {
         "teleocr": 96.91, "paddleocr-vl": 96.34, "mineru2.5": 95.75, "glm-ocr": 95.22,
-        "unlimited-ocr": 94.00, "monkeyocrv2-parsing": 91.80, "deepseek-ocr": 90.25,
+        "monkeyocrv2-parsing": 91.80, "deepseek-ocr": 90.25,
     }
     for adapter_id, value in leaderboard.items():
         score = public_benchmark(adapter_id)

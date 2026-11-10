@@ -280,7 +280,7 @@ def _evaluate_page(
 
     try:
         image = pagesvc.load_source_image(page)
-        # I modelli solo end2end (LightOnOCR-3, Unlimited-OCR, DeepSeek-OCR…)
+        # I modelli solo end2end (LightOnOCR-3, Unlimited-OCR-2, DeepSeek-OCR…)
         # non hanno un prompt di layout: si misurano sulla loro generazione
         # nativa, che porta anche il contenuto di ogni blocco. Gli adapter a
         # pipeline «official» (Qwen3-VL, PaddleOCR-VL, MinerU2.5, GLM, TeleOCR)

@@ -109,6 +109,15 @@ def test_bulk_run_persists_pages_and_exports_raw_and_reviewed(tmp_path, monkeypa
         assert "rel_path" in csv_export.text
         assert "Recognized text" in csv_export.text
 
+        # One folder of scans is one document: one Markdown body, no document separators.
+        markdown = client.get(
+            f"/api/projects/{project_id}/recognition-runs/{run_id}/export?scope=raw&format=markdown"
+        )
+        assert markdown.status_code == 200
+        assert markdown.headers["content-type"].startswith("text/markdown")
+        assert markdown.headers["content-disposition"].endswith('.md"')
+        assert markdown.text == "Recognized text\n\nRecognized text\n"
+
 
 def test_ocr_run_does_not_inherit_cloud_provider(tmp_path, monkeypatch):
     from app.db import connect
@@ -346,7 +355,7 @@ def test_recovery_restarts_only_a_dead_local_server(monkeypatch):
 
     monkeypatch.setattr(serve_manager, "start_async", fake_start)
     cancel = _threading.Event()
-    local = {"engine": "model", "provider": "local", "adapter_id": "unlimited-ocr",
+    local = {"engine": "model", "provider": "local", "adapter_id": "unlimited-ocr-2",
              "endpoint": "http://127.0.0.1:8889/v1", "owner_id": 1}
 
     # Remoto: non si riavvia niente da qui.
@@ -354,7 +363,7 @@ def test_recovery_restarts_only_a_dead_local_server(monkeypatch):
     assert started == []
     # Locale e morto: si riavvia sulla stessa porta e si aspetta che risponda.
     assert recognition._recover_local_server(local, cancel) is True
-    assert started == [("unlimited-ocr", 8889)]
+    assert started == [("unlimited-ocr-2", 8889)]
 
 
 def test_playground_reads_headers_and_table_with_end2end_model(tmp_path, monkeypatch):

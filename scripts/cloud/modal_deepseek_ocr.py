@@ -13,7 +13,7 @@ card Hugging Face (agosto 2026):
     prima di un deploy reale, non fidarsi ciecamente del pin qui sotto.
   - `--trust-remote-code` richiesto (confermato su README/model card).
   - logits processor dedicato per evitare loop di generazione su documenti
-    lunghi, stesso principio di MinerU2.5/Unlimited-OCR.
+    lunghi, stesso principio di MinerU2.5.
   - la "Gundam mode" (compressione ottica/crop tiling) è hardcoded
     nell'integrazione vLLM: nessun flag la controlla.
   - card ufficiale: "una singola GPU >= 8GB è tipicamente sufficiente per

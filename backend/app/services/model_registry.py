@@ -27,9 +27,9 @@ from . import paddle_runtime
 _ACTIVE: dict[str, dict] = {}  # adapter_id -> {"proc": Popen, "log_file": Path}
 _RUNTIME_ACTIVE: set[str] = set()
 
-# Template Modal gestite dall'interfaccia CloudControlModal. È distinto da
-# `local_serve_ready`: Unlimited-OCR, per esempio, è cloud-ready ma non si
-# avvia con il server locale standard.
+# Modal templates managed by the CloudControlModal UI. Distinct from
+# `local_serve_ready`: a model can be cloud-ready without starting on the standard
+# local server.
 # Modal template per model, declared in the model's own spec. A model without a
 # template says so (`cloud=NotApplicable`), instead of being silently absent.
 _CLOUD_TEMPLATES: dict[str, str] = model_specs.declared_values("cloud")
@@ -457,7 +457,7 @@ def list_models() -> list[dict]:
             # che non possiamo installare noi: dichiararli prima del click è
             # meglio che un `exit code 125` dopo.
             # Solo se qui si servirebbe davvero via Docker: su Apple Silicon un
-            # modello con percorso MLX (Unlimited-OCR) non tocca Docker, e
+            # modello con percorso MLX non tocca Docker, e
             # «docker_missing» spaventava senza motivo.
             "local_serve_blocker": (
                 _docker_gpu_blocker()

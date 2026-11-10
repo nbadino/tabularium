@@ -17,6 +17,8 @@ import { statusLabel } from '../lib/vocab'
 import { API_BASE } from '../lib/endpoints'
 import { RecognitionRunControls } from '../app/RunControls'
 
+type ExportFormat = 'json' | 'text' | 'csv' | 'markdown'
+
 const isActive = (run: RecognitionRun | null) => run?.state === 'queued' || run?.state === 'running'
 
 const stateKey = (state: string) => {
@@ -57,7 +59,7 @@ export default function ResultsPage() {
   const [run, setRun] = useState<RecognitionRun | null>(null)
   const [openingRun, setOpeningRun] = useState(false)
   const [requestedRunId, setRequestedRunId] = useState<number | null>(null)
-  const [exportFormat, setExportFormat] = useState<'json' | 'text' | 'csv'>('text')
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('text')
   const [exportCollection, setExportCollection] = useState<string>('all')
   const [error, setError] = useState<unknown>(null)
 
@@ -132,7 +134,7 @@ export default function ResultsPage() {
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
-      const extension = exportFormat === 'text' ? 'txt' : exportFormat
+      const extension = exportFormat === 'text' ? 'txt' : exportFormat === 'markdown' ? 'md' : exportFormat
       anchor.download = `tabularium-run-${run.id}-${scope}.${extension}`
       anchor.click()
       URL.revokeObjectURL(url)
@@ -242,9 +244,10 @@ export default function ResultsPage() {
                       <option value={UNASSIGNED}>{t('collections.none')}</option>
                     </select>
                   )}
-                  <select value={exportFormat} onChange={(e) => setExportFormat(e.target.value as 'json' | 'text' | 'csv')} className="fld !w-auto" aria-label={t('recognition.exportFormat')}>
+                  <select value={exportFormat} onChange={(e) => setExportFormat(e.target.value as ExportFormat)} className="fld !w-auto" aria-label={t('recognition.exportFormat')}>
                     <option value="text">{t('recognition.formatText')}</option>
                     <option value="csv">{t('recognition.formatCsv')}</option>
+                    <option value="markdown">{t('recognition.formatMarkdown')}</option>
                     <option value="json">{t('recognition.formatJson')}</option>
                   </select>
                   <button type="button" className="btn" disabled={isActive(run)} onClick={() => void download('raw')}>{t('recognition.rawExport')}</button>

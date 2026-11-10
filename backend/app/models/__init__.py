@@ -24,7 +24,6 @@ from . import (
     qwen3_vl_8b,
     surya_ocr,
     teleocr,
-    unlimited_ocr,
     unlimited_ocr2,
     xiaomi_ocr,
 )
@@ -53,7 +52,6 @@ _MODULES = (
     qwen3_vl_8b,
     surya_ocr,
     teleocr,
-    unlimited_ocr,
     unlimited_ocr2,
     xiaomi_ocr,
 )

@@ -534,6 +534,7 @@ export const en: Dict = {
     exportFormat: 'Export format',
     formatText: 'Text (.txt)',
     formatCsv: 'Spreadsheet (.csv)',
+    formatMarkdown: 'Single document (.md)',
     formatJson: 'Complete data (.json)',
     review: 'Review in Studio',
     startReview: 'Start review',
@@ -2776,8 +2777,6 @@ export const en: Dict = {
         'Performance profile: B-Parsing + DFlash draft, vLLM 0.25.1/CUDA 12.9, and a warm container to remove cold starts. Target-model quality is preserved; DFlash is supported only by B-Parsing.',
       modalMineruCaveat:
         'MinerU2.5 works with page recognition (verified on full-table pages, like the Historic Shipping Index corpus). Mixed-layout pages (titles, paragraphs and tables together) haven’t been verified yet.',
-      modalUnlimitedCaveat:
-        'Unlimited-OCR (Baidu, 3B) uses the dedicated vLLM image, persistent cache, and a warm container by default. Page recognition uses it in native end-to-end mode: grounding markers become editable block drafts.',
       modalTokenOk: 'Connected',
       modalTokenMissing: 'Not connected',
       modalCliMissing:
@@ -3038,9 +3037,12 @@ export const en: Dict = {
     teleocrLayoutOfficial: 'The selected mode changes the TeleOCR layout prompt used during page recognition.',
     glmWorkflowIntro: 'GLM-OCR uses the official vLLM recipe’s MTP speculative decoding. More speculative tokens can improve speed while using more memory; measure the best value on your GPU.',
     deepseekWorkflowIntro: 'DeepSeek-OCR-2 uses the official grounded Markdown workflow and vLLM n-gram processor. These values tune the processor for repeated text.',
-    unlimitedWorkflowIntro: 'Use the official Unlimited-OCR settings for a single page: gundam is the default crop mode; window_size 1024 is recommended for multi-page input.',
-    unlimited2WorkflowIntro: 'Official Unlimited-OCR-2 settings for a single page: gundam (tiles) is the default, window_size 128; the vendor uses 1024 only for multi-page documents.',
+    unlimited2WorkflowIntro: 'Official Unlimited-OCR-2 settings: gundam (tiles) is the single-page default, with window_size 128. In document mode the pages go in one request, with window_size 1024; the server reads them in windows of 10 pages, carrying the context from one to the next.',
     unlimited2MaxPageTokens: 'Max tokens per page',
+    unlimited2RequestScope: 'Recognition unit',
+    unlimited2ScopePageHint: 'one request per page: more resolution and individual retries',
+    unlimited2ScopeDocumentHint: 'each document in one request, however long: a collection, else a PDF or a folder of scans; a page the model skips is read again on its own',
+    unlimited2DocumentWindowSize: 'Document n-gram window',
     xiaomiWorkflowIntro: 'Xiaomi-OCR-0’s official region mode: PP-DocLayoutV3 finds the blocks and each crop is read with its task prompt. The vendor recommends whole-page parsing for historical books and irregular layouts, but that mode returns no boxes.',
     xiaomiLayoutThreshold: 'Layout threshold (PP-DocLayoutV3)',
     xiaomiRetryRepetitive: 'Retry regions that loop',

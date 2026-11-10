@@ -121,6 +121,8 @@ OAuth, serving locale o benchmark.
 
 ### Unlimited-OCR — deploy e inferenza end-to-end superati
 
+> Historic record: Unlimited-OCR v1 has since been removed in favour of Unlimited-OCR-2.
+
 Il 2026-09-01 era attivo un container Docker con:
 
 ```text
@@ -690,6 +692,8 @@ Questa verifica quindi non rimuove i blocker della matrice restante.
 
 ### Unlimited-OCR su MLX — percorso locale Apple Silicon (2026-10-13)
 
+> Historic record: the MLX path and its dedicated server were removed together with Unlimited-OCR v1.
+
 `mlx-vlm` 0.6.4 ha aggiunto il modello `unlimited_ocr` con `RingSlidingKVCache`
 (la R-SWA di upstream: prefisso intero + anello degli ultimi 128 token). È il
 pezzo che prima mancava e che rendeva il modello «solo remoto»: fino a 0.6.3 la
@@ -728,7 +732,7 @@ misurate):
 4. `temperature=0.0` per output deterministico; `max_tokens` alto (il modello è
    nato per documenti lunghi).
 
-I default esposti da Tabularium (`unlimited-ocr`, sezione MLX) sono questi:
+The defaults Tabularium exposed at the time (`unlimited-ocr`, MLX section) were:
 variante `bf16` (misura pulita) o `8bit` (circa metà dei pesi), `repetition_penalty`
 1.1 e `repetition_context_size` 128, applicati **solo** al serving locale Apple
 Silicon (su vLLM il modello ha già il suo processore n-gram). Resta da fare la
@@ -758,9 +762,9 @@ allucinato. Il difetto è nel backend a continuous batching, non nel formato
 della richiesta: `prepare_inputs` espande correttamente a 1518 token sia col
 prompt testuale sia con la lista di messaggi.
 
-Tabularium quindi serve Unlimited-OCR con un server dedicato
-(`backend/app/services/unlimited_ocr_mlx_server.py`), lanciato nel venv MLX:
-espone la stessa interfaccia OpenAI ma si regge sull'API `mlx_vlm.generate` che
+Tabularium therefore served Unlimited-OCR through a dedicated server
+(`backend/app/services/unlimited_ocr_mlx_server.py`, since removed), run in the MLX venv:
+esponeva la stessa interfaccia OpenAI ma si regge sull'API `mlx_vlm.generate` che
 funziona. Verificato end-to-end (streaming e non): `prompt_tokens=1518`, col
 guard `finish=stop` e zero ripetizioni; senza guard il loop. Poiché espone la
 stessa interfaccia, il resto del client resta invariato.

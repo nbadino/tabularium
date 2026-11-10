@@ -4,7 +4,7 @@ Il generatore non conosce i modelli per nome: legge la ricetta dell'adapter
 (`train_recipes.py`) e produce il comando che la **documentazione ufficiale**
 di quel modello prescrive. Oggi i toolchain sono tre:
 
-- ``ms-swift`` (MonkeyOCRv2, Qwen3-VL, Unlimited-OCR, DeepSeek-OCR-2,
+- ``ms-swift`` (MonkeyOCRv2, Qwen3-VL, Unlimited-OCR-2, DeepSeek-OCR-2,
   dots.ocr, MinerU2.5). MonkeyOCRv2 usa il fork ufficiale in
   ``parsing/train/ms-swift``, dove il flag è ``--train_type``; l'ms-swift
   upstream usa ``--tuner_type``. Il flag sta nella ricetta.

@@ -19,7 +19,7 @@ compaiono affatto: `training_types` vuoto lo dichiarerebbe già.
 Toolchain supportati (uno per modello, quello della sua doc):
 
 - ``ms-swift`` — MonkeyOCRv2 (fork ufficiale in `parsing/train/ms-swift`),
-  Qwen3-VL, Unlimited-OCR, DeepSeek-OCR-2, dots.ocr, MinerU2.5.
+  Qwen3-VL, Unlimited-OCR-2, DeepSeek-OCR-2, dots.ocr, MinerU2.5.
   MonkeyOCRv2 usa il fork ufficiale, dove il flag si chiama ``--train_type``;
   l'ms-swift upstream usa ``--tuner_type``. La ricetta dichiara quale.
 - ``llama-factory`` — GLM-OCR: il vendor documenta LLaMA-Factory

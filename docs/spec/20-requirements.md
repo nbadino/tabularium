@@ -93,7 +93,7 @@
        locally on Apple Silicon with this property and therefore the only one verifiable without a
        remote endpoint. The natural-language prompt family (MonkeyOCRv2/GLM-OCR/TeleOCR) is the
        natural candidate but stays off until measured; protocol-prompt or native-pipeline engines
-       (PaddleOCR-VL, MinerU2.5, DeepSeek-OCR-2, Unlimited-OCR) ignore it by construction, and a
+       (PaddleOCR-VL, MinerU2.5, DeepSeek-OCR-2, Unlimited-OCR-2) ignore it by construction, and a
        wrong gate would have sent out-of-distribution text to a model that does not understand it.
        The hint is a suggestion, not a truth: it sits alongside the deterministic header repair
        (`domain/table_headers.py::repair_flat_header`), which does not depend on the model

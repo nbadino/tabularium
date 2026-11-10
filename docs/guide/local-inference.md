@@ -59,7 +59,6 @@ environment pinned to the official release.
 | MonkeyOCRv2-Parsing | ✅ | ❌ | no MLX port of the architecture |
 | MinerU2.5 | ✅ | 🧪 `MinerUClient` `mlx-engine` | native path with an isolated runtime; live test on the corpus still pending |
 | DeepSeek-OCR-2 | ✅ | ❌ | the recipe needs vLLM's n-gram logits processor |
-| Unlimited-OCR | ✅ (Docker image) | 🧪 `mlx-community/Unlimited-OCR-{bf16,8bit}` | `mlx-vlm` ≥ 0.6.4 ships `unlimited_ocr` with R-SWA; protocol verified, quality test on gold pages pending |
 | dots.mocr | ✅ | ❌ | actually served: END2END stops at 682 characters, run fails |
 | GLM-OCR | ✅ | ❌ | actually served: run "succeeds" with **zero** blocks inserted |
 
@@ -89,32 +88,6 @@ Two practical differences of the MLX path:
 - **The model name is the MLX checkpoint id** (`/v1/models` of the MLX
   server). Start sets it automatically; the wrong name would be a 404 on every
   call.
-
-**The architecture existing in MLX is not enough: the recipe must be
-reproducible.** Up to `mlx-vlm` 0.6.3 Unlimited-OCR could not be served via MLX:
-the architecture was missing and a page produced 12,288 characters of
-`alpha.alpha.alpha…` up to the token limit. Since 0.6.4, `mlx-vlm` ships
-`unlimited_ocr` with `RingSlidingKVCache`, the upstream R-SWA (full prefix + a
-ring of the last 128 tokens), which makes the recipe reproducible.
-
-One difference from vLLM remains: upstream's **n-gram logits processor**
-(35-gram) is not provided by `mlx-vlm`, and the MLX server doesn't accept
-`logits_processors` over JSON. The only available guard is the repetition
-penalty. Measured on a sample index page (`gundam` mode, 3,000 tokens): with no
-guard a line repeats 23 times; with `repetition_penalty=1.1` and the default
-20-token window it repeats 80 times (the window doesn't cover a ~25-token
-line); with `repetition_context_size=128` generation **ends on its own**
-without repetition at ~250 tok/s. Both values are part of this model's MLX
-recipe, and they are the defaults in Settings → Local generation (MLX).
-
-**The standard MLX server isn't enough either.** `mlx_vlm.server` 0.7.1 does
-not inject the image for the `unlimited_ocr` architecture (continuous-batching
-backend: 6–7 `prompt_tokens` instead of 1,518, empty or hallucinated output),
-whereas the `mlx_vlm.generate` API works. Tabularium therefore serves this
-model with a **dedicated server**
-(`backend/app/services/unlimited_ocr_mlx_server.py`, run in the MLX venv): the
-same OpenAI interface, built on the API that works. Every other model uses
-`mlx_vlm.server`.
 
 **PaddleOCR-VL's official path has a second runtime.** The Paddle pipeline
 (PP-DocLayout for layout + recognition) lives in `<root>/paddle-runtime` and
@@ -342,46 +315,12 @@ vllm serve <model_path> --port <port> \
   unwarping, charts, seals, image OCR, Markdown, merge and queue options.
   Generation and image limits reach the same `predict` call.
 
-## 6. Unlimited-OCR (`baidu/Unlimited-OCR`), via Docker
+## 6. Docker and the NVIDIA Container Toolkit
 
-**The one exception to full automation**: the architecture is not in vLLM's
-stable pip wheel, so the vLLM environment Tabularium prepares isn't enough.
-You need **Docker + `nvidia-container-toolkit` installed on the machine**
-(system dependencies Tabularium can't install for you). Once they're present,
-Start works like for any other model.
-
-Local serving uses the dedicated Docker image `vllm/vllm-openai:unlimited-ocr`:
-
-```
-docker run --rm --gpus all --network host --ipc host \
-  -v <model_path>:/model \
-  vllm/vllm-openai:unlimited-ocr \
-  /model \
-  --trust-remote-code \
-  --logits_processors vllm.model_executor.models.unlimited_ocr:NGramPerReqLogitsProcessor \
-  --no-enable-prefix-caching --mm-processor-cache-gb 0 \
-  --max-model-len 12288 \
-  --port <port> --gpu-memory-utilization 0.85 \
-  --served-model-name Unlimited-OCR
-```
-
-- The logits processor is **mandatory**: without it, long documents loop on
-  `<|det|>` tokens. The flag uses underscores as in the official recipe; vLLM's
-  `FlexibleArgumentParser` normalizes `_` to `-`, so it is valid.
-- The `-v <model_path>:/model` mount points at weights already downloaded by
-  the registry instead of downloading them again in the container.
-- `--max-model-len 12288` is **not** in the official recipe, which keeps the
-  checkpoint default (32768). On 8 GB that default doesn't fit even with
-  offload: 32,768 tokens need 1.88 GiB of KV cache and 0.93 remain. At 12,288
-  the cache is enough (16,432 tokens) and still above the adapter's output
-  budget (8,192 tokens + ~1,300 for the image). It's a per-machine tuning, not a
-  requirement: raise it on a larger GPU.
-- 6.3 GiB of weights don't fit in 8 GB: `serve_manager` adds
-  `--cpu-offload-gb 4` automatically (see §12), bringing resident weights down
-  to 2.23 GiB.
-- Stopping the server sends SIGTERM to the `docker run` process, which Docker
-  forwards to the container. It's slower than a native process, which is
-  normal: `stop()` waits for the process to actually end (see §1.2).
+No built-in model starts locally through `docker run` at the moment. The registry
+still checks the Docker prerequisite for models packaged as a `vllm/vllm-openai` image
+(Surya OCR 2.5, which runs on a remote GPU: Vast.ai rents the instance with its image),
+so the warning below can appear next to them.
 
 ### 6.1 System prerequisite: NVIDIA Container Toolkit
 
@@ -403,19 +342,6 @@ sudo systemctl restart docker
 The model registry states the prerequisite before you click, and
 `serve_manager` refuses to start with the install command rather than the raw
 Docker error.
-
-### 6.2 Field measurements (sample page `A`, RTX 4060 Laptop 8 GB)
-
-| | MonkeyOCRv2 (resident) | Unlimited-OCR (4 GiB offload) |
-|---|---|---|
-| throughput | 152.6 tok/s | 13.3 tok/s |
-| page layout | register labelled `Text` | register labelled **`table`** |
-| table | 6 banded calls, unstable columns (12 vs the 9 printed) | 1 call, **76 complete rows**, header included |
-| full page end2end | — | 5 blocks in 263 s, `finish_reason=stop` |
-
-Table content arrives as **HTML** inside the `<|det|>table …` block, not as
-Markdown as the model card suggests; prefill converts it with
-`otsl.html_to_otsl` (verified: a 76×8 grid).
 
 ## 7. GLM-OCR (`zai-org/GLM-OCR`)
 
@@ -541,7 +467,6 @@ the KV cache. Measurements on an RTX 4060 Laptop 8 GB:
 | Model | Weights | Without offload | With offload | Throughput |
 |---|---|---|---|---|
 | DeepSeek-OCR-2 | 6.33 GiB | KV cache **-1.03 GiB**, doesn't start | `-gb 3` → 3.22 GiB resident, KV 2.08 GiB | 16.7 tok/s |
-| Unlimited-OCR | 6.3 GiB | doesn't start | `-gb 4` → 2.23 GiB resident, KV 0.94 GiB | 13.3 tok/s |
 | MonkeyOCRv2 | 1.92 GiB | fits, no offload | — | 152.6 tok/s |
 
 The ratio is roughly 1:1 between GiB moved and GiB of KV cache recovered. The
@@ -556,7 +481,6 @@ comparisons and a few pages, not for processing a whole corpus.
 | MinerU2.5 | `vllm serve` | `modal_mineru.py` | ~2.5 GB | comfortable |
 | dots.mocr | `vllm serve` | `modal_dots_ocr.py` | ~6.1 GB | OOM measured on an RTX 4060 8 GB, even with offload |
 | PaddleOCR-VL-1.6 | `vllm serve` | `modal_paddleocr_vl.py` | ~1.8 GB | comfortable |
-| Unlimited-OCR | Docker | `modal_unlimited_ocr.py` | ~6 GB | tight |
 | GLM-OCR | `vllm serve` | `modal_glm_ocr.py` | ~2.7 GB | OOM/cache issues measured on an RTX 4060 8 GB |
 | DeepSeek-OCR-2 | `vllm serve` | `modal_deepseek_ocr.py` | ~6 GB | works with 4 GB CPU offload |
 | Qwen3-VL-8B | `vllm serve` | `modal_qwen3_vl.py` | ~16.3 GB | beyond 8 GB, warning expected |

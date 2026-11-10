@@ -82,7 +82,8 @@ def test_services_reach_the_database_only_through_adapters() -> None:
 def test_domain_modules_are_actually_used() -> None:
     # A pure module nobody imports is dead weight pretending to be an architecture.
     assert sorted(path.stem for path in DOMAIN.glob("*.py") if path.name != "__init__.py") == [
-        "consensus", "inference", "otsl", "prefill", "table_headers", "table_similarity", "vram",
+        "consensus", "inference", "markdown_export", "otsl", "prefill", "table_headers",
+        "table_similarity", "vram",
     ]
 
 
@@ -244,7 +245,7 @@ def test_the_serving_dispatch_names_no_model() -> None:
     code = "\n".join(
         line for line in source.splitlines() if not line.lstrip().startswith("#")
     )
-    for adapter_id in ("mineru2.5", "unlimited-ocr"):
+    for adapter_id in ("mineru2.5",):
         assert f'"{adapter_id}"' not in code, (
             f"serve_manager names {adapter_id}: declare `local_serve` on its recipe "
             "and dispatch on it"

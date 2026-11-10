@@ -278,3 +278,32 @@ away from the others. `Title`, `Page-header`, `Section-header` and `List-item` e
 taxonomy for this reason.
 
 ---
+
+## Unlimited-OCR-2 request protocol
+
+Primary sources: the model card of `baidu/Unlimited-OCR-2` (revision `c14071b`; later commits
+changed only the README), `infer.py` and `utils/process_unlimitedOCR2.py` in
+`github.com/baidu/Unlimited-OCR`, and the vendor's SGLang wheel.
+
+| Fact | Value |
+|---|---|
+| Serving | the vendor's SGLang wheel, flags and environment in `backend/app/models/unlimited_ocr2.py` |
+| Prompt | `"<PAGE><image>" * pages + "Multi page parsing."`, images first, in page order |
+| Request | `temperature` 0, `skip_special_tokens` false, `images_config.crop_mode` (true = gundam), streaming |
+| N-gram window | 128 for one page, 1024 for several (`custom_params.window_size`) |
+| Output budget | 8000 tokens per page for the whole request, per-page guard `max_page_tokens` 20000, client timeout 6000 s |
+| Long documents | no page limit: with `SGLANG_UOCR_EANABLE_DOC_LIMIT=1` the server splits a request into windows of `SGLANG_UOCR_DOC_*_PAGE_WINDOW` (10) pages plus one look-ahead page, carries the previous window's KV tail, and spends `max_tokens` across windows (`doc_split.py`, "global-cumulative-v1"); the 131072-token context bounds a window, not the document |
+| Streamed windows | each window's output is re-emitted as `<PAGE>body` per owned page; `finish_reason` is `length` if any window is incomplete |
+| PDF rendering | 300 DPI in the vendor's example |
+| Output | blocks `<BLOCK>label[x1,y1,x2,y2]<FORK>content`, one `<PAGE>` per input page |
+| Empty blocks | dropped, except image kinds (`_render_blocks`) |
+| Markdown | `process_unlimitedOCR2.convert`: titles by `<LEVELn>`, single-rooted heading tree; `cross_`/`append_` chains (text, table) and same-page `<MERGE>` grouped by union-find; table fragments merged, a continuation's leading rows equal to the first fragment's (up to 5) dropped; images as `![](page<N>_x1_y1_x2_y2.jpg)`. Reimplemented in `backend/app/domain/markdown_export.py` on blocks that keep these facts in `native` |
+
+Tabularium's own choices, not the vendor's: a document is a collection when the page belongs
+to one (its pages in project order, `rel_path, pdf_page`), otherwise one PDF or one folder of
+scans, and it goes whole in one request; grey or black-and-white pages are sent as one-channel PNG
+(the same pixels, half the bytes on grey register scans); `cross_`/`append_` fragments stay as one block per page; and a page
+the document request did not read (empty, or cut by the budget) is read again with the
+single-page request.
+Measured on an A40 (2026-11-10): after a page looped up to `max_page_tokens`, the model emitted
+`<PAGE><PAGE></td>` and stopped, leaving the next page unread.

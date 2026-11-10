@@ -307,7 +307,7 @@ consumed. Four items, tracked here:
 3. **`DEFAULT_MODEL_ID` — done.** `frontend/src/lib/constants.ts` holds the reference
    model once; twelve literals across six files are gone. Typecheck and 258 tests green.
 4. **Serving dispatch by declaration — done for the MLX runners.** The recipe declares
-   `local_serve` (`""` = the standard MLX server, `mlx-mineru`, `mlx-unlimited`), and
+   `local_serve` (`""` = the standard MLX server, `mlx-mineru`), and
    `serve_manager._local_runner` maps it to the module that implements the log tail, the
    readiness step and the argv. The three `adapter_id ==` branches in the serve path are
    gone; `test_the_serving_dispatch_names_no_model` fails if a model name comes back.
@@ -322,7 +322,7 @@ the pattern, not on a file list:
 | Thin API | `app/api/`: 105 → **6** statements, all in `auth.py`; `test_the_api_layer_does_not_speak_sql` |
 | Thin services | `app/services/`: 145 in 21 modules → **12 in 3**, the declared exceptions (`auth`, `vault`, `audit`); `test_the_service_layer_does_not_speak_sql` |
 | Prefill by declaration | `native_runner` on the adapter, 11 `adapter_id ==` gone, `prefill` column in the matrix; `test_prefill_dispatches_by_declaration_not_by_model_identity` |
-| Serving by declaration | `local_serve` on the recipe (`mlx-mineru`, `mlx-unlimited`), dispatch table, model names gone from the MLX path; `test_the_serving_dispatch_names_no_model` |
+| Serving by declaration | `local_serve` on the recipe (`mlx-mineru`), dispatch table, model names gone from the MLX path; `test_the_serving_dispatch_names_no_model` |
 | One default model | `DEFAULT_MODEL_ID` in `frontend/src/lib/constants.ts`; twelve literals removed |
 
 Both exemption lists carry a reason and are *self-expiring*: a cleaned module must leave the

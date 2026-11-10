@@ -13,7 +13,7 @@ pipeline can be set per model, validated by the backend and reset. What it lacks
 structure.
 
 1. **It ignores the hub.** The panel has its own model dropdown and opens on the model
-   *in use*, not on the model chosen in steps 1–2. Configuring Unlimited-OCR while
+   *in use*, not on the model chosen in steps 1–2. Configuring Unlimited-OCR-2 while
    MonkeyOCRv2 is in use shows MonkeyOCRv2's parameters.
 2. **Grouped by implementation, not by intent.** Three equal columns — "Remote serving
    (vLLM)", "Generation", "Image" — then "MLX" and "Official workflow". The groups name
@@ -87,7 +87,7 @@ Progressive disclosure, three levels:
 - **L0 — summary line.** Collapsed state of the panel in step 3: "Official parameters"
   or "2 values differ from the official recipe", with *Customise*.
 - **L1 — essentials.** `image.max_pixels`, `generation.max_tokens`, and the workflow
-  fields the model's spec marks `essential` (MonkeyOCRv2 DFlash, Unlimited-OCR image
+  fields the model's spec marks `essential` (MonkeyOCRv2 DFlash, Unlimited-OCR-2 image
   mode, TeleOCR layout mode, LlamaCloud tier and languages).
 - **L2 — groups**, each collapsed, each with its own "n differ" badge:
   - *How it reads the image* — `min_pixels`, non-essential image workflow fields.

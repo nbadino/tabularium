@@ -71,7 +71,7 @@ def list_runs(project_id: int | None, limit: int) -> list[dict[str, Any]]:
 def items_for_run(run_id: int) -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
-            """SELECT i.*, p.rel_path, p.pdf_page, p.status AS page_status,
+            """SELECT i.*, p.rel_path, p.pdf_page, p.collection_id, p.width, p.height, p.status AS page_status,
                       (SELECT COUNT(*) FROM blocks b
                         WHERE b.recognition_run_id=i.run_id AND b.page_id=i.page_id) AS blocks,
                       (SELECT COUNT(*) FROM blocks b
@@ -373,6 +373,17 @@ def reviewed_blocks(page_id: int) -> list[dict[str, Any]]:
             (page_id,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def page_grids(page_id: int) -> dict[int, dict[str, Any]]:
+    """The saved table grids of a page's blocks, by block id."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT t.block_id, t.grid_json FROM tables t JOIN blocks b ON b.id=t.block_id "
+            "WHERE b.page_id=?",
+            (page_id,),
+        ).fetchall()
+    return {int(row[0]): json.loads(row[1]) for row in rows if row[1]}
 
 
 def _now() -> str:

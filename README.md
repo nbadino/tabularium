@@ -77,8 +77,8 @@ training set.
   the instance you rented, so you aren't billed for idle time. Each option says
   *before* you click whether it can host the chosen model.
 - A CPU OCR engine for when you have no GPU at all.
-- Export as JSON, CSV or plain text, either the raw model output or your
-  corrected version.
+- Export as JSON, CSV, plain text or one Markdown file per document (tables that run
+  across pages merged into one), either the raw model output or your corrected version.
 
 **Review and annotation**
 - A studio for layout blocks, reading order and transcription, with
@@ -128,7 +128,6 @@ listed as verified only after it has been run on real pages.
 | PaddleOCR-VL | ✅ | ✅ |
 | MinerU2.5 | ✅ | 🧪 |
 | Qwen3-VL | ✅ | 🧪 |
-| Unlimited-OCR | ✅ | 🧪 |
 | DeepSeek-OCR-2, GLM-OCR, dots.mocr | ✅ | — |
 | Any Hugging Face repo you register | ✅ | — |
 

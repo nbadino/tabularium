@@ -117,10 +117,9 @@ class ModelCapabilities:
     # `local_mlx_weight_factor` e l'8-bit sembrerebbe grande quanto il bf16:
     # un Mac da 8 GB si vedeva negare il modello per la variante che non usa.
     local_mlx_variant_weight_factors: tuple[tuple[str, float], ...] = ()
-    # Penalità di ripetizione consigliata per il percorso MLX. Serve ai modelli
-    # la cui ricetta ufficiale si regge su un logits processor n-gram che
-    # `mlx-vlm` non fornisce (v. Unlimited-OCR): senza, la generazione lunga
-    # entra in loop. None = nessun guard imposto, valgono i default di mlx-vlm.
+    # Repetition penalty recommended for the MLX path. For models whose official
+    # recipe relies on an n-gram logits processor that `mlx-vlm` does not provide:
+    # without it, long generations loop. None = no guard, mlx-vlm's defaults apply.
     local_mlx_repetition_penalty: float | None = None
     # Finestra su cui la penalità guarda indietro. Il default di mlx-vlm è 20
     # token: troppo corto per una riga di registro ripetuta (~25 token), che
@@ -471,210 +470,6 @@ class MinerU2_5Adapter(_StubAdapter):
         ]
 
 
-class UnlimitedOcrAdapter(_StubAdapter):
-    """baidu/Unlimited-OCR — discendente di DeepSeek-OCR (SAM-ViT-B + CLIP-L
-    DeepEncoder, modalità *gundam* per pagina singola), 3B parametri, MIT.
-    Parsing one-shot documento → markdown con token di grounding
-    ``<|ref|>tipo<|/ref|>`` / ``<|det|>tipo [bbox]<|/det|>`` per riga. Le
-    **tabelle** arrivano però in HTML dentro il blocco ``<|det|>table …``, non
-    in markdown: verificato sull'immagine ufficiale su pagina `A` del campione. È il
-    formato che `prefill` già converte con ``otsl.html_to_otsl``.
-
-    Fatti verificati sulla card Hugging Face e sulla ricetta vLLM ufficiale
-    (recipes.vllm.ai/baidu/Unlimited-OCR, agosto 2026):
-      - il serving richiede l'**immagine Docker dedicata**
-        ``vllm/vllm-openai:unlimited-ocr``: l'architettura NON è ancora nella
-        wheel stabile di vLLM, quindi ``pip install vllm`` non basta. Per il
-        locale, `serve_command` lancia direttamente questa immagine con
-        `docker run --gpus all` (richiede Docker + nvidia-container-toolkit
-        sulla macchina) montando i pesi già scaricati dal registro modelli
-        invece di farli riscaricare dentro il container; per il cloud resta
-        la template Modal ``modal_unlimited_ocr.py`` (usa
-        `modal.Image.from_registry` sulla stessa immagine). `stop()` di
-        `serve_manager` invia SIGTERM al processo `docker run`: Docker lo
-        inoltra al container per lo stop, ma non è istantaneo come un
-        processo nativo — normale, non un bug.
-        La card HF dichiara "una singola GPU >= 8GB è sufficiente per
-        l'inferenza BF16": margine stretto ma dichiarato fattibile su una
-        RTX 4060 Laptop;
-      - sul server è **obbligatorio** il logits processor
-        ``vllm.model_executor.models.unlimited_ocr:NGramPerReqLogitsProcessor``
-        (senza, i documenti lunghi vanno in loop sui token ``<|det|>``), con
-        ``--no-enable-prefix-caching`` e ``--mm-processor-cache-gb 0``;
-      - per richiesta: il prompt deve iniziare con il prefisso letterale
-        ``<image>``, ``skip_special_tokens=False`` e
-        ``vllm_xargs {ngram_size: 35, window_size: 128}`` (1024 per
-        multi-pagina). Tabularium invia questi parametri e converte i marker
-        ``<|det|>`` in blocchi con bbox 0–1000 e contenuto editabile;
-      - training: supporto ufficiale **ms-swift** annunciato il 2026/07/21 —
-        la stessa toolchain di MonkeyOCRv2 — ma la ricetta di serializzazione
-        non è ancora verificata sul repo e il template di training non è
-        integrato: `training_types` dichiara l'intenzione, non un percorso
-        pronto.
-
-    Misurato su LSI_17186_015 (2864x3952) con l'immagine ufficiale su una
-    RTX 4060 Laptop 8 GB, pesi in offload (`--cpu-offload-gb 4`, 2.23 GiB
-    residenti in VRAM):
-      - end2end pagina intera: 5 blocchi, ~264 s. Le coordinate coincidono con
-        quelle di MonkeyOCRv2 a 1 MP, ma il masthead viene separato in due
-        `title` e — soprattutto — il registro è etichettato **`table`**, cosa
-        che MonkeyOCRv2 su questo corpus non fa mai (lo classifica `Text`, e la
-        promozione a tabella la fa `prefill._looks_like_table` su base
-        geometrica);
-      - throughput 13.3 tok/s contro 152.6 di MonkeyOCRv2 residente e 16.7 di
-        DeepSeek-OCR-2 pure in offload: il costo è la banda PCIe, non il
-        modello.
-    """
-
-    adapter_id = "unlimited-ocr"
-    native_prefill_mode = "end2end"
-    # Unlimited-OCR termina con markdown e marker di grounding, non con una
-    # lista JSON: il client deve attendere il finish del server.
-    end2end_output_format = "grounded-markdown"
-    # La recipe vLLM ufficiale costruisce il messaggio come testo poi immagine;
-    # il prompt contiene il token letterale <image> prima del contenuto.
-    multimodal_content_order = "text-image"
-    end2end_max_tokens = 8192
-    # Official greedy decoding (vLLM `unlimited_ocr.py` example and recipe):
-    # the checkpoint's generation_config.json has no temperature, so without this
-    # vLLM would sample at 1.0.
-    recommended_generation = {"temperature": 0.0}
-    capabilities = ModelCapabilities(
-        adapter_id=adapter_id,
-        display_name="Unlimited-OCR",
-        tasks=("layout", "text", "table"),
-        coordinate_system="normalized-0-1000",
-        # Il modello emette `<table>...</table>` per le tabelle, non markdown:
-        # misurato, non dedotto dalla card.
-        table_format="html",
-        training_types=("lora", "full"),
-        inference_modes=("vllm",),
-        hardware=("cuda",),
-        languages=("multilingual",),
-        hf_repo="baidu/Unlimited-OCR",
-        approx_size_gb=6.0,
-        license_note="MIT.",
-        train_toolchain="ms-swift",
-        serve_backend="docker-vllm-openai",
-        serve_image="vllm/vllm-openai:unlimited-ocr",
-        # Serving e inferenza end2end verificati sul campo (v. sotto), training
-        # e export no: `experimental`, non `supported`.
-        maturity="experimental",
-        # La ricetta ufficiale non impone `--max-model-len`, quindi varrebbe il
-        # default del checkpoint (32768, da `config.json`). Su una GPU singola
-        # da 8 GB non ci sta nemmeno spostando i pesi in RAM: misurato, per
-        # 32768 token servono 1.88 GiB di cache KV e ne restano 0.93 dopo
-        # l'offload. Il tetto è tarato su quella misura (~0.057 GiB ogni 1000
-        # token) e resta ben sopra il budget dell'adapter stesso
-        # (`end2end_max_tokens` 8192 + ~1300 token di immagine + prompt).
-        # Stessa natura dei flag empirici già documentati per MonkeyOCRv2 in
-        # docs/guide/local-inference.md: taratura di macchina, non requisito
-        # del produttore — su una GPU capiente si può alzare.
-        max_model_len=12288,
-        served_model_name="Unlimited-OCR",
-        # Percorso locale Apple Silicon. Fino a `mlx-vlm` 0.6.4 l'architettura
-        # non c'era e il modello andava in loop (`alpha.alpha.alpha…`); da
-        # 0.6.4 esiste il modello `unlimited_ocr` con `RingSlidingKVCache`,
-        # cioè la R-SWA di upstream (prefisso intero + anello degli ultimi 128
-        # token). Verificato il 2026-10-13 su M5 Pro / 24 GB con
-        # `mlx_vlm 0.7.1`: pagina indice LSI (2816×3680) in modalità `gundam`,
-        # 265,6 tok/s, TTFT 1,2 s, picco 5,8 GB, output grounded-markdown con
-        # `<|det|>` e `<table>` HTML — lo stesso formato che `parse_layout` legge.
-        #
-        # Il ban n-gram a 35 di upstream **non** è in `mlx-vlm` (la doc lo
-        # dichiara opt-in e non lo fornisce) e il server MLX non accetta
-        # `logits_processors` via JSON: la difesa pratica è `repetition_penalty`
-        # (misurato: senza, una riga si ripete 23 volte; con 1.3, zero). Va
-        # impostata lato richiesta, non nei `vllm_xargs` che valgono solo per
-        # vLLM. Vedi `recommended_generation` sotto.
-        local_runtimes=("vllm", "mlx-vlm"),
-        # Default bf16 (misura pulita, la scelta di chi vuole la massima
-        # fedeltà); l'8-bit è l'alternativa per Mac con meno memoria unificata.
-        local_mlx_repo="mlx-community/Unlimited-OCR-bf16",
-        local_mlx_repo_choices=(
-            ("bf16", "mlx-community/Unlimited-OCR-bf16"),
-            ("8bit", "mlx-community/Unlimited-OCR-8bit"),
-        ),
-        local_mlx_settings=True,
-        # bf16 è ~6,2 GB contro i 6,0 GB stimati dei pesi sorgente: fattore ~1.
-        local_mlx_weight_factor=1.05,
-        # 8-bit: 3,6 GB su 6,0 GB di pesi sorgente.
-        local_mlx_variant_weight_factors=(
-            ("mlx-community/Unlimited-OCR-bf16", 1.05),
-            ("mlx-community/Unlimited-OCR-8bit", 0.6),
-        ),
-        # Guard anti-loop per il percorso MLX (v. commento sopra). Misurato sul
-        # campione in modalità `gundam`, 3000 token: senza guard una riga si
-        # ripete 23 volte; con context 20 la penalità non basta (80 ripetizioni,
-        # la finestra non copre la riga); con context 128 la generazione si
-        # chiude da sola (finish=stop) senza ripetizioni, a ~250 tok/s. Il
-        # context è quindi parte della ricetta, non un dettaglio.
-        local_mlx_repetition_penalty=1.1,
-        local_mlx_repetition_context_size=128,
-    )
-
-    def prompt_for(self, task: str, label: str | None = None) -> str | None:
-        if task == "end2end":
-            return "<image>document parsing."
-        raise NotImplementedError(
-            f"adapter '{self.adapter_id}': solo il percorso end2end è supportato"
-        )
-
-    def request_overrides(self, task: str) -> dict:
-        if task != "end2end":
-            return {}
-        from . import model_settings
-
-        workflow = model_settings.get_settings(self.adapter_id)["effective"]["workflow"]
-        return {
-            "skip_special_tokens": False,
-            # SGLang and the vendor client read `images_config`; vLLM's processor
-            # reads `crop_mode` from the multimodal kwargs (`unlimited_ocr.py`).
-            "images_config": {"image_mode": workflow.get("image_mode", "gundam")},
-            "mm_processor_kwargs": {"crop_mode": workflow.get("image_mode", "gundam") == "gundam"},
-            "vllm_xargs": {
-                "ngram_size": workflow.get("ngram_size", 35),
-                "window_size": workflow.get("window_size", 128),
-            },
-        }
-
-    def serve_command(self, model_path: str, port: int) -> list[str] | None:
-        return [
-            "docker", "run", "--rm", "--gpus", "all",
-            "--network", "host", "--ipc", "host",
-            "-v", f"{model_path}:/model",
-            "vllm/vllm-openai:unlimited-ocr",
-            "/model",
-            "--trust-remote-code",
-            "--logits_processors", "vllm.model_executor.models.unlimited_ocr:NGramPerReqLogitsProcessor",
-            "--no-enable-prefix-caching",
-            "--mm-processor-cache-gb", "0",
-            "--max-model-len", str(self.capabilities.max_model_len),
-            "--port", str(port),
-            "--gpu-memory-utilization", "0.85",
-            "--served-model-name", self.capabilities.served_model_name,
-        ]
-
-    def parse_layout(self, raw: str) -> list[dict]:
-        marker = re.compile(
-            r"<\|det\|>\s*([^\[<\s]+)\s*\[([^\]]+)\]\s*<\|/det\|>(.*?)(?=<\|det\|>|\Z)",
-            re.DOTALL,
-        )
-        items: list[dict] = []
-        for match in marker.finditer(raw or ""):
-            values = re.findall(r"-?\d+(?:\.\d+)?", match.group(2))
-            if len(values) != 4:
-                continue
-            bbox = [float(value) for value in values]
-            if bbox[0] >= bbox[2] or bbox[1] >= bbox[3]:
-                continue
-            content = re.sub(
-                r"<\|ref\|>.*?<\|/ref\|>", "", match.group(3), flags=re.DOTALL
-            ).strip()
-            items.append({"bbox": bbox, "label": match.group(1), "content": content})
-        return items
-
-
 def _sglang_class_reference(module: str, name: str) -> str:
     """`CustomLogitProcessor.to_str()` for an importable class, without SGLang.
 
@@ -764,6 +559,33 @@ class UnlimitedOcr2Adapter(_StubAdapter):
         re.I,
     )
     _SPAN = re.compile(r'\b(colspan|rowspan)\s*=\s*"([^"]*)"', re.I)
+    # `process_unlimitedOCR2.NOISE_CONTENT` and its bare-bbox-line cleanup.
+    _NOISE = frozenset({"[non-text]", "[unreadable]", "[image]", "[figure]"})
+    _BBOX_LINE = re.compile(r"(?m)^\s*\[\s*-?\d+\s*,\s*-?\d+\s*,\s*-?\d+\s*,\s*-?\d+\s*\]\s*$")
+    # `process_unlimitedOCR2.PAGE_SPLIT_RE`.
+    page_marker = re.compile(r"<\s*/?\s*PAGE\s*\d*\s*>", re.I)
+    # The README's `pdf_to_images(..., dpi=300)`. Only the request uses these pixels; the
+    # answer is normalised to 0-1000, so the blocks still land on the page as displayed.
+    pdf_render_dpi = 300
+
+    def document_scope(self) -> bool:
+        """Whether a run parses each document (PDF, folder or collection) in one request."""
+        from . import model_settings
+
+        workflow = model_settings.get_settings(self.adapter_id)["effective"]["workflow"]
+        return workflow["request_scope"] == "document"
+
+    def document_prompt(self, pages: int) -> str:
+        return "<PAGE><image>" * pages + "Multi page parsing."
+
+    def document_budget(self, pages: int) -> int:
+        """The README's `tokens_per_page * pages`, for the whole request.
+
+        The context does not bound it: the server splits the document into page
+        windows and spends this budget across them (`BUDGET_POLICY`
+        "global-cumulative-v1" in the wheel's `doc_split.py`).
+        """
+        return self.end2end_max_tokens * pages
 
     def prompt_for(self, task: str, label: str | None = None) -> str | None:
         if task == "end2end":
@@ -773,18 +595,19 @@ class UnlimitedOcr2Adapter(_StubAdapter):
         )
 
     def request_overrides(self, task: str) -> dict:
-        if task != "end2end":
+        if task not in {"end2end", "document"}:
             return {}
         from . import model_settings
 
         workflow = model_settings.get_settings(self.adapter_id)["effective"]["workflow"]
+        window = workflow["document_window_size"] if task == "document" else workflow["window_size"]
         return {
             "skip_special_tokens": False,
             "images_config": {"crop_mode": workflow["image_mode"] == "gundam"},
             "custom_logit_processor": self._NGRAM_PROCESSOR,
             "custom_params": {
                 "ngram_size": workflow["ngram_size"],
-                "window_size": workflow["window_size"],
+                "window_size": window,
                 "page_token_id": 128827,
                 "eos_token_id": 1,
                 "max_page_tokens": workflow["max_page_tokens"],
@@ -801,7 +624,9 @@ class UnlimitedOcr2Adapter(_StubAdapter):
         ]
 
     def _bare_blocks(self, text: str) -> str:
-        known = set(self._LABEL_MAP) | {f"{p}{l}" for p in ("cross_", "append_") for l in self._LABEL_MAP}
+        # `_BARE_LABELS` has no `picture`/`img`: those are only accepted after `<BLOCK>`.
+        base = set(self._LABEL_MAP) - {"picture", "img"}
+        known = base | {f"{p}{l}" for p in ("cross_", "append_") for l in base}
 
         def repl(match: re.Match) -> str:
             label = re.match(r"[a-zA-Z_][a-zA-Z_0-9]*", match.group(1)).group(0)
@@ -819,15 +644,26 @@ class UnlimitedOcr2Adapter(_StubAdapter):
 
         return self._SPAN.sub(repl, html)
 
+    _MERGE = re.compile(r"<\s*/?\s*MERGE\s*>", re.I)
+
     def parse_layout(self, raw: str) -> list[dict]:
+        """Blocks with Tabularium labels, each with the `native` facts the vendor's
+        Markdown converter groups by: its own kind, the `cross_`/`append_` chain it
+        belongs to, the title level and a `<MERGE>` with the block before."""
         text = self._bare_blocks(raw or "")
         matches = list(self._BLOCK.finditer(text))
         items = []
+        merge_prev = False
         for index, match in enumerate(matches):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            region = text[match.end():end]
+            # `_parse_blocks`: a `<MERGE>` after a block joins it to the next one.
+            merged, merge_prev = merge_prev, bool(self._MERGE.search(region))
             kind = match.group(1).lower()
+            chain = None
             for prefix in ("append_", "cross_"):
                 if kind.startswith(prefix):
-                    kind = kind[len(prefix):]
+                    kind, chain = kind[len(prefix):], prefix[:-1]
             label = self._LABEL_MAP.get(kind)
             coords = match.group(3, 4, 5, 6) if match.group(3) is not None else match.group(7, 8, 9, 10)
             if label is None or coords[0] is None:
@@ -835,13 +671,19 @@ class UnlimitedOcr2Adapter(_StubAdapter):
             bbox = [max(0, min(1000, int(value))) for value in coords]
             if bbox[0] >= bbox[2] or bbox[1] >= bbox[3]:
                 continue
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-            content = self._STRAY.sub("", text[match.end():end]).strip()
-            if label == "Picture":
+            level = match.group(2) if match.group(2) is not None else match.group(11)
+            native = {"kind": kind, "chain": chain, "level": int(level) if level else None,
+                      "merge_prev": merged}
+            content = self._BBOX_LINE.sub("", self._STRAY.sub("", region)).strip()
+            if label == "Picture" or content.lower() in self._NOISE:
                 content = ""
-            elif label == "Table":
+            # `_render_blocks`: only an image (every `IMAGE_LABELS` kind maps to
+            # Picture) survives without content.
+            if not content and label != "Picture":
+                continue
+            if label == "Table":
                 content = self._span_attrs(content)
-            items.append({"bbox": bbox, "label": label, "content": content})
+            items.append({"bbox": bbox, "label": label, "content": content, "native": native})
         return items
 
 
@@ -1096,7 +938,7 @@ class DeepSeekOcrAdapter(_StubAdapter):
     di breaking change fra versioni vLLM — verificare con `vllm serve --help`
     prima del deploy) e `--trust-remote-code`. Il logits processor
     dedicato evita loop di generazione su documenti lunghi, sullo stesso
-    principio di MinerU2.5/Unlimited-OCR. La "Gundam mode" (crop tiling) è
+    principio di MinerU2.5. La "Gundam mode" (crop tiling) è
     hardcoded nell'integrazione vLLM, nessun flag la controlla. Licenza
     corretta ad Apache-2.0 (la card HF non è MIT come indicato in precedenza).
     `--max-model-len`/`--gpu-memory-utilization` non ufficiali per hardware
@@ -1127,11 +969,10 @@ class DeepSeekOcrAdapter(_StubAdapter):
         served_model_name="deepseek-ocr-2",
         max_model_len=8192,
         local_runtimes=("vllm",),
-        # Come Unlimited-OCR: la ricetta verificata richiede il logits
-        # processor n-gram di vLLM (`deepseek_ocr:NGramPerReqLogitsProcessor`,
-        # «contro i loop»), che `mlx-vlm` non espone. Su Apple Silicon questo
-        # modello resta remoto: serve un percorso che possa vincolare la
-        # decodifica, non solo campionarla.
+        # The verified recipe requires vLLM's n-gram logits processor
+        # (`deepseek_ocr:NGramPerReqLogitsProcessor`, "against loops"), which
+        # `mlx-vlm` does not expose. On Apple Silicon this model stays remote: it
+        # needs a path that can constrain decoding, not merely sample it.
     )
 
     _PROMPTS = {
@@ -2573,7 +2414,6 @@ _ADAPTERS: dict[str, ModelAdapter] = {
     for adapter in (
         MonkeyOCRv2ParsingAdapter(),
         MinerU2_5Adapter(),
-        UnlimitedOcrAdapter(),
         UnlimitedOcr2Adapter(),
         DotsOcrAdapter(),
         GlmOcrAdapter(),
