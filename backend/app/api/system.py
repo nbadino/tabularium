@@ -470,6 +470,11 @@ def test_inference_endpoint(payload: dict, user: dict = Depends(authsvc.get_curr
 
         api_key = opencode_gateway.read_api_key()
 
+    provider = (
+        "llamaindex" if llama_backend
+        else "opencode" if "opencode.ai" in url.lower()
+        else payload.get("provider") or inference._provider_for_endpoint(url)
+    )
     client = inference.VllmClient(
         url=url,
         model=model,
@@ -477,10 +482,12 @@ def test_inference_endpoint(payload: dict, user: dict = Depends(authsvc.get_curr
         extra_headers=extra_headers,
         timeout=int(timeout),
         adapter=adapter,
-        provider=(
-            "llamaindex" if llama_backend
-            else "opencode" if "opencode.ai" in url.lower()
-            else payload.get("provider") or inference._provider_for_endpoint(url)
+        provider=provider,
+        # Recipes such as TeleOCR's serve only the vendor's sidecar: the test
+        # needs its URL to probe readiness where the model actually runs.
+        native_url=(
+            inference._native_url(adapter.adapter_id, provider, url)
+            if adapter is not None else None
         ),
     )
     return client.test_connection(timeout=timeout)

@@ -7,6 +7,11 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **TeleOCR on Vast.ai now finishes "Link to Tabularium".** Its recipe runs only the vendor's
+  sidecar, with no OpenAI-compatible server on the instance, but the tunnel check asked `/v1/models`
+  and waited forever at "Tunnel open: checking the model…". The check now names the model and the
+  provider, and for a recipe that serves only its sidecar it waits for the sidecar's `/health` to
+  report `ready`. The saved profile also keeps the Vast provider, so recognition reaches the sidecar.
 - **PaddleOCR-VL on a remote GPU no longer fails every page.** The official path runs the
   Paddle pipeline (layout detection and parser) on the Tabularium machine even when the model is
   served elsewhere, but its runtime was installed only when the model was downloaded or served

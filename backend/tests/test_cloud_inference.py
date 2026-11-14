@@ -1762,3 +1762,73 @@ def test_driver_cuda_is_read_from_the_nvidia_smi_header():
         input=header, capture_output=True, text=True, check=True,
     ).stdout.strip()
     assert got == "12.2"
+
+
+def _teleocr_vast_tunnel(monkeypatch, health_status: str):
+    """A Vast tunnel whose remote 8888 is dead and whose sidecar answers /health."""
+    monkeypatch.setattr(
+        cloud_manager,
+        "get_tunnel_status",
+        lambda: cloud_manager.TunnelStatus(
+            running=True, local_port=9101, remote_port=8888,
+            native_local_port=9102, native_remote_port=8889,
+        ),
+    )
+    seen: list[str] = []
+
+    class Health:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"status": health_status}
+
+    def fake_get(url, *args, **kwargs):
+        seen.append(url)
+        if url == "http://127.0.0.1:9102/health":
+            return Health()
+        # Nothing listens on remote 8888 for the native-only TeleOCR recipe.
+        raise infmod.requests.ConnectionError(f"connection refused: {url}")
+
+    monkeypatch.setattr(infmod.requests, "get", fake_get)
+    return seen
+
+
+@pytest.mark.parametrize("health_status,expected", [("ready", True), ("starting", False)])
+def test_teleocr_vast_test_checks_native_sidecar_health(monkeypatch, health_status, expected):
+    seen = _teleocr_vast_tunnel(monkeypatch, health_status)
+    with TestClient(app) as client:
+        res = client.post(
+            "/api/system/inference/test",
+            json={
+                "url": "http://127.0.0.1:9101/v1",
+                "model": "StarDoc-AI/TeleOCR",
+                "adapter_id": "teleocr",
+                "provider": "vast",
+            },
+        )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["ok"] is expected
+    assert "http://127.0.0.1:9102/health" in seen
+    assert not any(url.endswith("/models") for url in seen)
+    if not expected:
+        assert health_status in (data["error"] or "")
+
+
+def test_vllm_sidecar_adapters_still_probe_openai_models(monkeypatch):
+    # MinerU and GLM-OCR keep vLLM on 8888 next to their sidecar: their test
+    # must still prove that `/v1/models` serves the selected model.
+    seen = _teleocr_vast_tunnel(monkeypatch, "ready")
+    with TestClient(app) as client:
+        res = client.post(
+            "/api/system/inference/test",
+            json={
+                "url": "http://127.0.0.1:9101/v1",
+                "model": "zai-org/GLM-OCR",
+                "adapter_id": "glm-ocr",
+                "provider": "vast",
+            },
+        )
+    assert res.json()["ok"] is False
+    assert seen == ["http://127.0.0.1:9101/v1/models"]

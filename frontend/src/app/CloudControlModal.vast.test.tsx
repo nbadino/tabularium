@@ -11,12 +11,13 @@ import '@testing-library/jest-dom/vitest'
 import { MemoryRouter } from 'react-router'
 import { ConfirmProvider } from './confirm'
 import { CloudControlModal, readVastJob, writeVastJob } from './CloudControlModal'
-import { apiPost } from '../lib/api'
+import { apiPost, apiPut } from '../lib/api'
 
 type LogReply = { present: boolean; ready: boolean; failed: boolean; phase: string; error: string; lines: string[]; adapter_id?: string }
 const fake = {
   log: { present: false, ready: false, failed: false, phase: 'absent', error: '', lines: [] } as LogReply,
   tunnel: { running: false } as Record<string, unknown>,
+  probeOk: false,
 }
 
 vi.mock('../lib/api', () => ({
@@ -44,7 +45,7 @@ vi.mock('../lib/api', () => ({
       fake.tunnel = { running: true, host: 'h.example', port: 2222, local_port: 9999 }
       return fake.tunnel
     }
-    if (path === '/system/inference/test') return { ok: false }
+    if (path === '/system/inference/test') return { ok: fake.probeOk }
     return {}
   }),
   apiPut: vi.fn(async () => ({})),
@@ -77,6 +78,8 @@ describe('Vast.ai guidato', () => {
     vi.mocked(apiPost).mockClear()
     fake.log = { present: false, ready: false, failed: false, phase: 'absent', error: '', lines: [] }
     fake.tunnel = { running: false }
+    fake.probeOk = false
+    vi.mocked(apiPut).mockClear()
   })
   afterEach(cleanup)
 
@@ -127,5 +130,29 @@ describe('Vast.ai guidato', () => {
     expect(screen.queryByText(/Ripresa la preparazione/)).not.toBeInTheDocument()
     // Il promemoria resta: appartiene all'altro percorso.
     expect(readVastJob()?.adapterId).toBe('qwen3-vl-8b')
+  })
+
+  it('la verifica del tunnel dichiara adapter e provider Vast, poi li salva', async () => {
+    // TeleOCR serves only its sidecar: without the adapter and the provider
+    // the backend probes the dead /v1 tunnel and step 4 never completes.
+    fake.tunnel = { running: true, host: 'h.example', port: 2222, local_port: 9999 }
+    fake.probeOk = true
+    renderVast()
+    await waitFor(() =>
+      expect(vi.mocked(apiPost)).toHaveBeenCalledWith(
+        '/system/inference/test',
+        expect.objectContaining({
+          url: 'http://127.0.0.1:9999/v1',
+          adapter_id: 'monkeyocrv2-parsing',
+          provider: 'vast',
+        }),
+      ),
+    )
+    await waitFor(() =>
+      expect(vi.mocked(apiPut)).toHaveBeenCalledWith(
+        '/system/inference',
+        expect.objectContaining({ adapter_id: 'monkeyocrv2-parsing', provider: 'vast' }),
+      ),
+    )
   })
 })
