@@ -1190,6 +1190,8 @@ export const it = {
     starting: 'Avvio dell’importazione…',
     extracting: 'Estraggo i file: {current} di {total}',
     registering: 'Creo le pagine: {current} di {total}',
+    inBackground: 'Le pagine compaiono nel progetto man mano: puoi chiudere questa finestra, l’importazione continua.',
+    banner: 'Importazione di {name}: pagina {current} di {total}. Le pagine compaiono man mano.',
     importingLabel: 'Importazione dell’archivio',
     foldersFound: { one: 'L’archivio contiene {count} cartella.', other: 'L’archivio contiene {count} cartelle.' },
     files: { one: '{count} file', other: '{count} file' },

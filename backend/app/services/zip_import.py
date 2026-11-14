@@ -318,6 +318,16 @@ def _collection_name(folder: str) -> str:
     return folder.strip()[:_COLLECTION_NAME_MAX] or folder
 
 
+def _page_units(target: Path) -> int:
+    """Pages a file will become, for the progress bar (a PDF it cannot read counts 1)."""
+    if target.suffix.lower() != ".pdf":
+        return 1
+    try:
+        return max(1, scanmod.pdf_page_count(target))
+    except Exception:  # noqa: BLE001 - registration reports the real error
+        return 1
+
+
 def run_import(
     project_id: int,
     upload_id: str,
@@ -379,6 +389,10 @@ def run_import(
             collection_id, _name, flat_created = collectionstore.ensure(
                 conn, project_id, _collection_name(collection_name),
             )
+        # Progress counts pages, not files: one PDF can hold hundreds of them.
+        units = [_page_units(target) for _entry, target in extracted]
+        total_units = sum(units)
+        units_done = 0
         for index, (entry, target) in enumerate(extracted, 1):
             target_collection = collection_id
             if layout == "collections":
@@ -391,17 +405,25 @@ def run_import(
                     target_collection = collections[key]["id"]
             before = report.registered
             kind = "pdf" if target.suffix.lower() == ".pdf" else "image"
+            base_done = units_done
+
+            def on_page(done: int, _total: int, base_done: int = base_done) -> None:
+                if on_progress is not None:
+                    on_progress("registering", base_done + done, total_units)
+
             scanmod.register_candidate(
                 conn, project_id, scanmod.Candidate(target, kind), files_dir, report,
                 lang=lang, collection_id=target_collection,
+                on_page=on_page if kind == "pdf" else None,
             )
+            units_done = base_done + units[index - 1]
             added = report.registered - before
             if layout == "collections" and entry.folder is not None:
                 collections[_collection_name(entry.folder).lower()]["pages"] += added
             elif target_collection is None:
                 unassigned += added
             if on_progress is not None:
-                on_progress("registering", index, len(extracted))
+                on_progress("registering", units_done, total_units)
     if layout == "flat" and collection_id is not None:
         names = collectionstore.names(project_id)
         collections[names.get(collection_id, "")] = {

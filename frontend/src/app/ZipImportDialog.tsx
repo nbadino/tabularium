@@ -16,7 +16,7 @@ type Step =
 
 const mb = (bytes: number) => (bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)
 
-function Bar({ value, label }: { value: number; label: string }) {
+export function Bar({ value, label }: { value: number; label: string }) {
   return (
     <div className="mt-2 h-1.5 overflow-hidden border border-[color:var(--color-rule-strong)]" role="progressbar" aria-label={label} aria-valuenow={Math.round(value * 100)} aria-valuemin={0} aria-valuemax={100}>
       <div className="h-full bg-[color:var(--color-sig)] transition-[width] duration-300" style={{ width: `${Math.max(3, value * 100)}%` }} />
@@ -36,12 +36,15 @@ export default function ZipImportDialog({
   collectionId,
   onClose,
   onImported,
+  onProgress,
 }: {
   projectId: number
   file: File
   collectionId: number | null
   onClose: () => void
   onImported: () => void
+  /** The import job while it runs, null once it ends: the page shows it after the dialog closes. */
+  onProgress?: (job: ZipJob | null) => void
 }) {
   const { t } = useI18n()
   const [step, setStep] = useState<Step>({ kind: 'uploading', sent: 0, size: file.size })
@@ -59,13 +62,16 @@ export default function ZipImportDialog({
   const runImport = async (id: string, chosen: ZipLayout) => {
     setStep({ kind: 'importing', job: null })
     try {
-      const report = await importZip(projectId, id, chosen, destination, (job) =>
-        setStep({ kind: 'importing', job }),
-      )
+      const report = await importZip(projectId, id, chosen, destination, (job) => {
+        setStep({ kind: 'importing', job })
+        onProgress?.(job)
+      })
       setStep({ kind: 'done', report })
       onImported()
     } catch (e) {
       fail(e)
+    } finally {
+      onProgress?.(null)
     }
   }
 
@@ -133,6 +139,7 @@ export default function ZipImportDialog({
               : t('zip.starting')}
           </p>
           <Bar value={step.job && step.job.total ? step.job.current / step.job.total : 0} label={t('zip.importingLabel')} />
+          {step.job?.phase === 'registering' && <p className="mt-2 text-[12px] text-[color:var(--color-muted)]">{t('zip.inBackground')}</p>}
         </div>
       )}
       {step.kind === 'choosing' && (
