@@ -1,6 +1,6 @@
-fastapi>=0.141,<1
+fastapi>=0.162.4,<1
 uvicorn[standard]>=0.52,<1
-pydantic>=2.13,<3
+pydantic>=2.14.3,<3
 pillow>=12,<13
 numpy>=2,<3
 apted>=1.0.3,<2
@@ -23,7 +23,7 @@ onnxruntime>=1.17,<2
 # Client delle API cloud (Vast.ai/RunPod) in services/cloud_manager.py.
 httpx>=0.28,<1
 python-dotenv>=1.0,<2
-python-multipart>=0.0.20,<1
+python-multipart>=0.0.33,<1
 cryptography>=44,<51
 # Download pesi dal registro modelli (model_registry.py)
 huggingface-hub>=0.27,<1
