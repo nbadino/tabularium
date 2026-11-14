@@ -152,6 +152,12 @@ Notable changes to Tabularium. The format follows
   model in a comparison) shown later. A language chosen in the menu, Italian or French, is kept.
 
 ### Fixed
+- **Unlimited-OCR-2 can be run on a rented Vast.ai GPU.** The model picker refused Vast.ai for
+  every model without a Modal template ("no verified remote serving recipe"), although the Vast
+  setup script runs the model's own serve recipe, SGLang included. Vast.ai now follows the serve
+  recipe (`vast_serve_ready`), so Unlimited-OCR-2, Surya OCR 2.5, Xiaomi-OCR-0 and LightOnOCR-3
+  are offered there; Modal and RunPod still say why they cannot host them. Unlimited-OCR-2 also
+  asks Vast.ai for a CUDA 13 driver, which the vendor's SGLang build requires.
 - Local OCR (RapidOCR) stopped reading after the first page promoted to a table: pages came back
   *finished* with no blocks and no error. Reading a table cell switches text detection off, and
   rapidocr 3.x keeps that setting on the engine for the next pages. Detection now asks for its
