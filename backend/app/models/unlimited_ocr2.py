@@ -53,6 +53,9 @@ SPEC = ModelSpec(
         pip_extra=(SGLANG_WHEEL, "fastokens==0.3.2"),
         # Tested on an A800; the DASH kernels are Triton and the recipe is bf16.
         min_compute_capability=8.0,
+        # The wheel's METADATA requires `cuda-python>=13.0`, `flashinfer_python[cu13]`
+        # and `nvidia-cutlass-dsl[cu13]`: a driver that stops at CUDA 12.9 cannot load it.
+        min_cuda_driver=13.0,
         serve_args=(
             "--chat-template", "unlimited-ocr",
             "--tokenizer-backend", "fastokens",

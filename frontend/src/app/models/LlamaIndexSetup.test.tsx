@@ -81,6 +81,7 @@ const model = {
   local_serve_ready: false,
   local: { runnable: false, runtime: null, reason: 'no_local_runtime', mlx_repo: null },
   cloud_serve_ready: false,
+  vast_serve_ready: false,
   cloud_template: null,
   download_only: false,
   installed: false,

@@ -12,6 +12,11 @@ Notable changes to Tabularium. The format follows
   and waited forever at "Tunnel open: checking the model…". The check now names the model and the
   provider, and for a recipe that serves only its sidecar it waits for the sidecar's `/health` to
   report `ready`. The saved profile also keeps the Vast provider, so recognition reaches the sidecar.
+- **Models this server cannot run are marked so, automatically.** The server checks its own
+  hardware: on a CPU without AVX2 (needed by PaddlePaddle 3), PaddleOCR-VL and Xiaomi OCR, whose
+  official pipeline runs Paddle on the Tabularium machine even with a remote GPU, are greyed out in
+  the model picker with the reason, no runtime install is attempted, and a recognition with one of
+  them is refused before any page is queued (it used to fail every page of the document).
 - **PaddleOCR-VL on a remote GPU no longer fails every page.** The official path runs the
   Paddle pipeline (layout detection and parser) on the Tabularium machine even when the model is
   served elsewhere, but its runtime was installed only when the model was downloaded or served
@@ -152,6 +157,12 @@ Notable changes to Tabularium. The format follows
   model in a comparison) shown later. A language chosen in the menu, Italian or French, is kept.
 
 ### Fixed
+- **Unlimited-OCR-2 can be run on a rented Vast.ai GPU.** The model picker refused Vast.ai for
+  every model without a Modal template ("no verified remote serving recipe"), although the Vast
+  setup script runs the model's own serve recipe, SGLang included. Vast.ai now follows the serve
+  recipe (`vast_serve_ready`), so Unlimited-OCR-2, Surya OCR 2.5, Xiaomi-OCR-0 and LightOnOCR-3
+  are offered there; Modal and RunPod still say why they cannot host them. Unlimited-OCR-2 also
+  asks Vast.ai for a CUDA 13 driver, which the vendor's SGLang build requires.
 - Local OCR (RapidOCR) stopped reading after the first page promoted to a table: pages came back
   *finished* with no blocks and no error. Reading a table cell switches text detection off, and
   rapidocr 3.x keeps that setting on the engine for the next pages. Detection now asks for its

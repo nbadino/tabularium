@@ -99,6 +99,29 @@ def test_unlimited2_vast_recipe_carries_interpreter_and_environment():
     assert recipe["argv"][:2] == ["-m", "sglang.launch_server"]
 
 
+def test_unlimited2_vast_recipe_requires_a_cuda_13_driver():
+    # The vendor's SGLang wheel (revision c14071b) pins torch 2.13.0 and requires
+    # `cuda-python>=13.0`, `flashinfer_python[cu13]` and `nvidia-cutlass-dsl[cu13]`:
+    # a host whose driver stops at CUDA 12.9 cannot run it, so Vast must not offer it.
+    from app.services import cloud_manager
+
+    recipe = cloud_manager.build_provision_recipe("unlimited-ocr-2")
+    assert recipe["min_cuda_driver"] >= 13.0
+    listed = {item["adapter_id"]: item for item in serve_recipes.remote_models()}
+    assert listed["unlimited-ocr-2"]["min_cuda_driver"] >= 13.0
+
+
+def test_unlimited2_is_offered_on_vast_but_not_on_modal():
+    # No Modal template exists, but the Vast setup script installs the vendor's
+    # SGLang build from the recipe: the registry must say both things.
+    from app.services import model_registry
+
+    row = {item["adapter_id"]: item for item in model_registry.list_models()}["unlimited-ocr-2"]
+    assert row["vast_serve_ready"] is True
+    assert row["cloud_template"] is None
+    assert row["cloud_serve_ready"] is False
+
+
 def test_unlimited2_trains_with_ms_swift_main_and_its_own_profile():
     recipe = train_recipes.get_recipe("unlimited-ocr-2")
     assert recipe.script_ready

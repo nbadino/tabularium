@@ -43,6 +43,8 @@ export interface ModelItem {
    *  benchmark for every model, with its provenance; `value: null` carries the reason. */
   benchmark?: PublicBenchmark
   cloud_serve_ready: boolean
+  /** A rented Vast.ai GPU can serve it from its serve recipe, Modal template or not. */
+  vast_serve_ready: boolean
   /** Template Modal che serve questo modello; `null` = nessuna ricetta. */
   cloud_template: string | null
   download_only: boolean
@@ -58,6 +60,8 @@ export interface ModelItem {
   state: string
   error: string | null
   vram_warning: string | null
+  /** Why nothing on this host can run the model, wherever it is served (detected by the server). */
+  host_blocker?: string | null
   runtime_ready?: boolean
   runtime_state?: string | null
   runtime_error?: string | null
@@ -124,11 +128,15 @@ export interface DestinationVerdict {
 /**
  * Può `model` girare su `dest`? Rispecchia le regole che i pannelli dei
  * provider applicano davvero: una ricetta Modal esiste solo per i modelli con
- * `cloud_template`; un checkpoint personalizzato si pubblica su Vast o Modal
+ * `cloud_template`, mentre Vast esegue la ricetta di serving (`vast_serve_ready`);
+ * un checkpoint personalizzato si pubblica su Vast o Modal
  * ma non ha una via RunPod; il locale è il verdetto del backend per *questa*
  * macchina.
  */
 export function destinationVerdict(model: ModelItem, dest: Destination): DestinationVerdict {
+  // A model the Tabularium host itself cannot run fits no destination: a remote
+  // GPU would not help (e.g. a pipeline that runs PaddlePaddle on this server).
+  if (model.host_blocker) return { ok: false, reasonKey: `modelsHub.why.host.${model.host_blocker}` }
   switch (dest) {
     case 'local':
       return model.local?.runnable
@@ -140,7 +148,7 @@ export function destinationVerdict(model: ModelItem, dest: Destination): Destina
         : { ok: false, reasonKey: 'modelsHub.why.notLlamaIndexModel' }
     case 'vast':
       if (isCustom(model)) return { ok: true, publish: !model.cloud_serve_ready }
-      return model.cloud_serve_ready ? { ok: true } : { ok: false, reasonKey: 'modelsHub.why.noCloudRecipe' }
+      return model.vast_serve_ready ? { ok: true } : { ok: false, reasonKey: 'modelsHub.why.noCloudRecipe' }
     case 'modal':
       if (isCustom(model)) return { ok: true, publish: true }
       return model.cloud_template ? { ok: true } : { ok: false, reasonKey: 'modelsHub.why.noModalTemplate' }

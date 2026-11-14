@@ -20,6 +20,7 @@ function model(over: Partial<ModelItem> = {}): ModelItem {
     local_serve_ready: true,
     local: { runnable: false, runtime: null, reason: 'model_unsupported_locally', mlx_repo: null },
     cloud_serve_ready: true,
+    vast_serve_ready: true,
     cloud_template: 'monkeyocrv2',
     download_only: false,
     installed: false,
@@ -52,6 +53,24 @@ describe('destinationVerdict', () => {
     expect(destinationVerdict(model(), 'modal').ok).toBe(true)
   })
 
+  it('Vast segue la ricetta di serving, non la template Modal', () => {
+    // Unlimited-OCR-2: nessuna template Modal, ma lo script Vast installa la
+    // build SGLang del produttore dalla ricetta.
+    const uocr2 = model({
+      adapter_id: 'unlimited-ocr-2',
+      serve_backend: 'sglang-openai',
+      cloud_serve_ready: false,
+      vast_serve_ready: true,
+      cloud_template: null,
+    })
+    expect(destinationVerdict(uocr2, 'vast')).toEqual({ ok: true })
+    expect(destinationVerdict(uocr2, 'modal')).toEqual({ ok: false, reasonKey: 'modelsHub.why.noModalTemplate' })
+    expect(destinationVerdict(uocr2, 'runpod')).toEqual({ ok: false, reasonKey: 'modelsHub.why.noCloudRecipe' })
+    expect(recommendedDestination(uocr2)).toBe('vast')
+    const noRecipe = model({ vast_serve_ready: false })
+    expect(destinationVerdict(noRecipe, 'vast')).toEqual({ ok: false, reasonKey: 'modelsHub.why.noCloudRecipe' })
+  })
+
   it('un checkpoint personalizzato si pubblica su Vast/Modal, non su RunPod', () => {
     const custom = model({ adapter_id: 'custom-foo', cloud_serve_ready: false, cloud_template: null })
     expect(destinationVerdict(custom, 'vast')).toEqual({ ok: true, publish: true })
@@ -60,7 +79,7 @@ describe('destinationVerdict', () => {
   })
 
   it('senza parser e senza ricette il modello non è selezionabile', () => {
-    const m = model({ supports_native: false, cloud_serve_ready: false, cloud_template: null })
+    const m = model({ supports_native: false, cloud_serve_ready: false, vast_serve_ready: false, cloud_template: null })
     expect(isSelectable(m)).toBe(false)
     expect(recommendedDestination(m)).toBeNull()
   })
@@ -76,6 +95,7 @@ describe('destinationVerdict', () => {
       supports_end2end: false,
       local_serve_ready: false,
       cloud_serve_ready: false,
+      vast_serve_ready: false,
       cloud_template: null,
     })
     expect(destinationVerdict(argon, 'manual').ok).toBe(true)
@@ -91,6 +111,7 @@ describe('destinationVerdict', () => {
       supports_native: true,
       local_serve_ready: false,
       cloud_serve_ready: false,
+      vast_serve_ready: false,
       cloud_template: null,
     })
     expect(destinationVerdict(ocria, 'llamaindex')).toEqual({ ok: true })
@@ -156,5 +177,16 @@ describe('byPublicScore', () => {
   it('puts the highest public score first and models without one last, in catalog order', () => {
     const items = [scored('a', null), scored('b', 91.8), scored('c', 96.91), scored('d', null), model({ adapter_id: 'e', benchmark: undefined })]
     expect([...items].sort(byPublicScore).map((m) => m.adapter_id)).toEqual(['c', 'b', 'a', 'd', 'e'])
+  })
+})
+
+describe('host blocker', () => {
+  it('greys out a model the server itself cannot run, on every destination, with the reason', () => {
+    const blocked = model({ adapter_id: 'paddleocr-vl', host_blocker: 'cpu_no_avx2', local: { runnable: true, runtime: 'vllm', reason: null, mlx_repo: null } })
+    for (const dest of ['local', 'llamaindex', 'vast', 'runpod', 'modal', 'manual'] as const) {
+      expect(destinationVerdict(blocked, dest)).toEqual({ ok: false, reasonKey: 'modelsHub.why.host.cpu_no_avx2' })
+    }
+    expect(isSelectable(blocked)).toBe(false)
+    expect(isSelectable(model())).toBe(true)
   })
 })
