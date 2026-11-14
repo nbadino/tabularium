@@ -1679,6 +1679,8 @@ class VllmClient:
             return self._test_google_connection(timeout=timeout)
         if getattr(self.adapter.capabilities, "serve_backend", "") == "llamaindex-api":
             return self._test_llamaindex_connection(timeout=timeout)
+        if self.native_url and not _recipe_serves_openai(self.adapter.adapter_id):
+            return self._test_native_sidecar(timeout=timeout)
         started = time.perf_counter()
         try:
             if self.api_key or self.extra_headers:
@@ -1738,6 +1740,34 @@ class VllmClient:
                 "error": str(exc),
             }
 
+
+    def _test_native_sidecar(self, timeout: float = 10.0) -> dict:
+        """Readiness of a recipe whose only server is the vendor's sidecar.
+
+        Such recipes start no OpenAI-compatible server, so `/v1/models` never
+        answers; the sidecar's `/health` reports `ready` once the official
+        pipeline has loaded the model.
+        """
+        started = time.perf_counter()
+        error: str | None = None
+        try:
+            resp = requests.get(f"{self.native_url}/health", timeout=timeout)
+            resp.raise_for_status()
+            data = resp.json()
+            status = str(data.get("status") or "") if isinstance(data, dict) else ""
+            if status != "ready":
+                error = f"sidecar not ready: status '{status or 'unknown'}'"
+        except Exception as exc:  # noqa: BLE001
+            error = str(exc)
+        return {
+            "ok": error is None,
+            "url": self.native_url,
+            "model": self.model,
+            "models_available": [self.model] if error is None else [],
+            "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+            "is_cloud": self.is_cloud,
+            "error": error,
+        }
 
     def _test_llamaindex_connection(self, timeout: float = 10.0) -> dict:
         """Validate the user's LlamaCloud key with the cheap versions endpoint."""
@@ -1987,6 +2017,22 @@ def _native_url(adapter_id: str, provider: str | None, url: str) -> str | None:
         # the same port as the server's /v1/models readiness endpoint.
         return url[:-3].rstrip("/") if url.rstrip("/").endswith("/v1") else url.rstrip("/")
     return None
+
+
+def _recipe_serves_openai(adapter_id: str) -> bool:
+    """False when the adapter's serving recipe starts no OpenAI-compatible server.
+
+    TeleOCR's recipe runs only the vendor's sidecar (`serve_argv` is empty),
+    so its readiness lives on the sidecar's `/health`, not on `/v1/models`.
+    Adapters without a recipe are external endpoints and keep the `/v1` probe.
+    """
+    from . import serve_recipes
+
+    try:
+        recipe = serve_recipes.recipe_for(adapter_id)
+    except ValueError:
+        return True
+    return bool(serve_recipes.serve_argv(recipe, model_path=recipe.hf_repo, port=8888))
 
 
 def _provider_for_endpoint(url: str) -> str:

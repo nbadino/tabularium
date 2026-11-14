@@ -703,13 +703,23 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
     const localUrl = `http://127.0.0.1:${tunnelState.local_port || 8888}/v1`
     const tick = async () => {
       try {
-        const probe = await testInferenceConnection({ url: localUrl, model: vastServedName })
+        // Adapter and provider let the backend probe where the recipe really
+        // serves: TeleOCR runs only its native sidecar, with nothing on /v1.
+        // Saving the provider keeps the profile on the tunnel's sidecar too,
+        // instead of re-deriving "local" from the 127.0.0.1 URL.
+        const probe = await testInferenceConnection({
+          url: localUrl,
+          model: vastServedName,
+          adapterId: vastAdapter,
+          provider: 'vast',
+        })
         if (stopped || !probe.ok) return
         await saveInferenceToBackend({
           enabled: true,
           url: localUrl,
           model: vastServedName,
           adapterId: vastAdapter,
+          provider: 'vast',
         })
         if (!stopped) {
           setInferenceOk(true)
