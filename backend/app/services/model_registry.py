@@ -35,6 +35,19 @@ _RUNTIME_ACTIVE: set[str] = set()
 _CLOUD_TEMPLATES: dict[str, str] = model_specs.declared_values("cloud")
 
 
+def _vast_serve_ready(adapter_id: str) -> bool:
+    """Whether a rented Vast.ai GPU can serve the model from its serve recipe.
+
+    Distinct from the Modal template: the Vast setup script runs the recipe itself
+    (vLLM, the vendor's image, SGLang...), so a model without a Modal template can
+    still be hosted there. Same list as `serve_recipes.remote_models()`, which the
+    Vast picker offers.
+    """
+    from . import serve_recipes
+
+    return adapter_id in serve_recipes.RECIPES
+
+
 _DOWNLOAD_SCRIPT = (
     "import sys\n"
     "from huggingface_hub import snapshot_download\n"
@@ -441,6 +454,7 @@ def list_models() -> list[dict]:
             "local_serve_ready": local_serve_ready,
             "cloud_serve_ready": cap["adapter_id"] in _CLOUD_TEMPLATES,
             "cloud_template": _CLOUD_TEMPLATES.get(cap["adapter_id"]),
+            "vast_serve_ready": _vast_serve_ready(cap["adapter_id"]),
             "downloadable": bool(cap.get("hf_repo")) and not custom_checkpoint,
             "checkpoint_detached": custom_checkpoint and not state.get("installed"),
             "download_only": (
