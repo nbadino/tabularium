@@ -68,17 +68,54 @@ print(json.dumps([
 """
 
 
+# One install attempt per process: when it does not give a working runtime,
+# retrying on every page would rebuild the environment hundreds of times.
+_INSTALL_ATTEMPTED = False
+
+# `import paddle` on a CPU without the instructions its wheel was built for.
+_ILLEGAL_INSTRUCTION = (-4, 132)
+
+
+def _require_runtime() -> None:
+    """Make sure the PaddleOCR runtime is installed, installing it if needed.
+
+    The official path runs the Paddle pipeline (PP-DocLayoutV3 and the PaddleX
+    parser) on this machine even when the VLM is remote (a rented GPU behind a
+    tunnel, a custom endpoint). Installing it only when the model is downloaded
+    or served here left those users with every page failing; the first page now
+    waits for the install instead. `ensure_ready` is serialised, so the pages
+    that follow wait for the same install rather than starting another one.
+    """
+    global _INSTALL_ATTEMPTED
+    reason = paddle_runtime.cpu_unsupported_reason()
+    if reason:
+        raise RuntimeError(reason)
+    if paddle_runtime.ready():
+        return
+    if _INSTALL_ATTEMPTED:
+        raise RuntimeError(
+            "runtime PaddleOCR non utilizzabile dopo l'installazione: vedi il log di "
+            "installazione nella pagina Modelli"
+        )
+    _INSTALL_ATTEMPTED = True
+    try:
+        paddle_runtime.ensure_ready()
+    except Exception as exc:  # noqa: BLE001 - the install error is the useful message
+        raise RuntimeError(f"runtime PaddleOCR non installabile su questa macchina: {exc}") from exc
+    if not paddle_runtime.ready(force=True):
+        raise RuntimeError(
+            "runtime PaddleOCR installato ma non utilizzabile: vedi il log di installazione "
+            "nella pagina Modelli"
+        )
+
+
 def detect_layout(image: Image.Image, *, threshold: float) -> list[dict]:
     """PP-DocLayoutV3 regions as `{label, bbox}` with the bbox in 0-1000 integers.
 
     The scaling is the vendor's (`layout_detect_paddlex.serialize_regions`): clamp to the
     image, drop empty boxes, `int(x / width * 1000)`.
     """
-    if not paddle_runtime.ready():
-        raise RuntimeError(
-            "runtime PaddleOCR non disponibile su questa macchina: il layout PP-DocLayoutV3 "
-            "lo prepara Tabularium alla prima messa in servizio del modello"
-        )
+    _require_runtime()
     width, height = image.size
     with tempfile.TemporaryDirectory(prefix="tabularium-layout-", dir=config.ROOT_DIR) as tmp:
         path = Path(tmp) / "page.png"
@@ -88,8 +125,7 @@ def detect_layout(image: Image.Image, *, threshold: float) -> list[dict]:
             capture_output=True, text=True, timeout=int(config.VLLM_TIMEOUT) + 300,
         )
     if result.returncode:
-        reason = _last_meaningful_line(result.stderr or result.stdout)
-        raise RuntimeError(f"PP-DocLayoutV3 non ha completato la pagina: {reason or 'nessun dettaglio'}")
+        raise _runner_failure(result, "PP-DocLayoutV3 non ha completato la pagina")
     try:
         boxes = json.loads(result.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError) as exc:
@@ -137,6 +173,17 @@ def _axis_aligned_bbox(value) -> list | None:
     xs = [point[0] for point in coordinates]
     ys = [point[1] for point in coordinates]
     return [min(xs), min(ys), max(xs), max(ys)]
+
+
+def _runner_failure(result: subprocess.CompletedProcess, what: str) -> RuntimeError:
+    """The error for a runtime subprocess that failed, with its cause when known."""
+    if result.returncode in _ILLEGAL_INSTRUCTION:
+        return RuntimeError(
+            paddle_runtime.cpu_unsupported_reason()
+            or f"{what}: la CPU non supporta le istruzioni richieste da PaddlePaddle (illegal instruction)"
+        )
+    reason = _last_meaningful_line(result.stderr or result.stdout)
+    return RuntimeError(f"{what}: {reason}" if reason else f"{what} (nessun dettaglio dal runtime)")
 
 
 def _last_meaningful_line(text: str) -> str:
@@ -279,31 +326,16 @@ def parse_page(
     image_source, endpoint: str, model: str, width: int, height: int,
     *, vl_rec_backend: str = "vllm-server",
 ) -> list[dict]:
-    if not paddle_runtime.ready():
-        # Due situazioni diverse, due istruzioni diverse: un'installazione in
-        # corso chiede di riprovare, un runtime assente dice da dove arriva.
-        # Il messaggio unico di prima («completa prima l'installazione»)
-        # mandava a completare qualcosa che nessuno aveva iniziato.
-        state = paddle_runtime.status().get("state")
-        if state == "installing":
-            raise RuntimeError(
-                "runtime PaddleOCR in preparazione: il percorso ufficiale è "
-                "disponibile fra qualche minuto, riprova"
-            )
-        raise RuntimeError(
-            "runtime PaddleOCR non disponibile su questa macchina: il percorso "
-            "ufficiale di PaddleOCR-VL lo prepara Tabularium alla prima messa in "
-            "servizio del modello (Modelli → Avvia come server locale)"
-        )
-    # Il server del modello si verifica *prima* di avviare la pipeline: la sua
-    # inizializzazione (layout + modelli PaddleX) costa decine di secondi, e
-    # senza questo controllo si pagava tutto per poi leggere «Connection error»
-    # da dentro un worker.
+    # The model server is checked first: installing the runtime for a server
+    # that does not answer would only delay the error.
     if not _endpoint_alive(endpoint):
         raise RuntimeError(
             f"il server del modello non risponde su {endpoint}: avvialo dalla "
             "pagina Modelli (o scegli un provider remoto) e riprova"
         )
+    _require_runtime()
+    # The pipeline itself starts only now: its initialisation (layout and the
+    # PaddleX models) costs tens of seconds, wasted if the server were down.
     with tempfile.TemporaryDirectory(prefix="tabularium-paddle-", dir=config.ROOT_DIR) as tmp:
         # Pass the accepted master image when the caller has one. This keeps
         # the official pipeline on the same source used by the canvas/crops.
@@ -324,12 +356,7 @@ def parse_page(
             timeout=int(config.VLLM_TIMEOUT) + 300,
         )
         if result.returncode:
-            reason = _last_meaningful_line(result.stderr or result.stdout)
-            raise RuntimeError(
-                f"PaddleOCRVL non ha completato la pagina: {reason}"
-                if reason
-                else "PaddleOCRVL non ha completato la pagina (nessun dettaglio dal runtime)"
-            )
+            raise _runner_failure(result, "PaddleOCRVL non ha completato la pagina")
         try:
             hinted = json.loads(result.stdout.strip().splitlines()[-1]).get("path", "")
             payload = json.loads(_find_json(Path(tmp), hinted).read_text(encoding="utf-8"))

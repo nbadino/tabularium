@@ -6,6 +6,19 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **PaddleOCR-VL on a remote GPU no longer fails every page.** The official path runs the
+  Paddle pipeline (layout detection and parser) on the Tabularium machine even when the model is
+  served elsewhere, but its runtime was installed only when the model was downloaded or served
+  locally: with a rented GPU behind a tunnel each page failed with "runtime PaddleOCR non
+  disponibile". The first page now installs the runtime (once, the other pages wait for it).
+- **A CPU that cannot run PaddlePaddle 3 is named, not reported as "no detail".** The PaddlePaddle
+  3 x86-64 wheels need AVX2 and there is no build without it: on an older CPU (e.g. Xeon E5 v2)
+  the official PaddleOCR path died with an illegal instruction and every page said "nessun
+  dettaglio dal runtime". Tabularium now checks the CPU first and says so, explains an illegal
+  instruction when it happens anyway, and tries the runtime install once per process instead of
+  on every page.
+
 ### Added
 - **Searchable PDF and Markdown exports.** A recognition's results now have an *Export* panel
   of their own: pick the format, pick the text (with your corrections, or as the model produced

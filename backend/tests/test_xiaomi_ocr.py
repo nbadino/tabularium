@@ -78,6 +78,7 @@ def test_xiaomi_native_page_crops_each_region_with_its_task_prompt(monkeypatch):
 
 def test_detect_layout_scales_detector_pixels_like_the_vendor(monkeypatch):
     monkeypatch.setattr(paddle_official.paddle_runtime, "ready", lambda: True)
+    monkeypatch.setattr(paddle_official.paddle_runtime, "cpu_unsupported_reason", lambda: None)
 
     def run(argv, **kwargs):
         assert argv[-1] == "0.3"

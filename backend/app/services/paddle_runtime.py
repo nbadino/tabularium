@@ -71,6 +71,34 @@ def log_tail(n: int = 4000) -> str:
         return ""
 
 
+def cpu_unsupported_reason(
+    *, system: str | None = None, machine: str | None = None, cpuinfo: str | None = None,
+) -> str | None:
+    """Why this CPU cannot run PaddlePaddle 3, or `None` when it can (or we cannot tell).
+
+    The PaddlePaddle 3 wheels for x86-64 are built with AVX2 and the vendor
+    publishes no "noavx" build of 3.x (checked on its package index, 2026-11-14):
+    on an older CPU (e.g. Xeon E5 v2, AVX only) `import paddle` dies with SIGILL.
+    Only Linux is checked, where `/proc/cpuinfo` says it for sure.
+    """
+    system = system or sys.platform
+    machine = (machine or platform.machine()).lower()
+    if not system.startswith("linux") or machine not in ("x86_64", "amd64"):
+        return None
+    try:
+        text = cpuinfo if cpuinfo is not None else Path("/proc/cpuinfo").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    flags = next((line.split(":", 1)[1].split() for line in text.splitlines() if line.startswith("flags")), None)
+    if flags is None or "avx2" in flags:
+        return None
+    return (
+        "la CPU di questo server non supporta AVX2, richiesto da PaddlePaddle 3: il percorso "
+        "ufficiale di PaddleOCR (layout e parser) non può girare qui. Usa un modello che non "
+        "lo richiede, oppure Tabularium su una macchina con una CPU più recente"
+    )
+
+
 def default_paddle_packages(
     *, system: str | None = None, machine: str | None = None,
     driver_cuda: str | None = None, compute_cap: str | None = None,
