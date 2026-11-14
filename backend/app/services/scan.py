@@ -74,6 +74,51 @@ def scan_archive(root_dir: str | Path) -> list[Candidate]:
     return candidates
 
 
+# Default for pages with no raster image (born-digital PDFs).
+PDF_DEFAULT_DPI = 200
+# Scanned pages render at the resolution of their embedded scan, within these bounds.
+PDF_MIN_DPI = 200
+PDF_MAX_DPI = 600
+# Guard against a huge page size times a high DPI exhausting memory.
+PDF_MAX_PIXELS = 60_000_000
+
+
+def pdf_render_scale(page, *, target_width: int | None = None) -> float:
+    """Scale (pixels per PDF point) to render `page` at.
+
+    With `target_width` (a page already registered) the scale reproduces that
+    width, so stored coordinates stay valid. Otherwise it follows the largest
+    embedded image, so a scan is not downsampled.
+    """
+    width_pt, height_pt = page.get_size()
+    if target_width and width_pt > 0:
+        return target_width / width_pt
+    dpi = float(PDF_DEFAULT_DPI)
+    try:
+        import pypdfium2.raw as pdfium_c
+
+        best_area = 0.0
+        for obj in page.get_objects(filter=(pdfium_c.FPDF_PAGEOBJ_IMAGE,), max_depth=2):
+            px_w, px_h = obj.get_px_size()
+            # get_bounds() in pypdfium2 >= 5, get_pos() before.
+            bounds = getattr(obj, "get_bounds", None) or obj.get_pos
+            left, bottom, right, top = bounds()
+            shown_w, shown_h = right - left, top - bottom
+            area = shown_w * shown_h
+            if px_w <= 0 or px_h <= 0 or shown_w <= 0 or shown_h <= 0 or area <= best_area:
+                continue
+            best_area = area
+            dpi = max(px_w / (shown_w / 72), px_h / (shown_h / 72))
+    except Exception:  # noqa: BLE001 - an unreadable object falls back to the default
+        dpi = float(PDF_DEFAULT_DPI)
+    dpi = min(max(dpi, PDF_MIN_DPI), PDF_MAX_DPI)
+    scale = dpi / 72
+    pixels = width_pt * scale * height_pt * scale
+    if pixels > PDF_MAX_PIXELS:
+        scale *= (PDF_MAX_PIXELS / pixels) ** 0.5
+    return scale
+
+
 def render_pdf_pages(pdf_path: str | Path) -> list[tuple[object, tuple[int, int]]]:
     """Rende tutte le pagine di un PDF in immagini PIL. Richiede pypdfium2."""
     return list(iter_pdf_pages(pdf_path))
@@ -89,7 +134,7 @@ def iter_pdf_pages(pdf_path: str | Path):
     try:
         for page in pdf:
             try:
-                bitmap = page.render(scale=200 / 72)
+                bitmap = page.render(scale=pdf_render_scale(page))
                 try:
                     pil = bitmap.to_pil().convert("RGB")
                     yield pil, (pil.width, pil.height)
@@ -111,7 +156,9 @@ def iter_pdf_pages(pdf_path: str | Path):
 
 
 
-def render_pdf_page(pdf_path: str | Path, index: int) -> tuple[object, tuple[int, int]] | None:
+def render_pdf_page(
+    pdf_path: str | Path, index: int, *, target_width: int | None = None,
+) -> tuple[object, tuple[int, int]] | None:
     """Renderizza una sola pagina: preview/riconoscimento non devono renderizzare
     l'intero PDF a ogni click."""
     try:
@@ -124,7 +171,7 @@ def render_pdf_page(pdf_path: str | Path, index: int) -> tuple[object, tuple[int
             return None
         page = pdf[index]
         try:
-            bitmap = page.render(scale=200 / 72)
+            bitmap = page.render(scale=pdf_render_scale(page, target_width=target_width))
             try:
                 pil = bitmap.to_pil().convert("RGB")
                 return pil, (pil.width, pil.height)
@@ -232,7 +279,7 @@ def register_candidate(
         report.errors.append(f"{cand.path.name}: {msg('no_pages_rendered', lang)}")
         return
     # A rescan of a PDF whose pages are all known renders nothing: rendering every
-    # page at 200 DPI only to learn it was a duplicate cost minutes per archive.
+    # page at full resolution only to learn it was a duplicate cost minutes per archive.
     known = pagestore.registered_pdf_pages(conn, project_id, abs_path)
     if known >= set(range(page_count)):
         pagestore.revive_pdf_pages(conn, project_id, abs_path)
@@ -272,7 +319,8 @@ def register_candidate(
                 continue
             written += [pagesvc.pdf_image_path(page_id), pagesvc.thumb_path(page_id)]
             extracted = pagesvc.pdf_image_path(page_id)
-            pil_img.save(extracted, format="PNG", optimize=True)
+            # optimize=True costs ~1.5 s a page for ~4% less space.
+            pil_img.save(extracted, format="PNG")
             pagestore.set_meta(
                 conn, page_id, json.dumps({**extra, "extracted_path": str(extracted)})
             )
