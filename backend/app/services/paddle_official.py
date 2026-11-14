@@ -68,17 +68,36 @@ print(json.dumps([
 """
 
 
+def _require_runtime() -> None:
+    """Make sure the PaddleOCR runtime is installed, installing it if needed.
+
+    The official path runs the Paddle pipeline (PP-DocLayoutV3 and the PaddleX
+    parser) on this machine even when the VLM is remote (a rented GPU behind a
+    tunnel, a custom endpoint). Installing it only when the model is downloaded
+    or served here left those users with every page failing; the first page now
+    waits for the install instead. `ensure_ready` is serialised, so the pages
+    that follow wait for the same install rather than starting another one.
+    """
+    if paddle_runtime.ready():
+        return
+    try:
+        paddle_runtime.ensure_ready()
+    except Exception as exc:  # noqa: BLE001 - the install error is the useful message
+        raise RuntimeError(f"runtime PaddleOCR non installabile su questa macchina: {exc}") from exc
+    if not paddle_runtime.ready(force=True):
+        raise RuntimeError(
+            "runtime PaddleOCR installato ma non utilizzabile: vedi il log di installazione "
+            "nella pagina Modelli"
+        )
+
+
 def detect_layout(image: Image.Image, *, threshold: float) -> list[dict]:
     """PP-DocLayoutV3 regions as `{label, bbox}` with the bbox in 0-1000 integers.
 
     The scaling is the vendor's (`layout_detect_paddlex.serialize_regions`): clamp to the
     image, drop empty boxes, `int(x / width * 1000)`.
     """
-    if not paddle_runtime.ready():
-        raise RuntimeError(
-            "runtime PaddleOCR non disponibile su questa macchina: il layout PP-DocLayoutV3 "
-            "lo prepara Tabularium alla prima messa in servizio del modello"
-        )
+    _require_runtime()
     width, height = image.size
     with tempfile.TemporaryDirectory(prefix="tabularium-layout-", dir=config.ROOT_DIR) as tmp:
         path = Path(tmp) / "page.png"
@@ -279,31 +298,16 @@ def parse_page(
     image_source, endpoint: str, model: str, width: int, height: int,
     *, vl_rec_backend: str = "vllm-server",
 ) -> list[dict]:
-    if not paddle_runtime.ready():
-        # Due situazioni diverse, due istruzioni diverse: un'installazione in
-        # corso chiede di riprovare, un runtime assente dice da dove arriva.
-        # Il messaggio unico di prima («completa prima l'installazione»)
-        # mandava a completare qualcosa che nessuno aveva iniziato.
-        state = paddle_runtime.status().get("state")
-        if state == "installing":
-            raise RuntimeError(
-                "runtime PaddleOCR in preparazione: il percorso ufficiale è "
-                "disponibile fra qualche minuto, riprova"
-            )
-        raise RuntimeError(
-            "runtime PaddleOCR non disponibile su questa macchina: il percorso "
-            "ufficiale di PaddleOCR-VL lo prepara Tabularium alla prima messa in "
-            "servizio del modello (Modelli → Avvia come server locale)"
-        )
-    # Il server del modello si verifica *prima* di avviare la pipeline: la sua
-    # inizializzazione (layout + modelli PaddleX) costa decine di secondi, e
-    # senza questo controllo si pagava tutto per poi leggere «Connection error»
-    # da dentro un worker.
+    # The model server is checked first: installing the runtime for a server
+    # that does not answer would only delay the error.
     if not _endpoint_alive(endpoint):
         raise RuntimeError(
             f"il server del modello non risponde su {endpoint}: avvialo dalla "
             "pagina Modelli (o scegli un provider remoto) e riprova"
         )
+    _require_runtime()
+    # The pipeline itself starts only now: its initialisation (layout and the
+    # PaddleX models) costs tens of seconds, wasted if the server were down.
     with tempfile.TemporaryDirectory(prefix="tabularium-paddle-", dir=config.ROOT_DIR) as tmp:
         # Pass the accepted master image when the caller has one. This keeps
         # the official pipeline on the same source used by the canvas/crops.
