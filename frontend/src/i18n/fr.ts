@@ -1191,6 +1191,8 @@ export const fr: Dict = {
     starting: 'Démarrage de l’importation…',
     extracting: 'Extraction des fichiers : {current} sur {total}',
     registering: 'Création des pages : {current} sur {total}',
+    inBackground: 'Les pages apparaissent dans le projet au fur et à mesure : vous pouvez fermer cette fenêtre, l’import continue.',
+    banner: 'Import de {name} : page {current} sur {total}. Les pages apparaissent au fur et à mesure.',
     importingLabel: 'Importation de l’archive',
     foldersFound: { one: 'L’archive contient {count} dossier.', other: 'L’archive contient {count} dossiers.' },
     files: { one: '{count} fichier', other: '{count} fichiers' },

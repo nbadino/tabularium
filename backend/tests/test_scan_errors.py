@@ -14,7 +14,7 @@ def test_a_pdf_that_fails_midway_is_reported_and_the_rest_is_kept(tmp_path, monk
     Image.new("RGB", (400, 600), "white").save(archive / "a.png")
     (archive / "b.pdf").write_bytes(b"%PDF-1.4 fake")
 
-    def broken_pages(_path):
+    def broken_pages(_path, skip=frozenset()):
         yield Image.new("RGB", (400, 600), "white"), (400, 600)
         raise RuntimeError("page 2 cannot be rendered")
 

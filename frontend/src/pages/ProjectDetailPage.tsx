@@ -20,7 +20,8 @@ import { writeActiveProject } from '../app/activeProject'
 import { accessLabel, projectAccess } from '../app/projectAccess'
 import { pageLabel } from '../lib/pageLabel'
 import { API_BASE } from '../lib/endpoints'
-import ZipImportDialog from '../app/ZipImportDialog'
+import ZipImportDialog, { Bar as ProgressBar } from '../app/ZipImportDialog'
+import type { ZipJob } from '../lib/zipImport'
 import { isZip } from '../lib/zipImport'
 import CollectionsPanel from '../app/CollectionsPanel'
 import { CollectionNameDialog, DeleteCollectionDialog } from '../app/CollectionDialogs'
@@ -67,6 +68,8 @@ export default function ProjectDetailPage() {
   const filesInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
+  // The ZIP import running in the background, shown after its dialog is closed.
+  const [zipJob, setZipJob] = useState<{ name: string; job: ZipJob } | null>(null)
   const [shareOpen, setShareOpen] = useState(false)
   const [params, setParams] = useSearchParams()
   const view = params.get('vista') === 'tabella' ? 'table' : 'thumbs'
@@ -225,6 +228,17 @@ export default function ProjectDetailPage() {
     const r = await apiGet<{ items: PageItem[] }>(`/projects/${projectId}/pages`)
     setPages(r.items)
   }
+
+  // Pages are committed in blocks during an import: refresh the list while one runs,
+  // so they appear as they are created.
+  const importing = uploading || zipJob?.job.phase === 'registering'
+  const refreshPagesRef = useRef(refreshPages)
+  refreshPagesRef.current = refreshPages
+  useEffect(() => {
+    if (!importing) return
+    const timer = window.setInterval(() => { void refreshPagesRef.current().catch(() => undefined) }, 3000)
+    return () => window.clearInterval(timer)
+  }, [importing])
 
   // Approvazione in blocco: `pageIds` null = tutte le pagine del progetto.
   // Senza `approveDrafts` restano fuori le pagine con bozze non verificate; con
@@ -401,6 +415,7 @@ export default function ProjectDetailPage() {
           file={zipQueue[0]}
           collectionId={typeof collectionFilter === 'number' ? collectionFilter : null}
           onClose={() => setZipQueue((cur) => cur.slice(1))}
+          onProgress={(job) => setZipJob(job ? { name: zipQueue[0].name, job } : null)}
           onImported={() => {
             void refreshPages()
             void refreshCollections()
@@ -523,6 +538,15 @@ export default function ProjectDetailPage() {
               <div className="h-full animate-pulse bg-[color:var(--color-sig)] transition-[width] duration-300" style={{ width: scanProgress.total ? `${Math.max(3, (scanProgress.current / scanProgress.total) * 100)}%` : '25%' }} />
             </div>
           </Module>
+        </div>
+      )}
+
+      {zipJob && zipJob.job.total > 0 && zipQueue.length === 0 && (
+        <div role="status" className="mb-3 text-[13px]">
+          <p>{zipJob.job.phase === 'registering'
+            ? t('zip.banner', { name: zipJob.name, current: zipJob.job.current, total: zipJob.job.total })
+            : t('zip.extracting', { current: zipJob.job.current, total: zipJob.job.total })}</p>
+          <ProgressBar value={zipJob.job.current / zipJob.job.total} label={t('zip.importingLabel')} />
         </div>
       )}
 
