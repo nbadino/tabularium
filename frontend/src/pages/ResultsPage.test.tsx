@@ -19,7 +19,7 @@ vi.mock('../lib/api', () => ({
     if (path.startsWith('/recognition-runs?')) return { items: [run] }
     return run
   }),
-  apiDownload: vi.fn(), apiPost: vi.fn(),
+  apiDownloadFile: vi.fn(), apiPost: vi.fn(),
 }))
 afterEach(cleanup)
 
@@ -28,5 +28,5 @@ it('keeps original detections visible after the run’s saved blocks have been r
   expect(await screen.findByText('317 blocchi trovati in questo riconoscimento')).toBeInTheDocument()
   expect(screen.getByText('Pagina attuale: Approvata')).toBeInTheDocument()
   expect(screen.queryByText('Senza blocchi')).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Esporta versione corrente' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Scarica .pdf' })).toBeInTheDocument()
 })

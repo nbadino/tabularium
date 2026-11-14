@@ -7,6 +7,16 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **Searchable PDF and Markdown exports.** A recognition's results now have an *Export* panel
+  of their own: pick the format, pick the text (with your corrections, or as the model produced
+  it), download. The searchable PDF puts the recognised text, invisible, over each scanned page,
+  so any PDF reader can search, select and copy it where it is printed (block lines and table
+  cells are placed on their boxes); it is written page by page, so a long document starts
+  downloading at once. Markdown turns titles, headings, list items, formulas and tables (the
+  saved grid, or the model's HTML) into Markdown, with a comment marking each page. Files are
+  named after the source document (`volume.pdf`, `volume.md`, `volume-raw.md`), and the panel
+  remembers the last format. No new dependency: the PDF writer and its glyphless font are part
+  of Tabularium.
 - **Each user runs saved models on their own API key.** A saved model (a Recognition engine and a
   model in comparisons) no longer carries the key of the administrator who saved it for everyone:
   each user adds their own key under Recognition › Model comparison › Saved models (stored

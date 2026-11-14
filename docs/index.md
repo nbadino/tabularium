@@ -70,8 +70,9 @@ training set.
   user's own LlamaCloud key stored in the backend vault, including native tier,
   effort, table-quality, language, image, output and job-control settings.
 - A CPU OCR engine for when you have no GPU at all.
-- Export as JSON, CSV or plain text, either the raw model output or your
-  corrected version.
+- Export as a searchable PDF (the scans with the text underneath, to search
+  and copy in any PDF reader), Markdown, plain text, CSV or JSON, either the
+  raw model output or your corrected version.
 
 **Review and annotation**
 - A studio for layout blocks, reading order and transcription, with

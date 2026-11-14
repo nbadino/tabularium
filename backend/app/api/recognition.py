@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..services import auth as authsvc
@@ -145,7 +146,7 @@ def export_recognition_run(
     run_id: int,
     request: Request,
     scope: Literal["raw", "reviewed"] = "reviewed",
-    format: Literal["json", "text", "csv"] = "json",
+    format: Literal["json", "text", "csv", "markdown", "pdf"] = "json",
     # Only the pages of one collection: its id, or `none` for the pages without one.
     collection: str | None = None,
     _user: dict = Depends(require_resource(write=False)),
@@ -157,19 +158,20 @@ def export_recognition_run(
             raise HTTPException(status_code=400, detail=msg("collection_filter_invalid", lang))
         if collectionstore.get(project_id, int(collection)) is None:
             raise HTTPException(status_code=404, detail=msg("collection_not_found", lang))
+    body, filename = recognitionsvc.export_document(run_id, scope, format, collection)
+    if format == "pdf":
+        return StreamingResponse(body, media_type="application/pdf", headers=_attachment(filename))
+    if format == "markdown":
+        return Response(body, media_type="text/markdown; charset=utf-8", headers=_attachment(filename))
     if format == "text":
-        return PlainTextResponse(
-            recognitionsvc.export_run_text(run_id, scope, collection),
-            headers={
-                "Content-Disposition": f'attachment; filename="tabularium-run-{run_id}-{scope}.txt"'
-            },
-        )
+        return PlainTextResponse(body, headers=_attachment(filename))
     if format == "csv":
-        return Response(
-            "\ufeff" + recognitionsvc.export_run_csv(run_id, scope, collection),
-            media_type="text/csv; charset=utf-8",
-            headers={
-                "Content-Disposition": f'attachment; filename="tabularium-run-{run_id}-{scope}.csv"'
-            },
-        )
-    return recognitionsvc.export_run(run_id, scope, collection)
+        return Response("\ufeff" + body, media_type="text/csv; charset=utf-8", headers=_attachment(filename))
+    return JSONResponse(body, headers=_attachment(filename, inline=True))
+
+
+def _attachment(filename: str, *, inline: bool = False) -> dict[str, str]:
+    """`Content-Disposition` with an ASCII fallback and the UTF-8 name (RFC 6266)."""
+    fallback = filename.encode("ascii", "replace").decode().replace("?", "_").replace('"', "_")
+    kind = "inline" if inline else "attachment"
+    return {"Content-Disposition": f"{kind}; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename)}"}

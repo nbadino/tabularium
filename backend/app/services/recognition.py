@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import csv
 import io
+import logging
 import threading
 import time
 from datetime import datetime, timezone
@@ -18,8 +19,10 @@ from typing import Any
 from fastapi import HTTPException
 
 from ..adapters import runs as runstore
-from . import inference, ocr as ocrmod, prefill
+from . import inference, ocr as ocrmod, prefill, run_documents
 from .i18n import msg
+
+log = logging.getLogger(__name__)
 
 _ACTIVE: dict[int, threading.Event] = {}
 # Runs the user paused: the worker finishes the page in hand, then waits here
@@ -612,6 +615,7 @@ def export_run(run_id: int, scope: str, collection: int | str | None = None) -> 
             {
                 "page_id": item["page_id"],
                 "rel_path": item["rel_path"],
+                "pdf_page": item.get("pdf_page"),
                 "state": item["state"],
                 "blocks": blocks,
             }
@@ -629,9 +633,34 @@ def export_run(run_id: int, scope: str, collection: int | str | None = None) -> 
     }
 
 
-def export_run_text(run_id: int, scope: str, collection: int | str | None = None) -> str:
-    """Versione leggibile dell'export, ordinata per pagina e blocco."""
+EXPORT_FORMATS = ("json", "text", "csv", "markdown", "pdf")
+_EXTENSIONS = {"json": "json", "text": "txt", "csv": "csv", "markdown": "md", "pdf": "pdf"}
+
+
+def export_document(
+    run_id: int, scope: str, fmt: str, collection: int | str | None = None
+) -> tuple[Any, str]:
+    """The run export in `fmt`, and the file name to give it.
+
+    `json` is the export dict, `text`/`csv`/`markdown` a string, `pdf` an iterator
+    of bytes produced page by page: a long document starts downloading at once
+    instead of waiting, behind a proxy timeout, for the whole file.
+    """
     exported = export_run(run_id, scope, collection)
+    filename = f"{run_documents.download_stem(exported)}.{_EXTENSIONS[fmt]}"
+    if fmt == "text":
+        return _run_text(exported), filename
+    if fmt == "csv":
+        return _run_csv(exported), filename
+    if fmt == "markdown":
+        return run_documents.run_markdown(exported, _table_grids(exported)), filename
+    if fmt == "pdf":
+        return _run_pdf(exported), filename
+    return exported, filename
+
+
+def _run_text(exported: dict[str, Any]) -> str:
+    """The readable export, by page and block."""
     sections: list[str] = []
     for page in exported["pages"]:
         content = [
@@ -643,9 +672,48 @@ def export_run_text(run_id: int, scope: str, collection: int | str | None = None
     return "\n\n".join(sections).rstrip() + "\n"
 
 
-def export_run_csv(run_id: int, scope: str, collection: int | str | None = None) -> str:
-    """CSV tabellare UTF-8: una riga per blocco, pronto per fogli di calcolo."""
-    exported = export_run(run_id, scope, collection)
+def _table_grids(exported: dict[str, Any]) -> dict[int, dict]:
+    """The saved grids of the reviewed tables; the raw output has none."""
+    if exported["scope"] != "reviewed":
+        return {}
+    ids = [
+        int(block["id"])
+        for page in exported["pages"]
+        for block in page["blocks"]
+        if block.get("label") == "Table" and block.get("id") is not None
+    ]
+    return runstore.table_grids(ids)
+
+
+def _run_pdf(exported: dict[str, Any]):
+    from . import pages as pagesvc  # noqa: PLC0415
+    from . import searchable_pdf  # noqa: PLC0415
+    from ..adapters import pages as pagestore  # noqa: PLC0415
+
+    grids = _table_grids(exported)
+
+    def page_inputs():
+        for page in exported["pages"]:
+            row = pagestore.get(int(page["page_id"]))
+            image = None
+            if row is not None:
+                try:
+                    image = pagesvc.load_source_image(row)
+                except Exception:  # noqa: BLE001 - one unreadable scan must not truncate the file
+                    log.warning("searchable PDF: page %s has no readable image", page["page_id"], exc_info=True)
+            yield searchable_pdf.PdfPageInput(
+                image=image,
+                dpi=searchable_pdf.page_dpi(row, image),
+                blocks=page["blocks"],
+                grids=grids,
+                size_px=(int(row["width"] or 0), int(row["height"] or 0)) if row else None,
+            )
+
+    return searchable_pdf.write_pdf(page_inputs(), title=run_documents.download_stem(exported))
+
+
+def _run_csv(exported: dict[str, Any]) -> str:
+    """UTF-8 CSV, one row per block, ready for a spreadsheet."""
     output = io.StringIO(newline="")
     writer = csv.writer(output)
     writer.writerow((
