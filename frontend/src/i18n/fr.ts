@@ -741,6 +741,9 @@ export const fr: Dict = {
     remoteOnly: 'GPU distant seulement',
     remoteApi: 'Service OCR distant',
     notUsableYet: 'Pas encore utilisable pour la reconnaissance',
+    hostBlocker: {
+      cpu_no_avx2: 'Ne fonctionne pas sur ce serveur : il faut un processeur avec AVX2',
+    },
     notUsableYetHint: 'Aucune destination ne sait encore servir ce modèle.',
     choose: 'Choisir',
     continue: 'Continuer →',
@@ -767,6 +770,9 @@ export const fr: Dict = {
       manualNeeds: 'l’adresse du serveur et le nom du modèle.',
     },
     why: {
+      host: {
+        cpu_no_avx2: 'Ce modèle exécute PaddlePaddle 3 sur le serveur Tabularium, même quand le modèle lui-même tourne sur un GPU distant, et PaddlePaddle 3 exige un processeur avec AVX2 : celui-ci n’en a pas. Choisissez un autre modèle.',
+      },
       noCloudRecipe: 'Il n’existe pas encore de recette de serving distant vérifiée pour ce modèle.',
       noModalTemplate: 'Aucun template Modal ne sert ce modèle.',
       customNoRunpod: 'Un checkpoint personnalisé se publie sur Vast.ai ou Modal : RunPod n’a pas cette voie.',

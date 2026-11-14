@@ -249,6 +249,18 @@ def install_state(adapter_id: str) -> dict:
 
 
 
+def host_blocker(adapter_id: str) -> str | None:
+    """Why this model cannot run with *this* Tabularium host, wherever its VLM is
+    served, as a code the UI localises; `None` when nothing on the host stops it.
+
+    Detected, not configured: a model whose official path runs the Paddle pipeline
+    on this machine needs a CPU PaddlePaddle 3 can run on (AVX2 on x86-64).
+    """
+    if _needs_paddle_runtime(adapter_id) and paddle_runtime.cpu_unsupported_reason():
+        return "cpu_no_avx2"
+    return None
+
+
 def _needs_paddle_runtime(adapter_id: str) -> bool:
     """The adapter's official pipeline runs inside the Paddle runtime (declared, not named)."""
     try:
@@ -290,6 +302,8 @@ def ensure_runtime_async(adapter_id: str) -> None:
     e ogni pagina falliva con «completa prima l'installazione», cioè con
     l'istruzione di fare una cosa che nessuno aveva iniziato.
     """
+    if host_blocker(adapter_id):
+        return  # an install that cannot work would only cost minutes and disk
     if not _needs_paddle_runtime(adapter_id):
         return
     if not is_installed(adapter_id) and not _will_serve_locally(adapter_id):
@@ -449,6 +463,9 @@ def list_models() -> list[dict]:
                 and cap["adapter_id"] not in _CLOUD_TEMPLATES
                 and not modes["supports_native"]
             ),
+            # Nothing on this host can run it, whatever the destination: the UI
+            # greys it out with the reason instead of letting every page fail.
+            "host_blocker": host_blocker(cap["adapter_id"]),
             "vram_warning": vram_warning(adapter, state.get("size_bytes") or None, gpus),
             "draft_repo": cap.get("draft_hf_repo") or None,
             "draft_installed": bool(cap.get("draft_hf_repo")) and draft_installed(cap["adapter_id"]),
