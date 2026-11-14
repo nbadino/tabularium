@@ -262,3 +262,16 @@ def test_run_exports_markdown_and_searchable_pdf(tmp_path, monkeypatch):
         text = client.get(base, params={"format": "text"})
         assert 'filename="registro.txt"' in text.headers["content-disposition"]
         assert client.get(base, params={"format": "docx"}).status_code == 422
+
+
+def test_pdf_page_size_follows_the_source_document(monkeypatch):
+    # The import renders each PDF at the resolution of its scan: a 242.88 pt wide
+    # page stored 1013 px wide was rendered at 300 DPI and must come back 242.88 pt.
+    monkeypatch.setattr(searchable_pdf, "_pdf_page_widths", lambda path, mtime: (242.88, 264.48))
+    monkeypatch.setattr(searchable_pdf.Path, "stat", lambda self: type("S", (), {"st_mtime": 0})())
+    row = {"source_kind": "pdf", "abs_path": "/x/volume.pdf", "pdf_page": 0, "width": 1013}
+    assert round(searchable_pdf.page_dpi(row, None)) == 300
+    assert round(searchable_pdf.page_dpi({**row, "pdf_page": 1, "width": 1102}, None)) == 300
+    # Unreadable source: the page still gets a size, from the image resolution.
+    monkeypatch.setattr(searchable_pdf, "_pdf_page_widths", lambda path, mtime: 1 / 0)
+    assert searchable_pdf.page_dpi(row, None) == searchable_pdf.DEFAULT_IMAGE_DPI

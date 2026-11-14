@@ -28,7 +28,6 @@ from typing import Any, Iterable, Iterator
 from PIL import Image
 
 from . import run_documents
-from .scan import PDF_RENDER_DPI
 
 # Scans without a resolution in their metadata are taken at 300 DPI: the
 # common archive value, and what makes an A4 scan an A4 page.
@@ -54,10 +53,38 @@ class PdfPageInput:
     size_px: tuple[int, int] | None = None
 
 
+@lru_cache(maxsize=4)
+def _pdf_page_widths(path: str, mtime: float) -> tuple[float, ...]:
+    """Width in points of every page of a PDF (cached: a run reads one file)."""
+    import pypdfium2 as pdfium  # noqa: PLC0415 - present whenever PDFs were imported
+
+    document = pdfium.PdfDocument(path)
+    try:
+        return tuple(float(document[i].get_size()[0]) for i in range(len(document)))
+    finally:
+        document.close()
+
+
+def _pdf_page_dpi(row: dict[str, Any], width_px: int) -> float | None:
+    """The resolution a PDF page was rendered at, from its width in the source
+    file: the import picks it per document (the resolution of the embedded scan),
+    so it cannot be assumed."""
+    path = str(row.get("abs_path") or "")
+    try:
+        widths = _pdf_page_widths(path, Path(path).stat().st_mtime)
+        width_pt = widths[int(row.get("pdf_page") or 0)]
+    except Exception:  # noqa: BLE001 - missing file, no pypdfium2, bad index
+        return None
+    return width_px * 72.0 / width_pt if width_pt > 0 and width_px > 0 else None
+
+
 def page_dpi(row: dict[str, Any] | None, image: Image.Image | None) -> float:
     """The resolution that turns the pixels of the page image back into points."""
     if row is not None and row.get("source_kind") == "pdf":
-        return float(PDF_RENDER_DPI)
+        width_px = image.width if image is not None else int(row.get("width") or 0)
+        dpi = _pdf_page_dpi(row, width_px)
+        if dpi is not None:
+            return dpi
     if image is not None:
         dpi = image.info.get("dpi")
         try:

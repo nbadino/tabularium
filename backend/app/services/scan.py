@@ -74,11 +74,6 @@ def scan_archive(root_dir: str | Path) -> list[Candidate]:
     return candidates
 
 
-# The resolution of a PDF page turned into an image. Block coordinates are pixels
-# of that image, so the searchable PDF export divides by it to get back to points.
-PDF_RENDER_DPI = 200
-
-
 def render_pdf_pages(pdf_path: str | Path) -> list[tuple[object, tuple[int, int]]]:
     """Rende tutte le pagine di un PDF in immagini PIL. Richiede pypdfium2."""
     return list(iter_pdf_pages(pdf_path))
@@ -94,7 +89,7 @@ def iter_pdf_pages(pdf_path: str | Path):
     try:
         for page in pdf:
             try:
-                bitmap = page.render(scale=PDF_RENDER_DPI / 72)
+                bitmap = page.render(scale=200 / 72)
                 try:
                     pil = bitmap.to_pil().convert("RGB")
                     yield pil, (pil.width, pil.height)
@@ -129,7 +124,7 @@ def render_pdf_page(pdf_path: str | Path, index: int) -> tuple[object, tuple[int
             return None
         page = pdf[index]
         try:
-            bitmap = page.render(scale=PDF_RENDER_DPI / 72)
+            bitmap = page.render(scale=200 / 72)
             try:
                 pil = bitmap.to_pil().convert("RGB")
                 return pil, (pil.width, pil.height)
