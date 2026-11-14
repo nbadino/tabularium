@@ -173,6 +173,8 @@ def create_run(
     cfg = inference.get_inference_config()
     if engine == "model" and not cfg.get("enabled", True):
         raise HTTPException(status_code=409, detail="attiva un modello prima di avviare il riconoscimento")
+    if engine == "model":
+        _refuse_host_blocked(str(cfg.get("adapter_id") or ""), lang)
     try:
         runstore.check(project_id, unique_ids, engine=engine)
         if engine == "model":
@@ -237,6 +239,17 @@ def create_run(
     return get_run(run_id)
 
 
+def _refuse_host_blocked(adapter_id: str, lang: str | None) -> None:
+    """Refuse a run this host cannot do at all, before queuing pages that would
+    each fail the same way (a PaddleOCR-VL run on a CPU without AVX2 failed all
+    527 pages of a document)."""
+    from . import model_registry  # noqa: PLC0415
+
+    blocker = model_registry.host_blocker(adapter_id) if adapter_id else None
+    if blocker:
+        raise HTTPException(status_code=409, detail=msg(f"model_host_{blocker}", lang))
+
+
 def _create_profile_run(
     project_id: int,
     page_ids: list[int],
@@ -260,6 +273,7 @@ def _create_profile_run(
     if profile is None or profile["name"] == "legacy-active":
         raise HTTPException(status_code=404, detail=msg("saved_model_not_found", lang))
     model_keys.require_usable(profile, owner_id, lang)
+    _refuse_host_blocked(str(profile.get("model_adapter_id") or ""), lang)
     try:
         run_id = runstore.create(
             project_id,

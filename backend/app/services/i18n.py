@@ -92,6 +92,11 @@ _IT: dict[str, str] = {
         "il riconoscimento #{run} sta già elaborando queste pagine: attendi che "
         "finisca, o annullalo, prima di avviarne un altro."
     ),
+    "model_host_cpu_no_avx2": (
+        "questo modello non può girare su questo server: la sua pipeline ufficiale usa "
+        "PaddlePaddle 3, che richiede una CPU con AVX2, e questa non ce l'ha. Scegli un altro "
+        "modello nella pagina Modelli."
+    ),
     "model_endpoint_unreachable": (
         "l'endpoint di inferenza {url} non risponde: controlla modello e "
         "provider nella pagina Modelli prima di avviare un riconoscimento."
@@ -418,6 +423,11 @@ _EN: dict[str, str] = {
         "recognition #{run} is already processing these pages: wait for it to "
         "finish, or cancel it, before starting another."
     ),
+    "model_host_cpu_no_avx2": (
+        "this model cannot run on this server: its official pipeline uses PaddlePaddle 3, "
+        "which needs a CPU with AVX2, and this one has none. Choose another model on the "
+        "Models page."
+    ),
     "model_endpoint_unreachable": (
         "the inference endpoint {url} is not responding: check model and "
         "provider on the Models page before starting a recognition."
@@ -734,6 +744,11 @@ _FR: dict[str, str] = {
     "pages_in_active_run": (
         "la reconnaissance n°{run} traite déjà ces pages : attendez qu'elle se "
         "termine, ou annulez-la, avant d'en lancer une autre."
+    ),
+    "model_host_cpu_no_avx2": (
+        "ce modèle ne peut pas fonctionner sur ce serveur : son pipeline officiel utilise "
+        "PaddlePaddle 3, qui exige un processeur avec AVX2, et celui-ci n'en a pas. Choisissez "
+        "un autre modèle dans la page Modèles."
     ),
     "model_endpoint_unreachable": (
         "le point d'accès d'inférence {url} ne répond pas : vérifiez le modèle "

@@ -158,3 +158,14 @@ describe('byPublicScore', () => {
     expect([...items].sort(byPublicScore).map((m) => m.adapter_id)).toEqual(['c', 'b', 'a', 'd', 'e'])
   })
 })
+
+describe('host blocker', () => {
+  it('greys out a model the server itself cannot run, on every destination, with the reason', () => {
+    const blocked = model({ adapter_id: 'paddleocr-vl', host_blocker: 'cpu_no_avx2', local: { runnable: true, runtime: 'vllm', reason: null, mlx_repo: null } })
+    for (const dest of ['local', 'llamaindex', 'vast', 'runpod', 'modal', 'manual'] as const) {
+      expect(destinationVerdict(blocked, dest)).toEqual({ ok: false, reasonKey: 'modelsHub.why.host.cpu_no_avx2' })
+    }
+    expect(isSelectable(blocked)).toBe(false)
+    expect(isSelectable(model())).toBe(true)
+  })
+})

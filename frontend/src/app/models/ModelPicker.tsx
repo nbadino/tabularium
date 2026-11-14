@@ -278,6 +278,10 @@ export function ModelPicker({ models, loading, selectedId, onSelect, onChanged }
                   <span className="text-[color:var(--color-ink-2)]">
                     {m.serve_backend === 'llamaindex-api' ? t('modelsHub.remoteApi') : t('modelsHub.remoteOnly')}
                   </span>
+                ) : m.host_blocker ? (
+                  <span className="text-[color:var(--color-warn)]" title={t(`modelsHub.why.host.${m.host_blocker}`)}>
+                    {t(`modelsHub.hostBlocker.${m.host_blocker}`)}
+                  </span>
                 ) : (
                   <span className="text-[color:var(--color-warn)]">{t('modelsHub.notUsableYet')}</span>
                 )}
@@ -287,7 +291,7 @@ export function ModelPicker({ models, loading, selectedId, onSelect, onChanged }
                 type="button"
                 className={`btn btn-sm w-[7.5rem] justify-center ${selected || !selectedId ? 'btn-primary' : ''}`}
                 disabled={!selectable}
-                title={!selectable ? t('modelsHub.notUsableYetHint') : undefined}
+                title={!selectable ? (m.host_blocker ? t(`modelsHub.why.host.${m.host_blocker}`) : t('modelsHub.notUsableYetHint')) : undefined}
                 onClick={() => onSelect(m)}
               >
                 {selected ? t('modelsHub.continue') : t('modelsHub.choose')}

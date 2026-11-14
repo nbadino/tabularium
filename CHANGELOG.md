@@ -7,6 +7,11 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Models this server cannot run are marked so, automatically.** The server checks its own
+  hardware: on a CPU without AVX2 (needed by PaddlePaddle 3), PaddleOCR-VL and Xiaomi OCR, whose
+  official pipeline runs Paddle on the Tabularium machine even with a remote GPU, are greyed out in
+  the model picker with the reason, no runtime install is attempted, and a recognition with one of
+  them is refused before any page is queued (it used to fail every page of the document).
 - **PaddleOCR-VL on a remote GPU no longer fails every page.** The official path runs the
   Paddle pipeline (layout detection and parser) on the Tabularium machine even when the model is
   served elsewhere, but its runtime was installed only when the model was downloaded or served

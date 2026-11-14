@@ -58,6 +58,8 @@ export interface ModelItem {
   state: string
   error: string | null
   vram_warning: string | null
+  /** Why nothing on this host can run the model, wherever it is served (detected by the server). */
+  host_blocker?: string | null
   runtime_ready?: boolean
   runtime_state?: string | null
   runtime_error?: string | null
@@ -129,6 +131,9 @@ export interface DestinationVerdict {
  * macchina.
  */
 export function destinationVerdict(model: ModelItem, dest: Destination): DestinationVerdict {
+  // A model the Tabularium host itself cannot run fits no destination: a remote
+  // GPU would not help (e.g. a pipeline that runs PaddlePaddle on this server).
+  if (model.host_blocker) return { ok: false, reasonKey: `modelsHub.why.host.${model.host_blocker}` }
   switch (dest) {
     case 'local':
       return model.local?.runnable
