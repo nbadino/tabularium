@@ -23,7 +23,7 @@ vi.mock('../lib/api', () => ({
     calls.detail += 1
     return calls.detail === 1 ? running : { ...running, state: 'finished', completed_pages: 1, items: [{ ...running.items[0], state: 'finished' }] }
   }),
-  apiDownload: vi.fn(), apiPost: vi.fn(),
+  apiDownloadFile: vi.fn(), apiPost: vi.fn(),
 }))
 afterEach(cleanup)
 

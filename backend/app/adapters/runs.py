@@ -375,6 +375,26 @@ def reviewed_blocks(page_id: int) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def table_grids(block_ids: list[int]) -> dict[int, dict[str, Any]]:
+    """The saved grid of each table block, by block id."""
+    out: dict[int, dict[str, Any]] = {}
+    with connect() as conn:
+        for start in range(0, len(block_ids), 500):
+            chunk = block_ids[start : start + 500]
+            marks = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"SELECT block_id, grid_json FROM tables WHERE block_id IN ({marks})", chunk
+            ).fetchall()
+            for row in rows:
+                try:
+                    grid = json.loads(row["grid_json"] or "{}")
+                except ValueError:
+                    continue
+                if isinstance(grid, dict):
+                    out[int(row["block_id"])] = grid
+    return out
+
+
 def _now() -> str:
     from datetime import datetime, timezone
 

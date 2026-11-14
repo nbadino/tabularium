@@ -73,8 +73,30 @@ export async function apiDelete<T>(path: string): Promise<T> {
   return api<T>('DELETE', path)
 }
 
-/** Scarica un file mantenendo la stessa gestione errori/localizzazione delle API JSON. */
-export async function apiDownload(path: string): Promise<Blob> {
+/** The file name a `Content-Disposition` header gives, UTF-8 form first. */
+export function attachmentFilename(header: string | null): string | null {
+  if (!header) return null
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(header)
+  if (utf8) {
+    try {
+      return decodeURIComponent(utf8[1].trim())
+    } catch {
+      // A malformed name falls back to the plain one.
+    }
+  }
+  const plain = /filename="([^"]*)"/i.exec(header) ?? /filename=([^;]+)/i.exec(header)
+  return plain ? plain[1].trim() : null
+}
+
+/**
+ * Downloads a file the server names, reporting the bytes received so far: a
+ * long export (a searchable PDF of hundreds of pages) is produced page by page
+ * and the user sees it advance instead of a frozen button.
+ */
+export async function apiDownloadFile(
+  path: string,
+  onProgress?: (bytes: number) => void,
+): Promise<{ blob: Blob; filename: string | null }> {
   const url = joinPath(path)
   let res: Response
   try {
@@ -83,7 +105,25 @@ export async function apiDownload(path: string): Promise<Blob> {
     throw new ApiError('GET', path, null, e instanceof Error ? e.message : String(e))
   }
   if (!res.ok) throw new ApiError('GET', path, res.status, await res.text())
-  return res.blob()
+  const filename = attachmentFilename(res.headers.get('Content-Disposition'))
+  if (!res.body || !onProgress) return { blob: await res.blob(), filename }
+  const reader = res.body.getReader()
+  const parts: Uint8Array[] = []
+  let received = 0
+  for (;;) {
+    let chunk: ReadableStreamReadResult<Uint8Array>
+    try {
+      chunk = await reader.read()
+    } catch (e) {
+      throw new ApiError('GET', path, null, e instanceof Error ? e.message : String(e))
+    }
+    if (chunk.done) break
+    parts.push(chunk.value)
+    received += chunk.value.byteLength
+    onProgress(received)
+  }
+  const type = res.headers.get('Content-Type') ?? 'application/octet-stream'
+  return { blob: new Blob(parts as BlobPart[], { type }), filename }
 }
 
 async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
