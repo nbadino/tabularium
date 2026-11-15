@@ -397,6 +397,9 @@ def model_prelabel_events(
                         "bbox": bbox,
                         "label": resolved,
                         "content": str(item.get("content") or "").strip(),
+                        # A block that goes on across a page break (Unlimited-OCR 2
+                        # `cross_`/`append_`): the exports join the pieces.
+                        **({"continuation": item["continuation"]} if item.get("continuation") else {}),
                     }
                 )
 
