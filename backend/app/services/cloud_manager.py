@@ -624,6 +624,8 @@ def search_vast_offers(
     for item in result:
         if item["id"] is None:
             continue
+        if _hf_blocked_location(item.get("location")):
+            continue
         cap = item.get("compute_cap")
         cuda = item.get("cuda_max_good")
         required_cuda = float(min_cuda or 0)
@@ -640,7 +642,18 @@ def search_vast_offers(
     return _with_cost("vast", compatible)
 
 
-def offer_unfit_reason(adapter_id: str, compute_cap: Any, cuda_max_good: Any) -> str | None:
+def _hf_blocked_location(location: Any) -> bool:
+    """A host in mainland China (Vast's geolocation "Zhejiang, CN"): there
+    huggingface.co resolves to unrelated addresses and every recipe downloads its
+    weights (and Unlimited-OCR-2 its SGLang build) from it. An RTX 4090 in
+    Zhejiang failed the setup's network preflight this way."""
+    text = str(location or "").strip().upper()
+    return text == "CN" or text.endswith(", CN")
+
+
+def offer_unfit_reason(
+    adapter_id: str, compute_cap: Any, cuda_max_good: Any, location: Any = None,
+) -> str | None:
     """Why an offer cannot host the model's serving recipe, or `None`.
 
     The rent button sends the GPU's compute capability (Vast's encoding: 7.5 is
@@ -648,6 +661,11 @@ def offer_unfit_reason(adapter_id: str, compute_cap: Any, cuda_max_good: Any) ->
     model's requirements, or before the requirements had loaded, once rented a
     Quadro RTX 6000 (sm_7.5) for Unlimited-OCR 2, which needs sm_8.0: refuse it.
     """
+    if _hf_blocked_location(location):
+        return (
+            f"questa GPU è in Cina ({location}): da lì Hugging Face non è raggiungibile e i pesi del "
+            "modello non si possono scaricare. Scegli un'altra offerta."
+        )
     if not adapter_id:
         return None
     from . import serve_recipes  # noqa: PLC0415
@@ -683,6 +701,7 @@ def rent_vast_instance(
     image: str = "",
     cuda_max_good: float | None = None,
     compute_cap: float | None = None,
+    location: str | None = None,
     adapter_id: str = "",
     disk_gb: int = 40,
     model: str = reference.HF_REPO,
@@ -698,7 +717,7 @@ def rent_vast_instance(
     token = api_key.strip()
     if not token:
         raise ValueError("API Key di Vast.ai non specificata.")
-    unfit = offer_unfit_reason(adapter_id, compute_cap, cuda_max_good)
+    unfit = offer_unfit_reason(adapter_id, compute_cap, cuda_max_good, location)
     if unfit:
         raise ValueError(unfit)
     if int(disk_gb) < 10:
@@ -2025,7 +2044,8 @@ def provision_log(host: str, port: int, *, user: str = "root", lines: int = 80) 
     cmd = _ssh_base_args(host, port, user) + [
         # Le parentesi quadre impediscono al pattern di trovare la sonda stessa:
         # `pgrep -f` confronta le righe di comando, inclusa la propria shell.
-        f"if pgrep -f '[t]abularium_setup_cloud_vllm.sh|[s]erve[.]py|[v]llm.entrypoints' > /dev/null 2>&1; "
+        # SGLang (Unlimited-OCR-2) replaces the setup script with `sglang.launch_server`.
+        f"if pgrep -f '[t]abularium_setup_cloud_vllm.sh|[s]erve[.]py|[v]llm.entrypoints|[s]glang[.]launch_server' > /dev/null 2>&1; "
         f"then echo {_ALIVE_MARKER}; else echo {_DEAD_MARKER}; fi; "
         f"if [ -f {REMOTE_LOG_PATH} ]; then "
         f"echo {_PHASE_SECTION}; grep -E {shlex.quote(markers)} {REMOTE_LOG_PATH} | tail -n 40; "

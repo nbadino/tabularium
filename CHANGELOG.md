@@ -7,6 +7,14 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Unlimited-OCR 2 can be set up on a rented Vast.ai GPU.** The setup script's preflight demanded a
+  preinstalled `vllm` whenever a recipe installs none, which is also true of SGLang recipes:
+  Unlimited-OCR 2 stopped before its SGLang install. The check now applies to dedicated vLLM images
+  only, the liveness probe recognises `sglang.launch_server` (it would have declared a loading
+  SGLang server dead), and the log says "Avvio SGLang".
+- **GPUs in mainland China are no longer offered.** From an RTX 4090 in Zhejiang, huggingface.co
+  resolved to unrelated addresses, so no weights could ever be downloaded. Such offers are left out
+  of the search and refused at rent, and a failed network preflight now says what to do.
 - **A GPU that cannot run the chosen model can no longer be rented.** Offers searched before the
   model's requirements had loaded fell back to compute capability 7.5, and a Quadro RTX 6000
   (sm_7.5) was rented for Unlimited-OCR 2 (sm_8.0). The search now waits for the requirements, the

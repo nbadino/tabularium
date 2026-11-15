@@ -205,7 +205,9 @@ if ! command -v nvidia-smi >/dev/null 2>&1; then
   echo "!! Preflight fallito: nvidia-smi non trovato, GPU NVIDIA non visibile al container." >&2
   exit 2
 fi
-if [ "$RECIPE_INSTALL_VLLM" = "0" ] && ! command -v vllm >/dev/null 2>&1; then
+# Only a dedicated image (runtime "docker") brings vLLM along. An SGLang recipe
+# (Unlimited-OCR-2) installs no vLLM because it does not use it at all.
+if [ "$RECIPE_RUNTIME" = "docker" ] && [ "$RECIPE_INSTALL_VLLM" = "0" ] && ! command -v vllm >/dev/null 2>&1; then
   echo "!! Preflight fallito: la ricetta richiede un'immagine con vLLM già installato, ma il comando vllm non esiste." >&2
   exit 2
 fi
@@ -224,6 +226,7 @@ with socket.create_connection((host, 443), timeout=8) as sock:
 PY
   then
     echo "!! Preflight rete fallito: impossibile raggiungere https://${network_host}:443; nessun pacchetto o peso è stato scaricato." >&2
+    echo "!! Se l'host è in una regione che blocca ${network_host} (per esempio la Cina), da qui non si potrà mai scaricare: distruggi l'istanza e noleggiane un'altra." >&2
     exit 2
   fi
 done
@@ -673,6 +676,9 @@ rm -rf "$HOME/.cache/vllm/torch_compile_cache" 2>/dev/null || true
 echo "=========================================================="
 if [ "$RECIPE_RUNTIME" = "teleocr-native" ]; then
   echo ">> [Tabularium Cloud Runner] Preparazione runner TeleOCR nativo..."
+elif [ "$RECIPE_RUNTIME" = "sglang" ]; then
+  echo ">> [Tabularium Cloud Server] Avvio SGLang su $HOST:$PORT..."
+  echo ">> Endpoint: http://$HOST:$PORT/v1"
 else
   echo ">> [Tabularium Cloud Server] Avvio vLLM su $HOST:$PORT..."
   echo ">> Endpoint: http://$HOST:$PORT/v1"

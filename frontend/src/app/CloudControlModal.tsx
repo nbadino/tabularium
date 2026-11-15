@@ -1192,6 +1192,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
         cuda_max_good: offer.cuda_max_good ?? null,
         // The server checks the offer against the model's requirements before renting.
         compute_cap: offer.compute_cap ?? null,
+        location: offer.location ?? null,
         // L'istanza nasce nuda: la prepariamo via SSH subito dopo, con lo
         // script di questo checkout (niente hook onstart da GitHub).
         prepare_server: false, port: 8888,

@@ -171,6 +171,7 @@ def rent_vast(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             image=payload.get("image", ""),
             cuda_max_good=payload.get("cuda_max_good"),
             compute_cap=payload.get("compute_cap"),
+            location=payload.get("location"),
             adapter_id=payload.get("adapter_id") or "",
             disk_gb=payload.get("disk_gb", 40),
             model=payload.get("model", reference.HF_REPO),
