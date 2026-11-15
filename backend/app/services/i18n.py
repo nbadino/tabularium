@@ -97,6 +97,7 @@ _IT: dict[str, str] = {
         "PaddlePaddle 3, che richiede una CPU con AVX2, e questa non ce l'ha. Scegli un altro "
         "modello nella pagina Modelli."
     ),
+    "model_no_document_mode": "questo modello non legge documenti interi: avvia il riconoscimento pagina per pagina.",
     "model_endpoint_unreachable": (
         "l'endpoint di inferenza {url} non risponde: controlla modello e "
         "provider nella pagina Modelli prima di avviare un riconoscimento."
@@ -428,6 +429,7 @@ _EN: dict[str, str] = {
         "which needs a CPU with AVX2, and this one has none. Choose another model on the "
         "Models page."
     ),
+    "model_no_document_mode": "this model does not read whole documents: start the recognition page by page.",
     "model_endpoint_unreachable": (
         "the inference endpoint {url} is not responding: check model and "
         "provider on the Models page before starting a recognition."
@@ -750,6 +752,7 @@ _FR: dict[str, str] = {
         "PaddlePaddle 3, qui exige un processeur avec AVX2, et celui-ci n'en a pas. Choisissez "
         "un autre modèle dans la page Modèles."
     ),
+    "model_no_document_mode": "ce modèle ne lit pas des documents entiers : lancez la reconnaissance page par page.",
     "model_endpoint_unreachable": (
         "le point d'accès d'inférence {url} ne répond pas : vérifiez le modèle "
         "et le fournisseur dans la page Modèles avant de lancer une reconnaissance."

@@ -62,6 +62,8 @@ export interface ModelItem {
   vram_warning: string | null
   /** Why nothing on this host can run the model, wherever it is served (detected by the server). */
   host_blocker?: string | null
+  /** Parses consecutive pages in one request, with cross-page context (e.g. Unlimited-OCR 2). */
+  document_parsing?: boolean
   runtime_ready?: boolean
   runtime_state?: string | null
   runtime_error?: string | null

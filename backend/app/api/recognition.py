@@ -25,7 +25,9 @@ class RecognitionRunCreate(BaseModel):
     page_ids: list[int] = Field(min_length=1, max_length=10000)
     engine: Literal["model", "ocr"] = "model"
     mode: Literal["merge", "replace_drafts", "replace_all"] = "replace_drafts"
-    model_mode: Literal["native", "two_stage", "end2end"] = "native"
+    # `document`: the pages go to the model together (models that parse whole
+    # documents, e.g. Unlimited-OCR 2); otherwise like `native`.
+    model_mode: Literal["native", "two_stage", "end2end", "document"] = "native"
     stop_policy: Literal["none", "disable_inference"] = "disable_inference"
     # A saved model (compute profile) to read with instead of the active one.
     profile_id: int | None = None

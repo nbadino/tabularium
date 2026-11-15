@@ -205,6 +205,7 @@ export default function ResultsPage() {
               <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px]">
                 <span>{t('recognition.progress', { done: run.completed_pages, total: run.total_pages })}</span>
                 <span className="mono text-[11px] text-[color:var(--color-ink-3)]">{providerLabel(run.provider, run.engine, t)} · {run.adapter_id}</span>
+                {run.model_mode === 'document' && <Badge tone="ok">{t('recognition.asDocumentBadge')}</Badge>}
                 <span className="ml-auto flex flex-wrap gap-2">
                   <RecognitionRunControls
                     run={run}

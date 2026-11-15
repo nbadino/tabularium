@@ -39,6 +39,16 @@ Notable changes to Tabularium. The format follows
   on every page.
 
 ### Added
+- **Unlimited-OCR 2 reads a book as one document.** As its model card says, the pages go to the
+  model together, in book order, so it uses the context across pages; blocks that continue on the
+  next page (`cross_`/`append_`) are kept, and the Markdown export joins a paragraph or a table
+  split by a page break (repeated table headers dropped, words hyphenated at the break rejoined).
+  A request must fit the context the server serves (read from the server: 131,072 tokens with the
+  vendor's recipe), so a long book goes out as the longest runs of consecutive pages that fit, with
+  the vendor's budget (30% of the context for the output) and its refit when the server reports the
+  prompt is too long; each page is saved as soon as its output closes, and the next request starts
+  at the first unfinished page. The recognition form offers *Read as one document* only for models
+  that support it (on by default), and the results say when a run was done that way.
 - **Searchable PDF and Markdown exports.** A recognition's results now have an *Export* panel
   of their own: pick the format, pick the text (with your corrections, or as the model produced
   it), download. The searchable PDF puts the recognised text, invisible, over each scanned page,

@@ -175,6 +175,7 @@ def create_run(
         raise HTTPException(status_code=409, detail="attiva un modello prima di avviare il riconoscimento")
     if engine == "model":
         _refuse_host_blocked(str(cfg.get("adapter_id") or ""), lang)
+        _refuse_unsupported_document(model_mode, str(cfg.get("adapter_id") or ""), lang)
     try:
         runstore.check(project_id, unique_ids, engine=engine)
         if engine == "model":
@@ -250,6 +251,21 @@ def _refuse_host_blocked(adapter_id: str, lang: str | None) -> None:
         raise HTTPException(status_code=409, detail=msg(f"model_host_{blocker}", lang))
 
 
+def _refuse_unsupported_document(model_mode: str, adapter_id: str, lang: str | None) -> None:
+    """A document run needs a model that parses whole documents: say so instead of
+    silently going page by page."""
+    if model_mode != "document":
+        return
+    from .model_adapters import get_adapter  # noqa: PLC0415
+
+    try:
+        supported = bool(getattr(get_adapter(adapter_id), "document_parsing", False))
+    except ValueError:
+        supported = False
+    if not supported:
+        raise HTTPException(status_code=422, detail=msg("model_no_document_mode", lang))
+
+
 def _create_profile_run(
     project_id: int,
     page_ids: list[int],
@@ -274,6 +290,7 @@ def _create_profile_run(
         raise HTTPException(status_code=404, detail=msg("saved_model_not_found", lang))
     model_keys.require_usable(profile, owner_id, lang)
     _refuse_host_blocked(str(profile.get("model_adapter_id") or ""), lang)
+    _refuse_unsupported_document(model_mode, str(profile.get("model_adapter_id") or ""), lang)
     try:
         run_id = runstore.create(
             project_id,
@@ -409,7 +426,8 @@ def _worker(run_id: int, cancel: threading.Event) -> None:
         items = runstore.items_for_run(run_id)
         opts = prefill.PrelabelOptions(
             mode=run["mode"],
-            model_mode=run["model_mode"],
+            # A document run stores each page through the model's native path.
+            model_mode="native" if run["model_mode"] == "document" else run["model_mode"],
             recognition_run_id=run_id,
         )
         client = None
@@ -435,7 +453,16 @@ def _worker(run_id: int, cancel: threading.Event) -> None:
         if engine is not None and not engine.available:
             raise RuntimeError("nessun motore OCR locale disponibile")
 
-        for item in items:
+        # A model that parses whole documents gets the pages together, so it can
+        # use cross-page context; every other model goes page by page.
+        as_document = (
+            client is not None
+            and getattr(getattr(client, "adapter", None), "document_parsing", False)
+            and run["model_mode"] == "document"
+        )
+        if as_document:
+            _recognize_as_document(run_id, run, items, opts, client, cancel)
+        for item in () if as_document else items:
             _wait_while_paused(run_id, cancel)
             if cancel.is_set():
                 _mark_item(item["id"], "cancelled", ended_at=_now())
@@ -450,22 +477,7 @@ def _worker(run_id: int, cancel: threading.Event) -> None:
             if failure and not blocks and not cancel.is_set() and _recover_local_server(run, cancel):
                 _mark_item(item["id"], "running", error=None)
                 blocks, summary, failure = _recognize_page(run, item, opts, client, engine, cancel)
-
-            if cancel.is_set() and summary is None:
-                _mark_item(item["id"], "cancelled", ended_at=_now())
-            elif failure or summary is None:
-                _mark_item(item["id"], "failed", error=failure or "nessun risultato", ended_at=_now())
-            else:
-                raw = {"summary": summary, "blocks": blocks}
-                _mark_item(
-                    item["id"],
-                    "finished",
-                    detected=int(summary.get("detected", 0)),
-                    inserted=int(summary.get("inserted", 0)),
-                    result_json=json.dumps(raw, ensure_ascii=False),
-                    ended_at=_now(),
-                )
-            _refresh_counts(run_id)
+            _finish_item(run_id, item, blocks, summary, failure, cancel)
 
         counts = runstore.count_items(run_id)
         if cancel.is_set():
@@ -503,6 +515,81 @@ def _worker(run_id: int, cancel: threading.Event) -> None:
         with _LOCK:
             _ACTIVE.pop(run_id, None)
             _PAUSED.discard(run_id)
+
+
+def _finish_item(run_id: int, item, blocks, summary, failure, cancel: threading.Event) -> None:
+    """Store the outcome of one page and refresh the run's counts."""
+    if cancel.is_set() and summary is None:
+        _mark_item(item["id"], "cancelled", ended_at=_now())
+    elif failure or summary is None:
+        _mark_item(item["id"], "failed", error=failure or "nessun risultato", ended_at=_now())
+    else:
+        raw = {"summary": summary, "blocks": blocks}
+        _mark_item(
+            item["id"],
+            "finished",
+            detected=int(summary.get("detected", 0)),
+            inserted=int(summary.get("inserted", 0)),
+            result_json=json.dumps(raw, ensure_ascii=False),
+            ended_at=_now(),
+        )
+    _refresh_counts(run_id)
+
+
+class _PrecomputedPage:
+    """The run's client, whose `end2end` returns this page's share of a
+    whole-document response instead of calling the model again."""
+
+    def __init__(self, client, raw: str) -> None:
+        self._client = client
+        self._raw = raw
+
+    def __getattr__(self, name: str):
+        return getattr(self._client, name)
+
+    def end2end(self, image, *args, **kwargs):
+        return self._client.end2end(image, *args, precomputed=self._raw, **kwargs)
+
+
+def _recognize_as_document(run_id: int, run, items, opts, client, cancel: threading.Event) -> None:
+    """Recognize the run's pages as one document (`document_recognition`), in book
+    order; every page is then stored by the same pipeline as a single page."""
+    from . import document_recognition  # noqa: PLC0415
+    from . import pages as pagesvc  # noqa: PLC0415
+    from ..adapters import pages as pagestore  # noqa: PLC0415
+
+    ordered = sorted(
+        items, key=lambda it: (str(it.get("rel_path") or ""), int(it.get("pdf_page") or 0), int(it["id"]))
+    )
+    handled: set[int] = set()
+
+    def load_image(item):
+        row = pagestore.get(int(item["page_id"]))
+        image = pagesvc.load_source_image(row) if row is not None else None
+        if image is None:
+            raise RuntimeError(f"pagina {item['page_id']}: immagine non disponibile")
+        return image
+
+    def recognize_alone(item, page_client) -> None:
+        handled.add(int(item["id"]))
+        _mark_item(item["id"], "running", started_at=_now(), error=None)
+        blocks, summary, failure = _recognize_page(run, item, opts, page_client, None, cancel)
+        _finish_item(run_id, item, blocks, summary, failure, cancel)
+
+    document_recognition.recognize(
+        ordered,
+        client=client,
+        load_image=load_image,
+        save_page=lambda item, segment: recognize_alone(item, _PrecomputedPage(client, "<PAGE>" + segment)),
+        fallback_page=lambda item: recognize_alone(item, client),
+        cancel=cancel,
+        before_request=lambda: _wait_while_paused(run_id, cancel),
+        log=log.info,
+    )
+    for item in ordered:
+        if int(item["id"]) not in handled:
+            _mark_item(item["id"], "cancelled", ended_at=_now())
+    _refresh_counts(run_id)
 
 
 def _wait_while_paused(run_id: int, cancel: threading.Event) -> None:
@@ -620,10 +707,19 @@ def export_run(run_id: int, scope: str, collection: int | str | None = None) -> 
         if scope == "raw":
             blocks = item.get("result", {}).get("blocks", [])
         else:
+            # A block that goes on across a page keeps that mark from the run's
+            # output (a document run), so the exports can join the pieces.
+            continuation = {
+                raw.get("id"): raw["continuation"]
+                for raw in ((item.get("result") or {}).get("blocks") or [])
+                if raw.get("continuation")
+            }
             blocks = []
             for block in runstore.reviewed_blocks(item["page_id"]):
                 value = dict(block)
                 value["points"] = json.loads(value["points"] or "[]")
+                if value.get("id") in continuation:
+                    value["continuation"] = continuation[value["id"]]
                 blocks.append(value)
         pages.append(
             {

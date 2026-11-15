@@ -562,6 +562,9 @@ def model_prelabel_events(
                         "prefill_source": f"model:{client.model}:{page_mode}",
                         "grid": grid_json,
                         "error": k.get("error"),
+                        # A block that goes on (`cross`) or goes on from (`append`)
+                        # another page, for the exports that join them.
+                        **({"continuation": k["continuation"]} if k.get("continuation") else {}),
                     },
                 }
 

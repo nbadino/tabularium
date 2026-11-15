@@ -15,7 +15,7 @@ import { useI18n } from '../i18n'
 import { matchesCollection, UNASSIGNED, useCollections } from '../app/collections'
 import type { CollectionFilter } from '../app/collections'
 import { pageLabel, pageShortLabel } from '../lib/pageLabel'
-import { runTitle, useModelNames } from '../app/models/names'
+import { runTitle, useModelNames, useReadsDocuments } from '../app/models/names'
 import { API_BASE } from '../lib/endpoints'
 import { RecognitionRunControls } from '../app/RunControls'
 
@@ -118,6 +118,12 @@ export default function RecognizePage() {
   const [savedModels, setSavedModels] = useState<SavedModel[]>([])
   const savedModelId = savedModelOf(engine)
   const savedModel = savedModelId == null ? null : savedModels.find((item) => item.id === savedModelId) ?? null
+  // Models that read whole documents (Unlimited-OCR 2) get the pages together;
+  // the option exists only for them, so nobody else sees a choice that does nothing.
+  const readsDocuments = useReadsDocuments()
+  const runAdapterId = savedModel ? savedModel.model_adapter_id : engine === 'model' ? inference.adapterId : null
+  const documentCapable = readsDocuments(runAdapterId)
+  const [asDocument, setAsDocument] = useState(true)
   const savedModelNoKey = savedModel != null && !canUseSavedModel(savedModel)
   const [disableAfter, setDisableAfter] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -323,7 +329,7 @@ export default function RecognizePage() {
         engine: savedModelId != null ? 'model' : engine,
         ...(savedModelId != null ? { profile_id: savedModelId } : {}),
         mode,
-        model_mode: 'native',
+        model_mode: documentCapable && asDocument ? 'document' : 'native',
         stop_policy: canManageInference && disableAfter && engine === 'model' ? 'disable_inference' : 'none',
       })
       setCurrent(run)
@@ -570,6 +576,12 @@ export default function RecognizePage() {
                 </Link>
               )}
             </div>
+            {documentCapable && (
+              <label className="mt-3 flex items-start gap-2 text-[12px]">
+                <input type="checkbox" checked={asDocument} onChange={(e) => setAsDocument(e.target.checked)} />
+                <span><b className="font-semibold">{t('recognition.asDocument')}</b><span className="mt-0.5 block text-[11px] text-[color:var(--color-ink-3)]">{t('recognition.asDocumentHint')}</span></span>
+              </label>
+            )}
             {engine === 'model' && canManageInference && (
               <label className="mt-3 flex items-start gap-2 text-[12px]">
                 <input type="checkbox" checked={disableAfter} onChange={(e) => setDisableAfter(e.target.checked)} />
