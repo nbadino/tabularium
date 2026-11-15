@@ -1942,3 +1942,37 @@ def test_host_key_failure_is_not_a_502(monkeypatch):
     with TestClient(app) as client:
         res = client.post("/api/system/cloud/vast/hostkey", json={"host": "1.2.3.4", "port": 22})
     assert res.status_code == 424
+
+
+def test_mainland_china_hosts_are_not_offered_nor_rented(monkeypatch):
+    """An RTX 4090 in "Zhejiang, CN" could not reach huggingface.co (DNS answered
+    unrelated addresses): no recipe can download its weights there."""
+    offers = [
+        {"id": 1, "gpu_name": "RTX 4090", "compute_cap": 890, "cuda_max_good": 13.0, "geolocation": "Zhejiang, CN"},
+        {"id": 2, "gpu_name": "RTX 4090", "compute_cap": 890, "cuda_max_good": 13.0, "geolocation": "Taiwan, TW"},
+        {"id": 3, "gpu_name": "RTX 4090", "compute_cap": 890, "cuda_max_good": 13.0, "geolocation": "Hong Kong, HK"},
+    ]
+    monkeypatch.setattr(cloud_manager, "_vast_call", lambda *a, **k: {"offers": offers})
+    found = cloud_manager.search_vast_offers("key", min_compute_capability=8.0, min_cuda=13.0)
+    assert [o["id"] for o in found] == [2, 3]
+    assert "Cina" in cloud_manager.offer_unfit_reason("unlimited-ocr-2", 890, 13.0, "Zhejiang, CN")
+    assert cloud_manager.offer_unfit_reason("unlimited-ocr-2", 890, 13.0, "Taiwan, TW") is None
+
+
+def test_sglang_recipe_does_not_require_a_preinstalled_vllm():
+    """The preflight demanded `vllm` for Unlimited-OCR-2, which runs on SGLang."""
+    script = (Path(__file__).resolve().parents[2] / "scripts" / "cloud" / "setup_cloud_vllm.sh").read_text()
+    check = next(line for line in script.splitlines() if 'command -v vllm' in line and 'RECIPE_INSTALL_VLLM' in line)
+    assert '"$RECIPE_RUNTIME" = "docker"' in check
+
+
+def test_liveness_probe_sees_an_sglang_server(monkeypatch):
+    captured = {}
+
+    class Result:
+        returncode, stdout, stderr = 0, cloud_manager._DEAD_MARKER, ""
+
+    monkeypatch.setattr(cloud_manager.subprocess, "run", lambda cmd, **k: captured.setdefault("cmd", cmd) and Result())
+    monkeypatch.setattr(cloud_manager, "_host_key_known", lambda *a: True)
+    cloud_manager.provision_log("ssh5.vast.ai", 34567)
+    assert "[s]glang[.]launch_server" in captured["cmd"][-1]
