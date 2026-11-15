@@ -712,9 +712,18 @@ class UnlimitedOcr2Adapter(_StubAdapter):
     # go out in one request so the model uses cross-page context, and blocks that
     # continue on the next page come back as `cross_<t>` / `append_<t>`.
     document_parsing = True
-    # `sparse_attention_config.per_page_image_tokens` in config.json (base mode):
-    # the first estimate of a page's prompt cost, refitted from the server's count.
+    # A page's prompt cost, first estimate (refitted from the server's usage):
+    # `sparse_attention_config.per_page_image_tokens` = 273 in base mode; in gundam
+    # mode 12 pages of a 300 DPI book measured 16,969 prompt tokens on the live
+    # server (1,414 per page).
     document_page_tokens = 273
+    document_page_tokens_gundam = 1450
+
+    def document_page_cost(self) -> int:
+        from . import model_settings
+
+        mode = model_settings.get_settings(self.adapter_id)["effective"]["workflow"]["image_mode"]
+        return self.document_page_tokens_gundam if mode == "gundam" else self.document_page_tokens
     end2end_output_format = "grounded-markdown"
     end2end_max_tokens = 8000
     recommended_generation = {"temperature": 0.0}
