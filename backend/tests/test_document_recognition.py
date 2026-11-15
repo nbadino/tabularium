@@ -236,3 +236,49 @@ def test_pages_go_lossless_as_the_model_card_sends_them(tmp_path):
     assert b64.b64decode(uri.split(",", 1)[1]) == path.read_bytes()  # the file itself
     # An image without a file (deskewed in memory) goes as PNG, not JPEG.
     assert _page_data_uri(Image.new("RGB", (10, 10)), None).startswith("data:image/png;base64,")
+
+
+def test_continuation_marks_survive_the_real_page_pipeline(tmp_path):
+    """The live run lost every `cross_`/`append_` mark (0 on 83 pages, while the
+    model emitted them): prefill rebuilt its items without the field. Here the
+    page pipeline runs for real; only the model is replaced, by the adapter's own
+    parser on a vendor-shaped output."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services import prefill
+
+    adapter = get_adapter("unlimited-ocr-2")
+
+    class Model:
+        model = "Unlimited-OCR-2"
+
+        def __init__(self):
+            self.adapter = adapter
+
+        def ping(self):
+            return True
+
+        def end2end(self, image, **_kw):
+            raw = ("<PAGE><BLOCK>append_text[100,100,900,200]<FORK>sobre la villa de Ainsa."
+                   "<BLOCK>title<LEVEL4>[100,220,500,250]<FORK>36. Airães."
+                   "<BLOCK>cross_text[100,600,900,800]<FORK>En Ainsa (Huesca), capital de")
+            return [
+                {**item, **({"continuation": item["continuation"]} if item.get("continuation") else {})}
+                for item in adapter.parse_layout(raw)
+            ]
+
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    Image.new("RGB", (900, 1300), (215, 215, 215)).save(archive / "p.png")
+    with TestClient(app) as http:
+        pid = http.post("/api/projects", json={"name": "P", "archive_dir": str(archive)}).json()["id"]
+        http.post(f"/api/projects/{pid}/scan")
+        page_id = http.get(f"/api/projects/{pid}/pages").json()["items"][0]["id"]
+        events = list(prefill.model_prelabel_events(
+            pid, [page_id], prefill.PrelabelOptions(mode="replace_all"), Model(), "it",
+        ))
+    blocks = [e["block"] for e in events if e["type"] == "block"]
+    assert [(b["label"], b.get("continuation")) for b in blocks] == [
+        ("Text", "append"), ("Title", None), ("Text", "cross"),
+    ]

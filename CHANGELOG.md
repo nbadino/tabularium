@@ -7,6 +7,11 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Page-break continuations reach the exports.** Unlimited-OCR 2 marks a paragraph or table that
+  goes on to the next page (`cross_`/`append_`), and the model does so on the real book (page 41's
+  last paragraph, page 42's first), but the page pipeline rebuilt its items without the mark: the
+  first live run stored none on 83 pages, so the Markdown export could not join the pieces. The
+  mark is now kept, checked by a test that runs the real page pipeline.
 - **A whole-document run no longer exhausts the Tabularium host.** The first live run sent 333 pages
   in one request: the server decoded them all at once (4.7 GB) and the OOM killer stopped it, making
   the web app crawl and answer Cloudflare 524. Requests are now sized as the vendor's `infer.py`
