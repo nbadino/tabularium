@@ -272,18 +272,90 @@ def page_title(page: dict[str, Any]) -> str:
     return str(page.get("rel_path") or f"page {page.get('page_id')}")
 
 
+# Block families that chain across pages (`process_unlimitedOCR2.CHAIN_TYPES`).
+_CHAIN = {"Text": "text", TABLE: "table"}
+
+
+def _row_key(row: list[str]) -> tuple[int, str]:
+    """`process_unlimitedOCR2._row_key`: cell count and the text without spaces,
+    case and full-width forms, to recognise a header row repeated on a new page."""
+    text = "".join(row)
+    text = "".join(chr(ord(c) - 0xFEE0) if 0xFF01 <= ord(c) <= 0xFF5E else c for c in text)
+    return len(row), "".join(text.split()).lower()
+
+
+def merge_tables(base: TableRows, more: TableRows, max_header_rows: int = 5) -> TableRows:
+    """`process_unlimitedOCR2._merge_table_fragments`: the fragment's leading rows
+    that repeat the table's first rows (a header printed again) are dropped."""
+    keys = [_row_key(row) for row in base.rows]
+    skip = 0
+    for row in more.rows[:max_header_rows]:
+        if skip < len(keys) and _row_key(row) == keys[skip]:
+            skip += 1
+        else:
+            break
+    return TableRows(rows=base.rows + more.rows[skip:], header_rows=base.header_rows)
+
+
+def _cjk(ch: str) -> bool:
+    return bool(ch) and ("\u3000" <= ch <= "\u9fff" or "\uac00" <= ch <= "\ud7af" or "\uff00" <= ch <= "\uffef")
+
+
+def join_continued(before: str, after: str) -> str:
+    """Join a paragraph to its continuation on the next page.
+
+    The vendor concatenates the two pieces with no separator, which suits its
+    benchmark but glues words ("sailed from" + "Genoa"). A reader needs a space
+    between words, no space between CJK characters, and a word hyphenated at the
+    page break ("no-" + "viembre") put back together.
+    """
+    before, after = before.rstrip(), after.lstrip()
+    if not before or not after:
+        return before + after
+    if before.endswith("-") and after[0].islower():
+        return before[:-1] + after
+    if _cjk(before[-1]) or _cjk(after[0]):
+        return before + after
+    return f"{before} {after}"
+
+
 def run_markdown(exported: dict[str, Any], grids: dict[int, dict]) -> str:
     """The run as one Markdown document. Each page starts with an HTML comment:
-    invisible once rendered, it still tells where a passage comes from."""
-    sections: list[str] = []
+    invisible once rendered, it still tells where a passage comes from.
+
+    A block marked `append` (it goes on from an earlier page, document runs) joins
+    the open `cross` block of its family, as the vendor's post-processor does: text
+    is concatenated, a table fragment adds its rows to the table.
+    """
+    parts: list[dict[str, Any]] = []
+    open_chain: dict[str, int] = {}
     for page in exported["pages"]:
-        parts = [f"<!-- {page_label(page)} -->"]
+        parts.append({"text": f"<!-- {page_label(page)} -->"})
         for block in page["blocks"]:
-            text = block_markdown(block, grids.get(_block_id(block)))
-            if text:
-                parts.append(text)
-        sections.append("\n\n".join(parts))
-    return "\n\n".join(sections).rstrip() + "\n"
+            label = str(block.get("label") or "")
+            family = _CHAIN.get(label)
+            continuation = block.get("continuation")
+            grid = grids.get(_block_id(block))
+            table = block_table(block, grid) if label == TABLE else None
+            target = open_chain.get(family) if family and continuation == "append" else None
+            if target is not None:
+                previous = parts[target]
+                if family == "table" and previous.get("table") is not None and table is not None:
+                    previous["table"] = merge_tables(previous["table"], table)
+                elif family == "text":
+                    previous["text"] = join_continued(previous["text"], str(block.get("content") or ""))
+                open_chain[family] = target
+                continue
+            text = markdown_table(table) if table is not None else block_markdown(block, grid)
+            if not text:
+                continue
+            parts.append({"text": text, "table": table})
+            # Only a `cross` block or a table opens a chain; a plain paragraph leaves
+            # it as it is (`_build_groups`).
+            if family and (continuation == "cross" or family == "table"):
+                open_chain[family] = len(parts) - 1
+    rendered = [markdown_table(p["table"]) if p.get("table") is not None else p["text"] for p in parts]
+    return "\n\n".join(rendered).rstrip() + "\n"
 
 
 def page_label(page: dict[str, Any]) -> str:

@@ -708,6 +708,13 @@ class UnlimitedOcr2Adapter(_StubAdapter):
 
     adapter_id = "unlimited-ocr-2"
     native_prefill_mode = "end2end"
+    # Whole-document parsing (model card, "Multi-page inference"): consecutive pages
+    # go out in one request so the model uses cross-page context, and blocks that
+    # continue on the next page come back as `cross_<t>` / `append_<t>`.
+    document_parsing = True
+    # `sparse_attention_config.per_page_image_tokens` in config.json (base mode):
+    # the first estimate of a page's prompt cost, refitted from the server's count.
+    document_page_tokens = 273
     end2end_output_format = "grounded-markdown"
     end2end_max_tokens = 8000
     recommended_generation = {"temperature": 0.0}
@@ -825,9 +832,13 @@ class UnlimitedOcr2Adapter(_StubAdapter):
         items = []
         for index, match in enumerate(matches):
             kind = match.group(1).lower()
+            continuation = None
             for prefix in ("append_", "cross_"):
                 if kind.startswith(prefix):
                     kind = kind[len(prefix):]
+                    # `cross_` opens a block that goes on next page, `append_`
+                    # continues the open one (process_unlimitedOCR2._build_groups).
+                    continuation = prefix[:-1]
             label = self._LABEL_MAP.get(kind)
             coords = match.group(3, 4, 5, 6) if match.group(3) is not None else match.group(7, 8, 9, 10)
             if label is None or coords[0] is None:
@@ -841,8 +852,22 @@ class UnlimitedOcr2Adapter(_StubAdapter):
                 content = ""
             elif label == "Table":
                 content = self._span_attrs(content)
-            items.append({"bbox": bbox, "label": label, "content": content})
+            item = {"bbox": bbox, "label": label, "content": content}
+            if continuation:
+                item["continuation"] = continuation
+            items.append(item)
         return items
+
+    def document_request_overrides(self, pages: int) -> dict:
+        """Per-request fields for `pages` pages at once: the single-page ones, with
+        the n-gram window the vendor uses for multi-page documents (1024, model
+        card `generate()` and `infer.py`)."""
+        overrides = self.request_overrides("end2end")
+        if pages > 1:
+            params = dict(overrides.get("custom_params") or {})
+            params["window_size"] = max(int(params.get("window_size") or 0), 1024)
+            overrides["custom_params"] = params
+        return overrides
 
 
 class DotsOcrAdapter(_StubAdapter):

@@ -28,6 +28,21 @@ export function useModelNames(): ModelNameOf {
   return (adapterId) => items.find((m) => m.adapter_id === adapterId)?.display_name ?? null
 }
 
+/** Whether a model reads whole documents (catalog flag `document_parsing`). */
+export function useReadsDocuments(): (adapterId: string | null | undefined) => boolean {
+  const [items, setItems] = useState<ModelItem[]>(readStoredModelRegistry)
+  useEffect(() => {
+    let alive = true
+    fetchModelRegistry(false)
+      .then((next) => alive && setItems(next))
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
+  return (adapterId) => !!items.find((m) => m.adapter_id === adapterId)?.document_parsing
+}
+
 /** Titolo di un'elaborazione: il motore OCR si chiama tale, un modello per nome. */
 export function runTitle(run: Pick<RecognitionRun, 'engine' | 'adapter_id' | 'model_name'>, nameOf: ModelNameOf): string {
   if (run.engine === 'ocr') {

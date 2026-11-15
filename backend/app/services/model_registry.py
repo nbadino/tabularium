@@ -480,6 +480,9 @@ def list_models() -> list[dict]:
             # Nothing on this host can run it, whatever the destination: the UI
             # greys it out with the reason instead of letting every page fail.
             "host_blocker": host_blocker(cap["adapter_id"]),
+            # Parses consecutive pages in one request, with cross-page context: the
+            # recognition form offers "read as one document" only for these.
+            "document_parsing": bool(getattr(adapter, "document_parsing", False)),
             "vram_warning": vram_warning(adapter, state.get("size_bytes") or None, gpus),
             "draft_repo": cap.get("draft_hf_repo") or None,
             "draft_installed": bool(cap.get("draft_hf_repo")) and draft_installed(cap["adapter_id"]),

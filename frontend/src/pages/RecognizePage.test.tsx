@@ -51,7 +51,12 @@ vi.mock('../app/collections', () => ({
   matchesCollection: () => true,
   useCollections: () => ({ overview: null, refresh: async () => {} }),
 }))
-vi.mock('../app/models/names', () => ({ useModelNames: () => () => null, runTitle: () => '' }))
+vi.mock('../app/models/names', () => ({
+  useModelNames: () => () => null,
+  runTitle: () => '',
+  // Only Unlimited-OCR 2 reads whole documents in this catalog.
+  useReadsDocuments: () => (id: string | null | undefined) => id === 'unlimited-ocr-2',
+}))
 
 import RecognizePage from './RecognizePage'
 
@@ -87,6 +92,35 @@ describe('RecognizePage engines', () => {
       expect(await screen.findByText(/Non hai ancora aggiunto la tua chiave API per questo modello/)).toBeInTheDocument()
       expect(screen.getByText('manca la chiave')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /Avvia/ })).toBeDisabled()
+    } finally {
+      savedModels = withKeys
+    }
+  })
+
+  it('offers «read as one document» only for a model that reads whole documents', async () => {
+    setLocale('it')
+    savedModels = [...withKeys, { id: 5, name: 'Unlimited-OCR-2', model_adapter_id: 'unlimited-ocr-2', served_model_name: 'Unlimited-OCR-2', key_required: false, has_key: true }]
+    try {
+      render(<MemoryRouter initialEntries={['/progetti/4/riconoscimenti?project=4&pages=376']}><RecognizePage /></MemoryRouter>)
+      const engine = await screen.findByTestId('engine')
+      await waitFor(() => expect(engine).toHaveValue('profile:1'))
+      // A page-by-page model: no such choice on screen.
+      expect(screen.queryByText('Leggi come un documento unico')).toBeNull()
+
+      await userEvent.selectOptions(engine, 'profile:5')
+      const option = await screen.findByRole('checkbox', { name: /Leggi come un documento unico/ })
+      expect(option).toBeChecked()
+      expect(screen.getByText(/nell’ordine del libro/)).toBeInTheDocument()
+      await userEvent.click(screen.getByRole('button', { name: /Avvia/ }))
+      await waitFor(() => expect(posted[posted.length - 1]?.body).toMatchObject({ profile_id: 5, model_mode: 'document' }))
+
+      // Turned off, the same model goes page by page.
+      await userEvent.click(option)
+      await userEvent.click(screen.getByRole('button', { name: /Avvia/ }))
+      await waitFor(() => expect(posted[posted.length - 1]?.body).toMatchObject({ profile_id: 5, model_mode: 'native' }))
+
+      await userEvent.selectOptions(engine, 'profile:3')
+      expect(screen.queryByText('Leggi come un documento unico')).toBeNull()
     } finally {
       savedModels = withKeys
     }

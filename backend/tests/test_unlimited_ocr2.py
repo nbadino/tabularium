@@ -30,8 +30,9 @@ def test_unlimited2_parses_the_vendor_block_format():
         {"bbox": [10, 5, 300, 30], "label": "Page-header", "content": "Lloyd's"},
         {"bbox": [100, 100, 900, 200], "label": "Text", "content": "Arrived at Genoa"},
         # Clamped to 0-1000 like the vendor's `_scale`; malformed span values repaired.
+        # `cross_` keeps the mark that the table goes on next page.
         {"bbox": [50, 210, 950, 1000], "label": "Table",
-         "content": '<table><tr><td colspan="2">Ship</td></tr></table>'},
+         "content": '<table><tr><td colspan="2">Ship</td></tr></table>', "continuation": "cross"},
         {"bbox": [0, 0, 120, 120], "label": "Picture", "content": ""},
         # A bare block (no `<BLOCK>`) with a known label is recovered.
         {"bbox": [200, 600, 800, 650], "label": "Formula", "content": "x^2"},

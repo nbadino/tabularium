@@ -71,6 +71,23 @@ class OutputTruncated(RuntimeError):
     """La generazione ha esaurito i token prima di chiudere l'output."""
 
 
+class PromptTooLong(RuntimeError):
+    """The server refused a request that does not fit its context; it reported
+    how many tokens the input takes (SGLang's message, as `infer.py` reads it)."""
+
+    def __init__(self, prompt_tokens: int, message: str) -> None:
+        super().__init__(message)
+        self.prompt_tokens = prompt_tokens
+
+
+# Unlimited-OCR 2 `infer.py`, `RE_SGLANG_COUNTS`: the refusal names the input size.
+_SGLANG_COUNTS_RE = re.compile(
+    r"total of\s+(\d+)\s+tokens:\s*(\d+)\s+tokens from the input messages"
+    r"\s*and\s*(\d+)\s+tokens for the completion",
+    re.I,
+)
+
+
 # Floor for `generationConfig.maxOutputTokens` on Gemini 4 (thinking + output).
 GEMINI_MIN_OUTPUT_TOKENS = 32_768
 # Modal: a request over 150 s becomes a 303 chain (browsers follow 20 hops, ~50 min).
@@ -1150,6 +1167,87 @@ class VllmClient:
             )
         return resp
 
+    def served_context_length(self) -> int:
+        """The context the server actually serves (`max_model_len` in `/v1/models`,
+        which vLLM and SGLang report), else the adapter's declared one."""
+        try:
+            resp = requests.get(f"{self.url}/models", headers=self._headers(), timeout=10)
+            resp.raise_for_status()
+            for item in resp.json().get("data") or []:
+                value = int(item.get("max_model_len") or 0)
+                if value > 0:
+                    return value
+        except (requests.RequestException, ValueError, TypeError):
+            pass
+        return int(getattr(self.adapter.capabilities, "max_model_len", 0) or 0)
+
+    def end2end_document(
+        self,
+        images: list[Image.Image],
+        *,
+        max_tokens: int,
+        on_delta: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> tuple[str, str | None]:
+        """Consecutive pages in one request, the model card's multi-page protocol:
+        the images in page order, then `"<PAGE><image>" * n + "Multi page parsing."`.
+
+        Returns the raw text and the finish reason (`length` = the output budget
+        ran out). A request the server refuses as too long raises `PromptTooLong`
+        with the input size it reported, so the caller can refit.
+        """
+        content: list[dict] = []
+        for image in images:
+            prepared = _fit_pixels(image, max_pixels=self.max_pixels).convert("RGB")
+            buf = io.BytesIO()
+            prepared.save(buf, format="JPEG", quality=92)
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")},
+            })
+        content.append({"type": "text", "text": "<PAGE><image>" * len(images) + "Multi page parsing."})
+        payload = protocol.openai_request(
+            self.model, content, max_tokens=max_tokens, stream=True,
+            system_prompt=getattr(self.adapter, "system_prompt", None),
+            sampling=self._sampling_for("end2end"), adapter_id=self.adapter.adapter_id,
+        )
+        overrides = getattr(self.adapter, "document_request_overrides", None)
+        payload.update(overrides(len(images)) if callable(overrides) else {})
+        chunks: list[str] = []
+        finish_reason: str | None = None
+        try:
+            with self._post_chat(payload, True) as resp:
+                if getattr(resp, "status_code", 200) >= 400:
+                    body = resp.text[:2000]
+                    counts = _SGLANG_COUNTS_RE.search(body)
+                    if counts:
+                        raise PromptTooLong(int(counts.group(2)), body)
+                    resp.raise_for_status()
+                for line in resp.iter_lines(decode_unicode=True):
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise RuntimeError("inference cancelled")
+                    if not line or not line.startswith("data: "):
+                        continue
+                    body = line[6:]
+                    if body == "[DONE]":
+                        break
+                    event = json.loads(body)
+                    choices = event.get("choices") or []
+                    if not choices:
+                        continue
+                    finish_reason = choices[0].get("finish_reason") or finish_reason
+                    delta = (choices[0].get("delta") or {}).get("content") or ""
+                    if delta:
+                        chunks.append(delta)
+                        if on_delta:
+                            on_delta(delta)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            if not chunks:
+                raise RuntimeError(f"vLLM non raggiungibile ({self.url}): {exc}") from exc
+            # The pages already streamed are kept by the caller; the rest is retried.
+            finish_reason = "interrupted"
+        return "".join(chunks), finish_reason
+
     def _output_budget(self, wanted: int) -> int:
         """`max_tokens` che sta nel contesto con cui l'adapter serve il modello.
 
@@ -1286,8 +1384,12 @@ class VllmClient:
         on_delta: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
         on_retry: Callable[[], None] | None = None,
+        precomputed: str | None = None,
     ) -> list[dict]:
         """Pagina intera: bbox, label e contenuto in una sola generazione.
+
+        `precomputed` is this page's share of a whole-document response: it is
+        parsed exactly like a single-page output, without calling the model.
 
         È il percorso ufficiale ``ALL_PROMPT['END2END']``. Vale lo stesso tetto
         `MOCR2_MAX_PIXELS` di tutte le altre chiamate (1 MP di default,
@@ -1311,7 +1413,7 @@ class VllmClient:
                 # the image and the prompt.
                 end2end_tokens = min(end2end_tokens, self._output_budget(int(native_budget)))
         sampling = self._sampling_for("end2end")
-        raw = self._chat(
+        raw = precomputed if precomputed is not None else self._chat(
             prepared,
             prompt,
             task="end2end",
@@ -1400,6 +1502,7 @@ class VllmClient:
                     "label": str(label),
                     # "text" oltre a "content": v. nota su "category" per label.
                     "content": str(item.get("content") or item.get("text") or "").strip(),
+                    **({"continuation": item["continuation"]} if item.get("continuation") else {}),
                 }
             )
         return cleaned
