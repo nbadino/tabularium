@@ -1885,3 +1885,60 @@ def test_provision_log_failure_is_not_a_502(monkeypatch):
         res = client.post("/api/system/cloud/vast/provision/log", json={"host": "1.2.3.4", "port": 22})
     assert res.status_code == 424
     assert "Host key verification failed" in res.json()["detail"]
+
+
+def test_rent_refuses_a_gpu_below_the_models_requirements(monkeypatch):
+    """A Quadro RTX 6000 (sm_7.5) was rented for Unlimited-OCR 2 (sm_8.0, CUDA 13)
+    from an offer list searched before the requirements had loaded."""
+    calls = []
+    monkeypatch.setattr(cloud_manager, "_vast_call", lambda *a, **k: calls.append(a) or {"new_contract": 1})
+    with pytest.raises(ValueError, match="compute capability 7.5.*almeno 8.0"):
+        cloud_manager.rent_vast_instance("key", 123, adapter_id="unlimited-ocr-2", compute_cap=750, cuda_max_good=13.0)
+    with pytest.raises(ValueError, match="CUDA 12.8.*CUDA 13"):
+        cloud_manager.rent_vast_instance("key", 123, adapter_id="unlimited-ocr-2", compute_cap=860, cuda_max_good=12.8)
+    assert calls == []  # nothing was rented
+
+
+def test_offer_check_lets_a_fitting_or_unknown_gpu_through():
+    assert cloud_manager.offer_unfit_reason("unlimited-ocr-2", 860, 13.2) is None
+    assert cloud_manager.offer_unfit_reason("unlimited-ocr-2", None, None) is None  # cannot tell
+    assert cloud_manager.offer_unfit_reason("", 500, 10.0) is None
+    assert cloud_manager.offer_unfit_reason("teleocr", 750, 12.9) is None  # sm_7.0 is enough there
+
+
+def test_host_key_falls_back_to_a_real_handshake_when_keyscan_is_refused(monkeypatch, tmp_path):
+    """A Vast host (RTX 4090, 46.224.213.21:40870) closed every `ssh-keyscan`
+    while a real ssh client got through: the key is taken from the handshake."""
+    known = tmp_path / "known_hosts"
+    monkeypatch.setattr(cloud_manager.config, "SSH_KNOWN_HOSTS", known)
+
+    class Result:
+        def __init__(self, returncode=0, stdout="", stderr=""):
+            self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+    def run(cmd, **_k):
+        if cmd[0] == "ssh-keyscan":
+            return Result(0, "", "46.224.213.21: Connection closed by remote host")
+        if cmd[0] == "ssh":
+            scratch = next(arg.split("=", 1)[1] for arg in cmd if arg.startswith("UserKnownHostsFile="))
+            Path(scratch).write_text("[46.224.213.21]:40870 ssh-ed25519 AAAAC3Nza\n")
+            return Result(255, "", "Permission denied (publickey).")
+        return Result(0)
+
+    monkeypatch.setattr(cloud_manager.subprocess, "run", run)
+    out = cloud_manager.pin_ssh_host_key("46.224.213.21", 40870)
+    assert out["key_types"] == ["ssh-ed25519"]
+    assert "[46.224.213.21]:40870 ssh-ed25519 AAAAC3Nza" in known.read_text()
+
+
+def test_host_key_failure_is_not_a_502(monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    def boom(*_a, **_k):
+        raise RuntimeError("Host key non ottenibile da 1.2.3.4:22")
+
+    monkeypatch.setattr(cloud_manager, "pin_ssh_host_key", boom)
+    with TestClient(app) as client:
+        res = client.post("/api/system/cloud/vast/hostkey", json={"host": "1.2.3.4", "port": 22})
+    assert res.status_code == 424

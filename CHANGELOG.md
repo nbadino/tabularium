@@ -7,6 +7,15 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **A GPU that cannot run the chosen model can no longer be rented.** Offers searched before the
+  model's requirements had loaded fell back to compute capability 7.5, and a Quadro RTX 6000
+  (sm_7.5) was rented for Unlimited-OCR 2 (sm_8.0). The search now waits for the requirements, the
+  offer list is cleared when the model changes, and the server refuses to rent an offer whose
+  compute capability or CUDA driver is below the model's recipe, saying why.
+- **Pinning a Vast instance's host key works where `ssh-keyscan` is refused.** Some hosts close
+  `ssh-keyscan` connections while a real ssh client gets through (an RTX 4090 instance did), so
+  *Prepare the server* failed with an HTML 502. The key is now taken from a real handshake when the
+  scan returns nothing, and the endpoint answers 424 so its reason is shown.
 - **A Vast.ai setup followed after a reload no longer looks stuck.** The wizard resumes following a
   setup from what the browser remembered, skipping the step that pins the instance's SSH host key:
   every log read then failed "Host key verification failed", shown as Cloudflare's HTML 502 page.

@@ -2649,6 +2649,7 @@ export const it = {
       modelOwnImage: 'Questo modello richiede l’immagine {image}: sceglilo prima di noleggiare, l’istanza nascerà con quella.',
       monkeyRefHint: 'Commit eseguito sulla GPU, risolto automaticamente.',
       findOffers: 'Cerca offerte',
+      recipeLoading: 'Sto caricando i requisiti del modello: riprova fra un istante.',
       offersFound: 'Trovate {count} offerte.',
       noOffers: 'Nessuna offerta corrisponde ai filtri.',
       locationUnknown: 'posizione n/d',

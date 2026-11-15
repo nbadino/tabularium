@@ -375,6 +375,10 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   // Reserve room for the OS and host-side pipeline workers when searching.
   const recommendedVastHostRamGb = (selectedVastRecipe?.min_free_ram_gb ?? 8) + 4
 
+  // Offers were searched for one model's requirements: another model needs its own search.
+  useEffect(() => {
+    setVastOffers([])
+  }, [wantedAdapter])
   useEffect(() => {
     setVastDiskGb(String(recommendedVastDiskGb))
   }, [recommendedVastDiskGb])
@@ -1131,6 +1135,12 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
       setVastNotice(t('cloud.control.missingKey'))
       return
     }
+    // Without the model's recipe the filter would fall back to guesses (it once
+    // let an sm_7.5 GPU through for a model that needs sm_8.0): wait for it.
+    if (!selectedVastRecipe) {
+      setVastNotice(t('cloud.control.recipeLoading'))
+      return
+    }
     setVastBusy(true)
     setVastNotice(null)
     try {
@@ -1139,7 +1149,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
         disk_gb: Math.max(Number(vastDiskGb) || 40, recommendedVastDiskGb),
         min_gpu_ram_gb: vastVram ? Math.max(Number(vastVram), recommendedVastVramGb) : recommendedVastVramGb,
         min_cpu_ram_gb: recommendedVastHostRamGb,
-        min_compute_capability: selectedVastRecipe?.min_compute_capability ?? 7.5,
+        min_compute_capability: selectedVastRecipe.min_compute_capability ?? null,
         min_inet_down: vastNet ? Number(vastNet) : null,
         min_cuda: vastCuda ? Math.max(Number(vastCuda), recommendedVastCuda) : recommendedVastCuda,
         verified_only: vastVerified,
@@ -1180,6 +1190,8 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
         // Il CUDA massimo dell'host è noto dall'offerta: il backend sceglie
         // l'immagine giusta prima del noleggio, invece di rimediare dopo.
         cuda_max_good: offer.cuda_max_good ?? null,
+        // The server checks the offer against the model's requirements before renting.
+        compute_cap: offer.compute_cap ?? null,
         // L'istanza nasce nuda: la prepariamo via SSH subito dopo, con lo
         // script di questo checkout (niente hook onstart da GitHub).
         prepare_server: false, port: 8888,
@@ -1801,7 +1813,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
                     cuda: recommendedVastCuda.toFixed(1),
                   })}
                 </p>
-                <button type="button" onClick={() => void handleSearchVast()} disabled={vastBusy} className="btn btn-primary mt-3">
+                <button type="button" onClick={() => void handleSearchVast()} disabled={vastBusy || !selectedVastRecipe} className="btn btn-primary mt-3">
                   {vastBusy ? t('cloud.control.loading') : t('cloud.control.findOffers')}
                 </button>
                 {vastOffers.length > 0 && (

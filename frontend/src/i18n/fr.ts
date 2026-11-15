@@ -2649,6 +2649,7 @@ export const fr: Dict = {
       modelOwnImage: 'Ce modèle exige l’image {image} : choisissez-le avant de louer, l’instance en héritera.',
       monkeyRefHint: 'Commit exécuté sur le GPU, résolu automatiquement.',
       findOffers: 'Chercher des offres',
+      recipeLoading: 'Chargement des exigences du modèle : réessayez dans un instant.',
       offersFound: '{count} offres trouvées.',
       noOffers: 'Aucune offre ne correspond à ces filtres.',
       locationUnknown: 'emplacement n/d',
