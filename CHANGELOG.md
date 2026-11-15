@@ -12,6 +12,10 @@ Notable changes to Tabularium. The format follows
   every log read then failed "Host key verification failed", shown as Cloudflare's HTML 502 page.
   The log read now pins an endpoint with no known key (a known key that differs still fails), and
   its errors come back as 424 so the real reason reaches the wizard.
+- **A remembered Vast.ai setup on a destroyed instance is forgotten.** The wizard kept following
+  the setup of yesterday's GPU (destroyed, "Connection refused") and showed *starting setup* on the
+  new one, which was never prepared. Once the account's instances are listed, a remembered setup
+  whose instance is gone is dropped, and one whose instance moved to another SSH endpoint follows it.
 - **TeleOCR on Vast.ai now finishes "Link to Tabularium".** Its recipe runs only the vendor's
   sidecar, with no OpenAI-compatible server on the instance, but the tunnel check asked `/v1/models`
   and waited forever at "Tunnel open: checking the model…". The check now names the model and the

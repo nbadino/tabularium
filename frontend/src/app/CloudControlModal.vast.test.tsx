@@ -40,7 +40,11 @@ vi.mock('../lib/api', () => ({
       }
     }
     if (path === '/system/cloud/vast/hostkey') return { host: body.host, port: body.port, key_types: ['ed25519'] }
-    if (path === '/system/cloud/vast/provision/log') return fake.log
+    if (path === '/system/cloud/vast/provision/log') {
+      // A destroyed instance refuses the connection, as in production.
+      if (body.host === 'old.example') throw new Error('ssh: connect to host old.example port 4444: Connection refused')
+      return fake.log
+    }
     if (path === '/system/cloud/tunnel/start') {
       fake.tunnel = { running: true, host: 'h.example', port: 2222, local_port: 9999 }
       return fake.tunnel
@@ -121,6 +125,25 @@ describe('Vast.ai guidato', () => {
     expect(await screen.findByText(/l.ultima preparazione era di qwen3-vl-8b ed è fallita/)).toBeInTheDocument()
     expect(screen.getByText('Da preparare')).toBeInTheDocument()
     expect(screen.queryByText(/Setup interrotto/)).not.toBeInTheDocument()
+  })
+
+  it('forgets a remembered setup whose instance no longer exists', async () => {
+    // The browser remembers instance 3, destroyed since; the account has only 7.
+    writeVastJob({ instanceId: '3', host: 'old.example', port: 4444, servedName: 'MonkeyOCRv2', adapterId: 'monkeyocrv2-parsing' })
+    renderVast()
+    await waitFor(() => expect(readVastJob()).toBeNull())
+    expect(await screen.findByText('Da preparare')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Prepara il server' })).toBeEnabled()
+    // The stale endpoint is no longer followed.
+    expect(screen.queryByText(/Continua anche se chiudi o ricarichi/)).not.toBeInTheDocument()
+  })
+
+  it('follows a remembered setup to the new SSH endpoint of the same instance', async () => {
+    writeVastJob({ instanceId: '7', host: 'moved.example', port: 1111, servedName: 'MonkeyOCRv2', adapterId: 'monkeyocrv2-parsing' })
+    fake.log = { present: true, ready: false, failed: false, phase: 'weights', error: '', lines: ['>> Download pesi'], adapter_id: 'monkeyocrv2-parsing' }
+    renderVast()
+    await waitFor(() => expect(readVastJob()?.host).toBe('h.example'))
+    expect(readVastJob()?.port).toBe(2222)
   })
 
   it('un promemoria di un altro modello non viene ripreso', async () => {
