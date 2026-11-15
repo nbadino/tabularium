@@ -1832,3 +1832,56 @@ def test_vllm_sidecar_adapters_still_probe_openai_models(monkeypatch):
         )
     assert res.json()["ok"] is False
     assert seen == ["http://127.0.0.1:9101/v1/models"]
+
+
+def test_provision_log_pins_a_new_instance_first(monkeypatch, tmp_path):
+    """A setup followed from a remembered job skips the UI's pinning step: the
+    log read pins an endpoint with no known key instead of failing forever."""
+    known = tmp_path / "known_hosts"
+    known.write_text("")
+    monkeypatch.setattr(cloud_manager.config, "SSH_KNOWN_HOSTS", known)
+    calls = []
+
+    class Result:
+        def __init__(self, returncode=0, stdout=""):
+            self.returncode, self.stdout, self.stderr = returncode, stdout, ""
+
+    def run(cmd, **_k):
+        calls.append(cmd[0] if cmd[0] != "ssh-keygen" else f"ssh-keygen {cmd[1]}")
+        if cmd[:2] == ["ssh-keygen", "-F"]:
+            return Result(1, "")  # not known yet
+        return Result(0, "tabularium-log-missing\n")
+
+    monkeypatch.setattr(cloud_manager.subprocess, "run", run)
+    pinned = []
+    monkeypatch.setattr(cloud_manager, "pin_ssh_host_key", lambda h, p: pinned.append((h, p)))
+    out = cloud_manager.provision_log("111.104.43.22", 11061)
+    assert pinned == [("111.104.43.22", 11061)]
+    assert out["present"] is False
+
+
+def test_provision_log_does_not_repin_a_known_instance(monkeypatch, tmp_path):
+    known = tmp_path / "known_hosts"
+    known.write_text("[111.104.43.22]:11061 ssh-ed25519 AAAA\n")
+    monkeypatch.setattr(cloud_manager.config, "SSH_KNOWN_HOSTS", known)
+
+    class Result:
+        returncode, stdout, stderr = 0, "# Host [111.104.43.22]:11061 found\ntabularium-log-missing\n", ""
+
+    monkeypatch.setattr(cloud_manager.subprocess, "run", lambda *a, **k: Result())
+    monkeypatch.setattr(cloud_manager, "pin_ssh_host_key", lambda *a: pytest.fail("re-pinned a known key"))
+    cloud_manager.provision_log("111.104.43.22", 11061)
+
+
+def test_provision_log_failure_is_not_a_502(monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    def boom(*_a, **_k):
+        raise RuntimeError("Log remoto non leggibile: Host key verification failed.")
+
+    monkeypatch.setattr(cloud_manager, "provision_log", boom)
+    with TestClient(app) as client:
+        res = client.post("/api/system/cloud/vast/provision/log", json={"host": "1.2.3.4", "port": 22})
+    assert res.status_code == 424
+    assert "Host key verification failed" in res.json()["detail"]

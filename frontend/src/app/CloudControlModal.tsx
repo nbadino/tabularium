@@ -647,6 +647,34 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
+  // A remembered setup is only a hint: once the account's instances are known,
+  // one whose instance is gone (destroyed, paused) is forgotten, and one whose
+  // instance moved to another SSH endpoint follows it. Otherwise the wizard kept
+  // reading the log of a destroyed GPU and said "starting setup" forever, while
+  // the new instance was never prepared.
+  useEffect(() => {
+    if (!vastLoaded) return
+    const job = readVastJob()
+    if (!job) return
+    const inst = vastInstances.find((item) => String(item.id) === job.instanceId)
+    const endpoint = inst?.is_running ? effectiveEndpoint(inst) : null
+    const followed = vastProvisionTarget?.host === job.host && vastProvisionTarget?.port === job.port
+    if (!endpoint) {
+      writeVastJob(null)
+      if (followed) {
+        setVastProvisionTarget(null)
+        setVastPhase('absent')
+        setVastNotice(null)
+      }
+      return
+    }
+    if (endpoint.host !== job.host || endpoint.port !== job.port) {
+      writeVastJob({ ...job, host: endpoint.host, port: endpoint.port })
+      if (followed) setVastProvisionTarget({ host: endpoint.host, port: endpoint.port })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vastLoaded, vastInstances])
+
   // Il lavoro è finito quando l'endpoint risponde: da lì in poi lo stato vero
   // è il profilo attivo, non un promemoria nel browser.
   useEffect(() => {

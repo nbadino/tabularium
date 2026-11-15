@@ -1923,9 +1923,26 @@ _DEAD_MARKER = "tabularium-dead"
 _PROVISION_ERRORS = ("Engine core initialization failed", "RuntimeError:", "Error:", "Traceback (most recent call last)")
 
 
+def _host_key_known(host: str, port: int) -> bool:
+    """Whether the dedicated known_hosts already holds a key for this endpoint."""
+    known_hosts = Path(config.SSH_KNOWN_HOSTS)
+    if not known_hosts.is_file():
+        return False
+    name = host if int(port) == 22 else f"[{host}]:{int(port)}"
+    found = _run(["ssh-keygen", "-F", name, "-f", str(known_hosts)], timeout=15.0)
+    return found.returncode == 0 and bool((found.stdout or "").strip())
+
+
 def provision_log(host: str, port: int, *, user: str = "root", lines: int = 80) -> dict[str, Any]:
     """Ultime righe del log di setup remoto, per seguire l'avanzamento da UI."""
     lines = max(1, min(500, int(lines)))
+    # A new instance followed from a job the browser remembered (after a reload,
+    # another tab) never went through the UI's pinning step: every read then
+    # failed "Host key verification failed" and the setup looked stuck. Pin an
+    # endpoint we have no key for, as the UI does before any SSH use; a key that
+    # is known but different still fails, which is what strict checking is for.
+    if not _host_key_known(host, port):
+        pin_ssh_host_key(host, port)
     # Due sezioni in una sola connessione: i marcatori di fase cercati su tutto
     # il file (vLLM stampa centinaia di righe e li spingerebbe fuori dalla coda,
     # facendo *regredire* la fase mostrata) e la coda vera per il pannello log.
