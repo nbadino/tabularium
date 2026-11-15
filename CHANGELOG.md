@@ -7,6 +7,11 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Unlimited-OCR 2 is no longer driven as Unlimited-OCR 1.** The served name "Unlimited-OCR-2"
+  contains "unlimited-ocr", the alias of version 1, which came first; and the guess from the name won
+  over the adapter saved with the configuration. A recognition would have used version 1's prompt,
+  parser and page-by-page path. Version 2 now has its own alias, checked first, and the saved adapter
+  wins over any guess.
 - **Unlimited-OCR 2 can be set up on a rented Vast.ai GPU.** The setup script's preflight demanded a
   preinstalled `vllm` whenever a recipe installs none, which is also true of SGLang recipes:
   Unlimited-OCR 2 stopped before its SGLang install. The check now applies to dedicated vLLM images
