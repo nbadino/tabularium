@@ -7,6 +7,15 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **A whole-document run no longer exhausts the Tabularium host.** The first live run sent 333 pages
+  in one request: the server decoded them all at once (4.7 GB) and the OOM killer stopped it, making
+  the web app crawl and answer Cloudflare 524. Requests are now sized as the vendor's `infer.py`
+  does (the output gets all the context the pages leave, `context - prompt - 700`) on how many pages
+  the model can also write, from per-page prompt and output estimates refitted after every request
+  from the usage the server reports; at most 48 pages per request; pages are opened, encoded and
+  closed one at a time (150 MB peak for 12 pages on the live server); a request that breaks before
+  any output is retried with half the pages instead of falling back to page by page. Pages are sent
+  lossless, as the model card does (the original file, or PNG), no longer re-encoded as JPEG.
 - **Unlimited-OCR 2 is no longer driven as Unlimited-OCR 1.** The served name "Unlimited-OCR-2"
   contains "unlimited-ocr", the alias of version 1, which came first; and the guess from the name won
   over the adapter saved with the configuration. A recognition would have used version 1's prompt,

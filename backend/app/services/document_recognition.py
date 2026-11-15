@@ -2,18 +2,20 @@
 
 Unlimited-OCR 2's model card: "All pages of a document are parsed in one request, so
 the model can use cross-page context". A request still has to fit the context the
-server serves, so a long book goes out as the longest runs of consecutive pages that
-fit, and the next run starts where the previous one stopped:
+server serves, so a long book goes out as runs of consecutive pages, the next run
+starting where the previous one stopped:
 
-* the output budget is 30% of the context and the prompt gets the rest (the vendor's
-  `infer.py`: `gen_reserve = 0.3 * max_model_len`); a page's prompt cost starts at
-  the model's declared value and is refitted from the input size the server reports
-  when it refuses a request as too long (`infer.py`'s refit);
+* sizing follows the vendor's `infer.py`: the prompt is what the pages cost and the
+  output gets all the room left (`max_tokens = context - prompt - 700`). A run holds
+  as many pages as the model can also *write* in that room, from per-page estimates
+  of prompt and output tokens that are refitted after every request from the usage
+  the server reports (and from its "too long" refusal, as `infer.py` does);
+* a run never exceeds `MAX_PAGES_PER_REQUEST`: the pages are sent as images in one
+  body, and a 333-page body exhausted the Tabularium host (OOM at 4.7 GB) and broke
+  on the way to the GPU;
 * the response streams; each `<PAGE>` marker closes the previous page, which is saved
-  at once, so the run shows progress and an interrupted request loses one page at
-  most;
-* when the output budget runs out, the unfinished page and those after it go into the
-  next request, sized on how many pages the last one managed.
+  at once; when the output budget runs out, the next run starts at the unfinished
+  page; a request that breaks before any output is retried with half the pages.
 
 Context is lost only across the boundary between two requests. The server's own
 page-window scheduling (`SGLANG_UOCR_DOC_*_PAGE_WINDOW`) works inside one request.
@@ -94,13 +96,24 @@ class PageStream:
             self.done += 1
 
 
-def plan(context: int, page_tokens: float, remaining: int) -> tuple[int, int]:
-    """`(pages, max_tokens)` for the next request: the output budget, and as many
-    pages as the rest of the context holds."""
-    max_tokens = max(1, int(context * OUTPUT_SHARE))
-    room = context - max_tokens - PROMPT_MARGIN
-    pages = int(room // max(1.0, page_tokens))
-    return max(1, min(remaining, pages)), max_tokens
+# Pages per request, at most: bounds the request body (one JPEG per page) and the
+# memory to build it, whatever the context allows.
+MAX_PAGES_PER_REQUEST = 48
+# First guess of a dense page's output, until a request has been measured.
+INITIAL_PAGE_OUTPUT = 2000
+MIN_PAGE_OUTPUT = 200
+
+
+def plan(context: int, page_in: float, page_out: float, remaining: int,
+         cap: int = MAX_PAGES_PER_REQUEST) -> tuple[int, int]:
+    """`(pages, max_tokens)` for the next request: as many pages as the context
+    holds both to read (`page_in`) and to write (`page_out`), and the whole rest of
+    the context as output budget (`infer.py`: `max_model_len - prompt - 700`)."""
+    room = context - PROMPT_MARGIN
+    pages = int(room // max(1.0, page_in + page_out))
+    pages = max(1, min(remaining, cap, pages))
+    max_tokens = max(1, int(context - pages * page_in - PROMPT_MARGIN))
+    return pages, max_tokens
 
 
 def recognize(
@@ -117,56 +130,66 @@ def recognize(
     """Recognize `items` (pages in book order) as one document.
 
     `save_page(item, segment)` stores one page from its share of the response;
-    `fallback_page(item)` recognizes a page on its own, used when a request cannot
-    make progress (a single page that does not fit, an empty response).
+    `fallback_page(item)` recognizes a page on its own, used when even a one-page
+    request cannot make progress.
     """
+    from .inference import PromptTooLong  # noqa: PLC0415
+
     context = client.served_context_length()
-    page_tokens = float(getattr(client.adapter, "document_page_tokens", 0) or 1000)
+    cost = getattr(client.adapter, "document_page_cost", None)
+    page_in = float(cost() if callable(cost) else getattr(client.adapter, "document_page_tokens", 1000))
+    page_out = float(INITIAL_PAGE_OUTPUT)
+    cap = MAX_PAGES_PER_REQUEST
     pending = list(items)
-    limit: int | None = None  # pages the last request managed, when it was cut short
     while pending and not cancel.is_set():
         before_request()
         if cancel.is_set():
             break
-        pages, max_tokens = plan(context, page_tokens, len(pending))
-        if limit is not None:
-            pages = max(1, min(pages, limit))
+        pages, max_tokens = plan(context, page_in, page_out, len(pending), cap)
         batch = pending[:pages]
+
         def on_page(index: int, segment: str, batch=batch) -> None:
             if index < len(batch):  # a stray extra <PAGE> has no page to go to
                 save_page(batch[index], segment)
 
         stream = PageStream(on_page)
+        usage: dict = {}
         try:
-            text, finish = client.end2end_document(
-                [load_image(item) for item in batch],
+            text, finish, usage = client.end2end_document(
+                (load_image(item) for item in batch),  # opened one at a time
                 max_tokens=max_tokens,
                 on_delta=stream.feed,
                 cancel_event=cancel,
             )
+        except PromptTooLong as exc:
+            # The server says what the input really costs: refit and retry.
+            page_in = max(page_in * 1.05, exc.prompt_tokens / len(batch) * 1.05)
+            log(f"document request too long ({exc.prompt_tokens} tokens for {len(batch)} pages): refit")
+            continue
         except Exception as exc:  # noqa: BLE001
-            from .inference import PromptTooLong  # noqa: PLC0415
-
-            if isinstance(exc, PromptTooLong) and len(batch) > 1:
-                # The server says what the input really costs: refit and retry.
-                page_tokens = max(page_tokens * 1.05, exc.prompt_tokens / len(batch) * 1.05)
-                log(f"document request too long ({exc.prompt_tokens} tokens for {len(batch)} pages): refit")
+            if stream.done == 0 and len(batch) > 1:
+                # Broke before any output (upload, server): try half as many pages.
+                cap = max(1, len(batch) // 2)
+                log(f"document request of {len(batch)} pages failed ({exc}): retrying with {cap}")
                 continue
             if stream.done == 0:
                 fallback_page(batch[0])
                 pending = pending[1:]
                 continue
-            finish = "interrupted"
-            text = ""
+            finish, text = "interrupted", ""
         stream.finish(complete=finish not in {"length", "interrupted"})
         done = stream.done
-        log(f"document request: {done} of {len(batch)} pages (finish={finish})")
+        log(f"document request: {done} of {len(batch)} pages (finish={finish}, usage={usage})")
+        # Refit the estimates from what the server measured.
+        prompt_tokens = int((usage or {}).get("prompt_tokens") or 0)
+        completion_tokens = int((usage or {}).get("completion_tokens") or 0)
+        if prompt_tokens:
+            page_in = prompt_tokens / len(batch)
+        if done and completion_tokens:
+            page_out = max(MIN_PAGE_OUTPUT, completion_tokens / done * 1.1)
         if done == 0:
-            # No page closed: a single page larger than the output budget, or an
-            # empty answer. That page goes alone; the rest continues as a document.
+            # Not even one page fitted the output: that page goes alone.
             fallback_page(batch[0])
             pending = pending[1:]
-            limit = None
             continue
         pending = pending[done:]
-        limit = max(1, int(done * 1.1)) if done < len(batch) else None

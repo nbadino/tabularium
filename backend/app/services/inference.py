@@ -17,7 +17,7 @@ import threading
 import time
 import uuid
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from urllib.parse import urljoin, urlsplit
 
 import requests
@@ -69,6 +69,31 @@ _LLAMAINDEX_REGION: dict[str, str] = {}
 
 class OutputTruncated(RuntimeError):
     """La generazione ha esaurito i token prima di chiudere l'output."""
+
+
+def _page_data_uri(image: Image.Image, max_pixels: int | None) -> str:
+    """A page as the model card sends it: the original file when it can go as it
+    is (the vendor's `encode_image` reads the file and labels it by extension),
+    otherwise a lossless PNG, as the single-page path does. Never a lossy
+    re-encode of a scan."""
+    source = getattr(image, "filename", "") or ""
+    fits = max_pixels is None or image.width * image.height <= max_pixels
+    if fits and source and image.format in ("PNG", "JPEG") and os.path.isfile(source):
+        with open(source, "rb") as handle:
+            data = handle.read()
+        mime = "image/png" if image.format == "PNG" else "image/jpeg"
+        return f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
+    prepared = _fit_pixels(image, max_pixels=max_pixels)
+    if prepared.mode not in ("RGB", "L"):
+        prepared = prepared.convert("RGB")
+    buf = io.BytesIO()
+    prepared.save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+class UploadFailed(RuntimeError):
+    """A multi-page request broke before the model wrote anything (the connection
+    dropped while the pages were being sent): a smaller request may get through."""
 
 
 class PromptTooLong(RuntimeError):
@@ -1183,38 +1208,46 @@ class VllmClient:
 
     def end2end_document(
         self,
-        images: list[Image.Image],
+        images: Iterable[Image.Image],
         *,
         max_tokens: int,
         on_delta: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
-    ) -> tuple[str, str | None]:
+    ) -> tuple[str, str | None, dict]:
         """Consecutive pages in one request, the model card's multi-page protocol:
         the images in page order, then `"<PAGE><image>" * n + "Multi page parsing."`.
 
-        Returns the raw text and the finish reason (`length` = the output budget
-        ran out). A request the server refuses as too long raises `PromptTooLong`
-        with the input size it reported, so the caller can refit.
+        Returns the raw text, the finish reason (`length` = the output budget ran
+        out) and the server's token usage. A request the server refuses as too long
+        raises `PromptTooLong` with the input size it reported; one that breaks
+        before any output raises `UploadFailed`.
+
+        Each page is encoded and closed before the next is opened: holding a few
+        hundred decoded scans at once took the server to 4.7 GB and the OOM killer.
         """
         content: list[dict] = []
+        pages = 0
         for image in images:
-            prepared = _fit_pixels(image, max_pixels=self.max_pixels).convert("RGB")
-            buf = io.BytesIO()
-            prepared.save(buf, format="JPEG", quality=92)
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")},
-            })
-        content.append({"type": "text", "text": "<PAGE><image>" * len(images) + "Multi page parsing."})
+            try:
+                content.append({"type": "image_url", "image_url": {"url": _page_data_uri(image, self.max_pixels)}})
+            finally:
+                close = getattr(image, "close", None)
+                if callable(close):
+                    close()
+            pages += 1
+        content.append({"type": "text", "text": "<PAGE><image>" * pages + "Multi page parsing."})
         payload = protocol.openai_request(
             self.model, content, max_tokens=max_tokens, stream=True,
             system_prompt=getattr(self.adapter, "system_prompt", None),
             sampling=self._sampling_for("end2end"), adapter_id=self.adapter.adapter_id,
         )
         overrides = getattr(self.adapter, "document_request_overrides", None)
-        payload.update(overrides(len(images)) if callable(overrides) else {})
+        payload.update(overrides(pages) if callable(overrides) else {})
+        # The real prompt and output sizes size the next request.
+        payload["stream_options"] = {"include_usage": True}
         chunks: list[str] = []
         finish_reason: str | None = None
+        usage: dict = {}
         try:
             with self._post_chat(payload, True) as resp:
                 if getattr(resp, "status_code", 200) >= 400:
@@ -1232,6 +1265,8 @@ class VllmClient:
                     if body == "[DONE]":
                         break
                     event = json.loads(body)
+                    if event.get("usage"):
+                        usage = event["usage"]
                     choices = event.get("choices") or []
                     if not choices:
                         continue
@@ -1243,10 +1278,10 @@ class VllmClient:
                             on_delta(delta)
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
             if not chunks:
-                raise RuntimeError(f"vLLM non raggiungibile ({self.url}): {exc}") from exc
+                raise UploadFailed(f"richiesta di {pages} pagine interrotta ({self.url}): {exc}") from exc
             # The pages already streamed are kept by the caller; the rest is retried.
             finish_reason = "interrupted"
-        return "".join(chunks), finish_reason
+        return "".join(chunks), finish_reason, usage
 
     def _output_budget(self, wanted: int) -> int:
         """`max_tokens` che sta nel contesto con cui l'adapter serve il modello.

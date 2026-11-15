@@ -31,75 +31,106 @@ def test_a_cut_output_does_not_save_its_unfinished_page():
     assert pages == [0, 1]
 
 
-def test_plan_keeps_thirty_percent_for_the_output():
-    pages, max_tokens = doc.plan(131072, 273, 527)
-    assert max_tokens == int(131072 * 0.3)
-    assert pages == int((131072 - max_tokens - 700) // 273)
-    assert doc.plan(131072, 273, 5)[0] == 5
+def test_plan_sizes_on_what_the_model_can_write_and_gives_it_the_rest():
+    # infer.py: max_tokens = max_model_len - prompt - 700.
+    pages, max_tokens = doc.plan(131072, 1000, 2000, 527)
+    assert pages == (131072 - 700) // 3000
+    assert max_tokens == 131072 - pages * 1000 - 700
+    assert doc.plan(131072, 273, 200, 527)[0] == doc.MAX_PAGES_PER_REQUEST  # never a huge body
+    assert doc.plan(131072, 1000, 2000, 5)[0] == 5
+
+
+class FakeImage:
+    opened = 0
+    closed = 0
+
+    def __init__(self):
+        FakeImage.opened += 1
+        self.open = True
+
+    def close(self):
+        FakeImage.closed += 1
 
 
 class FakeClient:
-    """Answers each request with one `<PAGE>` per page, up to `fits` pages."""
+    """Writes `out_per_page` tokens per page within `max_tokens`; a page costs
+    `page_tokens` of prompt; bodies over `max_body` pages break on upload."""
 
-    def __init__(self, fits: int, *, page_tokens: int | None = None):
+    def __init__(self, *, out_per_page=1500, page_tokens=900, max_body=None, context=131072):
         self.adapter = get_adapter("unlimited-ocr-2")
-        self.fits = fits
-        self.page_tokens = page_tokens  # the real prompt cost of a page, if set
+        self.out_per_page = out_per_page
+        self.page_tokens = page_tokens
+        self.max_body = max_body
+        self.context = context
         self.requests: list[int] = []
+        self.peak_open = 0
 
     def served_context_length(self):
-        return 131072
+        return self.context
 
     def end2end_document(self, images, *, max_tokens, on_delta, cancel_event):
-        self.requests.append(len(images))
-        if self.page_tokens is not None:
-            prompt = len(images) * self.page_tokens
-            if prompt + max_tokens > 131072:  # as the server refuses it
-                raise PromptTooLong(prompt, "too long")
-        done = min(self.fits, len(images))
+        n = 0
+        for image in images:  # consumed one at a time, closed before the next
+            self.peak_open = max(self.peak_open, FakeImage.opened - FakeImage.closed)
+            image.close()
+            n += 1
+        self.requests.append(n)
+        prompt = n * self.page_tokens
+        if prompt + max_tokens > self.context:
+            raise PromptTooLong(prompt, "too long")
+        if self.max_body is not None and n > self.max_body:
+            raise RuntimeError("Connection aborted")  # upload broke, no output
+        done = min(n, max_tokens // self.out_per_page)
         for i in range(done):
             on_delta(f"<PAGE><BLOCK>text[1,1,9,9]<FORK>page{i}")
-        if done < len(images):
+        if done < n:
             on_delta("<PAGE><BLOCK>text[1,1,9,9]<FORK>cut sh")
-            return "", "length"
-        return "", "stop"
+            return "", "length", {"prompt_tokens": prompt, "completion_tokens": done * self.out_per_page + 10}
+        return "", "stop", {"prompt_tokens": prompt, "completion_tokens": done * self.out_per_page}
 
 
 def _run(client, n):
     items = [{"id": i, "page_id": i} for i in range(n)]
     saved, alone = [], []
     doc.recognize(
-        items, client=client, load_image=lambda _i: Image.new("RGB", (10, 10)),
+        items, client=client, load_image=lambda _i: FakeImage(),
         save_page=lambda item, seg: saved.append((item["id"], seg)),
         fallback_page=lambda item: alone.append(item["id"]), cancel=threading.Event(),
     )
     return saved, alone
 
 
-def test_a_long_book_goes_in_as_few_requests_as_the_output_allows():
-    client = FakeClient(fits=40)
-    saved, alone = _run(client, 100)
-    assert [i for i, _ in saved] == list(range(100))  # every page, in order, once
+def test_a_long_book_goes_in_bounded_requests_sized_on_the_output():
+    client = FakeClient(out_per_page=1500)
+    saved, alone = _run(client, 527)
+    assert [i for i, _ in saved] == list(range(527))  # every page, in order, once
     assert alone == []
-    # The first request offers every page that fits; the next ones are sized on
-    # what the output managed (40 -> 44).
-    assert client.requests[0] == 100
-    assert client.requests[1] == 44
-    assert sum(1 for _ in client.requests) <= 4
+    assert max(client.requests) <= doc.MAX_PAGES_PER_REQUEST
+    # Pages are opened one at a time, never a whole request in memory.
+    assert client.peak_open <= 1
+    # After the first request the size follows the measured output.
+    assert len(client.requests) <= 527 // 40 + 3
 
 
 def test_a_too_long_prompt_is_refitted_from_the_server_count():
-    # A page really costs 1500 tokens (gundam tiles), not the 273 first guessed.
-    client = FakeClient(fits=1000, page_tokens=1500)
+    # A page really costs 2500 prompt tokens, not the first guess.
+    client = FakeClient(page_tokens=2500, out_per_page=500)
     saved, _ = _run(client, 100)
     assert [i for i, _ in saved] == list(range(100))
-    assert client.requests[0] == 100  # refused once...
-    assert client.requests[1] * 1500 + int(131072 * 0.3) <= 131072  # ...then it fits
-    assert len(client.requests) <= 4
+    assert len(client.requests) <= 6
+
+
+def test_a_broken_upload_halves_the_request_instead_of_going_page_by_page():
+    client = FakeClient(max_body=10, out_per_page=500)
+    saved, alone = _run(client, 60)
+    assert [i for i, _ in saved] == list(range(60))
+    assert alone == []
+    assert client.requests[1] == client.requests[0] // 2
+    assert all(n <= 10 for n in client.requests[-3:])
 
 
 def test_no_progress_falls_back_to_one_page_alone():
-    client = FakeClient(fits=0)
+    client = FakeClient(out_per_page=10**9)  # not even one page fits the output
     saved, alone = _run(client, 3)
     assert alone == [0, 1, 2]
 
@@ -170,7 +201,7 @@ def test_a_document_run_saves_every_page_through_the_page_pipeline(tmp_path, mon
             stop_policy="none", owner_id=None, model_name="Unlimited-OCR-2", adapter_id="unlimited-ocr-2",
             provider="vast", endpoint="http://127.0.0.1:9/v1",
         )
-    client = FakeClient(fits=10)
+    client = FakeClient()
     monkeypatch.setattr(recognition.inference, "get_vllm_client", lambda: client)
     seen = []
 
@@ -191,3 +222,17 @@ def test_joining_a_paragraph_reads_like_text():
     assert run_documents.join_continued("sailed from", "Genoa") == "sailed from Genoa"
     assert run_documents.join_continued("el 24 de no-", "viembre del 978") == "el 24 de noviembre del 978"
     assert run_documents.join_continued("北京", "大学") == "北京大学"
+
+
+def test_pages_go_lossless_as_the_model_card_sends_them(tmp_path):
+    from app.services.inference import _page_data_uri
+
+    path = tmp_path / "p.png"
+    Image.new("L", (40, 60), 200).save(path)
+    with Image.open(path) as image:
+        uri = _page_data_uri(image, None)
+    import base64 as b64
+    assert uri.startswith("data:image/png;base64,")
+    assert b64.b64decode(uri.split(",", 1)[1]) == path.read_bytes()  # the file itself
+    # An image without a file (deskewed in memory) goes as PNG, not JPEG.
+    assert _page_data_uri(Image.new("RGB", (10, 10)), None).startswith("data:image/png;base64,")
