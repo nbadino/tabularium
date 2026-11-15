@@ -170,6 +170,7 @@ def rent_vast(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             offer_id,
             image=payload.get("image", ""),
             cuda_max_good=payload.get("cuda_max_good"),
+            compute_cap=payload.get("compute_cap"),
             adapter_id=payload.get("adapter_id") or "",
             disk_gb=payload.get("disk_gb", 40),
             model=payload.get("model", reference.HF_REPO),
@@ -383,7 +384,8 @@ def pin_vast_host_key(payload: dict, _admin: dict = Depends(_admin)) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        # 424, not 502: Cloudflare replaces an origin 502 with its own HTML page.
+        raise HTTPException(status_code=424, detail=str(exc)) from exc
 
 
 @router.get("/api/system/cloud/vast/monkeyocr-ref")

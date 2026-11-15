@@ -2648,6 +2648,7 @@ export const en: Dict = {
       modelOwnImage: 'This model requires the {image} image: pick it before renting, the instance will start from it.',
       monkeyRefHint: 'Commit run on the GPU, resolved automatically.',
       findOffers: 'Find offers',
+      recipeLoading: 'Loading the model’s requirements: try again in a moment.',
       offersFound: 'Found {count} offers.',
       noOffers: 'No offer matches these filters.',
       locationUnknown: 'location n/a',

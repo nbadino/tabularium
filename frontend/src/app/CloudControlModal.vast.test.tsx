@@ -18,6 +18,7 @@ const fake = {
   log: { present: false, ready: false, failed: false, phase: 'absent', error: '', lines: [] } as LogReply,
   tunnel: { running: false } as Record<string, unknown>,
   probeOk: false,
+  noRecipes: false,
 }
 
 vi.mock('../lib/api', () => ({
@@ -26,6 +27,7 @@ vi.mock('../lib/api', () => ({
     if (path === '/system/cloud/vast/ssh-key') return { exists: true, fingerprint: 'SHA256:abcdefghijklmnopqrstuvwxyz' }
     if (path === '/system/cloud/vast/monkeyocr-ref') return { ref: 'abc12345' }
     if (path === '/system/cloud/vast/models') {
+      if (fake.noRecipes) return { items: [] }
       return { items: [{ adapter_id: 'monkeyocrv2-parsing', hf_repo: 'zenosai/M', served_model_name: 'MonkeyOCRv2', runtime: 'vllm', supported: true, needs_own_image: false, docker_image: '', min_free_disk_gb: 22, min_free_vram_gb: 10 }] }
     }
     if (path === '/system/cloud/tunnel') return fake.tunnel
@@ -86,6 +88,18 @@ describe('Vast.ai guidato', () => {
     vi.mocked(apiPut).mockClear()
   })
   afterEach(cleanup)
+
+  it('does not search offers before the model requirements have loaded', async () => {
+    fake.noRecipes = true
+    try {
+      renderVast()
+      const search = await screen.findByRole('button', { name: 'Cerca offerte' })
+      expect(search).toBeDisabled()
+      expect(vi.mocked(apiPost).mock.calls.some(([path]) => path === '/system/cloud/vast/offers')).toBe(false)
+    } finally {
+      fake.noRecipes = false
+    }
+  })
 
   it('su una GPU mai toccata la tappa server dice «da preparare»', async () => {
     renderVast()

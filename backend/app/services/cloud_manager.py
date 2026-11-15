@@ -640,6 +640,41 @@ def search_vast_offers(
     return _with_cost("vast", compatible)
 
 
+def offer_unfit_reason(adapter_id: str, compute_cap: Any, cuda_max_good: Any) -> str | None:
+    """Why an offer cannot host the model's serving recipe, or `None`.
+
+    The rent button sends the GPU's compute capability (Vast's encoding: 7.5 is
+    750) and CUDA driver from the offer it shows. A list searched with another
+    model's requirements, or before the requirements had loaded, once rented a
+    Quadro RTX 6000 (sm_7.5) for Unlimited-OCR 2, which needs sm_8.0: refuse it.
+    """
+    if not adapter_id:
+        return None
+    from . import serve_recipes  # noqa: PLC0415
+
+    recipe = serve_recipes.RECIPES.get(str(adapter_id).strip())
+    if recipe is None:
+        return None
+    try:
+        cap = float(compute_cap) / 100 if compute_cap not in (None, "") else None
+        cuda = float(cuda_max_good) if cuda_max_good not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+    need_cap = getattr(recipe, "min_compute_capability", None)
+    need_cuda = getattr(recipe, "min_cuda_driver", None)
+    if need_cap and cap is not None and cap + 1e-9 < float(need_cap):
+        return (
+            f"questa GPU ha compute capability {cap:.1f}, il modello {adapter_id} richiede almeno "
+            f"{float(need_cap):.1f}: non verrebbe avviato. Scegli un'altra offerta."
+        )
+    if need_cuda and cuda is not None and cuda + 1e-9 < float(need_cuda):
+        return (
+            f"il driver di questa GPU arriva a CUDA {cuda:g}, il modello {adapter_id} richiede almeno "
+            f"CUDA {float(need_cuda):g}. Scegli un'altra offerta."
+        )
+    return None
+
+
 def rent_vast_instance(
     api_key: str,
     offer_id: int,
@@ -647,6 +682,7 @@ def rent_vast_instance(
     # Vuota: l'immagine viene scelta dal modello o da `cuda_max_good`.
     image: str = "",
     cuda_max_good: float | None = None,
+    compute_cap: float | None = None,
     adapter_id: str = "",
     disk_gb: int = 40,
     model: str = reference.HF_REPO,
@@ -662,6 +698,9 @@ def rent_vast_instance(
     token = api_key.strip()
     if not token:
         raise ValueError("API Key di Vast.ai non specificata.")
+    unfit = offer_unfit_reason(adapter_id, compute_cap, cuda_max_good)
+    if unfit:
+        raise ValueError(unfit)
     if int(disk_gb) < 10:
         raise ValueError("Il disco deve essere almeno 10 GB.")
     if prepare_server and prepare_training:
@@ -1173,6 +1212,27 @@ def get_vast_instance(api_key: str, instance_id: int, *, owner_id: int | None = 
     return item
 
 
+def _host_key_from_handshake(host: str, port: int) -> list[str]:
+    """known_hosts lines for `host:port` recorded by an ssh handshake into a
+    scratch file (`StrictHostKeyChecking=accept-new`); empty when it fails."""
+    import tempfile  # noqa: PLC0415
+
+    with tempfile.TemporaryDirectory(prefix="tabularium-hostkey-") as tmp:
+        scratch = Path(tmp) / "known_hosts"
+        scratch.touch()
+        _run(
+            [
+                "ssh", "-F", "/dev/null", "-p", str(port),
+                "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+                "-o", f"UserKnownHostsFile={scratch}", "-o", "PreferredAuthentications=none",
+                "-o", "ConnectTimeout=15", "-o", "LogLevel=ERROR",
+                f"root@{host}", "true",
+            ],
+            timeout=30.0,
+        )
+        return [line for line in scratch.read_text(encoding="utf-8").splitlines() if line.strip() and not line.startswith("#")]
+
+
 def pin_ssh_host_key(host: str, port: int) -> dict[str, Any]:
     """Registra la host key dell'istanza nel known_hosts dedicato.
 
@@ -1196,7 +1256,13 @@ def pin_ssh_host_key(host: str, port: int) -> dict[str, Any]:
         pass
     scan = _run(["ssh-keyscan", "-T", "10", "-p", str(port), host], timeout=25.0)
     lines = [line for line in scan.stdout.splitlines() if line.strip() and not line.startswith("#")]
-    if scan.returncode != 0 or not lines:
+    if not lines:
+        # Some Vast hosts close the connection on `ssh-keyscan` ("Connection closed
+        # by remote host") while a real ssh client gets through: take the key from
+        # a real handshake instead. Same trust on first use; authentication is not
+        # attempted (`PreferredAuthentications=none`), only the host key is kept.
+        lines = _host_key_from_handshake(host, port)
+    if not lines:
         raise RuntimeError(
             f"Host key non ottenibile da {host}:{port} — l'istanza potrebbe non aver ancora avviato SSH. "
             f"{(scan.stderr or '').strip()[:200]}"
