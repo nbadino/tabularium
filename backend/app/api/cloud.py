@@ -510,7 +510,9 @@ def read_provision_log(payload: dict, _admin: dict = Depends(_admin)) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        # 424, not 502: Cloudflare replaces an origin 502 with its own HTML
+        # page, and the wizard showed that page instead of the reason.
+        raise HTTPException(status_code=424, detail=str(exc)) from exc
 
 
 # --- Gestione Pod RunPod da UI -------------------------------------------------

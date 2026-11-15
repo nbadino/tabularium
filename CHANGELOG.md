@@ -7,6 +7,11 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **A Vast.ai setup followed after a reload no longer looks stuck.** The wizard resumes following a
+  setup from what the browser remembered, skipping the step that pins the instance's SSH host key:
+  every log read then failed "Host key verification failed", shown as Cloudflare's HTML 502 page.
+  The log read now pins an endpoint with no known key (a known key that differs still fails), and
+  its errors come back as 424 so the real reason reaches the wizard.
 - **TeleOCR on Vast.ai now finishes "Link to Tabularium".** Its recipe runs only the vendor's
   sidecar, with no OpenAI-compatible server on the instance, but the tunnel check asked `/v1/models`
   and waited forever at "Tunnel open: checking the model…". The check now names the model and the
