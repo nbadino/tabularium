@@ -31,3 +31,24 @@ def test_config_and_api_expose_configured(monkeypatch):
     assert infmod.get_inference_config()["configured"] is False
     with TestClient(app) as client:
         assert client.get("/api/system/inference").json()["configured"] is False
+
+
+def test_unlimited_ocr_2_is_not_taken_for_version_1(monkeypatch):
+    """The served name "Unlimited-OCR-2" contains "unlimited-ocr": the guess
+    returned Unlimited-OCR 1, and it won over the saved adapter, so recognitions
+    would have used version 1's protocol and parser."""
+    from app.services import inference
+
+    assert inference._adapter_for_endpoint("Unlimited-OCR-2", "http://127.0.0.1:58237/v1") == "unlimited-ocr-2"
+    assert inference._adapter_for_endpoint("Unlimited-OCR", "http://127.0.0.1:9/v1") == "unlimited-ocr"
+
+
+def test_the_saved_adapter_wins_over_a_guess_from_the_name(tmp_path, monkeypatch):
+    from app.services import inference
+
+    inference.save_inference_config({
+        "url": "http://127.0.0.1:58237/v1", "model": "unlimited-ocr-something",
+        "adapter_id": "unlimited-ocr-2", "provider": "vast", "enabled": True,
+    })
+    assert inference.get_inference_config()["adapter_id"] == "unlimited-ocr-2"
+    assert inference.get_vllm_client().adapter.adapter_id == "unlimited-ocr-2"

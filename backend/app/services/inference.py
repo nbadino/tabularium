@@ -2024,7 +2024,9 @@ def get_inference_config() -> dict:
     # vecchio client aveva salvato solo URL/modello, riallineiamo il profilo
     # quando il nome è riconoscibile: altrimenti un endpoint Unlimited può
     # ricevere silenziosamente il prompt/parser di MonkeyOCRv2.
-    adapter_id = _adapter_for_endpoint(model, url) or rows.get("inference_adapter_id") or "monkeyocrv2-parsing"
+    # The adapter saved with the configuration is the declared one; a guess from
+    # the served name only fills in when nothing was saved.
+    adapter_id = rows.get("inference_adapter_id") or _adapter_for_endpoint(model, url) or "monkeyocrv2-parsing"
     provider = rows.get("inference_provider") or _provider_for_endpoint(url)
     resource_id = rows.get("inference_resource_id") or None
     provider_credential_ref = rows.get("inference_provider_credential_ref") or None
@@ -2160,7 +2162,12 @@ def _adapter_for_endpoint(model: str, url: str) -> str | None:
     esposto resta la fonte di verità e `test_connection` verifica che esista.
     """
     value = f"{model} {url}".lower()
+    # First match wins, so a name that contains another (Unlimited-OCR-2 contains
+    # "unlimited-ocr") must come before it: the served "Unlimited-OCR-2" was read
+    # as Unlimited-OCR 1 and recognised with the wrong protocol and parser.
     aliases = (
+        ("unlimited-ocr-2", "unlimited-ocr-2"),
+        ("unlimited_ocr_2", "unlimited-ocr-2"),
         ("unlimited-ocr", "unlimited-ocr"),
         ("paddleocr-vl", "paddleocr-vl"),
         ("paddleocr_vl", "paddleocr-vl"),
