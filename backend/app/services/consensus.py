@@ -345,6 +345,33 @@ def _recognize(project_id: int, page_id: int, client, cancel: threading.Event):
 # its pages are marked failed at once instead of each costing a request.
 STOP_AFTER_SAME_ERRORS = 3
 
+# A gateway that answers "too many requests" or "overloaded" is busy, not broken: the
+# same page is sent again after these waits (seconds) before it counts as failed. Three
+# 429s in seven seconds used to stop Gemini on all 549 pages of a run.
+TRANSIENT_WAITS: tuple[float, ...] = (15, 30, 60, 120, 240, 480, 600, 600, 600)
+_TRANSIENT = re.compile(
+    r"\b(429|503)\b|too many requests|rate.?limit|resource.?exhausted|overloaded|"
+    r"service unavailable|try again later",
+    re.IGNORECASE,
+)
+
+
+def is_transient(error: str) -> bool:
+    """A busy or rate-limited model, worth waiting for; not a bad key or no credits."""
+    return bool(_TRANSIENT.search(error or ""))
+
+
+def _recognize_patiently(project_id: int, page_id: int, client, cancel: threading.Event):
+    """`_recognize`, waiting out a busy gateway (`TRANSIENT_WAITS`) before giving up."""
+    blocks, failure = _recognize(project_id, page_id, client, cancel)
+    for wait in TRANSIENT_WAITS:
+        if failure is None or cancel.is_set() or not is_transient(failure):
+            break
+        if cancel.wait(wait):
+            break
+        blocks, failure = _recognize(project_id, page_id, client, cancel)
+    return blocks, failure
+
 
 def _error_signature(error: str) -> str:
     """Two errors are the same when they differ only in numbers (request ids, times)."""
@@ -388,7 +415,7 @@ def _run_model(
             runstore.mark_output(output["id"], "failed", error=stopped, ended_at=_now())
             continue
         runstore.mark_output(output["id"], "running", started_at=_now())
-        blocks, failure = _recognize(project_id, int(output["page_id"]), client, cancel)
+        blocks, failure = _recognize_patiently(project_id, int(output["page_id"]), client, cancel)
         if failure is None:
             runstore.mark_output(
                 output["id"], "finished",
@@ -552,14 +579,16 @@ def adopt_block(
 
 
 def reconcile_runs() -> None:
-    """A restart keeps the finished outputs and closes only the interrupted queue."""
+    """A restart resumes the interrupted runs: finished outputs are kept, the rest goes on.
+
+    A deploy or a crash used to fail every page still in the queue and leave the user to
+    start the run again by hand. The run carries on with its owner's keys, as a retry
+    by the owner would.
+    """
     with _LOCK:
         active_ids = set(_ACTIVE)
-    runstore.reconcile(
-        active_ids,
-        message="backend restarted during the consensus run; start it again for the missing pages",
-        ended=_now(),
-    )
+    for run in runstore.interrupted(active_ids):
+        _start(int(run["id"]), run.get("owner_id"))
 
 
 # --- one page -------------------------------------------------------------------

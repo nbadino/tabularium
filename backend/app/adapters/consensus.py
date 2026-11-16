@@ -197,26 +197,30 @@ def block_geometry(block_id: int) -> dict[str, Any] | None:
     return {"page_id": int(row["page_id"]), "points": json.loads(row["points"] or "[]")}
 
 
-def reconcile(active_ids: set[int], *, message: str, ended: str) -> None:
-    """After a restart, close the runs no thread is working on any more."""
+def interrupted(active_ids: set[int]) -> list[dict[str, Any]]:
+    """After a restart, the runs no thread is working on any more, put back in the queue.
+
+    The outputs a dead thread left `running` go back to `queued` (their request was lost
+    with the process); the finished and failed ones are kept. Returns each run's id and
+    owner, so the caller can start it again.
+    """
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id FROM consensus_runs WHERE state IN ('queued','running')"
+            "SELECT id, owner_id FROM consensus_runs WHERE state IN ('queued','running')"
         ).fetchall()
-        for row in rows:
-            run_id = int(row["id"])
-            if run_id in active_ids:
-                continue
+        runs = [dict(row) for row in rows if int(row["id"]) not in active_ids]
+        for run in runs:
             conn.execute(
-                "UPDATE consensus_outputs SET state='failed', error=?, ended_at=? "
-                "WHERE run_id=? AND state IN ('queued','running')",
-                (message, ended, run_id),
+                "UPDATE consensus_outputs SET state='queued', started_at=NULL "
+                "WHERE run_id=? AND state='running'",
+                (int(run["id"]),),
             )
             conn.execute(
-                "UPDATE consensus_runs SET state='failed', error=?, ended_at=? WHERE id=?",
-                (message, ended, run_id),
+                "UPDATE consensus_runs SET state='queued', ended_at=NULL WHERE id=?",
+                (int(run["id"]),),
             )
         conn.commit()
+    return runs
 
 
 # --- decisions --------------------------------------------------------------------
