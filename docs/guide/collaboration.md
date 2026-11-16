@@ -16,7 +16,9 @@ Tabularium is self-hosted and multi-user.
 - **Assignments and review**: in the studio the owner or an administrator
   assigns a distinct annotator and reviewer per page. Submission, change
   requests and approval are recorded by the server, and an edit after approval
-  invalidates it. The **To annotate** and **To review** filters show your
+  invalidates it. The reviewer or a project manager can send an approved page
+  back with **Reopen for correction** and a required note: it returns to the
+  annotator as *Changes requested* and must be approved again. The **To annotate** and **To review** filters show your
   personal queue.
 - **Live presence**: people working on the same page see each other, and a page
   changed elsewhere is reloaded without losing unsaved work.

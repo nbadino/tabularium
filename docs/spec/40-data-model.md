@@ -26,7 +26,10 @@
   `collections.cover_page_id` (migration 22, nullable, `ON DELETE SET NULL`) is the page shown
   for the collection; it must belong to the collection and is cleared when that page moves out.
 - `page_work` (migration 19): per-page annotator, reviewer, state
-  (`annotation`/`pending`/`changes_requested`/`approved`) and optimistic version.
+  (`annotation`/`pending`/`changes_requested`/`approved`) and optimistic version. An `approved`
+  page goes back to `changes_requested` (and `pages.status='review'`) through a review that
+  requests changes, an edit after approval, or `POST /api/pages/{id}/work/reopen` (reviewer or
+  project manager, note required; logged as `page.reopened` and as a failed `page_reviews` row).
 - Coordinates **stored in source pixels**; normalization to 0–1000 **only at export** (§7).
 - **Auth**:
   - `users(id, username UNIQUE, password_hash, email, role ['admin','editor','viewer'], active,

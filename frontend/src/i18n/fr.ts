@@ -46,6 +46,9 @@ export const fr: Dict = {
     "reviewFor": "Révision : {name}",
     "reloadTitle": "Charger la version du serveur ?",
     "reloadHint": "Les modifications locales non enregistrées seront abandonnées.",
+    "reopen": "Rouvrir pour correction",
+    "reopenNote": "Ce qui doit être corrigé",
+    "reopenHint": "Obligatoire. La page revient à l’annotateur comme « À corriger » et devra être approuvée de nouveau.",
     "errorLoad": "Impossible de charger l’affectation. Rouvrez le panneau pour réessayer.",
     "state": {
         "annotation": "En annotation",

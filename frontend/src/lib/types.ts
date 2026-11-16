@@ -1071,6 +1071,8 @@ export interface PageWork {
   can_assign: boolean
   can_submit: boolean
   can_review: boolean
+  /** Approved page: its reviewer or a project manager may send it back for correction. */
+  can_reopen: boolean
 }
 
 export interface AutoTrainingJob {

@@ -39,3 +39,19 @@ it('al cambio pagina non mostra le azioni della pagina precedente', async () => 
   view.rerender(<PageWorkControl page={{ ...page, id: 9 }} {...props} />)
   expect(screen.queryByRole('button', { name: 'Invia al revisore' })).not.toBeInTheDocument()
 })
+it('una pagina approvata si riapre per correzioni solo con una nota', async () => {
+  h.work = { page_id: 8, version: 6, state: 'approved', can_reopen: true, can_assign: false, assignee_id: 4, reviewer_id: 2 } as PageWork
+  h.post.mockResolvedValue({ ...h.work, state: 'changes_requested', version: 7, can_reopen: false })
+  render(<PageWorkControl page={page} revision={3} beforeAction={async () => 3} onChanged={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Approvata' }))
+  expect(screen.getByRole('button', { name: 'Riapri per correzioni' })).toBeDisabled()
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Riga 12: tonnellaggio' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Riapri per correzioni' }))
+  await waitFor(() => expect(h.post).toHaveBeenCalledWith('/pages/8/work/reopen', { expected_version: 6, note: 'Riga 12: tonnellaggio' }))
+})
+it('senza permesso la pagina approvata non offre la riapertura', async () => {
+  h.work = { page_id: 8, version: 6, state: 'approved', can_reopen: false, can_assign: false, assignee_id: 2, reviewer_id: 3 } as PageWork
+  render(<PageWorkControl page={page} revision={3} beforeAction={async () => 3} onChanged={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Approvata' }))
+  expect(screen.queryByRole('button', { name: 'Riapri per correzioni' })).not.toBeInTheDocument()
+})

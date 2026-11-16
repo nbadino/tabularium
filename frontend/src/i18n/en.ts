@@ -46,6 +46,9 @@ export const en: Dict = {
     "reviewFor": "Review: {name}",
     "reloadTitle": "Load the server version?",
     "reloadHint": "Unsaved local changes will be discarded.",
+    "reopen": "Reopen for correction",
+    "reopenNote": "What needs correcting",
+    "reopenHint": "Required. The page goes back to the annotator as “Changes requested” and must be approved again.",
     "errorLoad": "Could not load the assignment. Reopen the panel to try again.",
     "state": {
         "annotation": "Annotating",

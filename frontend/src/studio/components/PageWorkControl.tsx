@@ -54,7 +54,7 @@ export default function PageWorkControl({ page, revision, beforeAction, onChange
   const assigned = Boolean(work?.assignee_id || work?.reviewer_id)
   const label = work?.can_submit ? t('work.submit') : work?.can_review ? t('work.review') : assigned ? t(`work.state.${work!.state}`) : t(work?.can_assign ? 'work.assign' : 'work.title')
   const update = (value: PageWork) => { setWork(value); onChanged(value, true) }
-  const run = async (action: 'assign' | 'submit' | 'approved' | 'changes_requested') => {
+  const run = async (action: 'assign' | 'submit' | 'approved' | 'changes_requested' | 'reopen') => {
     if (!work || busy) return
     if (action === 'assign' && work.state !== 'annotation' && (assignee !== String(work.assignee_id ?? '') || reviewer !== String(work.reviewer_id ?? ''))) {
       if (!await confirm({ title: t('work.reassign'), message: t('work.reassignHint') })) return
@@ -64,6 +64,8 @@ export default function PageWorkControl({ page, revision, beforeAction, onChange
       const current = await beforeAction()
       const value = action === 'assign'
         ? await apiPut<PageWork>(`/pages/${page.id}/work`, { assignee_id: assignee ? Number(assignee) : null, reviewer_id: reviewer ? Number(reviewer) : null, expected_version: work.version })
+        : action === 'reopen'
+        ? await apiPost<PageWork>(`/pages/${page.id}/work/reopen`, { expected_version: work.version, note })
         : await apiPost<PageWork>(`/pages/${page.id}/work/${action === 'submit' ? 'submit' : 'review'}`, {
           expected_version: work.version, annotation_revision: current,
           ...(action === 'submit' ? {} : { decision: action, note }),
@@ -80,6 +82,7 @@ export default function PageWorkControl({ page, revision, beforeAction, onChange
         <button className="btn" disabled={busy || !note.trim()} onClick={() => void run('changes_requested')}>{t('work.requestChanges')}</button>
         <button className="btn btn-primary" disabled={busy} onClick={() => void run('approved')}>{t('work.approve')}</button>
       </>}
+      {work?.can_reopen && <button className="btn" disabled={busy || !note.trim()} onClick={() => void run('reopen')}>{t('work.reopen')}</button>}
     </>}>
       <div className="space-y-3 p-3">
         {error != null && <ErrorNotice error={error} />}
@@ -92,6 +95,7 @@ export default function PageWorkControl({ page, revision, beforeAction, onChange
             <button className="btn" onClick={() => { setOpen(false); onReview?.() }}>{t('work.inspect')}</button>
             <Field label={t('work.note')} hint={t('work.noteHint')}><textarea className="fld" rows={3} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
           </>}
+          {work.can_reopen && <Field label={t('work.reopenNote')} hint={t('work.reopenHint')}><textarea className="fld" rows={3} value={note} onChange={(e) => setNote(e.target.value)} /></Field>}
           {!work.can_review && work.state === 'pending' && <p className="text-[13px]">{t('work.waiting', { name: work.reviewer_name ?? t('work.reviewer') })}</p>}
           {!assigned && !work.can_assign && <p className="text-[13px]">{t('work.unassignedHint')}</p>}
           {work.can_assign && <details open={!assigned}>
