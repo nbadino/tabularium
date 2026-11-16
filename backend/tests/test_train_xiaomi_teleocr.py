@@ -146,3 +146,17 @@ def test_teleocr_stays_inference_only_with_the_architecture_reason():
     # The reason is the architecture, not only the missing vendor code.
     assert "Qwen3ForCausalLM" in text
     assert "qwen2_5_vl" in text
+
+
+def test_teleocr_absence_cites_the_vendor_evidence_and_what_a_path_would_need():
+    # R3/R5: the absence of a recipe is backed by primary sources read on 2026-11-16, and the
+    # non-vendor alternative is spelled out so building it stays an explicit decision.
+    recipe = train_recipes.get_recipe("teleocr")
+    text = " ".join(recipe.official_notes)
+    assert "2608.12898" in text                 # the paper's training section
+    assert "caipeng328/TeleOCR#11" in text      # the authors' table-training answer
+    assert "No LoRA recipe" in text
+    assert "--custom_register_path" in text
+    assert "AutoModelForImageTextToText" in text and "trust_remote_code" in text
+    # No one-click profile may exist for a model without a recipe.
+    assert auto_training.profile_for("teleocr") is None

@@ -856,7 +856,13 @@ truth.
   (`TeleOCR-vllm/TeleOCR_vllm/qwen2_5_vl.py`, `architectures=["Qwen3ForCausalLM"]`) show a Qwen3
   decoder (head_dim 128 on hidden 1024 × 16 heads, q/k norm, no qkv bias). ms-swift's `qwen2_5_vl`
   loads the stock transformers class (head_dim 64, qkv bias), so it does not fit either
-  (checked 2026-11-16 on ms-swift main and 4.6.1).
+  (checked 2026-11-16 on ms-swift main and 4.6.1; neither ms-swift nor LLaMA-Factory main
+  registers TeleOCR). Paper v3 section 4 hyperparameters, framework unstated: stage 1 vision +
+  merger MLP lr 1e-4 / 1e-3, LM frozen, 1 epoch, batch 256; stage 2 full FT LM 1e-5 / vision
+  1e-6, 1 epoch, batch 128; stage 3 and 4 (GRPO, rewards 1-NED / TEDS / CDM) without values.
+  Issue #11 (authors, 2026-09-30): tables train OTSL structure first (contents removed), then the
+  full table conditioned on ground-truth OTSL. The HF repo now lives at `XingChen-AGI/TeleOCR`
+  (`StarDoc-AI/TeleOCR` redirects); its remote code needs transformers 4.x (HF discussion #6).
 - LightOnOCR-3 (<https://github.com/lightonai/LightOnOCR>): client, CLI and benchmarks only. The
   vendor blog documents Muon + packing SFT and a GRPO stage with a bbox reward
   `min(IoU/0.75, 1)`, but publishes no code, config or numeric SFT hyperparameters.
