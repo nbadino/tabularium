@@ -63,30 +63,54 @@ def gpu_snapshot() -> list[dict]:
     return [dict(gpu) for gpu in gpus]
 
 
-def parse_metrics_line(line: str) -> dict | None:
-    """Estrae loss/lr/step/epoch da una riga di log ms-swift (formato tollerante)."""
-    loss = re.search(rf"""(?<![\w])["']?loss["']?\s*[:=]\s*({_NUM})""", line, re.IGNORECASE)
-    lr = re.search(
-        rf"""["']?(?:lr|learning_rate)["']?\s*[:=]\s*({_NUM})""", line, re.IGNORECASE
+# Output key -> log key pattern. ms-swift >= 4.3 prints every value as a quoted string
+# ('loss': '0.0542'); ms-swift 3.x, LLaMA-Factory and PaddleFormers print bare numbers.
+# Both shapes go through the same optional-quote value pattern below.
+_METRIC_KEYS: dict[str, str] = {
+    "loss": r"loss",
+    "eval_loss": r"eval_loss",
+    "lr": r"(?:lr|learning_rate)",
+    "grad_norm": r"grad_norm",
+    "token_acc": r"token_acc",
+    "eval_token_acc": r"eval_token_acc",
+    "epoch": r"epoch",
+    "memory_gib": r"memory\(GiB\)",
+}
+_METRIC_RES = {
+    name: re.compile(
+        rf"""(?<![\w])["']?{key}["']?\s*[:=]\s*["']?({_NUM})(?![\w.])""", re.IGNORECASE
     )
-    step = re.search(rf"""["']?step["']?\s*[:=]\s*(\d+)""", line, re.IGNORECASE)
-    progress = re.search(r"global_step/max_steps['\"]?\s*:\s*['\"](\d+)/(\d+)", line)
-    if not (loss or lr or progress):
+    for name, key in _METRIC_KEYS.items()
+}
+_STEP_RE = re.compile(r"""(?<![\w/])["']?(?:global_)?step["']?\s*[:=]\s*["']?(\d+)\b""", re.IGNORECASE)
+_PROGRESS_RE = re.compile(r"""global_step\s*/\s*max_steps["']?\s*[:=]\s*["']?(\d+)\s*/\s*(\d+)""")
+_REMAINING_RE = re.compile(r"""remaining_time["']?\s*[:=]\s*["']([^"']+)""")
+
+
+def parse_metrics_line(line: str) -> dict | None:
+    """Extract loss/lr/step/epoch/eval values from one trainer log line.
+
+    Tolerant of every toolchain we generate: values may be bare numbers or quoted
+    strings, keys may be quoted or not. A line is a point when it carries a loss,
+    an eval loss, a learning rate or a step counter."""
+    values: dict[str, float] = {}
+    for name, pattern in _METRIC_RES.items():
+        match = pattern.search(line)
+        if match:
+            try:
+                values[name] = float(match.group(1))
+            except ValueError:
+                continue
+    progress = _PROGRESS_RE.search(line)
+    if not ({"loss", "eval_loss", "lr"} & values.keys() or progress):
         return None
-    out: dict = {"t": time.time()}
-    if loss:
-        out["loss"] = float(loss.group(1))
-    if lr:
-        out["lr"] = float(lr.group(1))
+    out: dict = {"t": time.time(), **values}
+    step = _STEP_RE.search(line)
     if step:
         out["step"] = int(step.group(1))
     if progress:
         out["step"], out["total_steps"] = map(int, progress.groups())
-    for key in ("epoch", "eval_loss"):
-        match = re.search(rf"[\"']?{key}[\"']?\s*:\s*({_NUM})", line)
-        if match:
-            out[key] = float(match.group(1))
-    remaining = re.search(r"remaining_time['\"]?\s*:\s*['\"]([^'\"]+)", line)
+    remaining = _REMAINING_RE.search(line)
     if remaining:
         out["remaining_time"] = remaining.group(1)
     return out

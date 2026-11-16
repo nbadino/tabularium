@@ -33,6 +33,12 @@ Notable changes to Tabularium. The format follows
   in flight, each worker with its own client; the stop rule still counts the model's failures.
 
 ### Fixed
+- **The training loss chart stays filled for ms-swift 4.x runs.** ms-swift ≥ 4.3 logs every value
+  as a quoted string (`'loss': '0.0542'`), and the log parser only accepted bare numbers, so the
+  status kept the step counter but dropped loss, eval loss and learning rate: the "Training
+  metrics" and "Validation loss" charts were empty while the log showed the losses. Every known
+  key (loss, eval_loss, learning_rate, grad_norm, token_acc, eval_token_acc, epoch, memory) now
+  accepts both shapes, and an eval line without a step counter (LLaMA-Factory) is kept too.
 - **A Vast listing error is never read as an empty account.** Vast's v0 instance collection
   (`GET /api/v0/instances/`, with or without `?owner=me`) now answers 410 Gone with no `instances`
   key. Tabularium already listed through the paginated `GET /api/v1/instances/` (vast-cli
