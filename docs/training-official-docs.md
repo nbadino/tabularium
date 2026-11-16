@@ -757,6 +757,31 @@ stated in the lesson:
 
 Anything quoting a learning rate / epoch / LoRA rank for MinerU2.5 is **community, not vendor**.
 
+### Bundle availability (checked 2026-11-16)
+
+- `opendatalab/mineru-tutorials` at `761b4a9895` (license: CC BY-NC-SA per commit `ccbf047649`;
+  GitHub reports `NOASSERTION`): the lesson folder holds only
+  `04课：MinerU 1.2B 模型微调 - 文档.md` (sha256 `4c2e5cdf…3201`) and the slide PDF
+  (sha256 `0808aae7…35e9`). No zip, no releases.
+- GitHub code search: no `run_mineru.py` with an `sft` command, no `sft_table_rec.yaml`, no
+  `mineru_ext` outside the lesson text. No opendatalab repository versions the code. A web search
+  found no mirror.
+- The lesson sends readers to the camp platform (heywhale.com, enrolment required), where the
+  environment, data and model are preloaded.
+- **Unmerged** PR [opendatalab/mineru-tutorials#1](https://github.com/opendatalab/mineru-tutorials/pull/1)
+  (head `c0d209c2`, "MetaX edition", `04-扩展：…沐曦版 - 文档.md`, sha256 `93e53397…c2`) says
+  *"官方完整仓库里，run_mineru.py 可能还会包一层 mineru_ext 里的逻辑；本教程用最小脚本，不依赖那套扩展"*
+  and writes a stub `run_mineru.py` that calls `swift sft <yaml>` with `model_type`/`template`
+  `qwen2_vl`, `tuner_type: lora`, `lora_rank: 8`, `MAX_PIXELS: 50176`, `attn_impl: sdpa`,
+  `torch_dtype: bfloat16`, `max_steps: 1`. Its data: `{"messages":[{"role":"user","content":
+  "<image>\nTable Recognition:"},{"role":"assistant","content":"<table><tr><td>…"}],"images":[…]}`.
+  It contradicts the main lesson and is a one-step smoke test, so it is **not** the recipe.
+- Checkpoints: the lesson trains `MinerU2.5-2509-1.2B` (AGPL-3.0, HF sha `1aa090b4`). Tabularium
+  serves `MinerU2.5-Pro-2605-1.2B` (Apache-2.0, HF sha `08aaea84`); both are
+  `Qwen2VLForConditionalGeneration` / `qwen2_vl`. Whether the bundle supports Pro is unverified.
+- To unblock: the user supplies `mineru_sft_code.zip`; it is then declared as an external checkout
+  (R2) with its checksum, and the recipe is wired from its `sft_table_rec.yaml`.
+
 ### Dataset
 
 - 4 demo datasets under `dataset/demo` in the zip; the only public preparation script is

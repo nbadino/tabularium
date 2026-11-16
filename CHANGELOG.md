@@ -15,6 +15,11 @@ Notable changes to Tabularium. The format follows
   `qwen` environment. It stays `experimental` until a real run.
 
 ### Changed
+- **MinerU2.5's training evidence is on record.** A fresh search found the vendor's
+  `mineru_sft_code.zip` (the `run_mineru.py sft` wrapper the lesson requires) in no public source;
+  the only public `run_mineru.py` is an unmerged lesson edition that swaps it for plain `swift sft`,
+  which is not adopted. The recipe stays `planned`, says the lesson targets the 2509 checkpoint
+  rather than Pro 2605, and names the zip as what would unblock it.
 - **TeleOCR says why it cannot be trained.** Besides the missing vendor code, its weights are a
   Qwen2.5-VL vision tower with a Qwen3 decoder, which ms-swift's `qwen2_5_vl` cannot load; the
   recipe now states this instead of only "no training code".
