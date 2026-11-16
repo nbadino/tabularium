@@ -178,6 +178,64 @@ def test_release_inference_stops_managed_local_server(monkeypatch):
     assert calls == [{"enabled": False}, "stop"]
 
 
+def _vast_release_env(monkeypatch, instances, tunnel):
+    from app.services import cloud_manager, recognition, vault
+
+    calls: list[object] = []
+    monkeypatch.setattr(recognition.inference, "save_inference_config", lambda p: calls.append(p))
+    monkeypatch.setattr(vault, "get", lambda ref: "vast-key" if ref == "vault:vast_api_key" else "")
+    monkeypatch.setattr(cloud_manager, "_fetch_vast_instances", lambda key, **k: instances)
+    monkeypatch.setattr(cloud_manager, "get_tunnel_status", lambda: tunnel)
+    monkeypatch.setattr(
+        cloud_manager, "control_vast_instance",
+        lambda key, instance_id, action: calls.append((key, instance_id, action)),
+    )
+    return calls
+
+
+def test_release_stops_the_vast_instance_behind_the_tunnel(monkeypatch):
+    """The panel's tunnel saves only the URL: the run did not know which instance
+    to stop and left the GPU running. The tunnel's SSH endpoint names it."""
+    from app.services import cloud_manager, recognition
+
+    instances = [
+        {"id": 1, "public_ipaddr": "10.0.0.1", "ports": {"22/tcp": [{"HostPort": "2222"}]}},
+        {"id": 60792196, "public_ipaddr": "111.104.43.22",
+         "ports": {"22/tcp": [{"HostPort": "11225"}]}, "ssh_host": "ssh5.vast.ai", "ssh_port": 31000},
+    ]
+    tunnel = cloud_manager.TunnelStatus(running=True, host="111.104.43.22", port=11225)
+    calls = _vast_release_env(monkeypatch, instances, tunnel)
+
+    recognition._release_inference("vast")
+
+    assert calls == [{"enabled": False}, ("vast-key", 60792196, "stop")]
+
+
+def test_release_matches_the_vast_proxy_endpoint_too(monkeypatch):
+    from app.services import cloud_manager, recognition
+
+    instances = [{"id": 7, "ssh_host": "ssh5.vast.ai", "ssh_port": 31000}]
+    tunnel = cloud_manager.TunnelStatus(running=True, host="ssh5.vast.ai", port=31000)
+    calls = _vast_release_env(monkeypatch, instances, tunnel)
+
+    recognition._release_inference("vast")
+
+    assert calls[-1] == ("vast-key", 7, "stop")
+
+
+def test_release_says_so_when_the_vast_instance_is_unknown(monkeypatch):
+    """No silent success: an instance that cannot be identified is an error the
+    run reports, so the user knows the GPU is still billing."""
+    from app.services import cloud_manager, recognition
+
+    tunnel = cloud_manager.TunnelStatus(running=False)
+    calls = _vast_release_env(monkeypatch, [{"id": 7, "ssh_host": "x", "ssh_port": 1}], tunnel)
+
+    with pytest.raises(RuntimeError, match="GPU"):
+        recognition._release_inference("vast")
+    assert calls == [{"enabled": False}]
+
+
 def test_second_model_run_is_rejected_while_first_is_active(tmp_path):
     from app.db import connect
     from app.services import recognition
