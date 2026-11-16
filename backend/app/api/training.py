@@ -212,6 +212,8 @@ def training_auto(
             max_dph=max(0.1, min(20.0, float(payload.get("max_dph") or 1.0))),
             min_gpu_ram_gb=max(8, min(160, int(payload.get("min_gpu_ram_gb") or 24))),
             disk_gb=max(20, min(500, int(payload.get("disk_gb") or 100))),
+            gpu_name=str(payload.get("gpu_name") or "")[:64],
+            allow_stale_dataset=payload.get("allow_stale_dataset") is True,
         )
     except (ValueError, TypeError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

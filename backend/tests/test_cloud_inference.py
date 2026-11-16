@@ -2053,3 +2053,40 @@ def test_rent_refuses_an_arm_host_with_a_localised_reason(monkeypatch):
     assert cloud_manager.offer_unfit_reason("", None, None, gpu_name="GH200 SXM")
     assert cloud_manager.offer_unfit_reason("", 800, 12.8, cpu_arch="amd64", gpu_name="A100") is None
     assert cloud_manager.offer_unfit_reason("", 890, 13.0, gpu_name="RTX 4090") is None
+
+
+# The offer a one-click Xiaomi-OCR-0 training rented on 2026-11-16 (instance
+# 60981030, job auto_1794867410853): an NVIDIA CMP 170HX mining card. It met
+# every numeric filter (sm_8.0, x86, CUDA 13.3, 64 GB reported) and was the
+# cheapest, so it was ranked first.
+CMP_OFFER = {
+    "id": 52617886, "gpu_name": "CMP 170HX", "cpu_arch": "amd64", "gpu_ram": 65_536,
+    "compute_cap": 800, "cuda_max_good": 13.3, "geolocation": "Oregon, US", "dph_total": 0.51,
+}
+
+
+def test_vast_search_drops_nvidia_mining_cards(monkeypatch):
+    offers = [CMP_OFFER, {**CMP_OFFER, "id": 7, "gpu_ram": 40_960}, {**CMP_OFFER, "id": 8, "gpu_name": "CMP 90HX"},
+              X86_OFFER, {**X86_OFFER, "id": 9, "gpu_name": "RTX A6000"}]
+    monkeypatch.setattr(cloud_manager, "_vast_call", lambda *a, **k: {"offers": offers})
+    found = cloud_manager.search_vast_offers("key", min_gpu_ram_gb=40, min_compute_capability=8.0, min_cuda=12.6)
+    assert [o["id"] for o in found] == [2, 9]
+
+
+def test_rent_refuses_a_mining_card_with_a_localised_reason(monkeypatch):
+    from app.services import i18n
+
+    calls = []
+    monkeypatch.setattr(cloud_manager, "_vast_call", lambda *a, **k: calls.append(a) or {"new_contract": 1})
+    with pytest.raises(ValueError, match="CMP 170HX") as err:
+        cloud_manager.rent_vast_instance(
+            "key", CMP_OFFER["id"], image="vastai/pytorch:cuda-12.8.1-auto",
+            cpu_arch="amd64", gpu_name="CMP 170HX", compute_cap=800, cuda_max_good=13.3, disk_gb=100,
+        )
+    assert calls == []  # nothing was rented
+    assert "mining" in i18n.localize_detail(str(err.value), "en")
+    assert "minage" in i18n.localize_detail(str(err.value), "fr")
+    for name in ("CMP 30HX", "NVIDIA CMP 50HX", "cmp 170hx"):
+        assert cloud_manager.offer_unfit_reason("", 800, 13.0, cpu_arch="amd64", gpu_name=name), name
+    for name in ("A100 PCIE", "RTX A6000", "L40S", "RTX 4090"):
+        assert cloud_manager.offer_unfit_reason("", 800, 13.0, cpu_arch="amd64", gpu_name=name) is None, name

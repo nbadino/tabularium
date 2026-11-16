@@ -272,6 +272,19 @@ def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dic
             errors.extend(coverage_errors)
     if family_counts["table"]["train"] == 0:
         warnings.append(msg("no_table_train_w", lang))
+    stale = None
+    if report_path.is_file():
+        from .dataset_builder import snapshot_staleness  # noqa: PLC0415
+
+        try:
+            stale = snapshot_staleness(project_id, json.loads(report_path.read_text(encoding='utf-8')))
+        except (OSError, ValueError):
+            stale = None
+    if stale:
+        warnings.append(msg(
+            "dataset_stale_w", lang, built=stale["built_at"], snapshot=stale["snapshot_pages"],
+            eligible=stale["eligible_pages"], changed=stale["changed_pages"],
+        ))
 
     # Dove gira il training decide che cosa va controllato qui. Prima questi
     # controlli guardavano sempre *questa* macchina: con un executor SSH/Vast
@@ -429,6 +442,9 @@ def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dic
             "snapshot_id": snapshot_id,
             "counts": counts,
             "families": family_counts,
+            # Not `None` when eligible pages were approved or edited after the
+            # snapshot: the one-click Vast start refuses it unless confirmed.
+            "stale": stale,
         },
         "executor": executor_kind,
         "remote": remote,

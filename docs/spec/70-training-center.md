@@ -106,9 +106,23 @@
   provisioning or training fails, and after registration. Profiles: `monkey`, `qwen`, `legacy` (Unlimited/DeepSeek), `dots`,
   `glm`, `paddle`. The manual rent endpoint still prepares only MonkeyOCRv2 and says so; SSH and
   the pins remain under Advanced, not in the main flow.
+  An optional `gpu_name` pins the search to one Vast GPU model (`"A100 SXM4"`).
+- **A stale snapshot is said, and refused for rental.** The preflight compares the snapshot's
+  `built_at` with today's pages, replaying the snapshot's own selection (approved only, pilot,
+  collection scope, gold excluded): a block or grid save, a review step (`page_work`,
+  `page_reviews`) or a page audit event (direct approval) after the build, or a different number
+  of eligible pages than the snapshot counted, sets `dataset.stale` (`snapshot_pages`,
+  `eligible_pages`, `changed_pages`, `latest_change`) and adds a warning. `POST /training/auto`
+  refuses such a snapshot unless `allow_stale_dataset: true`; the UI asks first and the job
+  records `dataset_snapshot` and `dataset_stale`. A deleted block leaves no page timestamp and is
+  caught only through the page count or a later edit.
 - **Which Vast hosts an image can run on.** Every image is linux/amd64, so every Vast search asks
   for `cpu_arch = amd64` and drops any arm64 offer it still gets (an absent `cpu_arch` with a Grace
-  name, GB10/GH200/GB200, counts as arm64); renting one is refused with a localised reason. An
+  name, GB10/GH200/GB200, counts as arm64); renting one is refused with a localised reason.
+  NVIDIA CMP mining cards (`gpu_name` "CMP <n>HX": NVIDIA sells them as a "Dedicated GPU for
+  Professional Mining", https://www.nvidia.com/en-us/cmp/; Vast lists the GA100 "CMP 170HX" with
+  sm_8.0 and 40–64 GB) are dropped by the same local filter and refused by
+  `cloud_manager.offer_unfit_reason`, for training and serving alike. An
   unknown or zero `gpu_ram` never meets a VRAM minimum. `auto_training.PREBUILT_CUDA` records the
   toolkit of each image; below CUDA 12.8 (`cloud_manager.BLACKWELL_FIRST_TOOLKIT`: torch 2.6+cu124
   and paddle cuda12.6) the auto search excludes Blackwell (`compute_cap` ≥ 1000).

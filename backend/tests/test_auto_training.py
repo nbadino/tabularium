@@ -221,3 +221,20 @@ def test_blackwell_follows_each_image_toolkit():
     for profile in ("paddle", "qwen", "legacy", "uocr2", "glm"):
         assert auto_training.blackwell_ready(profile) is False, profile
     assert auto_training.blackwell_ready("dots") is True  # image picked from the host CUDA
+
+
+def test_auto_search_can_be_pinned_to_one_gpu_model(monkeypatch):
+    import threading
+
+    from app.services import cloud_manager
+
+    seen: dict = {}
+    monkeypatch.setattr(cloud_manager, "search_vast_offers", lambda *_a, **k: seen.update(k) or [])
+    monkeypatch.setattr(auto_training, "_save", lambda _job: None)
+    job = {"id": "auto_g", "project_id": 4, "adapter_id": "glm-ocr", "state": "queued",
+           "phase": "queued", "message": "", "offer": None, "instance_id": None}
+    auto_training._run(  # noqa: SLF001
+        job, {"adapter_id": "glm-ocr", "train_type": "lora"}, "key", "glm", 1, "it", 1.5, 40, 120,
+        threading.Event(), gpu_name="A100 SXM4",
+    )
+    assert seen["gpu_name"] == "A100 SXM4"

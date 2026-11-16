@@ -588,6 +588,21 @@ def non_x86_cpu_arch(cpu_arch: Any, gpu_name: Any = None) -> str | None:
     return None
 
 
+# NVIDIA's CMP ("Cryptocurrency Mining Processor") line is sold as a "Dedicated
+# GPU for Professional Mining" (https://www.nvidia.com/en-us/cmp/); the Linux
+# driver names them "NVIDIA CMP 30HX/40HX/50HX/70HX/90HX" (supportedchips.html),
+# and Vast lists the GA100-based "CMP 170HX" with 40-64 GB and sm_8.0. They pass
+# every numeric filter and are the cheapest, but have no display outputs, a
+# narrowed PCIe link and throttled FP16/FMA throughput: a training rented one on
+# 2026-11-16 (instance 60981030). Neither training nor serving rents them.
+_MINING_GPU_NAME = re.compile(r"^\s*(?:NVIDIA\s+)?CMP\s*\d+\s*HX\b", re.IGNORECASE)
+
+
+def mining_gpu(gpu_name: Any) -> bool:
+    """True for an NVIDIA CMP mining card (by the offer's `gpu_name`)."""
+    return bool(_MINING_GPU_NAME.match(str(gpu_name or "")))
+
+
 VAST_API_BASE = "https://console.vast.ai/api/v0"
 # Vast.ai sta migrando per rotte, non in blocco: al 2026-09 solo la collection
 # delle istanze è passata a v1 (la v0 risponde 410 deprecated_endpoint), mentre
@@ -717,6 +732,8 @@ def search_vast_offers(
             continue
         if non_x86_cpu_arch(item.get("cpu_arch"), item.get("gpu_name")):
             continue
+        if mining_gpu(item.get("gpu_name")):
+            continue
         if min_gpu_ram_gb:
             # The rented GB10 (unified memory) reported `gpu_ram` 0: an unknown or
             # zero VRAM never satisfies a VRAM requirement.
@@ -771,6 +788,10 @@ def offer_unfit_reason(
         # Italian, the source language of HTTP details: the reverse adapter
         # renders it in the reader's language.
         return i18n.msg("vast_offer_not_x86", i18n.SOURCE, gpu=str(gpu_name or "GPU"), arch=arch)
+    if mining_gpu(gpu_name):
+        from . import i18n  # noqa: PLC0415
+
+        return i18n.msg("vast_offer_mining_gpu", i18n.SOURCE, gpu=str(gpu_name).strip())
     if _hf_blocked_location(location):
         return (
             f"questa GPU è in Cina ({location}): da lì Hugging Face non è raggiungibile e i pesi del "

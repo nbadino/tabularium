@@ -38,6 +38,18 @@ Notable changes to Tabularium. The format follows
   in flight, each worker with its own client; the stop rule still counts the model's failures.
 
 ### Fixed
+- **Vast never rents an NVIDIA CMP mining card.** A one-click Xiaomi-OCR-0 training on 2026-11-16
+  rented a "CMP 170HX" (instance 60981030): a GA100 mining card with no display outputs, a narrowed
+  PCIe link and throttled FP16 throughput, which met every numeric filter (sm_8.0, x86, CUDA 13.3,
+  64 GB) and was the cheapest offer. The shared offer filter now drops `CMP <n>HX` cards and renting
+  one is refused with a localised reason, for training and serving. `POST /training/auto` also
+  accepts an optional `gpu_name` to pin one GPU model.
+- **Training says when the dataset snapshot is older than the pages.** One-click training used
+  the 13:29 snapshot (124 pages) while 134 eligible pages had been approved or corrected after it,
+  without a word. The training preflight now reports `dataset.stale` with a warning when an
+  eligible page was approved, reviewed or edited after the build, or the eligible page count
+  differs; the one-click Vast start refuses it unless confirmed (`allow_stale_dataset`), and the UI
+  asks before renting.
 - **The training loss chart stays filled for ms-swift 4.x runs.** ms-swift ≥ 4.3 logs every value
   as a quoted string (`'loss': '0.0542'`), and the log parser only accepted bare numbers, so the
   status kept the step counter but dropped loss, eval loss and learning rate: the "Training

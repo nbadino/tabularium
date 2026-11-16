@@ -750,11 +750,26 @@ export interface TrainingStatus {
   gpu: GpuInfo[]
 }
 
+export interface DatasetStaleness {
+  built_at: string
+  snapshot_id: string | null
+  snapshot_pages: number
+  eligible_pages: number
+  changed_pages: number
+  latest_change: string | null
+}
+
 export interface TrainingPreflight {
   ready: boolean
   errors: string[]
   warnings: string[]
-  dataset: { dir: string; counts: Record<string, number> }
+  dataset: {
+    dir: string
+    counts: Record<string, number>
+    snapshot_id?: string | null
+    /** Set when eligible pages were approved or edited after the snapshot. */
+    stale?: DatasetStaleness | null
+  }
   executor?: string
   remote?: boolean
   training_repo: string | null

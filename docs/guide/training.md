@@ -371,10 +371,12 @@ or Paddle, provision the toolchain's checkout on the host and point
 3. **Fine-tuning → Training → New training.** Choose the model and training type.
    The official recipe supplies the parameters; Advanced lets you edit or restore them.
    MonkeyOCRv2 LoRA also has a measured 8 GB configuration in Advanced. The preflight tells you what is missing
-   (toolchain path, GPU, VRAM, dataset families, an unavailable recipe).
+   (toolchain path, GPU, VRAM, dataset families, an unavailable recipe). It also warns when the
+   snapshot is older than your pages (pages approved or corrected after the build): rebuild the
+   dataset, or *Rent and train* asks you to confirm training on the old snapshot.
 4. **Rent a GPU on Vast.ai.** Set the hourly budget and press *Rent and train*. Tabularium
    searches Vast.ai within that ceiling, picks the best GPU (most VRAM, then newest compute
-   capability, then reliability), rents it, installs the model's own environment on the host,
+   capability, then reliability; NVIDIA CMP mining cards are never picked), rents it, installs the model's own environment on the host,
    waits for the readiness file and starts the run. The card shows rent → SSH → environment →
    training and a Cancel button. Open *Show logs* when you need setup details. No host, Python
    path or repository to type.
