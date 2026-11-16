@@ -280,7 +280,7 @@ def test_provider_refresh_persists_rate_and_live_state(monkeypatch):
         }]}},
         calls,
     )
-    items = cloud_manager.list_vast_instances("token")
+    items = cloud_manager.list_vast_instances("token", adopt=True)  # the cloud panel
     assert items[0]["is_running"] is True
     assert items[0]["cost_estimate"]["hourly_rate"] == 0.42
     with connect() as conn:

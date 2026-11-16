@@ -126,7 +126,7 @@ def get_vast_instances(payload: dict, _admin: dict = Depends(_admin)) -> dict:
         raise HTTPException(status_code=400, detail="API Key di Vast.ai obbligatoria.")
 
     try:
-        items = cloud_manager.list_vast_instances(api_key, owner_id=_admin.get("id"))
+        items = cloud_manager.list_vast_instances(api_key, owner_id=_admin.get("id"), adopt=True)
         return {"items": items}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -436,8 +436,13 @@ def track_cloud_resource(
     hourly_rate: float | None = None,
     state: str = "running",
     metadata: dict[str, Any] | None = None,
+    adopt: bool = True,
 ) -> None:
-    """Registra una risorsa fatturabile senza conservare credenziali."""
+    """Record a billable resource without storing credentials.
+
+    `adopt=False` only refreshes a resource that already has a row, so a background
+    lookup never opens a row it will not close.
+    """
     remote_id = str(remote_id).strip()
     if not remote_id:
         return
@@ -452,6 +457,7 @@ def track_cloud_resource(
         state=state,
         cost=cost,
         terminal=terminal,
+        create=adopt,
     )
 
 
@@ -896,8 +902,18 @@ def rent_vast_instance(
     }
 
 
-def list_vast_instances(api_key: str, *, owner_id: int | None = None) -> list[dict[str, Any]]:
-    """Recupera l'elenco delle istanze noleggiate dall'account Vast.ai."""
+def list_vast_instances(
+    api_key: str, *, owner_id: int | None = None, adopt: bool = False,
+) -> list[dict[str, Any]]:
+    """List the instances rented by the Vast.ai account.
+
+    Only the cloud panel (`adopt=True`) records an instance that has no row yet: it
+    lists the account again on every refresh, so a row it opens is closed when the
+    instance disappears. A background lookup (auto-training polling and destroy,
+    startup reconcile) refreshes and closes the known rows but adopts nothing: an
+    instance rented outside Tabularium would otherwise stay "running" forever after
+    a one-off listing (prod row 43, 2026-11-16).
+    """
     api_key = api_key.strip()
     if not api_key:
         raise ValueError("API Key di Vast.ai non specificata.")
@@ -919,7 +935,7 @@ def list_vast_instances(api_key: str, *, owner_id: int | None = None) -> list[di
             track_cloud_resource(
                 "vast", resource_id, owner_id=owner_id,
                 hourly_rate=item["dph_total"], state=state,
-                metadata={"provider_status": status},
+                metadata={"provider_status": status}, adopt=adopt,
             )
     if complete:
         # The account's whole inventory: an open row for an instance Vast no longer
