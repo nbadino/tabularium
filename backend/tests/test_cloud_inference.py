@@ -1058,7 +1058,8 @@ def test_list_vast_instances_uses_v1_endpoint(monkeypatch):
     items = cloud_manager.list_vast_instances("token")
     assert items[0]["id"] == 7
     assert calls[0]["url"].startswith(cloud_manager.VAST_API_V1)
-    assert calls[0]["params"] == {"limit": 25}
+    # vast-cli `show_instances`: ordered by id so `after_token` pages are stable.
+    assert calls[0]["params"] == {"order_by": '[{"col": "id", "dir": "asc"}]', "limit": 25}
 
 
 def test_get_vast_instance_falls_back_to_v1_list(monkeypatch):
