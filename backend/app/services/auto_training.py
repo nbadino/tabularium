@@ -25,7 +25,8 @@ import time
 from pathlib import Path
 
 from .. import config
-from . import cloud_manager, train_recipes, trainer
+from . import cloud_manager, i18n, train_recipes, trainer
+from .i18n import msg
 from .trainer_script import _now
 
 PROFILES = {
@@ -350,8 +351,15 @@ def start_auto(
     max_dph: float = 1.0,
     min_gpu_ram_gb: int = 24,
     disk_gb: int = 100,
+    gpu_name: str = "",
+    allow_stale_dataset: bool = False,
 ) -> dict:
-    """Noleggia e prepara in background; ritorna subito il job."""
+    """Noleggia e prepara in background; ritorna subito il job.
+
+    `gpu_name` pins the search to one Vast GPU model (e.g. "A100 SXM4").
+    A snapshot older than the latest approval or edit of its eligible pages
+    (`dataset.stale` in the preflight) is refused unless `allow_stale_dataset`.
+    """
     adapter_id = str(cfg.get("adapter_id") or "").strip()
     recipe = train_recipes.get_recipe(adapter_id)
     if recipe is None:
@@ -388,6 +396,12 @@ def start_auto(
     data_errors = coverage.get('dataset_coverage_errors') or []
     if data_errors:
         raise ValueError('; '.join(data_errors))
+    stale = (coverage.get('dataset') or {}).get('stale')
+    if stale and not allow_stale_dataset:
+        raise ValueError(msg(
+            'dataset_stale', i18n.SOURCE, built=stale['built_at'], snapshot=stale['snapshot_pages'],
+            eligible=stale['eligible_pages'], changed=stale['changed_pages'],
+        ))
     job_id = f"auto_{int(time.time() * 1000)}"
     job = {
         "id": job_id,
@@ -405,6 +419,9 @@ def start_auto(
         "port": None,
         "run_id": None,
         "instance_destroyed": False,
+        "gpu_name": str(gpu_name or "").strip() or None,
+        "dataset_snapshot": (coverage.get('dataset') or {}).get('snapshot_id'),
+        "dataset_stale": stale or None,
         "created_at": _now(),
         "updated_at": _now(),
     }
@@ -415,6 +432,7 @@ def start_auto(
         thread = threading.Thread(
             target=_run,
             args=(job, dict(cfg), api_key, profile, owner_id, lang, max_dph, int(min_gpu_ram_gb), int(disk_gb), event),
+            kwargs={"gpu_name": str(gpu_name or "").strip()},
             name=f"auto-{job_id}",
             daemon=True,
         )
@@ -553,6 +571,8 @@ def _run(
     min_gpu_ram_gb: int,
     disk_gb: int,
     cancel: threading.Event,
+    *,
+    gpu_name: str = "",
 ) -> None:
     instance_id: int | None = None
     try:
@@ -561,6 +581,7 @@ def _run(
         _update(job, state="renting", phase="rent", message="cerco una GPU adatta…")
         offers = cloud_manager.search_vast_offers(
             api_key,
+            gpu_name=gpu_name,
             num_gpus=1,
             max_dph=max_dph,
             min_reliability=0.95,

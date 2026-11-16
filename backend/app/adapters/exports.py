@@ -65,3 +65,45 @@ def page_count(project_id: int) -> int:
             (project_id,),
         ).fetchone()
     return int(row["n"]) if row is not None else 0
+
+
+def eligible_page_status(project_id: int) -> dict[int, str]:
+    """{page_id: status} of the pages `pages_with_blocks` would return, cheaply.
+
+    Same rule: not missing, at least one block, and on an approved page an
+    unconfirmed model draft does not count.
+    """
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT p.id, p.status FROM pages p WHERE p.project_id=? AND p.status != 'missing' "
+            "AND EXISTS (SELECT 1 FROM blocks b WHERE b.page_id=p.id AND NOT ("
+            "p.status IN ('approved','exported') AND b.prefill_source IS NOT NULL AND b.confirmed=0))",
+            (project_id,),
+        ).fetchall()
+    return {int(row["id"]): str(row["status"]) for row in rows}
+
+
+def page_changes_since(project_id: int, since: str) -> dict[int, str]:
+    """{page_id: latest change} for pages approved, reviewed or edited after `since`.
+
+    `since` and the result are UTC `YYYY-MM-DD HH:MM:SS`, SQLite's `datetime('now')`.
+    A change is a block or grid save, a review-workflow step (`page_work`,
+    `page_reviews`) or a page-level audit event (a direct approval).
+    """
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT page_id, MAX(at) AS at FROM (
+                SELECT b.page_id AS page_id, b.updated_at AS at FROM blocks b
+                UNION ALL SELECT b.page_id, t.updated_at FROM tables t JOIN blocks b ON b.id=t.block_id
+                UNION ALL SELECT page_id, updated_at FROM page_work
+                UNION ALL SELECT page_id, created_at FROM page_reviews
+                UNION ALL SELECT CAST(resource_id AS INTEGER), created_at FROM audit_events
+                    WHERE resource_type='page'
+            ) changes
+            WHERE at > ? AND page_id IN (SELECT id FROM pages WHERE project_id=?)
+            GROUP BY page_id
+            """,
+            (since, project_id),
+        ).fetchall()
+    return {int(row["page_id"]): str(row["at"]) for row in rows}

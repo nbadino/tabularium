@@ -293,6 +293,55 @@ def gold_page_ids(project_id: int) -> set[int]:
         return set()
 
 
+def snapshot_staleness(project_id: int, report: dict | None) -> dict | None:
+    """Whether the pages the snapshot was built from changed after the build.
+
+    Two signals, because a direct approval only flips `pages.status`: an
+    approval, review or edit of an eligible page later than `built_at`, and a
+    different number of eligible pages than the snapshot counted. "Eligible"
+    is the snapshot's own selection rule replayed on today's pages (approved
+    only, pilot only, collection scope, gold pages excluded). `None` when the
+    snapshot is current or predates `built_at`.
+    """
+    if not report or not report.get("built_at"):
+        return None
+    try:
+        built = datetime.fromisoformat(str(report["built_at"])).astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+    eligible = exportstore.eligible_page_status(project_id)
+    if report.get("approved_only"):
+        eligible = {pid: st for pid, st in eligible.items() if st in {"approved", "exported"}}
+    if report.get("pilot_only"):
+        pilots = pilot_page_ids(project_id)
+        eligible = {pid: st for pid, st in eligible.items() if pid in pilots}
+    gold = gold_page_ids(project_id)
+    eligible = {pid: st for pid, st in eligible.items() if pid not in gold}
+    from . import collections as collectionsvc  # noqa: PLC0415
+
+    in_scope = collectionsvc.scope_pages(project_id, report.get("collection_scope"))
+    if in_scope is not None:
+        eligible = {pid: st for pid, st in eligible.items() if pid in in_scope}
+    since = built.strftime("%Y-%m-%d %H:%M:%S")
+    changed = {
+        pid: at for pid, at in exportstore.page_changes_since(project_id, since).items() if pid in eligible
+    }
+    try:
+        snapshot_pages = int((report.get("pages") or {}).get("with_blocks") or 0)
+    except (TypeError, ValueError):
+        snapshot_pages = 0
+    if not changed and len(eligible) == snapshot_pages:
+        return None
+    return {
+        "built_at": built.strftime("%Y-%m-%d %H:%M UTC"),
+        "snapshot_id": report.get("snapshot_id"),
+        "snapshot_pages": snapshot_pages,
+        "eligible_pages": len(eligible),
+        "changed_pages": len(changed),
+        "latest_change": max(changed.values()) if changed else None,
+    }
+
+
 def pilot_page_ids(project_id: int) -> set[int]:
     """Restituisce il campione pilot salvato nel protocollo di studio."""
     try:

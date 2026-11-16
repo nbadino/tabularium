@@ -14,9 +14,11 @@ import TrainingStatusPanel from './training/TrainingStatusPanel'
 import TrainingDashboard, { type GpuPoint, type PreparePoint } from './training/TrainingDashboard'
 import { BASE_CFG } from './training/presets'
 import { useI18n } from '../i18n'
+import { useConfirm } from '../app/confirm'
 
 export default function TrainingPage() {
   const { t, locale } = useI18n()
+  const confirm = useConfirm()
   const nameOf = useModelNames()
   const [params, setParams] = useSearchParams()
   const [view, setViewState] = useState<'monitor' | 'configure'>(() => params.get('view') === 'new' ? 'configure' : 'monitor')
@@ -245,10 +247,24 @@ export default function TrainingPage() {
 
   const startAuto = async (maxDph: number) => {
     if (projectId === '') return
+    // A snapshot older than the latest approval or edit is refused by the
+    // server unless the person says, here, to train on it anyway.
+    const stale = preflight?.dataset.stale ?? null
+    if (stale && !await confirm({
+      title: t('training.auto.staleTitle'),
+      message: t('training.auto.staleConfirm', {
+        built: stale.built_at,
+        snapshot: String(stale.snapshot_pages),
+        eligible: String(stale.eligible_pages),
+        changed: String(stale.changed_pages),
+      }),
+      acceptLabel: t('training.auto.staleAccept'),
+    })) return
     setAutoBusy(true)
     setAutoError(null)
     try {
       const job = await apiPost<AutoTrainingJob>(`/projects/${projectId}/training/auto`, {
+        allow_stale_dataset: stale !== null,
         config: requestBody(),
         credential_ref: 'vault:vast_api_key',
         max_dph: Math.max(0.1, Number(maxDph) || 1),
