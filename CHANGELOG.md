@@ -33,6 +33,12 @@ Notable changes to Tabularium. The format follows
   in flight, each worker with its own client; the stop rule still counts the model's failures.
 
 ### Fixed
+- **A background Vast lookup no longer opens a cost row for instances Tabularium did not rent.**
+  The end of a one-click training confirms the GPU deletion with a full account listing, and that
+  listing recorded every instance it saw, so an instance rented outside Tabularium got a
+  `cloud_resource` row left `running` with no owner that nothing would ever close (prod row 43).
+  Auto-training polling, the destroy check and the startup reconcile now only refresh and close
+  known rows; only the cloud panel, which lists the account on every refresh, adopts new ones.
 - **Vast.ai never offers or rents an ARM host.** One-click PaddleOCR-VL training rented a GB10
   (NVIDIA DGX Spark: arm64 Grace CPU, unified memory, sm_12.1) for an amd64-only image; it never
   left `loading`. Every Vast search now asks for `cpu_arch = amd64` and also drops arm64 offers
