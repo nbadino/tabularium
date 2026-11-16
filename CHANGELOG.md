@@ -24,6 +24,13 @@ Notable changes to Tabularium. The format follows
   in flight, each worker with its own client; the stop rule still counts the model's failures.
 
 ### Fixed
+- **Vast.ai never offers or rents an ARM host.** One-click PaddleOCR-VL training rented a GB10
+  (NVIDIA DGX Spark: arm64 Grace CPU, unified memory, sm_12.1) for an amd64-only image; it never
+  left `loading`. Every Vast search now asks for `cpu_arch = amd64` and also drops arm64 offers
+  locally, the rent button and the one-click job refuse one with a localised reason, an unknown or
+  zero `gpu_ram` no longer passes a VRAM minimum, and images built on CUDA < 12.8 (PaddleOCR-VL and
+  the torch 2.6 profiles) are no longer matched with Blackwell GPUs. VRAM minimums use vast-cli's
+  GB → MB factor (1000, was 1024).
 - **A busy model gateway no longer stops a consensus model.** Gemini behind the OpenCode gateway
   answered `429 RESOURCE_EXHAUSTED` ("overloaded, try again later") three times in seven seconds,
   which the stop rule read as "out of credits" and failed all 549 pages left of a Lloyd's run.

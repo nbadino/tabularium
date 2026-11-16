@@ -102,6 +102,8 @@ interface VastOffer {
   disk_space?: number | null
   inet_down?: number | null
   cuda_max_good?: number | null
+  /** Host CPU architecture as Vast reports it ("amd64", "arm64"). */
+  cpu_arch?: string | null
 }
 
 interface ModalStatus {
@@ -1193,6 +1195,9 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
         // The server checks the offer against the model's requirements before renting.
         compute_cap: offer.compute_cap ?? null,
         location: offer.location ?? null,
+        // An arm64 host (GB10, GH200) cannot run Tabularium's amd64 images.
+        cpu_arch: offer.cpu_arch ?? null,
+        gpu_name: offer.gpu_name ?? null,
         // L'istanza nasce nuda: la prepariamo via SSH subito dopo, con lo
         // script di questo checkout (niente hook onstart da GitHub).
         prepare_server: false, port: 8888,

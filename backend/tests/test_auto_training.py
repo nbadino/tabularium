@@ -182,3 +182,42 @@ def test_every_runtime_profile_has_a_prebuilt_image():
     assert set(auto_training.PROFILES.values()) - {"dots"} <= set(auto_training.PREBUILT_IMAGES)
     assert "dots" not in auto_training.PREBUILT_IMAGES
     assert all(tag.startswith("ghcr.io/nbadino/tabularium-train-") for tag in auto_training.PREBUILT_IMAGES.values())
+
+
+def test_auto_search_excludes_hosts_the_image_cannot_run(monkeypatch):
+    """PaddleOCR-VL training rented a GB10 (arm64, sm_12.1) for an amd64,
+    CUDA 12.6 image. The search must ask for x86 and, for an image built before
+    CUDA 12.8, no Blackwell; the rent call carries the offer's architecture."""
+    import threading
+
+    from app.services import cloud_manager
+
+    seen: dict = {}
+
+    def fake_search(*_a, **kwargs):
+        seen.update(kwargs)
+        return [{"id": 5, "gpu_name": "A100", "dph_total": 0.5, "cuda_max_good": 12.8,
+                 "cpu_arch": "amd64", "compute_cap": 800, "location": "Oregon, US"}]
+
+    rented: dict = {}
+    monkeypatch.setattr(cloud_manager, "search_vast_offers", fake_search)
+    monkeypatch.setattr(cloud_manager, "rent_vast_instance",
+                        lambda *a, **k: rented.update(k) or (_ for _ in ()).throw(RuntimeError("stop")))
+    monkeypatch.setattr(auto_training, "_save", lambda _job: None)
+    job = {"id": "auto_x", "project_id": 4, "adapter_id": "paddleocr-vl", "state": "queued",
+           "phase": "queued", "message": "", "offer": None, "instance_id": None}
+    auto_training._run(  # noqa: SLF001
+        job, {"adapter_id": "paddleocr-vl", "train_type": "lora"}, "key", "paddle", 1, "it", 1.5, 40, 120,
+        threading.Event(),
+    )
+    assert seen["blackwell_ready"] is False
+    assert seen["min_gpu_ram_gb"] == 40
+    assert rented["cpu_arch"] == "amd64" and rented["gpu_name"] == "A100"
+
+
+def test_blackwell_follows_each_image_toolkit():
+    assert set(auto_training.PREBUILT_CUDA) == set(auto_training.PREBUILT_IMAGES)
+    assert auto_training.blackwell_ready("monkey") is True  # torch 2.8 cu128
+    for profile in ("paddle", "qwen", "legacy", "uocr2", "glm"):
+        assert auto_training.blackwell_ready(profile) is False, profile
+    assert auto_training.blackwell_ready("dots") is True  # image picked from the host CUDA

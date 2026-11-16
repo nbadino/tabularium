@@ -53,8 +53,17 @@ PREBUILT_IMAGES = {
     "paddle": "ghcr.io/nbadino/tabularium-train-paddle:paddle-v1",
 }
 PREBUILT_MARKER = "/opt/tabularium/ready.json"
-# Minimum host CUDA compatibility must follow each versioned image.
-PREBUILT_CUDA = {"monkey": 12.8, "paddle": 12.6}
+# The CUDA toolkit each versioned image is built on (its base image tag; the
+# torch build recorded in its ready.json): it is the minimum host driver, and
+# below `cloud_manager.BLACKWELL_FIRST_TOOLKIT` the image cannot run on Blackwell.
+PREBUILT_CUDA = {
+    "monkey": 12.8,  # pytorch 2.8.0-cuda12.8
+    "paddle": 12.6,  # paddlepaddle/paddle 3.3.0-gpu-cuda12.6
+    "qwen": 12.4,  # pytorch 2.6.0-cuda12.4 (torch 2.6.0+cu124)
+    "legacy": 12.4,
+    "uocr2": 12.4,
+    "glm": 12.4,
+}
 _LOCK = threading.Lock()
 _CANCEL: dict[str, threading.Event] = {}
 _THREADS: dict[str, threading.Thread] = {}
@@ -62,6 +71,17 @@ _THREADS: dict[str, threading.Thread] = {}
 
 def profile_for(adapter_id: str) -> str | None:
     return PROFILES.get(str(adapter_id or ""))
+
+
+def blackwell_ready(profile: str) -> bool:
+    """Whether the profile's image has kernels for Blackwell GPUs.
+
+    A prebuilt image is as new as its toolkit; the runtime-provisioned profile
+    picks its `vastai/pytorch` image from the host's CUDA (`vast_image_for`).
+    """
+    if profile not in PREBUILT_IMAGES:
+        return True
+    return PREBUILT_CUDA[profile] + 1e-9 >= cloud_manager.BLACKWELL_FIRST_TOOLKIT
 
 
 def best_offer(offers: list[dict], max_dph: float) -> dict | None:
@@ -543,7 +563,8 @@ def _run(
             disk_gb=disk_gb,
             min_gpu_ram_gb=min_gpu_ram_gb,
             min_compute_capability=8.0,
-            min_cuda=(PREBUILT_CUDA.get(profile, 12.4) if profile in PREBUILT_IMAGES else None),
+            min_cuda=(PREBUILT_CUDA[profile] if profile in PREBUILT_IMAGES else None),
+            blackwell_ready=blackwell_ready(profile),
             limit=50,
         )
         # A retry should not immediately select the same offer that just failed
@@ -600,6 +621,10 @@ def _run(
                     int(best["id"]),
                     image=image,
                     cuda_max_good=best.get("cuda_max_good"),
+                    compute_cap=best.get("compute_cap"),
+                    location=best.get("location"),
+                    cpu_arch=best.get("cpu_arch"),
+                    gpu_name=best.get("gpu_name"),
                     disk_gb=disk_gb,
                     onstart_script="" if prebuilt else _onstart(profile, job["adapter_id"]),
                 )
