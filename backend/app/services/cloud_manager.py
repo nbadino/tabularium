@@ -1161,6 +1161,19 @@ def _vast_ssh_endpoint(inst: dict[str, Any]) -> tuple[str | None, int | None]:
     return (direct[0] or proxy[0]), (direct[1] if direct[0] else proxy[1])
 
 
+def vast_instance_at(api_key: str, host: str | None, port: int | None) -> int | None:
+    """The account's instance reachable at SSH `host:port`, by either of its two
+    endpoints (`vast_ssh_endpoints`), or None when none matches."""
+    host = _clean_host(host)
+    port = _coerce_port(port)
+    if not host or not port:
+        return None
+    for inst in _fetch_vast_instances(api_key):
+        if (host, port) in vast_ssh_endpoints(inst).values() and inst.get("id") is not None:
+            return int(inst["id"])
+    return None
+
+
 def _normalize_vast_instance(inst: dict[str, Any]) -> dict[str, Any]:
     is_running = str(inst.get("actual_status") or "").lower() == "running"
     endpoints = vast_ssh_endpoints(inst)

@@ -68,8 +68,13 @@ def _release_inference(
     esatta** registrata dalla run (`resource_id`): cercare «la prima che
     capita» nell'elenco dell'account rischierebbe di spegnere una risorsa
     diversa da quella che ha lavorato. Se l'identità puntuale manca (endpoint
-    custom, credenziale assente) si disattiva solo il client: meno sicuro, ma
-    mai distruttivo verso la risorsa sbagliata.
+    custom) si disattiva solo il client: meno sicuro, ma mai distruttivo verso
+    la risorsa sbagliata.
+
+    Il tunnel del pannello Vast salva solo l'URL locale, non l'istanza: in quel
+    caso l'istanza è quella raggiungibile all'endpoint SSH del tunnel attivo,
+    un'identità puntuale quanto l'id. Se nemmeno così si trova, è un errore:
+    la run deve dire che la GPU è ancora accesa, non tacerlo.
     """
     inference.save_inference_config({"enabled": False})
     if provider == "local":
@@ -77,20 +82,28 @@ def _release_inference(
 
         serve_manager.stop()
         return
-    if provider not in ("vast", "runpod") or not resource_id:
+    if provider not in ("vast", "runpod"):
         return
-    api_key = ""
-    if credential_ref:
-        from . import vault
+    from . import cloud_manager, vault
 
-        api_key = vault.get(credential_ref)
+    if provider == "vast" and not credential_ref:
+        credential_ref = "vault:vast_api_key"
+    api_key = vault.get(credential_ref) if credential_ref else ""
+    if not resource_id and provider == "vast" and api_key:
+        tunnel = cloud_manager.get_tunnel_status()
+        if tunnel.running:
+            found = cloud_manager.vast_instance_at(api_key, tunnel.host, tunnel.port)
+            resource_id = str(found) if found is not None else None
+    if not resource_id:
+        raise RuntimeError(
+            f"istanza {provider} non identificata: la GPU non è stata arrestata, "
+            "fermala dal pannello Cloud"
+        )
     if not api_key:
         raise RuntimeError(
             "credenziale del provider non disponibile: impossibile arrestare "
             f"la risorsa {resource_id} in sicurezza"
         )
-    from . import cloud_manager
-
     if provider == "vast":
         cloud_manager.control_vast_instance(api_key, int(resource_id), "stop")
     else:
