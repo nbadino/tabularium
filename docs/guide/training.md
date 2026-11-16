@@ -222,6 +222,19 @@ Source: the HF [`config.json`](https://huggingface.co/StarDoc-AI/TeleOCR/blob/ma
   (head_dim 64, qkv bias, no q/k norm) and cannot use the checkpoint's `auto_map`, so its
   documented Qwen2.5-VL recipe does not fit these weights. Registering the model ourselves
   (`--custom_register_path`) would be an invented recipe, so TeleOCR stays `inference-only`.
+- The vendor documents no fine-tuning path (checked 2026-11-16): the repository has inference code
+  only, no issue or discussion covers fine-tuning, and the [paper](https://arxiv.org/html/2608.12898v3)
+  (section 4) gives the pre-training stages without a framework — stage 1 vision encoder + merger
+  MLP at 1e-4 / 1e-3 with the LM frozen, batch 256; stage 2 full fine-tuning at LM 1e-5 / vision
+  1e-6, batch 128; stages 3 (content-structure) and 4 (GRPO) without values. No LoRA recipe.
+- For tables the authors
+  [explain](https://github.com/caipeng328/TeleOCR/issues/11) a structure-first scheme: OTSL with
+  the cell contents removed, then the full table conditioned on the ground-truth OTSL.
+- A non-vendor path would be a `--custom_register_path` registration that loads the checkpoint's
+  own `auto_map` class (`AutoModelForImageTextToText`, `trust_remote_code`) with the `qwen2_5_vl`
+  template, pinned to transformers 4.57.1 (the remote code breaks on 5.x,
+  [HF discussion #6](https://huggingface.co/XingChen-AGI/TeleOCR/discussions/6)). That would be
+  Tabularium's recipe, so it is left to an explicit decision.
 - If a toolchain adds it, the data is ready: TeleOCR emits OTSL (`otsl2html.py` converts it) and
   its task prompts start with a newline.
 

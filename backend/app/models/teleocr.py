@@ -74,8 +74,16 @@ SPEC = ModelSpec(
             "vision tower with a Qwen3ForCausalLM decoder, which ms-swift's `qwen2_5_vl` cannot load."
         ),
         "official_notes": (
-            "The paper describes four stages (alignment, deformation, content-structure, GRPO), "
-            "but the repository has no `train/` and no toolchain: the recipe is not reproducible.",
+            "The paper (arXiv 2608.12898v3, section 4) describes four stages and says it releases "
+            "'the complete implementation', but the repository (main, last push 2026-09-28) has "
+            "only inference code: no `train/`, no data format, no toolchain, and no issue or "
+            "discussion about fine-tuning. Stage hyperparameters are given without a framework: "
+            "stage 1 trains vision encoder + merger MLP (lr 1e-4 / 1e-3, LM frozen, 1 epoch, "
+            "batch 256); stage 2 is full fine-tuning (LM 1e-5, vision 1e-6, 1 epoch, batch 128); "
+            "stage 3 (content-structure) and stage 4 (GRPO, rewards 1-NED / TEDS / CDM) give none.",
+            "For tables the authors explain (issue caipeng328/TeleOCR#11, 2026-09-30) that a first "
+            "stage learns OTSL structure with cell contents removed, and a second generates the full "
+            "table conditioned on the ground-truth OTSL. No LoRA recipe is published anywhere.",
             "The HF `config.json` says `qwen2_5_vl`, but the weights are not stock Qwen2.5-VL: "
             "`modeling_naviocr.py` (its `auto_map`) gives the decoder head_dim 128 on hidden 1024 "
             "with 16 heads, q/k RMSNorm and no qkv bias, and the vendor's vLLM plugin "
@@ -85,7 +93,14 @@ SPEC = ModelSpec(
             "(head_dim = hidden/heads = 64, qkv bias, no q/k norm) and has no option to use the "
             "checkpoint's `auto_map`: `swift sft --model_type qwen2_5_vl` would not match these "
             "weights. A custom registration (`--custom_register_path`) would be Tabularium's own "
-            "recipe, not a documented one, so the model stays inference-only.",
+            "recipe, not a documented one, so the model stays inference-only. Re-checked "
+            "2026-11-16: neither ms-swift main nor LLaMA-Factory main registers TeleOCR.",
+            "What a non-vendor path would need: a `--custom_register_path` file registering a "
+            "`teleocr` model type whose loader uses `AutoModelForImageTextToText` with "
+            "`trust_remote_code` (the checkpoint's `auto_map` -> `modeling_naviocr.py`, whose "
+            "forward computes the LM loss from `labels`) and the `qwen2_5_vl` template, pinned to "
+            "transformers 4.57.1 as serving is: the remote code breaks on transformers 5.x (HF "
+            "discussion XingChen-AGI/TeleOCR#6). That is a user decision, not a vendor recipe.",
             "If it becomes trainable, the data is already right: TeleOCR emits OTSL "
             "(`DEFAULT_PROMPTS['table']` asks for it, `post_process/otsl2html.py` converts it) and "
             "its prompts start with a newline (`\\nPlease output the text content from the image.`).",

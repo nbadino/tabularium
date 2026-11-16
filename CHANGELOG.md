@@ -18,6 +18,10 @@ Notable changes to Tabularium. The format follows
 - **TeleOCR says why it cannot be trained.** Besides the missing vendor code, its weights are a
   Qwen2.5-VL vision tower with a Qwen3 decoder, which ms-swift's `qwen2_5_vl` cannot load; the
   recipe now states this instead of only "no training code".
+- **TeleOCR's training evidence is on record.** A fresh search of the vendor's repository, issues,
+  HF card and paper found no fine-tuning path; the recipe now cites the paper's stage
+  hyperparameters, the authors' structure-first table scheme (issue #11) and what a custom
+  ms-swift registration would need, so the choice to build one is explicit.
 
 - **A consensus model reads four pages at once.** One page at a time left Gemini at about a page a
   minute, 11 hours for the 560 Lloyd's pages. Each model now keeps `PAGES_IN_PARALLEL` (4) requests
