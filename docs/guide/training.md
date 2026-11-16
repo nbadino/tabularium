@@ -55,11 +55,11 @@ flags, official notes and `script_ready`.
 | `lightonocr-3` | `lightonai/LightOnOCR-3-1B` | — | — | — | inference-only |
 | `unlimited-ocr-2` | `baidu/Unlimited-OCR-2` | ms-swift (main, `d52d0c4`) | LoRA, full | `ms-swift-jsonl` | experimental |
 | `surya-ocr-2.5` | `datalab-to/surya-ocr-2.5` | — | — | — | inference-only |
-| `xiaomi-ocr-0` | `xiaomi-research/Xiaomi-OCR-0` | — | — | — | inference-only |
+| `xiaomi-ocr-0` | `xiaomi-research/Xiaomi-OCR-0` | ms-swift (`qwen3_5`) | LoRA, full | `ms-swift-jsonl` | experimental |
 
 `text_rec`, `table` and `formula` are the recognition families. `layout` is added
-only for models whose protocol produces bounding boxes: GLM-OCR and PaddleOCR-VL
-are trained on recognition only, because their outputs have no bbox.
+only for models whose protocol produces bounding boxes: GLM-OCR, PaddleOCR-VL and
+Xiaomi-OCR-0 are trained on recognition only, because their outputs have no bbox.
 
 ## What each vendor says, and what Tabularium does
 
@@ -170,10 +170,64 @@ Source: ms-swift [`examples/models/unlimited_ocr2/train.sh`](https://github.com/
 - As with v1, inference uses the native block protocol while this training produces OTSL on
   crops: `experimental` until the dataset exports the end2end family.
 
-### TeleOCR, LightOnOCR-3, Surya OCR 2.5, Xiaomi-OCR-0 — inference only
+### Xiaomi-OCR-0 — ms-swift `qwen3_5`, experimental
 
-Surya OCR 2.5 and Xiaomi-OCR-0 publish no training code either: Datalab offers fine-tuning as
-a service, and Xiaomi describes its recipe (CPT, Mix-RL) only in prose.
+Source: ms-swift [Qwen3.5/Qwen3.6/Qwen3.8 Best Practice](https://github.com/modelscope/ms-swift/blob/main/docs/source_en/BestPractices/Qwen3_8-Best-Practice.md)
+and [`swift/model/models/qwen.py`](https://github.com/modelscope/ms-swift/blob/main/swift/model/models/qwen.py).
+Xiaomi publishes no training code: the recipe is the toolchain's, not the vendor's.
+
+- The checkpoint is a stock `Qwen3_5ForConditionalGeneration` (its `config.json`). ms-swift
+  registers it as `--model_type qwen3_5 --template qwen3_5` from release **4.0.0** (3.12.x does
+  not have it); the recipe asks for ≥ 4.3.1, where the empty `<think>` block is kept out of the
+  loss automatically, and transformers ≥ 5.9 as the Best Practice installs. One-click training
+  uses the `qwen` profile (ms-swift 4.6.0, transformers 5.20.2).
+- Thinking off, as the vendor serves it (`enable_thinking: false`): the `qwen3_5` template puts
+  `<think>\n\n</think>\n\n` before every target (`--add_non_thinking_prefix`, default true), the
+  same prefix the chat template emits at inference.
+- Best Practice values (Qwen3.5 dense LoRA): lr 1e-4, LoRA r8/α32 on all-linear, warmup 0.05,
+  eval/save every 50 steps, `deepspeed zero2`, bf16. Its batch is 4 per GPU on 4 GPUs; on one GPU
+  the recipe uses 1 × 16 for the same global batch. Full SFT uses ms-swift's default 1e-5 (the BP
+  has no dense full-SFT example). ViT and aligner frozen, gradient checkpointing on: ms-swift
+  defaults, written out.
+- `max_length 8192`, not the BP's 2048: a table crop may take up to 4096 image tokens by itself.
+- Image tokens match serving: `IMAGE_MIN_TOKEN_NUM=64` (the processor's 65536 px floor) and
+  `IMAGE_MAX_TOKEN_NUM=4096` (the vendor fits every input within 2048 × 2048 px). Training crops
+  come from the full-resolution scan, while served crops come from a page fitted to 2048 px, so on
+  larger scans training sees sharper crops than inference.
+- No packing: ms-swift's FAQ says Qwen3.5's linear attention has no var_len. The BP's
+  `flash-linear-attention` and `causal-conv1d` speed-ups are not in the `qwen` image.
+- Prompts are the vendor's task prompts (`twostage_img2md.py`, `mcp_ocr_server.py`), declared once
+  in `models/xiaomi_ocr.py` and used both at inference and in training:
+  `Extract the text in the image.`, `Parse the table in the image into OTSL.`,
+  `Identify the formula in the image and represent it using LATEX format.`
+- Tables are trained in **OTSL**, the format the model emits and the vendor's `postprocess/otsl.py`
+  reads. Merged header cells keep their structure: a two-row header with `Ship` spanning both rows
+  and `Tons` spanning `Gross | Net` becomes
+  `<fcel>Ship<fcel>Tons<lcel><nl><ucel><fcel>Gross<fcel>Net<nl>…` and parses back to the same spans.
+- Not verified: whether the model ends an OTSL table with `<nl>` (Tabularium does not) and which
+  LaTeX delimiters it writes (Tabularium writes `$…$`; the vendor's post-processing strips `$$`,
+  `\[` and `\(` either way). The vendor's evaluation pipeline sends the prompt before the image;
+  Tabularium and the vendor's MCP server send the image first, and training follows Tabularium.
+
+### TeleOCR — inference only, architecture not in any toolchain
+
+Source: the HF [`config.json`](https://huggingface.co/StarDoc-AI/TeleOCR/blob/main/config.json) and
+`modeling_naviocr.py`, and the vendor's vLLM plugin
+[`TeleOCR-vllm/TeleOCR_vllm/qwen2_5_vl.py`](https://github.com/caipeng328/TeleOCR/blob/main/TeleOCR-vllm/TeleOCR_vllm/qwen2_5_vl.py).
+
+- The config says `qwen2_5_vl`, but the decoder is a Qwen3 one: head_dim 128 on hidden 1024 with
+  16 heads, q/k RMSNorm, no qkv bias; the vLLM plugin builds the language model as
+  `Qwen3ForCausalLM`.
+- ms-swift's `qwen2_5_vl` loads transformers' stock `Qwen2_5_VLForConditionalGeneration`
+  (head_dim 64, qkv bias, no q/k norm) and cannot use the checkpoint's `auto_map`, so its
+  documented Qwen2.5-VL recipe does not fit these weights. Registering the model ourselves
+  (`--custom_register_path`) would be an invented recipe, so TeleOCR stays `inference-only`.
+- If a toolchain adds it, the data is ready: TeleOCR emits OTSL (`otsl2html.py` converts it) and
+  its task prompts start with a newline.
+
+### LightOnOCR-3, Surya OCR 2.5 — inference only
+
+Surya OCR 2.5 publishes no training code either: Datalab offers fine-tuning as a service.
 
 
 Neither repository ships training code or a runnable config. Their papers/blog
@@ -343,7 +397,7 @@ repository to use:
 | Profile | Recipes | What is installed |
 |---|---|---|
 | `monkey` | MonkeyOCRv2 | **prebuilt image** `ghcr.io/nbadino/tabularium-train-monkey:monkey-v3`: torch 2.6.0, transformers 4.57.1, bundled ms-swift fork (no runtime pip) |
-| `qwen` | Qwen3-VL | prebuilt `tabularium-train-qwen:qwen-v1`; upstream ms-swift 4.6, transformers 5.20 |
+| `qwen` | Qwen3-VL, Xiaomi-OCR-0 | prebuilt `tabularium-train-qwen:qwen-v1`; upstream ms-swift 4.6, transformers 5.20 |
 | `legacy` | Unlimited-OCR, DeepSeek-OCR-2 | prebuilt `tabularium-train-legacy:legacy-v1`; ms-swift 4.6, transformers 4.46.3 |
 | `dots` | dots.ocr | **runtime provisioning** (flash-attn ABI still blocks a reliable image); ms-swift 4.6, transformers 4.57.1 |
 | `glm` | GLM-OCR | prebuilt `tabularium-train-glm:glm-v1`; LLaMA-Factory, transformers 5.8 |

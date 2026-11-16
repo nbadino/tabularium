@@ -24,6 +24,7 @@ from typing import Protocol
 from .. import config
 from ..models import monkeyocrv2 as reference
 from ..models.types import FAMILY_FORMULA, FAMILY_TABLE, FAMILY_TEXT, GLM_TRAIN_PROMPTS
+from ..models.xiaomi_ocr import XIAOMI_PAGE_MAX_EDGE, XIAOMI_TASK_PROMPTS
 
 from .model_labels import (
     DEEPSEEK_LABELS,
@@ -1883,7 +1884,8 @@ class XiaomiOcrAdapter(_StubAdapter):
         `enable_thinking: false`) and the 2048 px page edge are the vendor's; the region
         budget is the evaluation pipeline's 16384 tokens, not the MCP demo's per-task caps,
         which truncate long register tables;
-      - served with stock vLLM (`--trust-remote-code --max-model-len 16384`). No training code;
+      - served with stock vLLM (`--trust-remote-code --max-model-len 16384`). No vendor
+        training code: the recipe is ms-swift's `qwen3_5` (see `models/xiaomi_ocr.py`);
       - no vendor MLX build, but `mlx-vlm` ships `qwen3_5` and loads the original weights.
         Verified 2026-10-31 on Apple Silicon with mlx_vlm 0.7.1: `mlx_vlm.server` accepts
         the vendor request (`enable_thinking: false`) and, with PP-DocLayoutV3 on CPU, a
@@ -1896,7 +1898,7 @@ class XiaomiOcrAdapter(_StubAdapter):
     page_layout_fallback = "official-pipeline"
     official_runtime = "paddle"
     region_max_tokens = 16_384
-    page_max_edge = 2048
+    page_max_edge = XIAOMI_PAGE_MAX_EDGE
     recommended_generation = {
         "temperature": 0.0, "top_p": 0.8, "presence_penalty": 0.0, "repetition_penalty": 1.0,
     }
@@ -1906,14 +1908,14 @@ class XiaomiOcrAdapter(_StubAdapter):
         tasks=("layout", "text", "table", "formula"),
         coordinate_system="normalized-0-1000",
         table_format="otsl",
-        training_types=(),
+        training_types=("lora", "full"),
         inference_modes=("vllm",),
         hardware=("cuda",),
         languages=("multilingual",),
         hf_repo="xiaomi-research/Xiaomi-OCR-0",
         approx_size_gb=1.8,
         license_note="Apache-2.0.",
-        train_toolchain="none",
+        train_toolchain="ms-swift",
         serve_backend="vllm-openai",
         served_model_name="xiaomi-ocr-0",
         max_model_len=16_384,
@@ -1924,11 +1926,7 @@ class XiaomiOcrAdapter(_StubAdapter):
         local_mlx_weight_factor=1.0,
     )
 
-    _PROMPTS = {
-        "text": "Extract the text in the image.",
-        "table": "Parse the table in the image into OTSL.",
-        "formula": "Identify the formula in the image and represent it using LATEX format.",
-    }
+    _PROMPTS = XIAOMI_TASK_PROMPTS
 
     def prompt_for(self, task: str, label: str | None = None) -> str | None:
         if task in self._PROMPTS:

@@ -318,6 +318,9 @@ def _ms_swift_script(cfg: dict, recipe: recipes.TrainRecipe, run_dir: Path, trai
     workdir = _workdir(cfg, remote=remote, toolchain="ms-swift", adapter_id=recipe.adapter_id)
 
     env_lines = []
+    # Qwen-VL token bounds (ms-swift `qwen3_vl`/`qwen3_5` env vars): declared per recipe.
+    if flags.get("image_min_token_num"):
+        env_lines.append(f'export IMAGE_MIN_TOKEN_NUM={int(flags["image_min_token_num"])}')
     if flags.get("image_max_token_num"):
         env_lines.append(f'export IMAGE_MAX_TOKEN_NUM={int(flags["image_max_token_num"])}')
     if cfg.get("max_pixels") and "max_pixels" in recipe.defaults:

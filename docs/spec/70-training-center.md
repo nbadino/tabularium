@@ -9,13 +9,18 @@
   into a recipe by `services/train_recipes.py`: the toolchain the model's
   own vendor documentation uses, the official documentation URL, allowed types (`lora`/`full`), the
   data view, the official hyperparameters/flags and the maturity. Closed models (Gemini 4 Argon)
-  have no weights and no recipe; `inference-only` models (TeleOCR, LightOnOCR-3, Surya OCR 2.5, Xiaomi-OCR-0) declare why they
-  cannot be trained instead of disappearing.
+  have no weights and no recipe; `inference-only` models (TeleOCR, LightOnOCR-3, Surya OCR 2.5) declare why they
+  cannot be trained instead of disappearing. TeleOCR's reason is also architectural: a Qwen2.5-VL
+  vision tower with a `Qwen3ForCausalLM` decoder, which ms-swift's `qwen2_5_vl` (stock
+  transformers class) cannot load.
 - **The toolchain is per model, not one global choice**:
   - `ms-swift` — MonkeyOCRv2 (the **bundled fork** in `parsing/train/ms-swift`, where the flag is
     `--train_type`; upstream uses `--tuner_type`), Qwen3-VL, Unlimited-OCR, DeepSeek-OCR-2,
-    dots.ocr. The other four use upstream ms-swift; MonkeyOCRv2 must use its fork, whose
-    `<|image_pad|>` template is not upstream's `<|IMAGE|>` encoder template.
+    dots.ocr, Unlimited-OCR-2 and Xiaomi-OCR-0 (`qwen3_5`, experimental: ms-swift's Qwen3.5 Best
+    Practice, since the vendor publishes no training code). The others use upstream ms-swift;
+    MonkeyOCRv2 must use its fork, whose `<|image_pad|>` template is not upstream's `<|IMAGE|>`
+    encoder template. Xiaomi-OCR-0 trains recognition only, on the vendor's task prompts, with
+    `IMAGE_MIN_TOKEN_NUM=64`/`IMAGE_MAX_TOKEN_NUM=4096` matching its serving bounds and no packing.
   - `llama-factory` — GLM-OCR, as `examples/finetune/README.md` documents; ShareGPT view + the
     official prompts `Text Recognition:` / `Table Recognition:` / `Formula Recognition:`.
   - `paddleformers` — PaddleOCR-VL, `paddleformers-cli train <config> key=value`, full **and**

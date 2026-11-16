@@ -6,7 +6,19 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Xiaomi-OCR-0 can be fine-tuned (experimental).** Xiaomi publishes no training code, but the
+  checkpoint is a stock Qwen3.5, which ms-swift supports as `qwen3_5` since 4.0.0. The recipe
+  follows ms-swift's Qwen3.5 Best Practice (LoRA 1e-4 r8/α32, full 1e-5), trains text, tables and
+  formulas on the vendor's own task prompts with OTSL tables (merged header cells included), and
+  keeps image tokens within the model's serving bounds (64–4096). One-click training uses the
+  `qwen` environment. It stays `experimental` until a real run.
+
 ### Changed
+- **TeleOCR says why it cannot be trained.** Besides the missing vendor code, its weights are a
+  Qwen2.5-VL vision tower with a Qwen3 decoder, which ms-swift's `qwen2_5_vl` cannot load; the
+  recipe now states this instead of only "no training code".
+
 - **A consensus model reads four pages at once.** One page at a time left Gemini at about a page a
   minute, 11 hours for the 560 Lloyd's pages. Each model now keeps `PAGES_IN_PARALLEL` (4) requests
   in flight, each worker with its own client; the stop rule still counts the model's failures.
