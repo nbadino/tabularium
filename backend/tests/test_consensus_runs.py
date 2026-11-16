@@ -628,3 +628,125 @@ def test_a_recognition_can_read_with_a_saved_model_without_activating_it(tmp_pat
         assert {b["label"] for b in blocks} >= {"Title", "Table"}
         assert inference.get_inference_config()["enabled"] is False
         assert inference.get_inference_config() == before
+
+
+def test_a_busy_gateway_is_waited_out_instead_of_stopping_the_model(tmp_path, monkeypatch):
+    """Gemini behind the OpenCode gateway answers 429 "overloaded" in bursts. Three in a
+    row used to count as "out of credits" and fail all the pages left (549 on a Lloyd's
+    run); now the same page is sent again after a wait and the run goes on."""
+    from app.services import consensus
+
+    _fake_clients(monkeypatch)
+    monkeypatch.setattr(consensus, "TRANSIENT_WAITS", (0, 0, 0, 0))
+    calls = {"argon": 0}
+
+    class BusyArgon(FakeArgon):
+        def end2end(self, image, **kwargs):
+            calls["argon"] += 1
+            if calls["argon"] <= 3:  # the first page meets three 429s in a row
+                raise RuntimeError(
+                    "gateway del modello non raggiungibile: 429 Client Error: Too Many Requests"
+                )
+            return super().end2end(image, **kwargs)
+
+    monkeypatch.setattr(
+        consensus.inference,
+        "client_for_profile",
+        lambda profile, **_k: FakeOcria() if profile["model_adapter_id"] == "llamaindex-ocria-1" else BusyArgon(),
+    )
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path, pages=4)
+        ocria = _save_profile(client, OCRIA, "OCRia-1 (busy)")
+        argon = _save_profile(client, ARGON, "Argon (busy)")
+        created = client.post(
+            f"/api/projects/{project_id}/consensus-runs",
+            json={"page_ids": page_ids, "profile_ids": [ocria["id"], argon["id"]]},
+        )
+        run = _wait(client, project_id, created.json()["id"])
+        assert run["state"] == "finished", run
+        assert run["failed"] == 0 and run["succeeded"] == 8
+        assert calls["argon"] == 4 + 3
+
+
+def test_a_gateway_busy_for_too_long_fails_the_page_after_the_waits(tmp_path, monkeypatch):
+    from app.services import consensus
+
+    _fake_clients(monkeypatch)
+    monkeypatch.setattr(consensus, "TRANSIENT_WAITS", (0, 0))
+    calls = {"argon": 0}
+
+    class OverloadedArgon(FakeArgon):
+        def end2end(self, image, **_kwargs):
+            calls["argon"] += 1
+            raise RuntimeError('429 {"status":"RESOURCE_EXHAUSTED","message":"overloaded"}')
+
+    monkeypatch.setattr(
+        consensus.inference,
+        "client_for_profile",
+        lambda profile, **_k: FakeOcria() if profile["model_adapter_id"] == "llamaindex-ocria-1" else OverloadedArgon(),
+    )
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path, pages=1)
+        ocria = _save_profile(client, OCRIA, "OCRia-1 (overloaded)")
+        argon = _save_profile(client, ARGON, "Argon (overloaded)")
+        created = client.post(
+            f"/api/projects/{project_id}/consensus-runs",
+            json={"page_ids": page_ids, "profile_ids": [ocria["id"], argon["id"]]},
+        )
+        run = _wait(client, project_id, created.json()["id"])
+        assert run["state"] == "finished_with_errors"
+        assert calls["argon"] == 1 + 2  # first try, then one per wait
+        assert run["failed"] == 1 and run["succeeded"] == 1
+
+
+def test_errors_that_waiting_does_not_cure_are_not_retried():
+    from app.services import consensus
+
+    assert consensus.is_transient("503 Service Unavailable")
+    assert consensus.is_transient("The inference service is overloaded. Please try again later.")
+    assert not consensus.is_transient("402 insufficient credits")
+    assert not consensus.is_transient("401 invalid api key")
+
+
+def test_a_restart_resumes_the_interrupted_run(tmp_path, monkeypatch):
+    """A deploy restarts the backend: the run carries on from where it was, keeping the
+    finished outputs, instead of failing every page still in the queue."""
+    from app.adapters import consensus as runstore
+    from app.services import consensus
+
+    _fake_clients(monkeypatch)
+    ocria_calls = {"n": 0}
+
+    class CountingOcria(FakeOcria):
+        def llamaindex_native_page(self, image, **kwargs):
+            ocria_calls["n"] += 1
+            return super().llamaindex_native_page(image, **kwargs)
+
+    monkeypatch.setattr(
+        consensus.inference,
+        "client_for_profile",
+        lambda profile, **_k: CountingOcria() if profile["model_adapter_id"] == "llamaindex-ocria-1" else FakeArgon(),
+    )
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path, pages=3)
+        ocria = _save_profile(client, OCRIA, "OCRia-1 (restart)")
+        argon = _save_profile(client, ARGON, "Argon (restart)")
+
+        # The process dies mid-run: one output finished, one was in flight, the rest queued.
+        start = consensus._start
+        monkeypatch.setattr(consensus, "_start", lambda *_a, **_k: None)
+        run_id = client.post(
+            f"/api/projects/{project_id}/consensus-runs",
+            json={"page_ids": page_ids, "profile_ids": [ocria["id"], argon["id"]]},
+        ).json()["id"]
+        monkeypatch.setattr(consensus, "_start", start)
+        runstore.set_state(run_id, "running", started="2026-11-16T07:00:00+00:00")
+        outputs = runstore.outputs_for_model(run_id, f"p{ocria['id']}")
+        runstore.mark_output(outputs[0]["id"], "finished", blocks_json="[]")
+        runstore.mark_output(outputs[1]["id"], "running")
+
+        consensus.reconcile_runs()
+        run = _wait(client, project_id, run_id)
+        assert run["state"] == "finished", run
+        assert run["failed"] == 0 and run["succeeded"] == 6
+        assert ocria_calls["n"] == 2  # the finished page was not sent again

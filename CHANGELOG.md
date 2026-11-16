@@ -7,6 +7,14 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **A busy model gateway no longer stops a consensus model.** Gemini behind the OpenCode gateway
+  answered `429 RESOURCE_EXHAUSTED` ("overloaded, try again later") three times in seven seconds,
+  which the stop rule read as "out of credits" and failed all 549 pages left of a Lloyd's run.
+  Rate-limit and overload answers (429, 503) now send the same page again after growing waits
+  (15 s up to 10 min, about 45 min in all) before the page counts as failed.
+- **A restart resumes the consensus runs it interrupted.** A deploy or crash used to fail every
+  page still in the queue and leave the run to be started again by hand. The run now carries on
+  with its owner's keys; the finished outputs are kept and only the lost request is sent again.
 - **Page-break continuations reach the exports.** Unlimited-OCR 2 marks a paragraph or table that
   goes on to the next page (`cross_`/`append_`), and the model does so on the real book (page 41's
   last paragraph, page 42's first), but the page pipeline rebuilt its items without the mark: the
