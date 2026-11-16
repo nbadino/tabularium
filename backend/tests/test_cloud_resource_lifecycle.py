@@ -67,13 +67,16 @@ class _Client:
 
 
 def _vast(monkeypatch, listed: list[dict] | Exception):
-    """Mock the Vast client: control verbs succeed, the listing is `listed`."""
+    """Mock the Vast client: control verbs succeed, the listing (and per-instance lookups) see `listed`."""
     monkeypatch.setattr(cloud_manager.httpx, "Client", _Client)
 
     def call(api_key, method, path, **kwargs):
         if isinstance(listed, Exception):
             raise listed
-        return {"instances": listed, "next_token": None}
+        if path.rstrip("/") != "/instances":  # per-instance lookup (vast-cli show_instance)
+            wanted = path.strip("/").split("/")[-1]
+            return {"instances": next((i for i in listed if str(i["id"]) == wanted), None)}
+        return {"instances": listed, "next_token": None, "total_instances": len(listed)}
 
     monkeypatch.setattr(cloud_manager, "_vast_call", call)
 
