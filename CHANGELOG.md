@@ -6,6 +6,11 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **A consensus model reads four pages at once.** One page at a time left Gemini at about a page a
+  minute, 11 hours for the 560 Lloyd's pages. Each model now keeps `PAGES_IN_PARALLEL` (4) requests
+  in flight, each worker with its own client; the stop rule still counts the model's failures.
+
 ### Fixed
 - **A busy model gateway no longer stops a consensus model.** Gemini behind the OpenCode gateway
   answered `429 RESOURCE_EXHAUSTED` ("overloaded, try again later") three times in seven seconds,

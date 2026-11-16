@@ -345,6 +345,11 @@ def _recognize(project_id: int, page_id: int, client, cancel: threading.Event):
 # its pages are marked failed at once instead of each costing a request.
 STOP_AFTER_SAME_ERRORS = 3
 
+# Pages each model reads at the same time. One at a time left Gemini at about one
+# page a minute (11 hours for a 560-page comparison); a busy gateway's 429s are
+# waited out (`TRANSIENT_WAITS`), so a few requests in flight are safe.
+PAGES_IN_PARALLEL = 4
+
 # A gateway that answers "too many requests" or "overloaded" is busy, not broken: the
 # same page is sent again after these waits (seconds) before it counts as failed. Three
 # 429s in seven seconds used to stop Gemini on all 549 pages of a run.
@@ -389,9 +394,13 @@ def _run_model(
         profile = profilestore.get(int(model["profile_id"]))
         if profile is None:
             raise RuntimeError(f"profile '{model['name']}' was deleted")
-        client = inference.client_for_profile(
-            profile, api_key=model_keys.key_for(profile, key_user_id),
-        )
+        api_key = model_keys.key_for(profile, key_user_id)
+        pending = [output for output in outputs if output["state"] == "queued"]
+        # One client per worker: a client keeps per-conversation state (the gateway session).
+        clients = [
+            inference.client_for_profile(profile, api_key=api_key)
+            for _ in range(max(1, min(PAGES_IN_PARALLEL, len(pending))))
+        ]
     except Exception as exc:  # noqa: BLE001
         # Stored in Italian, the source language `localize_detail` reads back.
         error = (
@@ -402,39 +411,59 @@ def _run_model(
             if output["state"] == "queued":
                 runstore.mark_output(output["id"], "failed", error=error, ended_at=_now())
         return
-    last_error: str | None = None
-    streak = 0
-    stopped: str | None = None
-    for output in outputs:
-        if output["state"] != "queued":
-            continue  # finished in an earlier attempt of this run
-        if cancel.is_set():
-            runstore.mark_output(output["id"], "cancelled", ended_at=_now())
-            continue
-        if stopped is not None:
-            runstore.mark_output(output["id"], "failed", error=stopped, ended_at=_now())
-            continue
-        runstore.mark_output(output["id"], "running", started_at=_now())
-        blocks, failure = _recognize_patiently(project_id, int(output["page_id"]), client, cancel)
-        if failure is None:
-            runstore.mark_output(
-                output["id"], "finished",
-                blocks_json=json.dumps(blocks, ensure_ascii=False), ended_at=_now(),
-            )
-        elif cancel.is_set():
-            runstore.mark_output(output["id"], "cancelled", ended_at=_now())
-        else:
-            runstore.mark_output(output["id"], "failed", error=failure, ended_at=_now())
-            signature = _error_signature(failure)
-            streak = streak + 1 if signature == last_error else 1
-            last_error = signature
-            if streak >= STOP_AFTER_SAME_ERRORS:
-                # Out of credits, a revoked key, a model gone: every page left would
-                # fail the same way, one request at a time. Stop and say why; a retry
-                # sends them again once the cause is fixed.
-                stopped = msg("consensus_model_stopped", None, n=streak, error=failure)
-            continue
-        last_error, streak = None, 0
+    queue = iter(pending)
+    lock = threading.Lock()
+    # The stop rule is the model's, not a worker's: the streak counts failures in the
+    # order they end, whichever worker sent the page.
+    state: dict[str, Any] = {"last_error": None, "streak": 0, "stopped": None}
+
+    def take() -> dict[str, Any] | None:
+        with lock:
+            return next(queue, None)
+
+    def work(client) -> None:
+        while (output := take()) is not None:
+            if cancel.is_set():
+                runstore.mark_output(output["id"], "cancelled", ended_at=_now())
+                continue
+            with lock:
+                stopped = state["stopped"]
+            if stopped is not None:
+                runstore.mark_output(output["id"], "failed", error=stopped, ended_at=_now())
+                continue
+            runstore.mark_output(output["id"], "running", started_at=_now())
+            blocks, failure = _recognize_patiently(project_id, int(output["page_id"]), client, cancel)
+            if failure is None:
+                runstore.mark_output(
+                    output["id"], "finished",
+                    blocks_json=json.dumps(blocks, ensure_ascii=False), ended_at=_now(),
+                )
+                with lock:
+                    state["last_error"], state["streak"] = None, 0
+            elif cancel.is_set():
+                runstore.mark_output(output["id"], "cancelled", ended_at=_now())
+            else:
+                runstore.mark_output(output["id"], "failed", error=failure, ended_at=_now())
+                signature = _error_signature(failure)
+                with lock:
+                    state["streak"] = state["streak"] + 1 if signature == state["last_error"] else 1
+                    state["last_error"] = signature
+                    if state["streak"] >= STOP_AFTER_SAME_ERRORS and state["stopped"] is None:
+                        # Out of credits, a revoked key, a model gone: every page left would
+                        # fail the same way, one request at a time. Stop and say why; a retry
+                        # sends them again once the cause is fixed.
+                        state["stopped"] = msg(
+                            "consensus_model_stopped", None, n=state["streak"], error=failure,
+                        )
+
+    workers = [
+        threading.Thread(target=work, args=(client,), name=f"consensus-{run_id}-{model['key']}-{i}", daemon=True)
+        for i, client in enumerate(clients)
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
 
 
 def cancel_run(run_id: int) -> dict[str, Any]:
