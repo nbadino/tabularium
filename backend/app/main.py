@@ -73,6 +73,7 @@ async def lifespan(_app: FastAPI):
     consensus.reconcile_runs()
     benchsvc.reconcile_benchmarks()
     cloud_manager.reconcile_tunnel()
+    cloud_manager.reconcile_cloud_resources()
     from .services import auto_training
     auto_training.reconcile_jobs()
     yield
