@@ -104,6 +104,12 @@
   provisioning or training fails, and after registration. Profiles: `monkey`, `qwen`, `legacy` (Unlimited/DeepSeek), `dots`,
   `glm`, `paddle`. The manual rent endpoint still prepares only MonkeyOCRv2 and says so; SSH and
   the pins remain under Advanced, not in the main flow.
+- **Which Vast hosts an image can run on.** Every image is linux/amd64, so every Vast search asks
+  for `cpu_arch = amd64` and drops any arm64 offer it still gets (an absent `cpu_arch` with a Grace
+  name, GB10/GH200/GB200, counts as arm64); renting one is refused with a localised reason. An
+  unknown or zero `gpu_ram` never meets a VRAM minimum. `auto_training.PREBUILT_CUDA` records the
+  toolkit of each image; below CUDA 12.8 (`cloud_manager.BLACKWELL_FIRST_TOOLKIT`: torch 2.6+cu124
+  and paddle cuda12.6) the auto search excludes Blackwell (`compute_cap` ≥ 1000).
 - Official hyperparameters, per-model notes and the real-run log: `docs/guide/training.md`; the
   verbatim vendor commands: `docs/training-official-docs.md`.
 

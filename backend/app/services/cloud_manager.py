@@ -508,6 +508,49 @@ def vast_image_for(cuda_max_good: float | None, *, minimum: float = MIN_CUDA_FOR
             return image
     return VAST_CUDA_IMAGES[-1][1]
 
+# Every image Tabularium rents is linux/amd64 only: the registry manifests of
+# ghcr.io/nbadino/tabularium-train-* (all profiles) and of
+# paddlepaddle/paddle:3.3.0-gpu-cuda12.6-cudnn9.5 carry a single amd64 config
+# (checked 2026-11-16), and the runtime-provisioned recipes pip-install x86_64
+# wheels (flash-attn `linux_x86_64`, paddlepaddle-gpu, vLLM). An arm64 host
+# (NVIDIA GB10 / DGX Spark, a Grace-Hopper GH200) can never start them: a GB10
+# was rented for PaddleOCR-VL training and sat in `loading`. Vast's offers carry
+# `cpu_arch` ("amd64", "arm64") as a filterable field: vast-cli `search offers`
+# help and `offers_fields`.
+VAST_CPU_ARCH = "amd64"
+_X86_CPU_ARCHES = frozenset({"amd64", "x86_64", "x86-64", "x64"})
+# Defence in depth when the provider omits `cpu_arch`: NVIDIA's Grace superchips
+# (GB10, GH200, GB200, GB300) are named G<B|H><digits> and always have an ARM CPU.
+_GRACE_GPU_NAME = re.compile(r"^\s*G[BH]\d", re.IGNORECASE)
+
+# The first CUDA toolkit that can target Blackwell (sm_100, sm_120, sm_121) is
+# 12.8: PyTorch added Blackwell in 2.7 with its cu128 wheels, and PaddleOCR-VL
+# sends Blackwell users to a cu129 build and a separate `-sm120` image. An image
+# built on an older toolkit (torch 2.6.0+cu124, paddle cuda12.6) has no kernels
+# for those GPUs, whatever the host driver supports.
+BLACKWELL_FIRST_TOOLKIT = 12.8
+BLACKWELL_COMPUTE_CAP = 1000  # Vast encodes 10.0 as 1000
+
+# `gpu_ram`/`cpu_ram` are MB in Vast's catalogue; the official CLI converts GB
+# with a factor of 1000 (`offers_mult` in vast-cli). The query and the local
+# check below share it, so the two never disagree on a threshold.
+VAST_MB_PER_GB = 1000.0
+
+
+def non_x86_cpu_arch(cpu_arch: Any, gpu_name: Any = None) -> str | None:
+    """The host's CPU architecture when it is not x86_64, else `None`.
+
+    `cpu_arch` comes from the offer; when the provider leaves it out, a Grace
+    superchip name still betrays an ARM host.
+    """
+    arch = str(cpu_arch or "").strip().lower()
+    if arch:
+        return None if arch in _X86_CPU_ARCHES else arch
+    if _GRACE_GPU_NAME.match(str(gpu_name or "")):
+        return "arm64"
+    return None
+
+
 VAST_API_BASE = "https://console.vast.ai/api/v0"
 # Vast.ai sta migrando per rotte, non in blocco: al 2026-09 solo la collection
 # delle istanze è passata a v1 (la v0 risponde 410 deprecated_endpoint), mentre
@@ -537,8 +580,13 @@ def search_vast_offers(
     min_inet_down: float | None = None,
     min_cuda: float | None = None,
     verified_only: bool = False,
+    blackwell_ready: bool = True,
 ) -> list[dict[str, Any]]:
-    """Cerca offerte noleggiabili, senza creare alcuna istanza."""
+    """Cerca offerte noleggiabili, senza creare alcuna istanza.
+
+    Only x86_64 hosts are returned (see `VAST_CPU_ARCH`); `blackwell_ready=False`
+    also drops Blackwell GPUs, for an image built before `BLACKWELL_FIRST_TOOLKIT`.
+    """
     api_key = api_key.strip()
     if not api_key:
         raise ValueError("API Key di Vast.ai non specificata.")
@@ -557,6 +605,7 @@ def search_vast_offers(
         "limit": max(1, min(50, int(limit))),
         # Il prezzo mostrato include il costo del disco richiesto.
         "allocated_storage": float(max(5, int(disk_gb))),
+        "cpu_arch": {"eq": VAST_CPU_ARCH},
     }
     if gpu_name.strip():
         query["gpu_name"] = {"eq": gpu_name.strip()}
@@ -564,12 +613,14 @@ def search_vast_offers(
         query["dph_total"] = {"lte": float(max_dph)}
     if min_gpu_ram_gb:
         # `gpu_ram` è in MB nel catalogo del provider.
-        query["gpu_ram"] = {"gte": float(min_gpu_ram_gb) * 1024.0}
+        query["gpu_ram"] = {"gte": float(min_gpu_ram_gb) * VAST_MB_PER_GB}
     if min_cpu_ram_gb:
-        query["cpu_ram"] = {"gte": float(min_cpu_ram_gb) * 1000.0}
+        query["cpu_ram"] = {"gte": float(min_cpu_ram_gb) * VAST_MB_PER_GB}
     if min_compute_capability:
         # Vast's API/CLI encode 7.5 as 750 (not 7.5).
         query["compute_cap"] = {"gte": round(float(min_compute_capability) * 100)}
+    if not blackwell_ready:
+        query.setdefault("compute_cap", {})["lt"] = BLACKWELL_COMPUTE_CAP
     if disk_gb:
         query["disk_space"] = {"gte": float(disk_gb)}
     if min_inet_down:
@@ -616,6 +667,7 @@ def search_vast_offers(
             "disk_space": offer.get("disk_space"),
             "inet_down": offer.get("inet_down"),
             "cuda_max_good": offer.get("cuda_max_good"),
+            "cpu_arch": offer.get("cpu_arch"),
         })
     # Vast's search API cannot express a conditional rule such as
     # "Blackwell needs CUDA 12.9, other supported cards need 12.8". Apply that
@@ -626,6 +678,17 @@ def search_vast_offers(
             continue
         if _hf_blocked_location(item.get("location")):
             continue
+        if non_x86_cpu_arch(item.get("cpu_arch"), item.get("gpu_name")):
+            continue
+        if min_gpu_ram_gb:
+            # The rented GB10 (unified memory) reported `gpu_ram` 0: an unknown or
+            # zero VRAM never satisfies a VRAM requirement.
+            try:
+                vram = float(item.get("gpu_ram") or 0)
+            except (TypeError, ValueError):
+                vram = 0.0
+            if vram < float(min_gpu_ram_gb) * VAST_MB_PER_GB:
+                continue
         cap = item.get("compute_cap")
         cuda = item.get("cuda_max_good")
         required_cuda = float(min_cuda or 0)
@@ -635,6 +698,8 @@ def search_vast_offers(
             if cuda is not None and float(cuda) < required_cuda:
                 continue
             if min_compute_capability and cap is not None and float(cap) < float(min_compute_capability) * 100:
+                continue
+            if not blackwell_ready and (cap is None or float(cap) >= BLACKWELL_COMPUTE_CAP):
                 continue
         except (TypeError, ValueError):
             continue
@@ -653,6 +718,7 @@ def _hf_blocked_location(location: Any) -> bool:
 
 def offer_unfit_reason(
     adapter_id: str, compute_cap: Any, cuda_max_good: Any, location: Any = None,
+    *, cpu_arch: Any = None, gpu_name: Any = None,
 ) -> str | None:
     """Why an offer cannot host the model's serving recipe, or `None`.
 
@@ -661,6 +727,13 @@ def offer_unfit_reason(
     model's requirements, or before the requirements had loaded, once rented a
     Quadro RTX 6000 (sm_7.5) for Unlimited-OCR 2, which needs sm_8.0: refuse it.
     """
+    arch = non_x86_cpu_arch(cpu_arch, gpu_name)
+    if arch:
+        from . import i18n  # noqa: PLC0415
+
+        # Italian, the source language of HTTP details: the reverse adapter
+        # renders it in the reader's language.
+        return i18n.msg("vast_offer_not_x86", i18n.SOURCE, gpu=str(gpu_name or "GPU"), arch=arch)
     if _hf_blocked_location(location):
         return (
             f"questa GPU è in Cina ({location}): da lì Hugging Face non è raggiungibile e i pesi del "
@@ -702,6 +775,8 @@ def rent_vast_instance(
     cuda_max_good: float | None = None,
     compute_cap: float | None = None,
     location: str | None = None,
+    cpu_arch: str | None = None,
+    gpu_name: str | None = None,
     adapter_id: str = "",
     disk_gb: int = 40,
     model: str = reference.HF_REPO,
@@ -717,7 +792,9 @@ def rent_vast_instance(
     token = api_key.strip()
     if not token:
         raise ValueError("API Key di Vast.ai non specificata.")
-    unfit = offer_unfit_reason(adapter_id, compute_cap, cuda_max_good, location)
+    unfit = offer_unfit_reason(
+        adapter_id, compute_cap, cuda_max_good, location, cpu_arch=cpu_arch, gpu_name=gpu_name,
+    )
     if unfit:
         raise ValueError(unfit)
     if int(disk_gb) < 10:
