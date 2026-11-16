@@ -11,6 +11,7 @@ import os
 import base64
 import hashlib
 import json
+import logging
 import re
 import shlex
 import signal
@@ -420,6 +421,13 @@ def reconcile_tunnel() -> None:
     _update_tunnel_job(int(row["id"]), "failed", str(last_error or "ripristino tunnel fallito"))
 
 
+# The provider-side verbs and the state each leaves the resource in: one table for
+# every caller, so a `delete` is recorded as the terminal `deleted`, never as a raw
+# verb that the job row would read as still open.
+CONTROL_STATES: dict[str, str] = {"start": "running", "stop": "stopped", "delete": "deleted"}
+VANISHED_REASON = "instance no longer listed by the provider"
+
+
 def track_cloud_resource(
     provider: str,
     remote_id: str | int,
@@ -445,6 +453,29 @@ def track_cloud_resource(
         cost=cost,
         terminal=terminal,
     )
+
+
+def reconcile_cloud_resources() -> list[str]:
+    """Close the open Vast rows whose instance the provider no longer lists.
+
+    Runs at startup so a row left "running" by a destroy that was never recorded (or
+    by a restart in the middle of one) heals on the next deploy. An unreachable
+    provider or a missing key proves nothing, so the rows are left as they are.
+    """
+    from . import vault  # noqa: PLC0415
+
+    if not jobstore.cloud_open_ids("vast"):
+        return []
+    api_key = vault.get("vault:vast_api_key")
+    if not api_key:
+        return []
+    before = jobstore.cloud_open_ids("vast")
+    try:
+        list_vast_instances(api_key)
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("cloud resource reconcile skipped: %s", exc)
+        return []
+    return sorted(before - jobstore.cloud_open_ids("vast"))
 
 
 def cloud_resource_cost(provider: str, remote_id: str | int) -> dict[str, float] | None:
@@ -871,7 +902,7 @@ def list_vast_instances(api_key: str, *, owner_id: int | None = None) -> list[di
     if not api_key:
         raise ValueError("API Key di Vast.ai non specificata.")
 
-    instances = _fetch_vast_instances(api_key)
+    instances, complete = _fetch_vast_inventory(api_key)
     out = []
     for inst in instances:
         item = _normalize_vast_instance(inst)
@@ -890,6 +921,14 @@ def list_vast_instances(api_key: str, *, owner_id: int | None = None) -> list[di
                 hourly_rate=item["dph_total"], state=state,
                 metadata={"provider_status": status},
             )
+    if complete:
+        # The account's whole inventory: an open row for an instance Vast no longer
+        # lists belongs to a resource destroyed outside this process (or before a
+        # restart), and stays "running" forever unless it is closed here.
+        jobstore.cloud_close_missing(
+            "vast", {str(item["id"]) for item in out if item["id"] is not None},
+            reason=VANISHED_REASON,
+        )
     return _with_cost("vast", out)
 
 
@@ -909,6 +948,14 @@ def _vast_instances_payload(data: Any) -> tuple[list[dict[str, Any]], str | None
 
 def _fetch_vast_instances(api_key: str, *, max_pages: int = 10) -> list[dict[str, Any]]:
     """Elenco istanze dalla rotta v1 paginata, con fallback alla v0 se assente."""
+    return _fetch_vast_inventory(api_key, max_pages=max_pages)[0]
+
+
+def _fetch_vast_inventory(
+    api_key: str, *, max_pages: int = 10,
+) -> tuple[list[dict[str, Any]], bool]:
+    """`(instances, complete)`: `complete` is False when pages were left unread, so
+    an instance missing from the list is not proof that it no longer exists."""
     collected: list[dict[str, Any]] = []
     token: str | None = None
     for _ in range(max_pages):
@@ -926,15 +973,17 @@ def _fetch_vast_instances(api_key: str, *, max_pages: int = 10) -> list[dict[str
             # per gli account non ancora migrati.
             if collected:
                 raise
-            return _vast_instances_payload(_vast_call(api_key, "GET", "/instances/", timeout=10.0))[0]
+            return _vast_instances_payload(_vast_call(api_key, "GET", "/instances/", timeout=10.0))[0], True
         page, token = _vast_instances_payload(data)
         collected.extend(page)
         if not token or not page:
-            break
-    return collected
+            return collected, True
+    return collected, False
 
 
-def control_vast_instance(api_key: str, instance_id: int, action: str) -> dict[str, Any]:
+def control_vast_instance(
+    api_key: str, instance_id: int, action: str, *, owner_id: int | None = None,
+) -> dict[str, Any]:
     """Avvia ('start'), mette in pausa ('stop') o distrugge ('delete') un'istanza Vast.ai."""
     api_key = api_key.strip()
     if not api_key:
@@ -953,7 +1002,8 @@ def control_vast_instance(api_key: str, instance_id: int, action: str) -> dict[s
 
         if resp.status_code not in (200, 204):
             raise RuntimeError(f"Operazione fallita su Vast.ai ({resp.status_code}): {resp.text}")
-        return {"ok": True, "action": action, "instance_id": instance_id}
+    track_cloud_resource("vast", instance_id, owner_id=owner_id, state=CONTROL_STATES[action])
+    return {"ok": True, "action": action, "instance_id": instance_id}
 
 
 # --- VAST.AI: PRIMA CONFIGURAZIONE (account, chiave SSH, host key) -------------
@@ -2328,7 +2378,9 @@ def create_runpod_pod(
     return {"ok": True, "pod": data}
 
 
-def control_runpod_pod(api_key: str, pod_id: str, action: str) -> dict[str, Any]:
+def control_runpod_pod(
+    api_key: str, pod_id: str, action: str, *, owner_id: int | None = None,
+) -> dict[str, Any]:
     """Avvia ('start'), mette in pausa ('stop') o distrugge ('delete') un Pod RunPod."""
     api_key = api_key.strip()
     if not api_key:
@@ -2350,4 +2402,5 @@ def control_runpod_pod(api_key: str, pod_id: str, action: str) -> dict[str, Any]
 
         if resp.status_code not in (200, 204):
             raise RuntimeError(f"Operazione fallita su RunPod ({resp.status_code}): {resp.text}")
-        return {"ok": True, "action": action, "pod_id": pod_id}
+    track_cloud_resource("runpod", pod_id, owner_id=owner_id, state=CONTROL_STATES[action])
+    return {"ok": True, "action": action, "pod_id": pod_id}

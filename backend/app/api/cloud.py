@@ -302,9 +302,9 @@ def control_vast(payload: dict, _admin: dict = Depends(_admin)) -> dict:
         raise HTTPException(status_code=400, detail="API Key e ID istanza obbligatori.")
 
     try:
-        res = cloud_manager.control_vast_instance(api_key, int(instance_id), action)
-        cloud_manager.track_cloud_resource("vast", instance_id, owner_id=_admin.get("id"), state=action)
-        return res
+        return cloud_manager.control_vast_instance(
+            api_key, int(instance_id), action, owner_id=_admin.get("id"),
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -577,9 +577,9 @@ def control_runpod(payload: dict, _admin: dict = Depends(_admin)) -> dict:
         raise HTTPException(status_code=400, detail="API Key e ID Pod obbligatori.")
 
     try:
-        res = cloud_manager.control_runpod_pod(api_key, str(pod_id), action)
-        cloud_manager.track_cloud_resource("runpod", pod_id, owner_id=_admin.get("id"), state=action)
-        return res
+        return cloud_manager.control_runpod_pod(
+            api_key, str(pod_id), action, owner_id=_admin.get("id"),
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
