@@ -247,8 +247,13 @@ def cloud_upsert(
     state: str,
     cost: dict[str, Any],
     terminal: bool,
+    create: bool = True,
 ) -> None:
-    """Record a provider-side resource, or refresh the row that already tracks it."""
+    """Record a provider-side resource, or refresh the row that already tracks it.
+
+    With `create=False` only an existing row is refreshed: a resource seen for the
+    first time is not recorded.
+    """
     with connect() as conn:
         row = conn.execute(
             "SELECT id, ended_at, cost_json, "
@@ -258,6 +263,8 @@ def cloud_upsert(
             (provider, remote_id),
         ).fetchone()
         if row is None:
+            if not create:
+                return
             conn.execute(
                 "INSERT INTO jobs(kind, owner_id, provider, remote_job_id, state, heartbeat_at, "
                 "cost_json, recovery_strategy, ended_at) "

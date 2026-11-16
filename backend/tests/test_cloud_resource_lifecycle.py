@@ -140,3 +140,42 @@ def test_a_truncated_listing_closes_nothing(monkeypatch, clean_rows):
 
     cloud_manager.reconcile_cloud_resources()
     assert _row("60907839")["ended_at"] is None
+
+
+def _open_rows() -> list[str]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT remote_job_id FROM jobs WHERE kind='cloud_resource' AND provider='vast' "
+            "AND ended_at IS NULL ORDER BY id"
+        ).fetchall()
+    return [str(row["remote_job_id"]) for row in rows]
+
+
+def test_destroying_the_training_gpu_opens_no_row_for_other_instances(monkeypatch, clean_rows):
+    """Prod row 43 (2026-11-16): the end-of-run destroy confirmed the deletion with a
+    full account listing, which recorded an instance rented outside Tabularium
+    (60933398) as a running resource that nothing would ever close."""
+    _vast(monkeypatch, [{"id": 60933398, "actual_status": "running", "dph_total": 0.0674}])
+    cloud_manager.track_cloud_resource("vast", 60929663, hourly_rate=1.37)
+
+    auto_training._destroy("key", 60929663)
+
+    assert _row("60929663")["state"] == "deleted"
+    assert _open_rows() == []
+
+
+def test_startup_reconcile_adopts_no_foreign_instance(monkeypatch, clean_rows):
+    _vast(monkeypatch, [{"id": 60933398, "actual_status": "running", "dph_total": 0.0674}])
+    monkeypatch.setattr(vault, "get", lambda ref: "key" if ref == "vault:vast_api_key" else "")
+    cloud_manager.track_cloud_resource("vast", 60929663, hourly_rate=1.37)
+
+    assert cloud_manager.reconcile_cloud_resources() == ["60929663"]
+    assert _open_rows() == []
+
+
+def test_the_cloud_panel_listing_still_records_every_instance(monkeypatch, clean_rows):
+    _vast(monkeypatch, [{"id": 60933398, "actual_status": "running", "dph_total": 0.0674}])
+
+    cloud_manager.list_vast_instances("key", adopt=True)
+
+    assert _open_rows() == ["60933398"]
