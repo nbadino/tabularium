@@ -948,53 +948,78 @@ def list_vast_instances(
     return _with_cost("vast", out)
 
 
-def _vast_instances_payload(data: Any) -> tuple[list[dict[str, Any]], str | None]:
-    """Normalizza la busta della lista: v1 pagina, v0 no, i nomi dei campi variano."""
-    if isinstance(data, list):
-        return [item for item in data if isinstance(item, dict)], None
-    if not isinstance(data, dict):
-        return [], None
-    for key in ("instances", "results", "data", "items"):
-        items = data.get(key)
-        if isinstance(items, list):
-            token = data.get("next_token") or data.get("next") or None
-            return [item for item in items if isinstance(item, dict)], (str(token) if token else None)
-    return [], None
+# vast-cli `vastai/api/instances.py` (show_instances / show_instances_v1, checked
+# 2026-11-16 at 6eb4ed8): the account's instances come only from the paginated
+# `GET /api/v1/instances/`, which answers `{instances, next_token, total_instances,
+# label_counts}`; the response's `next_token` goes back as `after_token`. The v0
+# collection (`GET /api/v0/instances/`, with or without `?owner=me`) answers 410 Gone.
+VAST_LIST_ORDER = [{"col": "id", "dir": "asc"}]
+
+
+class VastListingError(RuntimeError):
+    """Vast.ai answered the instance listing with something that is not a listing.
+
+    Never read as "the account has no instances": closing a job or a cost row on
+    that reading would hide a GPU that keeps billing.
+    """
+
+
+def _vast_instances_payload(data: Any) -> tuple[list[dict[str, Any]], str | None, int | None]:
+    """`(page, next_token, total_instances)` of one v1 page, or `VastListingError`."""
+    if not isinstance(data, dict) or data.get("success") is False:
+        raise VastListingError(f"Vast.ai instance listing failed: {str(data)[:200]}")
+    items = data.get("instances")
+    if not isinstance(items, list):
+        raise VastListingError(f"Vast.ai instance listing has no `instances` list: {str(data)[:200]}")
+    if not all(isinstance(item, dict) for item in items):
+        raise VastListingError("Vast.ai instance listing has non-object rows")
+    token = data.get("next_token")
+    total = data.get("total_instances")
+    return items, (str(token) if token else None), (int(total) if isinstance(total, int) else None)
 
 
 def _fetch_vast_instances(api_key: str, *, max_pages: int = 10) -> list[dict[str, Any]]:
-    """Elenco istanze dalla rotta v1 paginata, con fallback alla v0 se assente."""
+    """Every instance of the account (v1 listing); raises on any provider error."""
     return _fetch_vast_inventory(api_key, max_pages=max_pages)[0]
 
 
 def _fetch_vast_inventory(
     api_key: str, *, max_pages: int = 10,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """`(instances, complete)`: `complete` is False when pages were left unread, so
-    an instance missing from the list is not proof that it no longer exists."""
+    """`(instances, complete)`: `complete` is False when pages were left unread or
+    fewer rows came back than `total_instances` announced, so an instance missing
+    from the list is not proof that it no longer exists. Any HTTP error or a body
+    that is not a listing raises: there is no v0 fallback, the v0 collection is gone."""
     collected: list[dict[str, Any]] = []
     token: str | None = None
     for _ in range(max_pages):
-        params: dict[str, Any] = {"limit": 25}
+        # vast-cli `VastClient._build_url`: non-string query values are JSON-encoded.
+        params: dict[str, Any] = {"order_by": json.dumps(VAST_LIST_ORDER), "limit": 25}
         if token:
-            # vast-cli `vastai/api/instances.py`: the response's `next_token` is sent
-            # back as `after_token`.
             params["after_token"] = token
-        try:
-            data = _vast_call(api_key, "GET", "/instances/", params=params, timeout=15.0, version="v1")
-        except VastDeprecatedEndpoint:
-            raise
-        except RuntimeError:
-            # Provider in transizione: se la v1 non risponde, la v0 resta valida
-            # per gli account non ancora migrati.
-            if collected:
-                raise
-            return _vast_instances_payload(_vast_call(api_key, "GET", "/instances/", timeout=10.0))[0], True
-        page, token = _vast_instances_payload(data)
+        data = _vast_call(api_key, "GET", "/instances/", params=params, timeout=15.0, version="v1")
+        page, token, total = _vast_instances_payload(data)
         collected.extend(page)
         if not token or not page:
-            return collected, True
+            return collected, total is None or len(collected) >= total
     return collected, False
+
+
+def vast_instance_record(api_key: str, instance_id: int) -> dict[str, Any] | None:
+    """One instance from `GET /api/v0/instances/{id}/?owner=me` (vast-cli
+    `show_instance`): its row, or None when Vast answers `instances: null` (the
+    account has no such instance). Any error or other shape raises."""
+    data = _vast_call(
+        api_key, "GET", f"/instances/{int(instance_id)}/", params={"owner": "me"}, timeout=10.0,
+    )
+    if not isinstance(data, dict) or "instances" not in data or data.get("success") is False:
+        raise VastListingError(f"Vast.ai instance {instance_id}: unexpected answer {str(data)[:200]}")
+    inst = data["instances"]
+    if isinstance(inst, list):  # older v0 answers wrapped the row in a list
+        inst = inst[0] if inst else None
+    if inst is not None and not isinstance(inst, dict):
+        raise VastListingError(f"Vast.ai instance {instance_id}: unexpected row {str(inst)[:200]}")
+    return inst
 
 
 def control_vast_instance(
@@ -1348,22 +1373,23 @@ def _normalize_vast_instance(inst: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def get_vast_instance(api_key: str, instance_id: int, *, owner_id: int | None = None) -> dict[str, Any]:
-    """Dettaglio di una singola istanza: è ciò che il wizard interroga in polling."""
+def observe_vast_instance(
+    api_key: str, instance_id: int, *, owner_id: int | None = None,
+) -> dict[str, Any] | None:
+    """One instance, normalised and recorded in its `cloud_resource` row (rate and
+    heartbeat), or None when Vast says the account has no such instance. Provider
+    errors raise: they never mean "gone"."""
     try:
-        data = _vast_call(api_key, "GET", f"/instances/{int(instance_id)}/", timeout=10.0)
-        inst = data.get("instances") if isinstance(data, dict) else None
-        if isinstance(inst, list):
-            inst = inst[0] if inst else None
-        if not isinstance(inst, dict):
-            inst = data if isinstance(data, dict) else {}
+        inst = vast_instance_record(api_key, int(instance_id))
     except VastDeprecatedEndpoint:
         # Se anche il dettaglio sparisce dalla v0, l'istanza si ritrova nella
         # lista v1: il polling del wizard non deve fermarsi per questo.
-        inst = next(
-            (item for item in _fetch_vast_instances(api_key) if str(item.get("id")) == str(instance_id)),
-            {},
-        )
+        inventory, complete = _fetch_vast_inventory(api_key)
+        inst = next((item for item in inventory if str(item.get("id")) == str(instance_id)), None)
+        if inst is None and not complete:
+            raise
+    if inst is None:
+        return None
     item = _normalize_vast_instance(inst)
     if item["id"] is None:
         item["id"] = int(instance_id)
@@ -1384,6 +1410,16 @@ def get_vast_instance(api_key: str, instance_id: int, *, owner_id: int | None = 
     estimate = cloud_resource_cost("vast", item["id"])
     if estimate is not None:
         item["cost_estimate"] = estimate
+    return item
+
+
+def get_vast_instance(api_key: str, instance_id: int, *, owner_id: int | None = None) -> dict[str, Any]:
+    """Dettaglio di una singola istanza: è ciò che il wizard interroga in polling."""
+    item = observe_vast_instance(api_key, instance_id, owner_id=owner_id)
+    if item is None:
+        # Vast lists no such instance: report it, and record no "running" row for it.
+        item = _normalize_vast_instance({"id": int(instance_id), "actual_status": "not_found"})
+        item["ssh_ready"] = False
     return item
 
 

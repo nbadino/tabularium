@@ -234,10 +234,12 @@ def _ssh(host: str, port: int, command: str, *, timeout: int = 45) -> subprocess
 
 
 def _instance(api_key: str, instance_id: int) -> dict | None:
-    for item in cloud_manager.list_vast_instances(api_key):
-        if int(item.get("id") or 0) == int(instance_id):
-            return item
-    return None
+    """The instance as Vast reports it, or None when Vast says it does not exist.
+
+    A per-instance lookup (the account-wide v0 listing answers 410 Gone); any
+    provider error raises, so a failed lookup is never read as "gone".
+    """
+    return cloud_manager.observe_vast_instance(api_key, int(instance_id))
 
 
 def reconcile_jobs() -> None:
@@ -257,16 +259,19 @@ def reconcile_jobs() -> None:
             continue
     if not active:
         return
-    try:
-        instances = {int(item['id']) for item in cloud_manager.list_vast_instances(api_key) if item.get('id')}
-    except Exception:
-        # Unavailable provider is not proof that a resource was deleted.
-        return
     for job in active:
         instance_id = job.get('instance_id')
         run_id = job.get('run_id')
         project_id = int(job['project_id'])
-        if not instance_id or int(instance_id) not in instances:
+        gone = not instance_id
+        if instance_id:
+            try:
+                gone = _instance(api_key, int(instance_id)) is None
+            except Exception:
+                # Unavailable provider is not proof that a resource was deleted:
+                # leave the job as it is and look again at the next start.
+                continue
+        if gone:
             _update(job, state='failed', phase='prepare' if run_id else 'failed',
                     instance_destroyed=bool(instance_id),
                     cost_unknown=bool(instance_id), last_observed_at=job.get('updated_at'),
