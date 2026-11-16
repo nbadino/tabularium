@@ -303,6 +303,8 @@ def test_a_model_failing_the_same_way_again_and_again_is_stopped(tmp_path, monke
     from app.services import consensus
 
     _fake_clients(monkeypatch)
+    # One worker: which page is the first to be refused depends on the order pages end.
+    monkeypatch.setattr(consensus, "PAGES_IN_PARALLEL", 1)
     calls = {"argon": 0}
 
     class BrokeArgon(FakeArgon):
@@ -750,3 +752,48 @@ def test_a_restart_resumes_the_interrupted_run(tmp_path, monkeypatch):
         assert run["state"] == "finished", run
         assert run["failed"] == 0 and run["succeeded"] == 6
         assert ocria_calls["n"] == 2  # the finished page was not sent again
+
+
+def test_a_model_reads_several_pages_at_once(tmp_path, monkeypatch):
+    """One page at a time left Gemini at a page a minute: 11 hours for 560 pages. Each
+    model now keeps `PAGES_IN_PARALLEL` requests in flight, each on its own client."""
+    import threading
+
+    from app.services import consensus
+
+    _fake_clients(monkeypatch)
+    lock = threading.Lock()
+    seen = {"now": 0, "max": 0, "clients": set()}
+    gate = threading.Barrier(consensus.PAGES_IN_PARALLEL, timeout=5)
+
+    class SlowArgon(FakeArgon):
+        def end2end(self, image, **kwargs):
+            with lock:
+                seen["now"] += 1
+                seen["max"] = max(seen["max"], seen["now"])
+                seen["clients"].add(id(self))
+            try:
+                gate.wait()  # all the workers must be in flight together to pass
+            except threading.BrokenBarrierError:
+                pass
+            with lock:
+                seen["now"] -= 1
+            return super().end2end(image, **kwargs)
+
+    monkeypatch.setattr(
+        consensus.inference,
+        "client_for_profile",
+        lambda profile, **_k: FakeOcria() if profile["model_adapter_id"] == "llamaindex-ocria-1" else SlowArgon(),
+    )
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path, pages=8)
+        ocria = _save_profile(client, OCRIA, "OCRia-1 (parallel)")
+        argon = _save_profile(client, ARGON, "Argon (parallel)")
+        created = client.post(
+            f"/api/projects/{project_id}/consensus-runs",
+            json={"page_ids": page_ids, "profile_ids": [ocria["id"], argon["id"]]},
+        )
+        run = _wait(client, project_id, created.json()["id"])
+        assert run["state"] == "finished" and run["succeeded"] == 16
+        assert seen["max"] == consensus.PAGES_IN_PARALLEL
+        assert len(seen["clients"]) == consensus.PAGES_IN_PARALLEL
