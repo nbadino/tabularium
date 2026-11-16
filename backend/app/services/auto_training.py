@@ -31,6 +31,8 @@ from .trainer_script import _now
 PROFILES = {
     "monkeyocrv2-parsing": "monkey",
     "qwen3-vl-8b": "qwen",
+    # ms-swift 4.6.0 + transformers 5.20.2 meet the Qwen3.5 Best Practice pins.
+    "xiaomi-ocr-0": "qwen",
     "unlimited-ocr": "legacy",
     "unlimited-ocr-2": "uocr2",
     "deepseek-ocr": "legacy",

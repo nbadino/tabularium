@@ -69,10 +69,26 @@ SPEC = ModelSpec(
         "data_view": "none",
         "families": (),
         "official_doc": "https://github.com/caipeng328/TeleOCR",
-        "note": "Il repo ufficiale distribuisce solo inferenza: nessun codice o config di training.",
+        "note": (
+            "No vendor training code, and no toolchain registers the architecture: a Qwen2.5-VL "
+            "vision tower with a Qwen3ForCausalLM decoder, which ms-swift's `qwen2_5_vl` cannot load."
+        ),
         "official_notes": (
-            "Il paper descrive quattro stadi (allineamento, deformazione, contenuto-struttura, GRPO) "
-            "ma il repo non contiene `train/` né un toolchain: la ricetta non è riproducibile.",
+            "The paper describes four stages (alignment, deformation, content-structure, GRPO), "
+            "but the repository has no `train/` and no toolchain: the recipe is not reproducible.",
+            "The HF `config.json` says `qwen2_5_vl`, but the weights are not stock Qwen2.5-VL: "
+            "`modeling_naviocr.py` (its `auto_map`) gives the decoder head_dim 128 on hidden 1024 "
+            "with 16 heads, q/k RMSNorm and no qkv bias, and the vendor's vLLM plugin "
+            "(`TeleOCR-vllm/TeleOCR_vllm/qwen2_5_vl.py`) builds the language model as "
+            "`Qwen3ForCausalLM`.",
+            "ms-swift's `qwen2_5_vl` loads transformers' `Qwen2_5_VLForConditionalGeneration` "
+            "(head_dim = hidden/heads = 64, qkv bias, no q/k norm) and has no option to use the "
+            "checkpoint's `auto_map`: `swift sft --model_type qwen2_5_vl` would not match these "
+            "weights. A custom registration (`--custom_register_path`) would be Tabularium's own "
+            "recipe, not a documented one, so the model stays inference-only.",
+            "If it becomes trainable, the data is already right: TeleOCR emits OTSL "
+            "(`DEFAULT_PROMPTS['table']` asks for it, `post_process/otsl2html.py` converts it) and "
+            "its prompts start with a newline (`\\nPlease output the text content from the image.`).",
         ),
     }),
     labels=Declared(TELEOCR_LABELS),

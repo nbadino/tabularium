@@ -852,11 +852,32 @@ truth.
 - TeleOCR (<https://github.com/caipeng328/TeleOCR>): inference only. The paper describes four
   training stages (VL alignment, deformation-aware, content-structure decoupled, GRPO) and even
   claims a full implementation release, but the repository has no `train/` and no toolchain.
+  Its HF `config.json` says `qwen2_5_vl`, but `modeling_naviocr.py` and the vendor's vLLM plugin
+  (`TeleOCR-vllm/TeleOCR_vllm/qwen2_5_vl.py`, `architectures=["Qwen3ForCausalLM"]`) show a Qwen3
+  decoder (head_dim 128 on hidden 1024 × 16 heads, q/k norm, no qkv bias). ms-swift's `qwen2_5_vl`
+  loads the stock transformers class (head_dim 64, qkv bias), so it does not fit either
+  (checked 2026-11-16 on ms-swift main and 4.6.1).
 - LightOnOCR-3 (<https://github.com/lightonai/LightOnOCR>): client, CLI and benchmarks only. The
   vendor blog documents Muon + packing SFT and a GRPO stage with a bbox reward
   `min(IoU/0.75, 1)`, but publishes no code, config or numeric SFT hyperparameters.
 
 Both stay `inference-only` in `train_recipes.py`.
+
+## 10. Xiaomi-OCR-0 — no vendor code, ms-swift `qwen3_5` (experimental)
+
+- Vendor (<https://github.com/xiaomi-research/Xiaomi-OCR-0>): inference only; the card describes
+  Q-Mask anchoring, CPT and Mix-RL in prose. The checkpoint is a stock
+  `Qwen3_5ForConditionalGeneration` (from Qwen3.5-0.8B-Base).
+- ms-swift registers `qwen3_5` (model type and template, `Qwen/Qwen3.5-0.8B-Base` in its list)
+  from release 4.0.0; 3.12.6 does not have it. Requires `transformers>=5.2.0`; packing/padding_free
+  need transformers ≥ 5.9, and the FAQ advises against packing for Qwen3.5's linear attention.
+- Best Practice (`docs/source_en/BestPractices/Qwen3_8-Best-Practice.md`, dense LoRA): lr 1e-4,
+  r8/α32 all-linear, batch 4 × 4 GPUs, max_length 2048, warmup 0.05, eval/save 50, zero2,
+  `--add_non_thinking_prefix true`, `--loss_scale ignore_empty_think` (automatic from 4.3.1),
+  `IMAGE_MAX_TOKEN_NUM=1024`. No dense full-SFT example; ms-swift's default full lr is 1e-5.
+- Tabularium keeps the BP's optimiser values and changes what the model's serving fixes: image
+  tokens 64–4096 (processor `shortest_edge` 65536 px; vendor 2048 × 2048 input bound),
+  `max_length 8192`, batch 1 × 16 on one GPU, the vendor's task prompts and OTSL tables.
 
 ## Cross-model traps (summary)
 
