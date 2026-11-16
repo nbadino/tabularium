@@ -247,8 +247,13 @@ def cloud_upsert(
     state: str,
     cost: dict[str, Any],
     terminal: bool,
+    create: bool = True,
 ) -> None:
-    """Record a provider-side resource, or refresh the row that already tracks it."""
+    """Record a provider-side resource, or refresh the row that already tracks it.
+
+    With `create=False` only an existing row is refreshed: a resource seen for the
+    first time is not recorded.
+    """
     with connect() as conn:
         row = conn.execute(
             "SELECT id, ended_at, cost_json, "
@@ -258,6 +263,8 @@ def cloud_upsert(
             (provider, remote_id),
         ).fetchone()
         if row is None:
+            if not create:
+                return
             conn.execute(
                 "INSERT INTO jobs(kind, owner_id, provider, remote_job_id, state, heartbeat_at, "
                 "cost_json, recovery_strategy, ended_at) "
@@ -282,6 +289,56 @@ def cloud_upsert(
             (state, json.dumps({**cost, **({"billed_hours": billed} if billed is not None else {})}),
              terminal, resumed, row["id"]),
         )
+
+
+def cloud_open_ids(provider: str) -> set[str]:
+    """Remote ids of the provider's resources whose row is still open (no `ended_at`)."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT remote_job_id FROM jobs WHERE kind='cloud_resource' AND provider=? "
+            "AND ended_at IS NULL",
+            (provider,),
+        ).fetchall()
+    return {str(row["remote_job_id"]) for row in rows}
+
+
+def cloud_close_missing(provider: str, present: set[str], *, reason: str) -> list[str]:
+    """Close every open row of `provider` whose remote id is not in `present`.
+
+    The caller passes the provider's complete inventory: a resource it does not list
+    no longer exists. The end time is the last heartbeat (the last time Tabularium
+    saw the resource), not now, so the cost estimate does not grow with the time the
+    row stayed stale; `closed_reason` records why the row was closed.
+    """
+    closed: list[str] = []
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, remote_job_id, cost_json, "
+            "(julianday(COALESCE(heartbeat_at, started_at)) - julianday(started_at)) * 24.0 "
+            "AS seen_hours "
+            "FROM jobs WHERE kind='cloud_resource' AND provider=? AND ended_at IS NULL",
+            (provider,),
+        ).fetchall()
+        for row in rows:
+            if str(row["remote_job_id"]) in present:
+                continue
+            try:
+                cost = json.loads(row["cost_json"] or "{}")
+            except ValueError:
+                cost = {}
+            if not isinstance(cost, dict):
+                cost = {}
+            billed = _billed_hours(row["cost_json"])
+            if billed is not None:
+                cost["billed_hours"] = billed + max(0.0, float(row["seen_hours"] or 0.0))
+            cost["closed_reason"] = reason
+            conn.execute(
+                "UPDATE jobs SET state='deleted', cost_json=?, "
+                "ended_at=COALESCE(heartbeat_at, started_at, datetime('now')) WHERE id=?",
+                (json.dumps(cost), row["id"]),
+            )
+            closed.append(str(row["remote_job_id"]))
+    return closed
 
 
 def _billed_hours(cost_json: str | None) -> float | None:

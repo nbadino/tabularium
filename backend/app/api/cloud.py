@@ -126,7 +126,7 @@ def get_vast_instances(payload: dict, _admin: dict = Depends(_admin)) -> dict:
         raise HTTPException(status_code=400, detail="API Key di Vast.ai obbligatoria.")
 
     try:
-        items = cloud_manager.list_vast_instances(api_key, owner_id=_admin.get("id"))
+        items = cloud_manager.list_vast_instances(api_key, owner_id=_admin.get("id"), adopt=True)
         return {"items": items}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -172,6 +172,8 @@ def rent_vast(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             cuda_max_good=payload.get("cuda_max_good"),
             compute_cap=payload.get("compute_cap"),
             location=payload.get("location"),
+            cpu_arch=payload.get("cpu_arch"),
+            gpu_name=payload.get("gpu_name"),
             adapter_id=payload.get("adapter_id") or "",
             disk_gb=payload.get("disk_gb", 40),
             model=payload.get("model", reference.HF_REPO),
@@ -257,6 +259,9 @@ def rent_training(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             api_key,
             int(best["id"]),
             cuda_max_good=best.get("cuda_max_good"),
+            location=best.get("location"),
+            cpu_arch=best.get("cpu_arch"),
+            gpu_name=best.get("gpu_name"),
             disk_gb=disk_gb,
             tabularium_ref=ref,
             prepare_training=True,
@@ -297,9 +302,9 @@ def control_vast(payload: dict, _admin: dict = Depends(_admin)) -> dict:
         raise HTTPException(status_code=400, detail="API Key e ID istanza obbligatori.")
 
     try:
-        res = cloud_manager.control_vast_instance(api_key, int(instance_id), action)
-        cloud_manager.track_cloud_resource("vast", instance_id, owner_id=_admin.get("id"), state=action)
-        return res
+        return cloud_manager.control_vast_instance(
+            api_key, int(instance_id), action, owner_id=_admin.get("id"),
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -572,9 +577,9 @@ def control_runpod(payload: dict, _admin: dict = Depends(_admin)) -> dict:
         raise HTTPException(status_code=400, detail="API Key e ID Pod obbligatori.")
 
     try:
-        res = cloud_manager.control_runpod_pod(api_key, str(pod_id), action)
-        cloud_manager.track_cloud_resource("runpod", pod_id, owner_id=_admin.get("id"), state=action)
-        return res
+        return cloud_manager.control_runpod_pod(
+            api_key, str(pod_id), action, owner_id=_admin.get("id"),
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

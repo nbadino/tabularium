@@ -15,9 +15,18 @@ Notable changes to Tabularium. The format follows
   `qwen` environment. It stays `experimental` until a real run.
 
 ### Changed
+- **MinerU2.5's training evidence is on record.** A fresh search found the vendor's
+  `mineru_sft_code.zip` (the `run_mineru.py sft` wrapper the lesson requires) in no public source;
+  the only public `run_mineru.py` is an unmerged lesson edition that swaps it for plain `swift sft`,
+  which is not adopted. The recipe stays `planned`, says the lesson targets the 2509 checkpoint
+  rather than Pro 2605, and names the zip as what would unblock it.
 - **TeleOCR says why it cannot be trained.** Besides the missing vendor code, its weights are a
   Qwen2.5-VL vision tower with a Qwen3 decoder, which ms-swift's `qwen2_5_vl` cannot load; the
   recipe now states this instead of only "no training code".
+- **TeleOCR's training evidence is on record.** A fresh search of the vendor's repository, issues,
+  HF card and paper found no fine-tuning path; the recipe now cites the paper's stage
+  hyperparameters, the authors' structure-first table scheme (issue #11) and what a custom
+  ms-swift registration would need, so the choice to build one is explicit.
 
 - **A consensus model reads four pages at once.** One page at a time left Gemini at about a page a
   minute, 11 hours for the 560 Lloyd's pages. Each model now keeps `PAGES_IN_PARALLEL` (4) requests
@@ -30,6 +39,27 @@ Notable changes to Tabularium. The format follows
   metrics" and "Validation loss" charts were empty while the log showed the losses. Every known
   key (loss, eval_loss, learning_rate, grad_norm, token_acc, eval_token_acc, epoch, memory) now
   accepts both shapes, and an eval line without a step counter (LLaMA-Factory) is kept too.
+- **A background Vast lookup no longer opens a cost row for instances Tabularium did not rent.**
+  The end of a one-click training confirms the GPU deletion with a full account listing, and that
+  listing recorded every instance it saw, so an instance rented outside Tabularium got a
+  `cloud_resource` row left `running` with no owner that nothing would ever close (prod row 43).
+  Auto-training polling, the destroy check and the startup reconcile now only refresh and close
+  known rows; only the cloud panel, which lists the account on every refresh, adopts new ones.
+- **Vast.ai never offers or rents an ARM host.** One-click PaddleOCR-VL training rented a GB10
+  (NVIDIA DGX Spark: arm64 Grace CPU, unified memory, sm_12.1) for an amd64-only image; it never
+  left `loading`. Every Vast search now asks for `cpu_arch = amd64` and also drops arm64 offers
+  locally, the rent button and the one-click job refuse one with a localised reason, an unknown or
+  zero `gpu_ram` no longer passes a VRAM minimum, and images built on CUDA < 12.8 (PaddleOCR-VL and
+  the torch 2.6 profiles) are no longer matched with Blackwell GPUs. VRAM minimums use vast-cli's
+  GB → MB factor (1000, was 1024).
+- **A destroyed Vast instance no longer stays "running" in the jobs table.** Deleting an
+  instance (auto-training cancel and cleanup, the cloud panel) never closed its `cloud_resource`
+  row: auto-training did not record the delete at all, and the panel recorded the raw verb
+  `delete`, which the row read as still open. Every start/stop/delete now records its state in
+  the control call itself, a complete Vast listing closes the rows of instances the account no
+  longer has (`closed_reason`, ended at the last heartbeat), and startup runs that listing, so
+  stale rows heal on the next deploy. An unreachable provider or a truncated listing closes
+  nothing.
 - **A busy model gateway no longer stops a consensus model.** Gemini behind the OpenCode gateway
   answered `429 RESOURCE_EXHAUSTED` ("overloaded, try again later") three times in seven seconds,
   which the stop rule read as "out of credits" and failed all 549 pages left of a Lloyd's run.

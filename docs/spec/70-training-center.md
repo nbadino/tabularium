@@ -26,7 +26,9 @@
   - `paddleformers` — PaddleOCR-VL, `paddleformers-cli train <config> key=value`, full **and**
     LoRA; the `messages` dataset is the same shape as ms-swift.
   - `mineru-sft` — MinerU2.5: its lesson explicitly forbids `swift sft` and ships the config only
-    inside `mineru_sft_code.zip`; the recipe is `planned` and blocks with the documentation link.
+    inside `mineru_sft_code.zip`, which no public source carries (checked 2026-11-16; the
+    unmerged MetaX lesson's plain-`swift sft` stub is not adopted); the recipe is `planned`
+    and blocks with the documentation link.
 - `services/training_views.py` materialises the run's data view from the immutable dataset
   snapshot. Views reshape containers/prompts, never the target: `ms-swift-jsonl`,
   `paddleformers-messages`, `llamafactory-sharegpt`. Each run writes `dataset/view.json` (families,
@@ -104,6 +106,12 @@
   provisioning or training fails, and after registration. Profiles: `monkey`, `qwen`, `legacy` (Unlimited/DeepSeek), `dots`,
   `glm`, `paddle`. The manual rent endpoint still prepares only MonkeyOCRv2 and says so; SSH and
   the pins remain under Advanced, not in the main flow.
+- **Which Vast hosts an image can run on.** Every image is linux/amd64, so every Vast search asks
+  for `cpu_arch = amd64` and drops any arm64 offer it still gets (an absent `cpu_arch` with a Grace
+  name, GB10/GH200/GB200, counts as arm64); renting one is refused with a localised reason. An
+  unknown or zero `gpu_ram` never meets a VRAM minimum. `auto_training.PREBUILT_CUDA` records the
+  toolkit of each image; below CUDA 12.8 (`cloud_manager.BLACKWELL_FIRST_TOOLKIT`: torch 2.6+cu124
+  and paddle cuda12.6) the auto search excludes Blackwell (`compute_cap` ≥ 1000).
 - Official hyperparameters, per-model notes and the real-run log: `docs/guide/training.md`; the
   verbatim vendor commands: `docs/training-official-docs.md`.
 

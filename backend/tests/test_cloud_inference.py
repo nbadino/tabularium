@@ -280,7 +280,7 @@ def test_provider_refresh_persists_rate_and_live_state(monkeypatch):
         }]}},
         calls,
     )
-    items = cloud_manager.list_vast_instances("token")
+    items = cloud_manager.list_vast_instances("token", adopt=True)  # the cloud panel
     assert items[0]["is_running"] is True
     assert items[0]["cost_estimate"]["hourly_rate"] == 0.42
     with connect() as conn:
@@ -1106,7 +1106,7 @@ def test_vast_search_translates_hardware_filters(monkeypatch):
         min_inet_down=200, min_cuda=12.4, verified_only=True,
     )
     q = calls[0]["json"]["q"]
-    assert q["gpu_ram"] == {"gte": 24 * 1024.0}
+    assert q["gpu_ram"] == {"gte": 24_000.0}  # vast-cli `offers_mult`: GB × 1000
     assert q["cpu_ram"] == {"gte": 32_000.0}
     assert q["compute_cap"] == {"gte": 750}
     assert q["disk_space"] == {"gte": 60.0}
@@ -1976,3 +1976,79 @@ def test_liveness_probe_sees_an_sglang_server(monkeypatch):
     monkeypatch.setattr(cloud_manager, "_host_key_known", lambda *a: True)
     cloud_manager.provision_log("ssh5.vast.ai", 34567)
     assert "[s]glang[.]launch_server" in captured["cmd"][-1]
+
+
+# The offer a one-click PaddleOCR-VL training rented on 2026-11-16 (instance
+# 60902644): an NVIDIA DGX Spark, ARM Grace CPU with unified memory, sm_12.1.
+GB10_OFFER = {
+    "id": 60902644, "gpu_name": "GB10", "cpu_arch": "arm64", "gpu_ram": 0,
+    "compute_cap": 1210, "cuda_max_good": 13.0, "geolocation": "Oregon, US",
+}
+X86_OFFER = {
+    "id": 2, "gpu_name": "A100 SXM4", "cpu_arch": "amd64", "gpu_ram": 81_920,
+    "compute_cap": 800, "cuda_max_good": 12.8, "geolocation": "Oregon, US",
+}
+
+
+def test_vast_search_asks_for_x86_hosts_only(monkeypatch):
+    calls: list = []
+    _fake_vast_client(monkeypatch, {("PUT", "/search/asks/"): {"offers": []}}, calls)
+    cloud_manager.search_vast_offers("token")
+    assert calls[0]["json"]["q"]["cpu_arch"] == {"eq": "amd64"}
+
+
+def test_vast_search_drops_an_arm_host_the_provider_still_returns(monkeypatch):
+    """Defence in depth: the query filter is not trusted alone."""
+    no_arch = {**GB10_OFFER, "id": 3, "cpu_arch": None, "gpu_name": "GH200 SXM", "gpu_ram": 97_871}
+    monkeypatch.setattr(
+        cloud_manager, "_vast_call", lambda *a, **k: {"offers": [GB10_OFFER, X86_OFFER, no_arch]},
+    )
+    found = cloud_manager.search_vast_offers("key", min_compute_capability=8.0, min_cuda=12.6)
+    assert [o["id"] for o in found] == [2]
+    assert found[0]["cpu_arch"] == "amd64"
+
+
+def test_vast_search_never_lets_unknown_vram_meet_a_minimum(monkeypatch):
+    offers = [
+        {**X86_OFFER, "id": 1, "gpu_ram": 0},
+        {**X86_OFFER, "id": 2, "gpu_ram": None},
+        {**X86_OFFER, "id": 3, "gpu_ram": 24_000},
+        {**X86_OFFER, "id": 4, "gpu_ram": 49_140},
+    ]
+    monkeypatch.setattr(cloud_manager, "_vast_call", lambda *a, **k: {"offers": offers})
+    assert [o["id"] for o in cloud_manager.search_vast_offers("key", min_gpu_ram_gb=40)] == [4]
+    assert [o["id"] for o in cloud_manager.search_vast_offers("key", min_gpu_ram_gb=24)] == [3, 4]
+    assert [o["id"] for o in cloud_manager.search_vast_offers("key")] == [1, 2, 3, 4]
+
+
+def test_vast_search_can_exclude_blackwell(monkeypatch):
+    calls: list = []
+    offers = [
+        {**X86_OFFER, "id": 1, "compute_cap": 1200, "cuda_max_good": 13.0},
+        {**X86_OFFER, "id": 2, "compute_cap": 1000, "cuda_max_good": 13.0},
+        {**X86_OFFER, "id": 3, "compute_cap": 900},
+    ]
+    _fake_vast_client(monkeypatch, {("PUT", "/search/asks/"): {"offers": offers}}, calls)
+    found = cloud_manager.search_vast_offers("token", min_compute_capability=8.0, blackwell_ready=False)
+    assert calls[0]["json"]["q"]["compute_cap"] == {"gte": 800, "lt": 1000}
+    assert [o["id"] for o in found] == [3]
+    assert len(cloud_manager.search_vast_offers("token", min_compute_capability=8.0)) == 3
+
+
+def test_rent_refuses_an_arm_host_with_a_localised_reason(monkeypatch):
+    from app.services import i18n
+
+    calls = []
+    monkeypatch.setattr(cloud_manager, "_vast_call", lambda *a, **k: calls.append(a) or {"new_contract": 1})
+    with pytest.raises(ValueError, match="GB10.*arm64.*x86_64") as err:
+        cloud_manager.rent_vast_instance(
+            "key", GB10_OFFER["id"], image="ghcr.io/nbadino/tabularium-train-paddle:paddle-v1",
+            cpu_arch="arm64", gpu_name="GB10", cuda_max_good=13.0, disk_gb=120,
+        )
+    assert calls == []  # nothing was rented
+    assert "amd64 only" in i18n.localize_detail(str(err.value), "en")
+    assert "uniquement amd64" in i18n.localize_detail(str(err.value), "fr")
+    # Without `cpu_arch` a Grace superchip is still recognised by its name.
+    assert cloud_manager.offer_unfit_reason("", None, None, gpu_name="GH200 SXM")
+    assert cloud_manager.offer_unfit_reason("", 800, 12.8, cpu_arch="amd64", gpu_name="A100") is None
+    assert cloud_manager.offer_unfit_reason("", 890, 13.0, gpu_name="RTX 4090") is None

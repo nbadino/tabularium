@@ -11,6 +11,7 @@ import os
 import base64
 import hashlib
 import json
+import logging
 import re
 import shlex
 import signal
@@ -420,6 +421,13 @@ def reconcile_tunnel() -> None:
     _update_tunnel_job(int(row["id"]), "failed", str(last_error or "ripristino tunnel fallito"))
 
 
+# The provider-side verbs and the state each leaves the resource in: one table for
+# every caller, so a `delete` is recorded as the terminal `deleted`, never as a raw
+# verb that the job row would read as still open.
+CONTROL_STATES: dict[str, str] = {"start": "running", "stop": "stopped", "delete": "deleted"}
+VANISHED_REASON = "instance no longer listed by the provider"
+
+
 def track_cloud_resource(
     provider: str,
     remote_id: str | int,
@@ -428,8 +436,13 @@ def track_cloud_resource(
     hourly_rate: float | None = None,
     state: str = "running",
     metadata: dict[str, Any] | None = None,
+    adopt: bool = True,
 ) -> None:
-    """Registra una risorsa fatturabile senza conservare credenziali."""
+    """Record a billable resource without storing credentials.
+
+    `adopt=False` only refreshes a resource that already has a row, so a background
+    lookup never opens a row it will not close.
+    """
     remote_id = str(remote_id).strip()
     if not remote_id:
         return
@@ -444,7 +457,31 @@ def track_cloud_resource(
         state=state,
         cost=cost,
         terminal=terminal,
+        create=adopt,
     )
+
+
+def reconcile_cloud_resources() -> list[str]:
+    """Close the open Vast rows whose instance the provider no longer lists.
+
+    Runs at startup so a row left "running" by a destroy that was never recorded (or
+    by a restart in the middle of one) heals on the next deploy. An unreachable
+    provider or a missing key proves nothing, so the rows are left as they are.
+    """
+    from . import vault  # noqa: PLC0415
+
+    if not jobstore.cloud_open_ids("vast"):
+        return []
+    api_key = vault.get("vault:vast_api_key")
+    if not api_key:
+        return []
+    before = jobstore.cloud_open_ids("vast")
+    try:
+        list_vast_instances(api_key)
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("cloud resource reconcile skipped: %s", exc)
+        return []
+    return sorted(before - jobstore.cloud_open_ids("vast"))
 
 
 def cloud_resource_cost(provider: str, remote_id: str | int) -> dict[str, float] | None:
@@ -508,6 +545,49 @@ def vast_image_for(cuda_max_good: float | None, *, minimum: float = MIN_CUDA_FOR
             return image
     return VAST_CUDA_IMAGES[-1][1]
 
+# Every image Tabularium rents is linux/amd64 only: the registry manifests of
+# ghcr.io/nbadino/tabularium-train-* (all profiles) and of
+# paddlepaddle/paddle:3.3.0-gpu-cuda12.6-cudnn9.5 carry a single amd64 config
+# (checked 2026-11-16), and the runtime-provisioned recipes pip-install x86_64
+# wheels (flash-attn `linux_x86_64`, paddlepaddle-gpu, vLLM). An arm64 host
+# (NVIDIA GB10 / DGX Spark, a Grace-Hopper GH200) can never start them: a GB10
+# was rented for PaddleOCR-VL training and sat in `loading`. Vast's offers carry
+# `cpu_arch` ("amd64", "arm64") as a filterable field: vast-cli `search offers`
+# help and `offers_fields`.
+VAST_CPU_ARCH = "amd64"
+_X86_CPU_ARCHES = frozenset({"amd64", "x86_64", "x86-64", "x64"})
+# Defence in depth when the provider omits `cpu_arch`: NVIDIA's Grace superchips
+# (GB10, GH200, GB200, GB300) are named G<B|H><digits> and always have an ARM CPU.
+_GRACE_GPU_NAME = re.compile(r"^\s*G[BH]\d", re.IGNORECASE)
+
+# The first CUDA toolkit that can target Blackwell (sm_100, sm_120, sm_121) is
+# 12.8: PyTorch added Blackwell in 2.7 with its cu128 wheels, and PaddleOCR-VL
+# sends Blackwell users to a cu129 build and a separate `-sm120` image. An image
+# built on an older toolkit (torch 2.6.0+cu124, paddle cuda12.6) has no kernels
+# for those GPUs, whatever the host driver supports.
+BLACKWELL_FIRST_TOOLKIT = 12.8
+BLACKWELL_COMPUTE_CAP = 1000  # Vast encodes 10.0 as 1000
+
+# `gpu_ram`/`cpu_ram` are MB in Vast's catalogue; the official CLI converts GB
+# with a factor of 1000 (`offers_mult` in vast-cli). The query and the local
+# check below share it, so the two never disagree on a threshold.
+VAST_MB_PER_GB = 1000.0
+
+
+def non_x86_cpu_arch(cpu_arch: Any, gpu_name: Any = None) -> str | None:
+    """The host's CPU architecture when it is not x86_64, else `None`.
+
+    `cpu_arch` comes from the offer; when the provider leaves it out, a Grace
+    superchip name still betrays an ARM host.
+    """
+    arch = str(cpu_arch or "").strip().lower()
+    if arch:
+        return None if arch in _X86_CPU_ARCHES else arch
+    if _GRACE_GPU_NAME.match(str(gpu_name or "")):
+        return "arm64"
+    return None
+
+
 VAST_API_BASE = "https://console.vast.ai/api/v0"
 # Vast.ai sta migrando per rotte, non in blocco: al 2026-09 solo la collection
 # delle istanze è passata a v1 (la v0 risponde 410 deprecated_endpoint), mentre
@@ -537,8 +617,13 @@ def search_vast_offers(
     min_inet_down: float | None = None,
     min_cuda: float | None = None,
     verified_only: bool = False,
+    blackwell_ready: bool = True,
 ) -> list[dict[str, Any]]:
-    """Cerca offerte noleggiabili, senza creare alcuna istanza."""
+    """Cerca offerte noleggiabili, senza creare alcuna istanza.
+
+    Only x86_64 hosts are returned (see `VAST_CPU_ARCH`); `blackwell_ready=False`
+    also drops Blackwell GPUs, for an image built before `BLACKWELL_FIRST_TOOLKIT`.
+    """
     api_key = api_key.strip()
     if not api_key:
         raise ValueError("API Key di Vast.ai non specificata.")
@@ -557,6 +642,7 @@ def search_vast_offers(
         "limit": max(1, min(50, int(limit))),
         # Il prezzo mostrato include il costo del disco richiesto.
         "allocated_storage": float(max(5, int(disk_gb))),
+        "cpu_arch": {"eq": VAST_CPU_ARCH},
     }
     if gpu_name.strip():
         query["gpu_name"] = {"eq": gpu_name.strip()}
@@ -564,12 +650,14 @@ def search_vast_offers(
         query["dph_total"] = {"lte": float(max_dph)}
     if min_gpu_ram_gb:
         # `gpu_ram` è in MB nel catalogo del provider.
-        query["gpu_ram"] = {"gte": float(min_gpu_ram_gb) * 1024.0}
+        query["gpu_ram"] = {"gte": float(min_gpu_ram_gb) * VAST_MB_PER_GB}
     if min_cpu_ram_gb:
-        query["cpu_ram"] = {"gte": float(min_cpu_ram_gb) * 1000.0}
+        query["cpu_ram"] = {"gte": float(min_cpu_ram_gb) * VAST_MB_PER_GB}
     if min_compute_capability:
         # Vast's API/CLI encode 7.5 as 750 (not 7.5).
         query["compute_cap"] = {"gte": round(float(min_compute_capability) * 100)}
+    if not blackwell_ready:
+        query.setdefault("compute_cap", {})["lt"] = BLACKWELL_COMPUTE_CAP
     if disk_gb:
         query["disk_space"] = {"gte": float(disk_gb)}
     if min_inet_down:
@@ -616,6 +704,7 @@ def search_vast_offers(
             "disk_space": offer.get("disk_space"),
             "inet_down": offer.get("inet_down"),
             "cuda_max_good": offer.get("cuda_max_good"),
+            "cpu_arch": offer.get("cpu_arch"),
         })
     # Vast's search API cannot express a conditional rule such as
     # "Blackwell needs CUDA 12.9, other supported cards need 12.8". Apply that
@@ -626,6 +715,17 @@ def search_vast_offers(
             continue
         if _hf_blocked_location(item.get("location")):
             continue
+        if non_x86_cpu_arch(item.get("cpu_arch"), item.get("gpu_name")):
+            continue
+        if min_gpu_ram_gb:
+            # The rented GB10 (unified memory) reported `gpu_ram` 0: an unknown or
+            # zero VRAM never satisfies a VRAM requirement.
+            try:
+                vram = float(item.get("gpu_ram") or 0)
+            except (TypeError, ValueError):
+                vram = 0.0
+            if vram < float(min_gpu_ram_gb) * VAST_MB_PER_GB:
+                continue
         cap = item.get("compute_cap")
         cuda = item.get("cuda_max_good")
         required_cuda = float(min_cuda or 0)
@@ -635,6 +735,8 @@ def search_vast_offers(
             if cuda is not None and float(cuda) < required_cuda:
                 continue
             if min_compute_capability and cap is not None and float(cap) < float(min_compute_capability) * 100:
+                continue
+            if not blackwell_ready and (cap is None or float(cap) >= BLACKWELL_COMPUTE_CAP):
                 continue
         except (TypeError, ValueError):
             continue
@@ -653,6 +755,7 @@ def _hf_blocked_location(location: Any) -> bool:
 
 def offer_unfit_reason(
     adapter_id: str, compute_cap: Any, cuda_max_good: Any, location: Any = None,
+    *, cpu_arch: Any = None, gpu_name: Any = None,
 ) -> str | None:
     """Why an offer cannot host the model's serving recipe, or `None`.
 
@@ -661,6 +764,13 @@ def offer_unfit_reason(
     model's requirements, or before the requirements had loaded, once rented a
     Quadro RTX 6000 (sm_7.5) for Unlimited-OCR 2, which needs sm_8.0: refuse it.
     """
+    arch = non_x86_cpu_arch(cpu_arch, gpu_name)
+    if arch:
+        from . import i18n  # noqa: PLC0415
+
+        # Italian, the source language of HTTP details: the reverse adapter
+        # renders it in the reader's language.
+        return i18n.msg("vast_offer_not_x86", i18n.SOURCE, gpu=str(gpu_name or "GPU"), arch=arch)
     if _hf_blocked_location(location):
         return (
             f"questa GPU è in Cina ({location}): da lì Hugging Face non è raggiungibile e i pesi del "
@@ -702,6 +812,8 @@ def rent_vast_instance(
     cuda_max_good: float | None = None,
     compute_cap: float | None = None,
     location: str | None = None,
+    cpu_arch: str | None = None,
+    gpu_name: str | None = None,
     adapter_id: str = "",
     disk_gb: int = 40,
     model: str = reference.HF_REPO,
@@ -717,7 +829,9 @@ def rent_vast_instance(
     token = api_key.strip()
     if not token:
         raise ValueError("API Key di Vast.ai non specificata.")
-    unfit = offer_unfit_reason(adapter_id, compute_cap, cuda_max_good, location)
+    unfit = offer_unfit_reason(
+        adapter_id, compute_cap, cuda_max_good, location, cpu_arch=cpu_arch, gpu_name=gpu_name,
+    )
     if unfit:
         raise ValueError(unfit)
     if int(disk_gb) < 10:
@@ -788,13 +902,23 @@ def rent_vast_instance(
     }
 
 
-def list_vast_instances(api_key: str, *, owner_id: int | None = None) -> list[dict[str, Any]]:
-    """Recupera l'elenco delle istanze noleggiate dall'account Vast.ai."""
+def list_vast_instances(
+    api_key: str, *, owner_id: int | None = None, adopt: bool = False,
+) -> list[dict[str, Any]]:
+    """List the instances rented by the Vast.ai account.
+
+    Only the cloud panel (`adopt=True`) records an instance that has no row yet: it
+    lists the account again on every refresh, so a row it opens is closed when the
+    instance disappears. A background lookup (auto-training polling and destroy,
+    startup reconcile) refreshes and closes the known rows but adopts nothing: an
+    instance rented outside Tabularium would otherwise stay "running" forever after
+    a one-off listing (prod row 43, 2026-11-16).
+    """
     api_key = api_key.strip()
     if not api_key:
         raise ValueError("API Key di Vast.ai non specificata.")
 
-    instances = _fetch_vast_instances(api_key)
+    instances, complete = _fetch_vast_inventory(api_key)
     out = []
     for inst in instances:
         item = _normalize_vast_instance(inst)
@@ -811,8 +935,16 @@ def list_vast_instances(api_key: str, *, owner_id: int | None = None) -> list[di
             track_cloud_resource(
                 "vast", resource_id, owner_id=owner_id,
                 hourly_rate=item["dph_total"], state=state,
-                metadata={"provider_status": status},
+                metadata={"provider_status": status}, adopt=adopt,
             )
+    if complete:
+        # The account's whole inventory: an open row for an instance Vast no longer
+        # lists belongs to a resource destroyed outside this process (or before a
+        # restart), and stays "running" forever unless it is closed here.
+        jobstore.cloud_close_missing(
+            "vast", {str(item["id"]) for item in out if item["id"] is not None},
+            reason=VANISHED_REASON,
+        )
     return _with_cost("vast", out)
 
 
@@ -832,6 +964,14 @@ def _vast_instances_payload(data: Any) -> tuple[list[dict[str, Any]], str | None
 
 def _fetch_vast_instances(api_key: str, *, max_pages: int = 10) -> list[dict[str, Any]]:
     """Elenco istanze dalla rotta v1 paginata, con fallback alla v0 se assente."""
+    return _fetch_vast_inventory(api_key, max_pages=max_pages)[0]
+
+
+def _fetch_vast_inventory(
+    api_key: str, *, max_pages: int = 10,
+) -> tuple[list[dict[str, Any]], bool]:
+    """`(instances, complete)`: `complete` is False when pages were left unread, so
+    an instance missing from the list is not proof that it no longer exists."""
     collected: list[dict[str, Any]] = []
     token: str | None = None
     for _ in range(max_pages):
@@ -849,15 +989,17 @@ def _fetch_vast_instances(api_key: str, *, max_pages: int = 10) -> list[dict[str
             # per gli account non ancora migrati.
             if collected:
                 raise
-            return _vast_instances_payload(_vast_call(api_key, "GET", "/instances/", timeout=10.0))[0]
+            return _vast_instances_payload(_vast_call(api_key, "GET", "/instances/", timeout=10.0))[0], True
         page, token = _vast_instances_payload(data)
         collected.extend(page)
         if not token or not page:
-            break
-    return collected
+            return collected, True
+    return collected, False
 
 
-def control_vast_instance(api_key: str, instance_id: int, action: str) -> dict[str, Any]:
+def control_vast_instance(
+    api_key: str, instance_id: int, action: str, *, owner_id: int | None = None,
+) -> dict[str, Any]:
     """Avvia ('start'), mette in pausa ('stop') o distrugge ('delete') un'istanza Vast.ai."""
     api_key = api_key.strip()
     if not api_key:
@@ -876,7 +1018,8 @@ def control_vast_instance(api_key: str, instance_id: int, action: str) -> dict[s
 
         if resp.status_code not in (200, 204):
             raise RuntimeError(f"Operazione fallita su Vast.ai ({resp.status_code}): {resp.text}")
-        return {"ok": True, "action": action, "instance_id": instance_id}
+    track_cloud_resource("vast", instance_id, owner_id=owner_id, state=CONTROL_STATES[action])
+    return {"ok": True, "action": action, "instance_id": instance_id}
 
 
 # --- VAST.AI: PRIMA CONFIGURAZIONE (account, chiave SSH, host key) -------------
@@ -2251,7 +2394,9 @@ def create_runpod_pod(
     return {"ok": True, "pod": data}
 
 
-def control_runpod_pod(api_key: str, pod_id: str, action: str) -> dict[str, Any]:
+def control_runpod_pod(
+    api_key: str, pod_id: str, action: str, *, owner_id: int | None = None,
+) -> dict[str, Any]:
     """Avvia ('start'), mette in pausa ('stop') o distrugge ('delete') un Pod RunPod."""
     api_key = api_key.strip()
     if not api_key:
@@ -2273,4 +2418,5 @@ def control_runpod_pod(api_key: str, pod_id: str, action: str) -> dict[str, Any]
 
         if resp.status_code not in (200, 204):
             raise RuntimeError(f"Operazione fallita su RunPod ({resp.status_code}): {resp.text}")
-        return {"ok": True, "action": action, "pod_id": pod_id}
+    track_cloud_resource("runpod", pod_id, owner_id=owner_id, state=CONTROL_STATES[action])
+    return {"ok": True, "action": action, "pod_id": pod_id}
