@@ -63,11 +63,12 @@ SPEC = ModelSpec(
     )),
     train=Declared({
         "maturity": "planned",
-        # Il vendor *vieta* `swift sft`: la ricetta ufficiale è il wrapper
-        # `python run_mineru.py sft --config configs/sft/sft_table_rec.yaml`,
-        # distribuito in `mineru_sft_code.zip`. Il config è dentro lo zip e il
-        # suo schema non è pubblico, quindi Tabularium non può generarlo in
-        # modo fedele: la ricetta resta `planned` e la UI porta alla doc.
+        # The vendor forbids `swift sft`: the official recipe is the wrapper
+        # `python run_mineru.py sft --config configs/sft/sft_table_rec.yaml`, shipped in
+        # `mineru_sft_code.zip`, which is not published anywhere we can fetch (checked
+        # 2026-11-16, evidence in official_notes). Tabularium cannot generate a faithful
+        # script without that bundle, so the recipe stays `planned` and the UI links
+        # to the lesson.
         "toolchain": "mineru-sft",
         "data_view": "ms-swift-jsonl",
         "families": RECOGNITION_FAMILIES,
@@ -78,13 +79,31 @@ SPEC = ModelSpec(
             FAMILY_FORMULA: "\nFormula Recognition:",
         },
         "official_notes": (
-            "La lezione ufficiale dice esplicitamente di **non** usare `swift sft`, ma "
-            "`python run_mineru.py sft --config configs/sft/sft_table_rec.yaml`: il wrapper carica "
-            "`mineru_ext` con template propri.",
-            "Il codice è `mineru_sft_code.zip`, allegato alla lezione e non versionato: `configs/sft/sft_table_rec.yaml` "
-            "sta dentro lo zip, quindi il generatore non può produrre uno script fedele senza quel bundle.",
-            "I prompt di training ufficiali hanno il newline iniziale: `\\nTable Recognition:`, `\\nFormula Recognition:`, "
-            "`\\nText Recognition:`.",
+            "The official lesson explicitly says **not** to use `swift sft` but "
+            "`python run_mineru.py sft --config configs/sft/sft_table_rec.yaml`: the wrapper loads "
+            "`mineru_ext` with its own templates and training logic.",
+            "The code is `mineru_sft_code.zip`, attached to the lesson and not versioned. Checked on "
+            "2026-11-16: the opendatalab/mineru-tutorials tree at 761b4a9895 holds only the lesson "
+            "Markdown and PDF, the repository has no releases, and GitHub code search finds no "
+            "`run_mineru.py` with an `sft` command, no `sft_table_rec.yaml` and no `mineru_ext` "
+            "anywhere. The lesson points to the camp platform (heywhale.com, enrolment required) for "
+            "the bundle.",
+            "The only public `run_mineru.py` is in the unmerged MetaX edition of the lesson "
+            "(opendatalab/mineru-tutorials#1, head c0d209c2): it says the official wrapper may add "
+            "`mineru_ext` logic and replaces it with a stub that calls plain `swift sft` "
+            "(`model_type`/`template` `qwen2_vl`, LoRA rank 8, `MAX_PIXELS` 50176, `max_steps: 1` "
+            "smoke test). It contradicts the main lesson and is a smoke test, so it is not adopted "
+            "as the recipe.",
+            "The lesson trains `MinerU2.5-2509-1.2B` (AGPL-3.0). The served checkpoint "
+            "`MinerU2.5-Pro-2605-1.2B` (Apache-2.0) has the same `Qwen2VLForConditionalGeneration` "
+            "architecture, but whether the bundle supports it is unverified.",
+            "Table targets in both lessons are HTML (`<table><tr><td>…`) after "
+            "`<image>\\nTable Recognition:`, in ms-swift `messages` + `images` JSONL; the demo "
+            "datasets that would fix the exact schema are inside the zip.",
+            "To unblock: supply `mineru_sft_code.zip` (from the lesson page or the camp platform) so "
+            "it can be declared as an external checkout with its checksum and license.",
+            "The official training prompts have the leading newline: `\\nTable Recognition:`, "
+            "`\\nFormula Recognition:`, `\\nText Recognition:`.",
         ),
     }),
     labels=Declared({**MINERU_LAYOUT_LABELS, **MINERU_NATIVE_LABELS}),

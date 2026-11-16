@@ -26,7 +26,9 @@
   - `paddleformers` — PaddleOCR-VL, `paddleformers-cli train <config> key=value`, full **and**
     LoRA; the `messages` dataset is the same shape as ms-swift.
   - `mineru-sft` — MinerU2.5: its lesson explicitly forbids `swift sft` and ships the config only
-    inside `mineru_sft_code.zip`; the recipe is `planned` and blocks with the documentation link.
+    inside `mineru_sft_code.zip`, which no public source carries (checked 2026-11-16; the
+    unmerged MetaX lesson's plain-`swift sft` stub is not adopted); the recipe is `planned`
+    and blocks with the documentation link.
 - `services/training_views.py` materialises the run's data view from the immutable dataset
   snapshot. Views reshape containers/prompts, never the target: `ms-swift-jsonl`,
   `paddleformers-messages`, `llamafactory-sharegpt`. Each run writes `dataset/view.json` (families,

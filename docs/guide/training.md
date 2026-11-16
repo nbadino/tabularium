@@ -138,8 +138,20 @@ Source: [MinerU lesson 04](https://github.com/opendatalab/mineru-tutorials/tree/
   `python run_mineru.py sft --config configs/sft/sft_table_rec.yaml`. The code
   (`mineru_sft_code.zip`) and that YAML are attached to the lesson, not
   versioned in a repository.
+- Checked again on 2026-11-16: the lesson repository (tree at `761b4a9895`) has
+  no zip and no releases, and no public repository versions `run_mineru.py sft`,
+  `sft_table_rec.yaml` or `mineru_ext`. The bundle is handed out on the camp
+  platform (heywhale.com, enrolment required).
+- The unmerged MetaX edition of the lesson
+  ([opendatalab/mineru-tutorials#1](https://github.com/opendatalab/mineru-tutorials/pull/1))
+  replaces the wrapper with a stub around plain `swift sft` (`qwen2_vl`, LoRA
+  r8, one-step smoke test). It contradicts the main lesson, so Tabularium does
+  not adopt it.
+- The lesson trains `MinerU2.5-2509-1.2B`; whether the bundle supports the Pro
+  2605 checkpoint Tabularium serves is unverified (same Qwen2-VL architecture).
 - Tabularium therefore does not generate a script: the recipe is `planned`, the
-  UI links to the lesson and blocks the start. The data view and the official
+  UI links to the lesson and blocks the start. To unblock it, supply
+  `mineru_sft_code.zip`; it can then be declared as an external checkout. The data view and the official
   prompts (`\nTable Recognition:`, etc.) are ready for when the bundle can be
   declared as a checkout.
 
