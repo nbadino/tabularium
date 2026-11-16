@@ -32,6 +32,9 @@ def project_work(conn, project_id: int, user: dict, page_id: int | None = None) 
                     can_submit=uid is not None and uid == row['assignee_id'] and row['reviewer_id'] is not None and row['state'] in ('annotation', 'changes_requested'),
                     can_review=uid is not None and uid == row['reviewer_id'] and uid != row['submitted_by'] and uid != row['assignee_id'] and row['state'] == 'pending',
                     changed_since_submission=row['submitted_revision'] is not None and row['annotation_revision'] != row['submitted_revision'])
+        # Reopening an approval is the reviewer's own call, or a manager's.
+        item['can_reopen'] = uid is not None and row['state'] == 'approved' and (
+            uid == row['reviewer_id'] or can_assign)
         out[row['page_id']] = item
     return out
 
@@ -44,7 +47,8 @@ def get_work(conn, page_id: int, user: dict) -> dict:
     return item or dict(page_id=page_id, assignee_id=None, reviewer_id=None, assignee_name=None,
                        reviewer_name=None, state='annotation', version=0, note='', submitted_revision=None,
                        annotation_revision=page['annotation_revision'], changed_since_submission=False,
-                       can_assign=managed(conn, page['project_id'], user), can_submit=False, can_review=False)
+                       can_assign=managed(conn, page['project_id'], user), can_submit=False, can_review=False,
+                       can_reopen=False)
 
 
 def check_version(item: dict, expected: int, lang: str):
@@ -130,4 +134,25 @@ def review(conn, page_id: int, expected: int, revision: int, decision: str, note
     )
     audit.record(conn, user, 'page.reviewed', resource_type='page', resource_id=page_id,
                  payload={'decision': decision, 'revision': revision, 'note': note.strip(), **accepted})
+    return get_work(conn, page_id, user)
+
+
+def reopen(conn, page_id: int, expected: int, note: str, user: dict, lang: str):
+    """Send an approved page back to its annotator: the same state as a review that asked
+    for changes, so the normal submit → review loop applies again."""
+    conn.execute('BEGIN IMMEDIATE')
+    item = get_work(conn, page_id, user)
+    check_version(item, expected, lang)
+    if item['state'] != 'approved':
+        fail('work_not_approved', lang)
+    if not item['can_reopen']:
+        fail('work_reopen_forbidden', lang, 403)
+    note = note.strip()
+    if not note:
+        fail('work_note_required', lang, 422)
+    workstore.add_review(conn, page_id, reviewer=user["username"], passed=False, note=note)
+    workstore.settle_review(conn, page_id, state='changes_requested', note=note, approved_revision=None)
+    audit.record(conn, user, 'page.reopened', resource_type='page', resource_id=page_id,
+                 payload={'revision': item['annotation_revision'], 'note': note,
+                          'approved_revision': item.get('approved_revision')})
     return get_work(conn, page_id, user)

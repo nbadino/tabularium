@@ -34,6 +34,10 @@ class ReviewIn(SubmissionIn):
     decision: Literal['approved', 'changes_requested']
     note: str = Field(default='', max_length=4000)
 
+class ReopenIn(BaseModel):
+    expected_version: int = Field(ge=0)
+    note: str = Field(default='', max_length=4000)
+
 @router.get('/api/projects/{project_id}/work-members')
 def work_members(project_id: int, user: dict = Depends(require_resource())):
     with connect() as conn:
@@ -63,4 +67,11 @@ def review(page_id: int, payload: ReviewIn, request: Request, user: dict = Depen
     with connect() as conn:
         out = work.review(conn, page_id, payload.expected_version, payload.annotation_revision, payload.decision,
                            payload.note, user, parse_lang(request.headers.get('accept-language')))
+    return notify(out, user)
+
+@router.post('/api/pages/{page_id}/work/reopen')
+def reopen(page_id: int, payload: ReopenIn, request: Request, user: dict = Depends(require_resource(write=True))):
+    with connect() as conn:
+        out = work.reopen(conn, page_id, payload.expected_version, payload.note, user,
+                          parse_lang(request.headers.get('accept-language')))
     return notify(out, user)

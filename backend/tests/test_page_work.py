@@ -119,3 +119,69 @@ def test_stale_block_and_table_writes_roll_back_without_overwriting(team):
         assert c.get(block+'/table').json()['grid'] is None
         assert c.put(block+'/table?expected_revision=2',json=grid).status_code==200
         assert c.get(block).json()['annotation_revision']==3
+
+def approve(client, team):
+    assign(client, team); submit(client, team)
+    login(client, 'reviewer_work')
+    response = client.post(f"/api/pages/{team['page']}/work/review",
+                           json={'expected_version':2,'annotation_revision':0,'decision':'approved'})
+    assert response.status_code == 200, response.text
+    assert response.json()['state'] == 'approved'
+    return response.json()
+
+def test_reviewer_or_manager_reopens_an_approved_page_for_correction(team):
+    with TestClient(app) as c:
+        work = approve(c, team)
+        url = f"/api/pages/{team['page']}/work/reopen"
+        assert work['can_reopen'] is True
+        # A note is required, and the version seen must be the current one.
+        assert c.post(url, json={'expected_version':work['version'],'note':'  '}).status_code == 422
+        assert c.post(url, json={'expected_version':work['version']-1,'note':'Riga 12'}).status_code == 409
+        # The annotator and a reader cannot reopen someone else's approval.
+        for who in ('annotator_work', 'reader_work'):
+            login(c, who)
+            assert c.get(f"/api/pages/{team['page']}/work").json()['can_reopen'] is False
+            assert c.post(url, json={'expected_version':work['version'],'note':'Riga 12'}).status_code == 403
+        login(c, 'reviewer_work')
+        response = c.post(url, json={'expected_version':work['version'],'note':'Riga 12: tonnellaggio errato'})
+        assert response.status_code == 200, response.text
+        reopened = response.json()
+        assert reopened['state'] == 'changes_requested'
+        assert reopened['note'] == 'Riga 12: tonnellaggio errato'
+        assert reopened['can_reopen'] is False
+        # Not approved any more: a second reopen is refused.
+        assert c.post(url, json={'expected_version':reopened['version'],'note':'again'}).status_code == 409
+        assert c.get(f"/api/projects/{team['pid']}/pages").json()['items'][0]['status'] == 'review'
+        with connect() as conn:
+            reviews = conn.execute('SELECT reviewer,status,notes FROM page_reviews WHERE page_id=? ORDER BY id',
+                                   (team['page'],)).fetchall()
+            events = [r['action'] for r in conn.execute(
+                "SELECT action FROM audit_events WHERE resource_type='page' AND resource_id=? ORDER BY id", (team['page'],))]
+        assert [tuple(r) for r in reviews][-1] == ('reviewer_work', 'fail', 'Riga 12: tonnellaggio errato')
+        assert events.count('page.reopened') == 1
+        assert 'page.assigned' in events and events.count('page.assigned') == 1
+        # The assignee corrects and resubmits; the reviewer approves again.
+        login(c, 'annotator_work')
+        assert c.get(f"/api/pages/{team['page']}/work").json()['can_submit'] is True
+        response = c.post(f"/api/pages/{team['page']}/work/submit",
+                          json={'expected_version':reopened['version'],'annotation_revision':reopened['annotation_revision']})
+        assert response.status_code == 200, response.text
+        login(c, 'reviewer_work')
+        response = c.post(f"/api/pages/{team['page']}/work/review",
+                          json={'expected_version':response.json()['version'],'annotation_revision':reopened['annotation_revision'],'decision':'approved'})
+        assert response.status_code == 200, response.text
+        assert response.json()['state'] == 'approved'
+
+def test_project_manager_can_reopen_and_pending_pages_cannot(team):
+    with TestClient(app) as c:
+        assign(c, team); pending = submit(c, team)
+        url = f"/api/pages/{team['page']}/work/reopen"
+        login(c, 'owner_work')
+        assert c.post(url, json={'expected_version':pending['version'],'note':'x'}).status_code == 409
+        login(c, 'reviewer_work')
+        approved = c.post(f"/api/pages/{team['page']}/work/review",
+                          json={'expected_version':2,'annotation_revision':0,'decision':'approved'}).json()
+        login(c, 'owner_work')
+        response = c.post(url, json={'expected_version':approved['version'],'note':'Controllo finale'})
+        assert response.status_code == 200, response.text
+        assert response.json()['state'] == 'changes_requested'

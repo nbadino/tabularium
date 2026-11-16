@@ -32,6 +32,8 @@ _IT: dict[str, str] = {
     "work_reviewer_only": "Solo il revisore assegnato può decidere su una pagina inviata da un’altra persona.",
     "work_revision_changed": "La pagina è cambiata. Ricarica e controlla la versione aggiornata.",
     "work_note_required": "Indica cosa deve correggere l’annotatore.",
+    "work_not_approved": "Solo una pagina approvata può essere riaperta per correzioni.",
+    "work_reopen_forbidden": "Solo il revisore della pagina o chi gestisce il progetto può riaprirla.",
     "work_use_review": "Questa pagina segue una revisione assegnata. Usa Invia al revisore o Revisiona nello Studio.",
 
     # --- dettagli API -------------------------------------------------------
@@ -369,6 +371,8 @@ _EN: dict[str, str] = {
     "work_reviewer_only": "Only the assigned reviewer can decide on a page submitted by another person.",
     "work_revision_changed": "The page changed. Reload and check the latest version.",
     "work_note_required": "Describe what the annotator needs to correct.",
+    "work_not_approved": "Only an approved page can be reopened for correction.",
+    "work_reopen_forbidden": "Only the page's reviewer or a project manager can reopen it.",
     "work_use_review": "This page has an assigned review. Use Submit for review or Review in the Studio.",
 
     "page_not_found": "page not found",
@@ -693,6 +697,8 @@ _FR: dict[str, str] = {
     "work_reviewer_only": "Seul le réviseur affecté peut statuer sur une page soumise par une autre personne.",
     "work_revision_changed": "La page a changé. Rechargez et vérifiez la dernière version.",
     "work_note_required": "Indiquez les corrections demandées à l’annotateur.",
+    "work_not_approved": "Seule une page approuvée peut être rouverte pour correction.",
+    "work_reopen_forbidden": "Seul le réviseur de la page ou un gestionnaire du projet peut la rouvrir.",
     "work_use_review": "Cette page suit une révision affectée. Utilisez Soumettre ou Réviser dans le Studio.",
 
     "page_not_found": "page introuvable",

@@ -45,6 +45,9 @@ export const it = {
     "reviewFor": "Revisione: {name}",
     "reloadTitle": "Caricare la versione del server?",
     "reloadHint": "Le modifiche locali non salvate verranno scartate.",
+    "reopen": "Riapri per correzioni",
+    "reopenNote": "Cosa va corretto",
+    "reopenHint": "Obbligatoria. La pagina torna all’annotatore come «Da correggere» e dovrà essere approvata di nuovo.",
     "errorLoad": "Impossibile caricare l’assegnazione. Riapri il pannello per riprovare.",
     "state": {
         "annotation": "In annotazione",

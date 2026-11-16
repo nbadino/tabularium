@@ -7,6 +7,11 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **An approved page can be reopened for correction.** The page's reviewer or a project manager
+  sends it back from the page work panel with a required note (`POST /api/pages/{id}/work/reopen`):
+  it moves to *Changes requested*, the annotator corrects and resubmits, and the reviewer approves
+  again. The reopening is recorded in the audit log (`page.reopened`) and in the page's review
+  history. Before, the only way was to reassign the page to someone else and back.
 - **Xiaomi-OCR-0 can be fine-tuned (experimental).** Xiaomi publishes no training code, but the
   checkpoint is a stock Qwen3.5, which ms-swift supports as `qwen3_5` since 4.0.0. The recipe
   follows ms-swift's Qwen3.5 Best Practice (LoRA 1e-4 r8/α32, full 1e-5), trains text, tables and
