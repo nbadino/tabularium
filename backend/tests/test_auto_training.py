@@ -88,8 +88,8 @@ def test_run_rents_provisions_and_starts_training(monkeypatch):
     monkeypatch.setattr(cloud_manager, "rent_vast_instance", fake_rent)
     monkeypatch.setattr(cloud_manager, "track_cloud_resource", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        cloud_manager, "list_vast_instances",
-        lambda *args, **kwargs: [{"id": 77, "is_running": True, "ssh_host": "gpu.example", "ssh_port": 2222}],
+        cloud_manager, "observe_vast_instance",
+        lambda *args, **kwargs: {"id": 77, "is_running": True, "ssh_host": "gpu.example", "ssh_port": 2222},
     )
     monkeypatch.setattr(cloud_manager, "pin_ssh_host_key", lambda *args, **kwargs: {"ok": True})
     monkeypatch.setattr(cloud_manager, "check_ssh_access", lambda *args, **kwargs: {"ok": True})
@@ -159,8 +159,8 @@ def test_monkey_run_uses_the_prebuilt_image(monkeypatch):
     monkeypatch.setattr(cloud_manager, "rent_vast_instance", fake_rent)
     monkeypatch.setattr(cloud_manager, "track_cloud_resource", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        cloud_manager, "list_vast_instances",
-        lambda *args, **kwargs: [{"id": 77, "is_running": True, "ssh_host": "gpu.example", "ssh_port": 2222}],
+        cloud_manager, "observe_vast_instance",
+        lambda *args, **kwargs: {"id": 77, "is_running": True, "ssh_host": "gpu.example", "ssh_port": 2222},
     )
     monkeypatch.setattr(cloud_manager, "pin_ssh_host_key", lambda *args, **kwargs: {"ok": True})
     monkeypatch.setattr(cloud_manager, "check_ssh_access", lambda *args, **kwargs: {"ok": True})

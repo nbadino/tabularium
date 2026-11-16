@@ -33,6 +33,18 @@ Notable changes to Tabularium. The format follows
   in flight, each worker with its own client; the stop rule still counts the model's failures.
 
 ### Fixed
+- **A Vast listing error is never read as an empty account.** Vast's v0 instance collection
+  (`GET /api/v0/instances/`, with or without `?owner=me`) now answers 410 Gone with no `instances`
+  key. Tabularium already listed through the paginated `GET /api/v1/instances/` (vast-cli
+  `show_instances`), but fell back to the gone v0 collection whenever v1 failed, and read any body
+  without a recognised list as "no instances": a complete, empty inventory that closes every open
+  `cloud_resource` row and fails every running auto-training job. Now the listing reads only
+  vast-cli's shape (`instances`, `next_token`, `total_instances`, ordered by id), has no v0
+  fallback, and raises on any HTTP error or other body; fewer rows than `total_instances` is an
+  incomplete inventory that closes nothing. Auto-training checks its own GPU with the
+  per-instance `GET /api/v0/instances/{id}/?owner=me` (vast-cli `show_instance`): only
+  `instances: null` means gone, and a failed lookup leaves the job as it is. The cloud panel's
+  instance detail no longer records a "running" cost row for an instance Vast does not have.
 - **A background Vast lookup no longer opens a cost row for instances Tabularium did not rent.**
   The end of a one-click training confirms the GPU deletion with a full account listing, and that
   listing recorded every instance it saw, so an instance rented outside Tabularium got a
