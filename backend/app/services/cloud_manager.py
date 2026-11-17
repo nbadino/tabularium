@@ -611,6 +611,21 @@ VAST_API_BASE = "https://console.vast.ai/api/v0"
 VAST_API_V1 = "https://console.vast.ai/api/v1"
 
 
+# Vast.ai's datacenter ("Secure Cloud") hosts. The search filter is `datacenter`
+# (official vast-cli, `search offers`: "show only datacenter offers"); each offer
+# carries `hosting_type`, 1 for a datacenter host and 0 for a community one, as the
+# live `/search/asks/` answer shows with the filter on and off.
+VAST_HOSTING_DATACENTER = 1
+
+
+def is_datacenter_offer(hosting_type: Any) -> bool:
+    """True only for an offer the provider labels datacenter; unknown is not."""
+    try:
+        return int(hosting_type) == VAST_HOSTING_DATACENTER
+    except (TypeError, ValueError):
+        return False
+
+
 class VastDeprecatedEndpoint(RuntimeError):
     """Rotta rimossa dal provider: chi la chiama può ricadere sull'alternativa."""
 
@@ -633,11 +648,14 @@ def search_vast_offers(
     min_cuda: float | None = None,
     verified_only: bool = False,
     blackwell_ready: bool = True,
+    datacenter_only: bool = False,
 ) -> list[dict[str, Any]]:
     """Cerca offerte noleggiabili, senza creare alcuna istanza.
 
     Only x86_64 hosts are returned (see `VAST_CPU_ARCH`); `blackwell_ready=False`
     also drops Blackwell GPUs, for an image built before `BLACKWELL_FIRST_TOOLKIT`.
+    `datacenter_only=True` asks the provider for datacenter hosts only and drops,
+    locally, any offer whose `hosting_type` is not datacenter (unknown included).
     """
     api_key = api_key.strip()
     if not api_key:
@@ -681,6 +699,8 @@ def search_vast_offers(
         query["cuda_max_good"] = {"gte": float(min_cuda)}
     if verified_only:
         query["verified"] = {"eq": True}
+    if datacenter_only:
+        query["datacenter"] = {"eq": True}
     query["type"] = "bid" if instance_type == "interruptible" else "on-demand"
 
     # Due forme entrambe in uso nella CLI ufficiale: `/search/asks/` vuole la
@@ -720,6 +740,8 @@ def search_vast_offers(
             "inet_down": offer.get("inet_down"),
             "cuda_max_good": offer.get("cuda_max_good"),
             "cpu_arch": offer.get("cpu_arch"),
+            "hosting_type": offer.get("hosting_type"),
+            "datacenter": is_datacenter_offer(offer.get("hosting_type")),
         })
     # Vast's search API cannot express a conditional rule such as
     # "Blackwell needs CUDA 12.9, other supported cards need 12.8". Apply that
@@ -733,6 +755,13 @@ def search_vast_offers(
         if non_x86_cpu_arch(item.get("cpu_arch"), item.get("gpu_name")):
             continue
         if mining_gpu(item.get("gpu_name")):
+            continue
+        if datacenter_only and not item["datacenter"]:
+            logging.getLogger(__name__).info(
+                "Vast offer %s dropped: %s", item["id"],
+                offer_unfit_reason("", None, None, gpu_name=item.get("gpu_name"),
+                                   datacenter_only=True, hosting_type=item.get("hosting_type")),
+            )
             continue
         if min_gpu_ram_gb:
             # The rented GB10 (unified memory) reported `gpu_ram` 0: an unknown or
@@ -773,6 +802,7 @@ def _hf_blocked_location(location: Any) -> bool:
 def offer_unfit_reason(
     adapter_id: str, compute_cap: Any, cuda_max_good: Any, location: Any = None,
     *, cpu_arch: Any = None, gpu_name: Any = None,
+    datacenter_only: bool = False, hosting_type: Any = None,
 ) -> str | None:
     """Why an offer cannot host the model's serving recipe, or `None`.
 
@@ -780,7 +810,13 @@ def offer_unfit_reason(
     750) and CUDA driver from the offer it shows. A list searched with another
     model's requirements, or before the requirements had loaded, once rented a
     Quadro RTX 6000 (sm_7.5) for Unlimited-OCR 2, which needs sm_8.0: refuse it.
+    With `datacenter_only`, an offer not labelled datacenter (`hosting_type`) is
+    refused too: the rent re-checks what the search promised.
     """
+    if datacenter_only and not is_datacenter_offer(hosting_type):
+        from . import i18n  # noqa: PLC0415
+
+        return i18n.msg("vast_offer_not_datacenter", i18n.SOURCE, gpu=str(gpu_name or "GPU").strip())
     arch = non_x86_cpu_arch(cpu_arch, gpu_name)
     if arch:
         from . import i18n  # noqa: PLC0415
@@ -835,6 +871,8 @@ def rent_vast_instance(
     location: str | None = None,
     cpu_arch: str | None = None,
     gpu_name: str | None = None,
+    hosting_type: int | None = None,
+    datacenter_only: bool = False,
     adapter_id: str = "",
     disk_gb: int = 40,
     model: str = reference.HF_REPO,
@@ -852,6 +890,7 @@ def rent_vast_instance(
         raise ValueError("API Key di Vast.ai non specificata.")
     unfit = offer_unfit_reason(
         adapter_id, compute_cap, cuda_max_good, location, cpu_arch=cpu_arch, gpu_name=gpu_name,
+        datacenter_only=datacenter_only, hosting_type=hosting_type,
     )
     if unfit:
         raise ValueError(unfit)

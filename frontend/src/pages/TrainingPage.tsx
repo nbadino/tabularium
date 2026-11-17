@@ -245,7 +245,7 @@ export default function TrainingPage() {
     model_path: cfg.model_path?.trim() ? cfg.model_path.trim() : undefined,
   })
 
-  const startAuto = async (maxDph: number) => {
+  const startAuto = async (maxDph: number, datacenterOnly: boolean) => {
     if (projectId === '') return
     // A snapshot older than the latest approval or edit is refused by the
     // server unless the person says, here, to train on it anyway.
@@ -269,6 +269,7 @@ export default function TrainingPage() {
         credential_ref: 'vault:vast_api_key',
         max_dph: Math.max(0.1, Number(maxDph) || 1),
         min_gpu_ram_gb: 24,
+        datacenter_only: datacenterOnly,
         lang: document.documentElement.lang || 'en',
       })
       setAutoJob(job)
@@ -480,7 +481,7 @@ export default function TrainingPage() {
           autoJob={autoJob && ['queued', 'renting', 'waiting_ssh', 'provisioning', 'starting', 'running'].includes(autoJob.state) ? autoJob : null}
           autoBusy={autoBusy}
           autoError={autoError}
-          onAutoStart={(maxDph) => void startAuto(maxDph)}
+          onAutoStart={(maxDph, datacenterOnly) => void startAuto(maxDph, datacenterOnly)}
           onAutoCancel={() => void cancelAuto()}
         />
       </div>}

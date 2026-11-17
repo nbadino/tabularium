@@ -104,6 +104,9 @@ interface VastOffer {
   cuda_max_good?: number | null
   /** Host CPU architecture as Vast reports it ("amd64", "arm64"). */
   cpu_arch?: string | null
+  /** Vast's `hosting_type`: 1 for a datacenter (Secure Cloud) host, 0 for community. */
+  hosting_type?: number | null
+  datacenter?: boolean
 }
 
 interface ModalStatus {
@@ -325,6 +328,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
   // riallineato automaticamente al modello quando cambia la selezione.
   const [vastCuda, setVastCuda] = useState('12.9')
   const [vastVerified, setVastVerified] = useState(true)
+  const [vastDatacenter, setVastDatacenter] = useState(false)
   const [vastAccount, setVastAccount] = useState<VastAccount | null>(null)
   const [vastSshKey, setVastSshKey] = useState<VastSshKey | null>(null)
   const [vastWaitingId, setVastWaitingId] = useState<number | string | null>(null)
@@ -1155,10 +1159,13 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
         min_inet_down: vastNet ? Number(vastNet) : null,
         min_cuda: vastCuda ? Math.max(Number(vastCuda), recommendedVastCuda) : recommendedVastCuda,
         verified_only: vastVerified,
+        datacenter_only: vastDatacenter,
         num_gpus: 1, min_reliability: 0.95, instance_type: 'on-demand',
       })
       setVastOffers(res.items)
-      setVastNotice(res.items.length ? t('cloud.control.offersFound', { count: res.items.length }) : t('cloud.control.noOffers'))
+      setVastNotice(res.items.length
+        ? t('cloud.control.offersFound', { count: res.items.length })
+        : t(vastDatacenter ? 'cloud.control.noDatacenterOffers' : 'cloud.control.noOffers'))
     } catch (e) {
       setVastNotice(t('cloud.control.loadError', { error: String(e) }))
     } finally {
@@ -1198,6 +1205,9 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
         // An arm64 host (GB10, GH200) cannot run Tabularium's amd64 images.
         cpu_arch: offer.cpu_arch ?? null,
         gpu_name: offer.gpu_name ?? null,
+        // The server refuses a community host when only datacenter was asked.
+        hosting_type: offer.hosting_type ?? null,
+        datacenter_only: vastDatacenter,
         // L'istanza nasce nuda: la prepariamo via SSH subito dopo, con lo
         // script di questo checkout (niente hook onstart da GitHub).
         prepare_server: false, port: 8888,
@@ -1788,6 +1798,10 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
                   <Field label={t('cloud.control.maxPriceLabel')}>
                     <input type="number" min="0" step="0.01" value={vastMaxDph} onChange={(e) => setVastMaxDph(e.target.value)} placeholder="0.50" className="fld fld-mono" />
                   </Field>
+                  <label className="flex items-center gap-2 text-[12px] sm:col-span-3">
+                    <input type="checkbox" checked={vastDatacenter} onChange={(e) => setVastDatacenter(e.target.checked)} />
+                    {t('cloud.control.datacenterOnly')}
+                  </label>
                 </div>
                 <details className="mt-2">
                   <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.04em] text-[color:var(--color-ink-2)]">
@@ -1830,6 +1844,7 @@ export function CloudControlModal({ open, onClose, focusProvider, focusAdapterId
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-[color:var(--color-ink)]">{offer.num_gpus}× {offer.gpu_name || 'GPU'}</span>
                             {offer.verified && <Badge tone="ok">{t('cloud.control.verified')}</Badge>}
+                            {offer.datacenter && <Badge tone="ok">{t('cloud.control.datacenter')}</Badge>}
                             <span className="mono text-[12px] font-semibold text-[color:var(--color-ink)]">
                               {offer.dph_total == null ? '—' : `$${offer.dph_total.toFixed(3)}/h`}
                             </span>

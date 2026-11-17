@@ -1113,6 +1113,8 @@ export interface AutoTrainingJob {
   port: number | null
   run_id: string | null
   instance_destroyed: boolean
+  /** Only Vast.ai datacenter (Secure Cloud) hosts were searched for this job. */
+  datacenter_only?: boolean
   created_at: string
   updated_at: string
 }

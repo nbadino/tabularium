@@ -7,6 +7,14 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **Rent only Vast.ai datacenter hosts.** A *Datacenter only* toggle next to the one-click
+  training budget (and *Datacenter hosts only* in the Vast.ai serving panel) restricts the search
+  to datacenter (Secure Cloud) hosts: Vast's `datacenter` filter plus a local `hosting_type` check,
+  and a rent-time check that refuses a community host. When none fits the budget the job fails
+  with "no datacenter Vast.ai offer under $X/h" instead of falling back to community hosts, whose
+  dropped SSH sessions, exited containers and 84 KB/s downloads (on a host advertising 3.9 Gb/s)
+  cost real runs. `datacenter_only` is accepted by `POST /training/auto` (and stored in the job),
+  `/system/cloud/vast/offers`, `/rent` and `/rent-training`.
 - **Evaluation image for Xiaomi-OCR-0** (`ghcr.io/nbadino/tabularium-eval-xiaomi:v1`, `docker/eval-xiaomi`): the qwen training image plus `/root/eval-env` with the exact stack the gold evaluations are scored with (torch 2.14.0, torchvision 0.29.0, transformers 5.17.0, accelerate, peft). A rented GPU is ready in minutes instead of reinstalling ~3 GB from PyPI (observed at ~3 MB/s on Vast hosts) on every rental. Built by the `eval-image` workflow on main.
 - **An approved page can be reopened for correction.** The page's reviewer or a project manager
   sends it back from the page work panel with a required note (`POST /api/pages/{id}/work/reopen`):

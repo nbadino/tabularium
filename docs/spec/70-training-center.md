@@ -117,7 +117,8 @@
   The config form always configures a new run and says so.
 - **One-click training is the non-developer path.** `POST /training/auto` takes the current
   config plus an hourly budget, rents the best Vast.ai offer within that ceiling (VRAM, then compute
-  capability, reliability and price), boots the profile's versioned GHCR image (MonkeyOCRv2,
+  capability, reliability and price; with `datacenter_only` only Vast datacenter hosts, filter
+  `datacenter` plus a local `hosting_type == 1` check, and an explicit error when none fits), boots the profile's versioned GHCR image (MonkeyOCRv2,
   Qwen, legacy, GLM, Paddle; dots.ocr still provisions with `scripts/cloud/setup_train_env.sh`),
   waits for `/opt/tabularium/ready.json`, then calls `start_run`. The job is persisted under
   `<data>/auto-training/`, shows phases/log in the UI and destroys the instance if rental,

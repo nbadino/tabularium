@@ -446,6 +446,19 @@ across runs. It saves reinstalling ~3 GB from PyPI on every rental.
 The budget is the only infrastructure decision left to the user: the backend ranks offers by
 **VRAM first**, then compute capability, reliability and price, so a slightly more expensive
 24 GB card wins over a slower one at the same price, and a 40 GB card wins when it fits the budget.
+
+**Datacenter only.** Next to the budget, *Datacenter only* restricts the search to Vast.ai
+datacenter (Secure Cloud) hosts: the search sends Vast's `datacenter` filter and Tabularium drops,
+on its side, any offer whose `hosting_type` is not 1 (datacenter), including offers that do not
+report it; the rent re-checks the offer and refuses a community host. These hosts cost more (in
+November 2026, with 1 GPU and at least 40 GB under $1.60/h: an A100 PCIe from about $0.75/h, RTX
+A6000 or RTX PRO 5000 at $0.88–1.25/h) but community hosts gave dropped SSH sessions, a container
+that exited mid-run and 84 KB/s of real download on a host advertising 3.9 Gb/s. When no
+datacenter offer fits, the job fails with "no datacenter Vast.ai offer under $X/h with at least
+N GB": it never falls back to community hosts. The choice is remembered in the browser, stored in
+the job (`datacenter_only`), and also applies to the manual rent button under Advanced. The same
+toggle (*Datacenter hosts only*) sits under the price filter in the Vast.ai serving panel, where
+datacenter offers carry a *datacenter* badge.
 The GPU is destroyed automatically if rental, provisioning or training fails; after the remote
 merge/download and registration it is destroyed too, so the one-click path leaves no instance
 running. The merged model stays locally and in Models.
