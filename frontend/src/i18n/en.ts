@@ -1683,6 +1683,18 @@ export const en: Dict = {
       'No model configured: the hint will be used by the first model that accepts it.',
   },
 
+  tableGuard: {
+    title: 'Structure guard for model tables',
+    intro: 'Repairs the model’s tables deterministically: merges a column split by a broken header and realigns a row with an inserted empty cell, only when the profile’s column types confirm it. Every repair stays listed on the table.',
+    enabled: 'On',
+    followsProfile: 'Follows the profile {profile} (default: {state})',
+    projectSet: 'Set for this project',
+    reset: 'Back to the profile default',
+    stateOn: 'on',
+    stateOff: 'off',
+    noColumns: 'The profile declares no column types: only columns with a duplicated header are merged, rows are never realigned.',
+  },
+
   table: {
     backToStudio: 'Back to the Studio',
     blockVerified: "Block checked",
@@ -1736,6 +1748,11 @@ export const en: Dict = {
     markVerified: 'Mark the cell as verified',
     phantomColumn: 'Phantom column (no rule)',
     phantomColumns: 'Phantom columns: {n}',
+    structureRepairs: 'Structure repairs: {n}',
+    structureRepairsIntro: 'The structure guard changed the model’s draft:',
+    repair_column_merged: 'column {col} merged into its neighbour ({header})',
+    repair_empty_cell_moved: 'row {row}: empty cell moved from column {col}',
+    repair_glued_value_split: 'row {row}: value split off the cell on its left (column {col})',
     hintSheet: 'Right-click to insert rows and columns, merge, split, mark the phantom column. Enter and Tab move down; saving is automatic.',
     notice: 'Table sheet',
     detectStructureOnly: 'structure only',

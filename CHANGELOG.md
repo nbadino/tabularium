@@ -7,6 +7,16 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **Structure guard for model tables.** A fine-tuned model's OTSL can no longer break a page's
+  columns unnoticed: before a model grid is stored, `domain/table_guard.py` folds a column split by
+  a broken printed header ("Gr ss" read as "Gr" | "as") into its neighbour, and realigns a row
+  where the model inserted an empty cell or glued the flag to the vessel name. Both repairs only
+  move existing text, only fire when the domain profile's column types confirm the row fits
+  better, and skip ambiguous rows. Every repair is listed on the grid (`structure_repairs`, shown as
+  "Structure repairs: n" in the table editor) and counted in the prefill summary. On by default for
+  the `shipping-registers-1900s` profile, which now declares its column types; switchable per
+  project (`GET/PUT /api/projects/{id}/table-guard`, advanced settings → Table schema). On the
+  Lloyd's gold set: Xiaomi-OCR-0 LoRA v2 81.3% → 92.4% exact cells, v3 86.2% → 89.7%, no page worse.
 - **Rent only Vast.ai datacenter hosts.** A *Datacenter only* toggle next to the one-click
   training budget (and *Datacenter hosts only* in the Vast.ai serving panel) restricts the search
   to datacenter (Secure Cloud) hosts: Vast's `datacenter` filter plus a local `hosting_type` check,

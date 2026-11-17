@@ -31,6 +31,7 @@ from ..schemas import (
 )
 from ..services import inference, labeling, table_checks, table_detect
 from ..domain import otsl
+from ..services import table_guard as table_guard_svc
 from ..services import table_hint as table_hint_svc
 from ..services.table_provenance import with_cell_provenance
 from ..services import model_labels
@@ -385,6 +386,7 @@ def block_table_put(
         "row_columns": payload.row_columns,
         "row_columns_proven": payload.row_columns_proven,
         "misprints": payload.misprints,
+        "structure_repairs": [r.model_dump(exclude_none=True) for r in payload.structure_repairs],
     }
     try:
         otsl_str = otsl.grid_to_otsl(grid)
@@ -442,9 +444,8 @@ def block_table_detect(
         if page is None:
             raise HTTPException(status_code=404, detail="pagina non trovata")
         image = pagesvc.crop_block_image(page, _block_bbox(block))
-        table_hint = table_hint_svc.get_table_hint(
-            projectstore.settings_json(page["project_id"])
-        )
+        project_settings = projectstore.settings_json(page["project_id"])
+        table_hint = table_hint_svc.get_table_hint(project_settings)
 
     try:
         detection = table_detect.detect_grid(
@@ -460,6 +461,7 @@ def block_table_detect(
     cells = table_detect.empty_cells(rows, cols)
     ocr_stats: dict | None = None
     prefill_source: str | None = None
+    structure_repairs: list[dict] = []
 
     if payload.fill == "ocr":
         engine = ocrmod.OcrEngine()
@@ -510,6 +512,8 @@ def block_table_detect(
             )
         except RuntimeError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        grid_dict = table_guard_svc.apply(grid_dict, table_guard_svc.resolve(project_settings))
+        structure_repairs = list(grid_dict.get("structure_repairs") or [])
         if grid_dict["rows"]:
             rows, cols = grid_dict["rows"], grid_dict["cols"]
             cells = grid_dict["cells"]
@@ -556,6 +560,7 @@ def block_table_detect(
             detection.diagnostics.get("row_columns_proven", [])
             if payload.fill != "model" else []
         ),
+        structure_repairs=structure_repairs,
     )
     return TableDetectOut(
         grid=grid,

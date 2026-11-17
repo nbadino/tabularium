@@ -32,6 +32,22 @@
     "Indented continuation lines starting with «[» belong to the previous cell: join them with a space and drop the bracket.",
     "A layout class never splits a typographic line: when the date shares the masthead line, it stays inside the Title."
   ],
+  "table_guard": {
+    "enabled": true,
+    "source": "Index registers (Lloyd's Daily Index 1920/1930, Lloyd's Shipping Index 1950): flag, rig and registry codes as printed on the proofread gold pages.",
+    "columns": [
+      {"field": "vessel", "headers": ["vessel", "steamer"], "pattern": "[A-Za-z]"},
+      {"field": "flag", "headers": ["flg", "flag"], "values": ["Am", "Ar", "Au", "Ba", "Be", "Bm", "Br", "Bs", "Bz", "Ca", "Ce", "Ch", "Cn", "Co", "Cs", "Cu", "Da", "Du", "Ec", "Eg", "Ei", "Es", "Est", "Fi", "Fr", "Ge", "Gr", "Hn", "Ho", "Hu", "Ic", "In", "Ind", "Ir", "Is", "It", "Ja", "La", "Le", "Li", "Lt", "Ma", "Me", "Mx", "Ni", "No", "Pa", "Pe", "Ph", "Pk", "Pl", "Po", "Pr", "Pv", "Ro", "Ru", "Sa", "Sp", "Ss", "Sw", "Th", "Tu", "Ur", "Ve", "Y-S", "Ys", "Yu"]},
+      {"field": "rig", "headers": ["rig"], "pattern": "^(?:\\d?m?\\.?(?:bq|bk|bn|bgn|bkn|bqn|sc|sch|s|sp|ft|yt|ktch|gal|bge|stm)|[a-z]{1,4})$"},
+      {"field": "reg", "headers": ["reg"], "pattern": "^(?:[*†✝+]{1,2}[A-Za-z]?|[*†]?[RrNnvVcCGgIiBx]{1,2}|[*†][RN]|RI|ri|IV|iv)$"},
+      {"field": "built", "headers": ["blt", "built", "year"], "pattern": "^\\d{2}(?:-\\d{2})?$"},
+      {"field": "gross", "headers": ["gross"], "pattern": "^\\d{2,6}$"},
+      {"field": "net", "headers": ["net"], "pattern": "^\\d{1,6}$"},
+      {"field": "from", "headers": ["from"], "pattern": "[A-Za-z]"},
+      {"field": "for", "headers": ["for"], "pattern": "[A-Za-z]"},
+      {"field": "latest", "headers": ["latest"], "pattern": "[A-Za-z]"}
+    ]
+  },
   "recommended_split": "issue",
   "recommended_language": "en"
 }

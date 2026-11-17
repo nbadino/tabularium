@@ -98,6 +98,36 @@
        The hint is a suggestion, not a truth: it sits alongside the deterministic header repair
        (`domain/table_headers.py::repair_flat_header`), which does not depend on the model
        obeying. Experimental: to be measured on an `index` page before calling it useful;
+     - **table structure guard**: every table grid a model writes in prefill or recognition
+       (`services/prefill.py`, and the deprecated `POST /blocks/{id}/table/detect` with
+       `fill=model`) passes through `domain/table_guard.py::guard_grid` before it is stored.
+       Two content-preserving repairs, each recorded in the grid's `structure_repairs` and shown
+       in the table editor's toolbar ("Structure repairs: n"), and counted in the prefill page
+       summary (`table_structure_repairs`):
+       (a) `column_merged`: a column folded into its neighbour when the header shows it as a
+       duplicate of the neighbour, or as a split of the one declared field the header is missing
+       ("Gr" + "as" for "Gross"), and no body row has text in both (at most 10% of body rows
+       carry text in the folded column). A column with an empty header is never dropped (it may
+       be a phantom column);
+       (b) `empty_cell_moved` / `glued_value_split`: one row realigned by moving one empty cell
+       (preferably to the row's end), or by splitting a trailing token that belongs to the next
+       column's vocabulary (a flag glued to the vessel) while consuming an empty cell further
+       right. Applied only when the declared column types say the row fits strictly better and
+       the moved cells all fit, and only when one best repair exists (an ambiguous row stays as
+       read). Rule (b) needs declared column types: types inferred from the same table cannot
+       see a fault the model repeats on every row.
+       Column types belong to the domain profile (`conf/profiles/*.json`, `table_guard.columns`:
+       `field`, header `headers`, `pattern` and/or `values`); `shipping-registers-1900s` declares
+       the Lloyd's index columns and `table_guard.enabled: true`. A project follows its profile
+       (study protocol `domain_profile`, default `shipping-registers-1900s`) until it sets
+       `settings_json["table_guard"]` (`GET/PUT /api/projects/{id}/table-guard`, `{"enabled":
+       null}` returns to the profile; project advanced settings, *Table schema*). A profile
+       without `table_guard` leaves the guard off. Measured on the 27-page Lloyd's gold set
+       (gold evaluation kept outside the repository, strict cell-exact on 26 pages): LoRA v2 81.3% → 92.4%,
+       v3 86.2% → 89.7%, v1 89.9% → 90.0%; no page got worse. A constrained OTSL decoder (vLLM
+       logits processor) is not part of this: it would need a tokenizer-level OTSL state machine
+       installed into every serving image and would only forbid extra cells, not the misplaced
+       empty cell that causes most shifts;
    - autosave, per-page progress, keyboard shortcuts;
    - **autosave and navigation**: changing page/project waits for the store's `flush()`
      (`useAnnotationState` exposes `dirty`/`getDirty`/`flush`); a failed flush blocks the change.

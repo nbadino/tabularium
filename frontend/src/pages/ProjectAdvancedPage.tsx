@@ -16,6 +16,7 @@ import { useInference } from '../app/inference'
 import LabelsEditor from '../studio/components/LabelsEditor'
 import ConventionsChecklist from '../studio/components/ConventionsChecklist'
 import TableHintEditor from '../studio/components/TableHintEditor'
+import TableGuardToggle from '../studio/components/TableGuardToggle'
 import { useI18n, tn } from '../i18n'
 
 type StudyProtocol = {
@@ -104,6 +105,7 @@ export default function ProjectAdvancedPage() {
 
         <Module tab={t('tableHint.tab')} quiet>
           <TableHintEditor projectId={projectId} />
+          <TableGuardToggle projectId={projectId} />
         </Module>
 
         {protocol && (

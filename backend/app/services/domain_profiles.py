@@ -6,6 +6,8 @@ import json
 from .. import config
 
 _PROFILE_DIR = config.RESOURCE_DIR / "conf" / "profiles"
+# The profile a project follows until its study protocol names another one.
+DEFAULT_PROFILE_ID = "shipping-registers-1900s"
 
 
 def list_profiles() -> list[dict]:

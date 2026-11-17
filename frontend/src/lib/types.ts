@@ -396,6 +396,20 @@ export interface TableGrid {
   /** Somme confrontate con la scansione e dichiarate refusi della stampa
    *  (chiave `TableCheck.key`): non contano più come errori. */
   misprints?: string[]
+  /** What the structure guard (backend `domain/table_guard.py`) changed in the
+   *  model's draft. Provenance: kept on save, never edited here. */
+  structure_repairs?: TableStructureRepair[]
+}
+
+export interface TableStructureRepair {
+  rule: 'column_merged' | 'empty_cell_moved' | 'glued_value_split'
+  row?: number | null
+  col?: number | null
+  reason?: string | null
+  header?: string[]
+  rows?: number[]
+  before?: string[]
+  after?: string[]
 }
 
 export interface TableGridOut {
@@ -549,6 +563,14 @@ export interface ConventionItem {
 
 export interface ConventionsOut {
   conventions: ConventionItem[]
+}
+
+export interface TableGuardOut {
+  enabled: boolean
+  source: 'project' | 'profile'
+  profile_id: string
+  profile_default: boolean
+  declares_columns: boolean
 }
 
 export interface TableHintOut {

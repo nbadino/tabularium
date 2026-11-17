@@ -7,7 +7,8 @@
 
 - `projects(id, name, root_dir, owner_id, created_at, settings_json)` — settings keys actually
   written by the code: `labels` (custom classes + colors + prompts), `conventions` (transcription
-  rules), `table_hint`, `known_table_headers`, `study_protocol` (+ `study_protocol_history`).
+  rules), `table_hint`, `table_guard` (bool; absent = the domain profile's default),
+  `known_table_headers`, `study_protocol` (+ `study_protocol_history`).
   Model choice, image caps and the split ratio are **not** stored here: they belong to the active
   compute profile / model settings, and the split ratio is a request parameter (see §7).
   `owner_id` = who created the project (see permissions below).
@@ -17,7 +18,9 @@
   ['text','table','formula','picture','custom'], prefill_source, confirmed, updated_at)`.
 - `tables(id, block_id, grid_json)` — `grid_json`: `{rows: n, cols: m, cells:[{r,c,rowspan,colspan,
   text, source, verified}], vlines:[...], hlines:[...]}` (physical grid; spans are the merges;
-  `source` = who wrote the cell text, `verified` = human confirmation — only cells with text).
+  `source` = who wrote the cell text, `verified` = human confirmation — only cells with text;
+  `structure_repairs` = what the structure guard changed in the model's draft, kept on save,
+  see `20-requirements.md` "table structure guard").
 - `collections(id, project_id, name, created_at, updated_at)` (migration 21): named groups of
   pages inside a project, name unique per project (case-insensitive). `pages.collection_id`
   (nullable, `ON DELETE SET NULL` as a safety net) puts a page in at most one collection;

@@ -18,7 +18,7 @@ tabularium/
       db.py                 # SQLite schema, versioned migrations
       schemas.py            # Pydantic models
       models/               # one module per model: SPEC = serve + train + labels + cloud
-      domain/               # pure logic: otsl, vram, table_headers, table_similarity.
+      domain/               # pure logic: otsl, vram, table_headers, table_guard, table_similarity.
                             #   No FastAPI, SQLite, HTTP or subprocess (tests/test_architecture.py)
       adapters/             # the outside world: store.py (meta key/value), projects.py
                             #   (settings_json), blocks.py (prefill reads/writes), runs.py

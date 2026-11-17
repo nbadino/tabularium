@@ -17,7 +17,7 @@ from fastapi import HTTPException
 
 from ..adapters import blocks as blockstore
 from ..adapters import projects as projectstore
-from . import labeling, ocr as ocrmod, table_detect, table_hint
+from . import labeling, ocr as ocrmod, table_detect, table_guard, table_hint
 from ..domain import otsl, table_headers
 from ..domain.prefill import (
     _TABLE_MIN_COLS,
@@ -250,6 +250,7 @@ def model_prelabel_events(
     # `Text` in silenzio.
     schema_labels = _project_schema_labels(project_id)
     table_hint_text = _project_table_hint(project_id)
+    structure_guard = table_guard.resolve(projectstore.settings_json(project_id))
     with (writer or blockstore.writing)() as conn:
         for pid in page_ids:
             if cancel_event is not None and cancel_event.is_set():
@@ -450,6 +451,7 @@ def model_prelabel_events(
             # commit ciascuno.
             conn.commit()
             grids = 0
+            table_repairs = 0
             table_sources: list[str] = []
             for i, k in enumerate(kept, start=1):
                 # Nel due-stadi il primo giro produce solo geometria/classi:
@@ -538,6 +540,8 @@ def model_prelabel_events(
                         k["error"] = f"{k['bbox']}: {exc}"
                         grid = None
                     if grid and grid["rows"]:
+                        grid = table_guard.apply(grid, structure_guard)
+                        table_repairs += len(grid.get("structure_repairs") or [])
                         grid = with_cell_provenance(grid, f"model:{client.model}", generated=True)
                         conn.upsert_grid(block_id, grid)
                         grids += 1
@@ -587,6 +591,7 @@ def model_prelabel_events(
                     "replaced_grids": replaced["grids"],
                     "model_mode": page_mode,
                     "table_sources": table_sources,
+                    "table_structure_repairs": table_repairs,
                     "deskew_angle": applied_angle,
                     "unmapped_labels": unmapped,
                 },
