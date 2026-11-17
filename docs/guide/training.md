@@ -437,6 +437,12 @@ provisioning because its flash-attn wheel did not load against the torch 2.6 bas
 come from HuggingFace at the first run, because an 8B checkpoint would exceed the GitHub runner
 disk and produce a 20 GB image. MonkeyOCRv2 additionally has its 1.5 GB weights baked in.
 
+For scoring fine-tuned Xiaomi-OCR-0 checkpoints outside the app (gold-set evaluations run by
+hand on a rented GPU), `ghcr.io/nbadino/tabularium-eval-xiaomi:v1` (`docker/eval-xiaomi`, built by
+`.github/workflows/eval-image.yml`) is the qwen image plus `/root/eval-env`: torch 2.14.0,
+torchvision 0.29.0, transformers 5.17.0, accelerate and peft, pinned so scores stay comparable
+across runs. It saves reinstalling ~3 GB from PyPI on every rental.
+
 The budget is the only infrastructure decision left to the user: the backend ranks offers by
 **VRAM first**, then compute capability, reliability and price, so a slightly more expensive
 24 GB card wins over a slower one at the same price, and a 40 GB card wins when it fits the budget.
