@@ -697,18 +697,32 @@ def _monitor(project_id: int) -> None:
         return
     proc, run_dir = handle["proc"], handle["run_dir"]
     code = proc.wait()
+    training_exit_code = code
     state = "finished" if code == 0 else "failed"
     artifact_error = None
+    artifact_warning = None
+    post_training: dict = {"training_exit_code": training_exit_code}
     if hasattr(proc, "download_artifacts"):
+        post_training.update(downloaded=False, manifest=None)
         try:
             result = proc.download_artifacts(run_dir / "checkpoints")
-            if not result.get("ok"):
+            post_training.update(
+                downloaded=bool(result.get("downloaded", True)),
+                manifest=result.get("manifest"),
+            )
+            if result.get("manifest") == "unreachable":
+                # The files arrived (rsync checks them end to end) and only the
+                # bookkeeping read of the remote manifest kept timing out: a
+                # finished training is not failed for a network hiccup.
+                artifact_warning = "; ".join(result.get("errors") or ["manifest remoto irraggiungibile"])
+            elif not result.get("ok"):
                 artifact_error = "; ".join(result.get("errors") or ["checksum artefatti remoto fallito"])
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
             artifact_error = str(exc)
     if artifact_error:
         state = "failed"
         code = 1
+        post_training["error"] = artifact_error
     artifact_manifest = write_manifest(run_dir / "checkpoints")
     artifact_check = verify_manifest(run_dir / "checkpoints", artifact_manifest)
     meta = _read_run_meta(run_dir) or {}
@@ -722,8 +736,11 @@ def _monitor(project_id: int) -> None:
         ended_at=meta.get("ended_at"),
     )
     meta["checkpoint"] = checkpoint_info(run_dir)
+    meta["post_training"] = post_training
     if artifact_error:
         meta["error"] = artifact_error
+    if artifact_warning:
+        meta["artifact_warning"] = artifact_warning
     write_run_meta(run_dir, meta)
     if state == "finished" and (meta.get("config") or {}).get("auto_prepare", True):
         _auto_prepare(project_id, run_dir.name)
@@ -732,6 +749,81 @@ def _monitor(project_id: int) -> None:
             meta["job_id"], state, ended=meta["ended_at"], exit_code=code
         )
     _ACTIVE.pop(project_id, None)
+
+
+_LEGACY_MANIFEST_MARKER = "__TABULARIUM_MANIFEST_BEGIN__"
+
+
+def recovery_check(run_dir: Path, meta: dict, *, verify: bool = True) -> dict:
+    """Whether a failed run can be marked finished: the training succeeded,
+    the checkpoints are here and intact, and only a later step failed.
+
+    Runs written since `post_training` exists say so directly. Older runs
+    only kept the error text: the remote manifest read is the step *after* a
+    completed rsync, so a failure there plus a log that reached its last step
+    is the same evidence. `verify=False` skips hashing the checkpoints (for
+    listings); `recover_run` always verifies.
+    """
+    if meta.get("state") != "failed":
+        return {"ok": False, "reason": "only a failed run can be recovered"}
+    post = meta.get("post_training")
+    if isinstance(post, dict):
+        if post.get("training_exit_code") != 0:
+            return {"ok": False, "reason": "the training command did not exit 0"}
+        if not post.get("downloaded"):
+            return {"ok": False, "reason": "the checkpoints were not fully downloaded"}
+        if post.get("manifest") not in {"verified", "unreachable"}:
+            return {"ok": False, "reason": "the checkpoints do not match the remote manifest"}
+        evidence = "post_training"
+    else:
+        summary = meta.get("summary") or summarize_log(
+            _log_tail_logfile(run_dir), started_at=meta.get("started_at"), ended_at=meta.get("ended_at"),
+        )
+        steps, total = (summary or {}).get("steps"), (summary or {}).get("total_steps")
+        if not (isinstance(steps, int) and isinstance(total, int) and total > 0 and steps >= total):
+            return {"ok": False, "reason": "the training log does not reach its last step"}
+        if _LEGACY_MANIFEST_MARKER not in str(meta.get("error") or ""):
+            return {"ok": False, "reason": "the run did not fail on the post-training manifest read"}
+        evidence = "legacy_manifest_read"
+    if not verify:
+        return {"ok": checkpoint_info(run_dir) is not None, "evidence": evidence, "reason": "the run has no complete checkpoint"}
+    manifest = run_dir / "artifacts.sha256"
+    check = verify_manifest(run_dir / "checkpoints", manifest)
+    if not check.get("ok") or not check.get("checked"):
+        return {"ok": False, "reason": "the local checkpoints fail their checksum manifest"}
+    if checkpoint_info(run_dir) is None:
+        return {"ok": False, "reason": "the run has no complete checkpoint"}
+    return {"ok": True, "evidence": evidence, "artifacts": check}
+
+
+def recover_run(project_id: int, run_id: str, *, reason: str = "") -> dict:
+    """Mark a failed run finished when only post-training bookkeeping failed.
+
+    The previous state, error and exit code are kept under `recovery`, so the
+    run's history still shows what went wrong. Nothing is deleted. Then the
+    usual auto-prepare runs, as it would have at the end of the training.
+    """
+    run_dir, meta = _load_run(project_id, run_id)
+    check = recovery_check(run_dir, meta)
+    if not check["ok"]:
+        raise ValueError(f"run not recoverable: {check['reason']}")
+    meta["recovery"] = {
+        "at": _now(),
+        "reason": str(reason or "post-training step failed after a successful training").strip()[:500],
+        "evidence": check["evidence"],
+        "previous_state": meta.get("state"),
+        "previous_error": meta.get("error"),
+        "previous_exit_code": meta.get("exit_code"),
+    }
+    meta["state"] = "finished"
+    meta["exit_code"] = 0
+    meta.pop("error", None)
+    meta["artifacts"] = check["artifacts"]
+    meta["checkpoint"] = checkpoint_info(run_dir)
+    write_run_meta(run_dir, meta)
+    if (meta.get("config") or {}).get("auto_prepare", True):
+        _auto_prepare(project_id, run_dir.name)
+    return _decorate_run(_read_run_meta(run_dir) or meta, run_dir)
 
 
 def _dir_bytes(path: Path) -> int:
@@ -823,6 +915,8 @@ def _decorate_run(meta: dict, run_dir: Path) -> dict:
                 ended_at=meta.get("ended_at"),
             )
         meta["checkpoint"] = checkpoint_info(run_dir)
+    if meta.get("state") == "failed":
+        meta["recoverable"] = recovery_check(run_dir, meta, verify=False)["ok"]
     return meta
 
 

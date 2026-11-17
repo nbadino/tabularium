@@ -38,6 +38,15 @@ Notable changes to Tabularium. The format follows
   in flight, each worker with its own client; the stop rule still counts the model's failures.
 
 ### Fixed
+- **A transient SSH timeout no longer fails a finished training.** After a Vast run trained to the
+  end and its checkpoints were downloaded, the single 20 s SSH read of the remote artifact manifest
+  timed out, the run was marked failed, the instance destroyed and the model stranded. The rsync
+  and the manifest read are now retried with backoff (the read with a 60 s timeout); if the
+  manifest stays unreachable after a completed download the run finishes with a warning, while a
+  checksum mismatch still fails it. `run.json` records the training exit code and download outcome
+  under `post_training`. A run already failed this way can be recovered with
+  `POST /api/projects/{id}/training/recover`, which re-verifies the local checkpoints, keeps the old
+  error under `recovery`, and then prepares the checkpoint as for any finished run.
 - **Vast never rents an NVIDIA CMP mining card.** A one-click Xiaomi-OCR-0 training on 2026-11-16
   rented a "CMP 170HX" (instance 60981030): a GA100 mining card with no display outputs, a narrowed
   PCIe link and throttled FP16 throughput, which met every numeric filter (sm_8.0, x86, CUDA 13.3,

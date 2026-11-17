@@ -133,6 +133,38 @@ def training_cleanup(
     return result
 
 
+@router.post("/api/projects/{project_id}/training/recover")
+def training_recover(
+    project_id: int,
+    payload: dict,
+    user: dict = Depends(require_resource(write=True)),
+) -> dict:
+    """Mark a failed run finished when the training exited 0 and its checkpoints
+    are downloaded and verified, and only a later bookkeeping step failed.
+
+    The previous error stays in the run under `recovery`; prepare-checkpoint
+    then works as for any finished run.
+    """
+    _require_project(project_id)
+    run_id = str(payload.get("run_id") or "")
+    try:
+        run = trainer.recover_run(project_id, run_id, reason=str(payload.get("reason") or ""))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with connect() as conn:
+        auditsvc.record(
+            conn,
+            user,
+            "training.run_recovered",
+            resource_type="project",
+            resource_id=project_id,
+            payload={"run_id": run_id, "evidence": (run.get("recovery") or {}).get("evidence")},
+        )
+    return {"run": run}
+
+
 @router.get("/api/projects/{project_id}/training/prepare-checkpoint")
 def training_prepare_checkpoint_status(
     project_id: int,
