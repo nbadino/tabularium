@@ -84,6 +84,24 @@
   state in `run.json`, so the HTTP request never waits for the merge. It starts automatically when
   the run finishes (`auto_prepare`, on by default and disableable in Advanced). If the remote host
   is gone, the plan says the local fallback is required and lists the missing command.
+- **Bringing a remote run home.** When the remote command exits, `RemoteProcess.download_artifacts`
+  rsyncs the checkpoints and then reads the remote `artifacts.sha256` over SSH to verify them. Both
+  steps are retried on transport failures (timeout, `OSError`, ssh exit 255) with backoff
+  (`POST_TRAINING_ATTEMPTS`, `POST_TRAINING_BACKOFF_S`); the manifest read has its own timeout
+  (`MANIFEST_TIMEOUT_S`, 60 s). `run.json` records `post_training`: the training exit code, whether
+  the download completed, and the manifest outcome (`verified`, `mismatch`, `missing`, `empty`,
+  `unreachable`). A mismatch, a missing manifest or a failed download fails the run. A manifest that
+  stays `unreachable` after a completed download does **not**: the run is `finished` with
+  `artifact_warning`, since rsync `--checksum` already verified the copy.
+- **Recovering a run failed only by bookkeeping.** `POST /training/recover {run_id, reason?}` marks a
+  `failed` run `finished` when the training exited 0, the checkpoints were fully downloaded and
+  still match the local `artifacts.sha256`, and only a later step failed. Runs written before
+  `post_training` existed qualify when the log reached its last step and the error is the remote
+  manifest read (that read only happens after a completed rsync). The previous state, error and
+  exit code are kept under `recovery`; nothing is deleted. Auto-prepare then runs as at the end of
+  a training, so prepare-checkpoint (a local merge when the instance is gone) and registration work
+  as for any finished run. Failed runs carry `recoverable` in status and history (cheap check, no
+  hashing); the route always re-verifies.
 - **Evaluate before transferring or releasing the training GPU.** Automatic MonkeyOCRv2 runs
   merge on the rented host, serve the base and merged checkpoint sequentially on that same GPU,
   and compare the exact frozen validation images/prompts. Only then download/register the model

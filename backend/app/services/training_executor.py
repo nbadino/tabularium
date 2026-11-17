@@ -27,6 +27,10 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+class RemoteTransportError(RuntimeError):
+    """SSH could not reach the host; says nothing about the run's files."""
+
+
 @dataclass(frozen=True)
 class TrainingRecipe:
     """Manifest immutabile della singola run."""
@@ -319,14 +323,48 @@ class RemoteProcess:
         self._missing_exit_since: float | None = None
         self._gpu_cache: tuple[float, list[dict]] = (0.0, [])
 
-    def _remote(self, command: str) -> subprocess.CompletedProcess[str]:
+    # Post-training reads (the artifact manifest) happen once, after the GPU
+    # has spent an hour on the run: a single 20 s SSH hiccup there used to
+    # fail a finished training. They get a longer timeout and retries with
+    # backoff; the poll loop keeps the short timeout because it retries anyway.
+    MANIFEST_TIMEOUT_S = 60
+    POST_TRAINING_ATTEMPTS = 4
+    POST_TRAINING_BACKOFF_S = (5.0, 15.0, 45.0)
+    _sleep = staticmethod(time.sleep)
+
+    def _remote(self, command: str, *, timeout: float = 20) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["ssh", *self.executor._options(), self.executor._target(), command],
             check=False,
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=timeout,
         )
+
+    def _remote_with_retry(self, command: str, *, timeout: float) -> subprocess.CompletedProcess[str]:
+        """Run a remote command, retrying transport failures with backoff.
+
+        A transport failure is a timeout, an OSError, or ssh's own exit code
+        255. A non-zero exit of the remote command itself is an answer, not a
+        transport failure, and is returned at once. When every attempt fails
+        the last transport error is raised as `RemoteTransportError`.
+        """
+        last: BaseException | None = None
+        for attempt in range(self.POST_TRAINING_ATTEMPTS):
+            if attempt:
+                backoff = self.POST_TRAINING_BACKOFF_S
+                self._sleep(backoff[min(attempt - 1, len(backoff) - 1)])
+            try:
+                result = self._remote(command, timeout=timeout)
+            except (OSError, subprocess.SubprocessError) as exc:
+                last = exc
+                continue
+            if result.returncode != 255:
+                return result
+            last = RuntimeError((result.stderr or "ssh exit 255").strip()[:300])
+        raise RemoteTransportError(
+            f"SSH unreachable after {self.POST_TRAINING_ATTEMPTS} attempts: {last}"
+        ) from last
 
     def gpu_snapshot(self) -> list[dict]:
         """Telemetria della GPU remota, con cache breve per non martellare SSH."""
@@ -366,32 +404,58 @@ class RemoteProcess:
             self.log_file.write_text(result.stdout, encoding="utf-8")
 
     def download_artifacts(self, destination: Path) -> dict:
+        """Copy the remote checkpoints here and verify them against the remote manifest.
+
+        The result always says how far it got: `downloaded` is true once rsync
+        finished, `manifest` is `verified`, `mismatch`, `missing`, `empty` or
+        `unreachable`. `unreachable` means SSH failed on every retry *after*
+        the files arrived: rsync's own checksums still vouch for the copy, so
+        the trainer does not fail the run for it (see `trainer._monitor`).
+        rsync is retried with the same backoff; if it never succeeds the
+        error propagates and the run fails, because the copy is incomplete.
+        """
         destination.mkdir(parents=True, exist_ok=True)
         remote = f"{self.executor._target()}:{self.executor._remote_dir(self.recipe)}/checkpoints/"
-        subprocess.run(
-            [
-                "rsync", "--archive", "--checksum",
-                "-e", "ssh " + " ".join(shlex.quote(x) for x in self.executor._options()),
-                remote, f"{destination}/",
-            ],
-            check=True,
-        )
-        manifest_result = self._remote(
-            "printf '__TABULARIUM_MANIFEST_BEGIN__\\n'; "
-            f"cat {shlex.quote(self.executor._remote_dir(self.recipe))}/artifacts.sha256; "
-            + 'code=$?; printf "\\n__TABULARIUM_MANIFEST_END__\\n"; exit "$code"'
-        )
+        command = [
+            "rsync", "--archive", "--checksum",
+            "-e", "ssh " + " ".join(shlex.quote(x) for x in self.executor._options()),
+            remote, f"{destination}/",
+        ]
+        for attempt in range(self.POST_TRAINING_ATTEMPTS):
+            if attempt:
+                backoff = self.POST_TRAINING_BACKOFF_S
+                self._sleep(backoff[min(attempt - 1, len(backoff) - 1)])
+            try:
+                subprocess.run(command, check=True)
+                break
+            except (OSError, subprocess.SubprocessError):
+                if attempt == self.POST_TRAINING_ATTEMPTS - 1:
+                    raise
+        try:
+            manifest_result = self._remote_with_retry(
+                "printf '__TABULARIUM_MANIFEST_BEGIN__\\n'; "
+                f"cat {shlex.quote(self.executor._remote_dir(self.recipe))}/artifacts.sha256; "
+                + 'code=$?; printf "\\n__TABULARIUM_MANIFEST_END__\\n"; exit "$code"',
+                timeout=self.MANIFEST_TIMEOUT_S,
+            )
+        except RemoteTransportError as exc:
+            return {"ok": False, "checked": 0, "errors": [str(exc)], "downloaded": True, "manifest": "unreachable"}
         if manifest_result.returncode != 0:
-            return {"ok": False, "checked": 0, "errors": ["manifest remoto assente"]}
+            return {"ok": False, "checked": 0, "errors": ["manifest remoto assente"], "downloaded": True, "manifest": "missing"}
         manifest = destination.parent / "remote-artifacts.sha256"
         import re
         framed = re.search(r"__TABULARIUM_MANIFEST_BEGIN__\n(.*?)\n__TABULARIUM_MANIFEST_END__", manifest_result.stdout, re.DOTALL)
         if not framed or not framed.group(1).strip():
-            return {"ok": False, "checked": 0, "errors": ["manifest remoto vuoto: nessun checkpoint recuperato"]}
+            return {
+                "ok": False, "checked": 0,
+                "errors": ["manifest remoto vuoto: nessun checkpoint recuperato"],
+                "downloaded": True, "manifest": "empty",
+            }
         # Preserve the entire framed manifest: malformed entries must fail
         # validation rather than silently disappear with the provider banner.
         manifest.write_text(framed.group(1), encoding="utf-8")
-        return verify_manifest(destination, manifest)
+        result = verify_manifest(destination, manifest)
+        return {**result, "downloaded": True, "manifest": "verified" if result.get("ok") else "mismatch"}
 
     def poll(self) -> int | None:
         if self._returncode is not None:
