@@ -33,6 +33,16 @@ DAEMON_ERROR = (
 )
 
 
+# The first CUDA call of `run_1794954387239` on machine 25723 (A100 SXM4, offer 29019380).
+CUDA_BUSY_TRACEBACK = (
+    "Traceback (most recent call last):\n"
+    '  File "<string>", line 1, in <module>\n'
+    "RuntimeError: CUDA error: CUDA-capable device(s) is/are busy or unavailable\n"
+    "CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace "
+    "below might be incorrect.\n"
+)
+
+
 def _offer(offer_id: int, machine_id: int, dph: float = 1.16) -> dict:
     return {"id": offer_id, "machine_id": machine_id, "gpu_name": "A100 SXM4", "compute_cap": 800,
             "cuda_max_good": 13.2, "gpu_ram": 81920, "dph_total": dph, "cpu_arch": "amd64",
@@ -105,9 +115,11 @@ def _job(job_id: str = "auto_new") -> dict:
 class _FakeVast:
     """Offers and instances: `bad` machines report the daemon error."""
 
-    def __init__(self, offers: list[dict], bad: set[int]):
+    def __init__(self, offers: list[dict], bad: set[int], cuda_busy: set[int] | None = None):
         self.offers = offers
         self.bad = bad
+        self.cuda_busy = cuda_busy or set()
+        self.preflights: list[int] = []
         self.rented: list[int] = []
         self.deleted: list[int] = []
         self.machine_of: dict[int, int] = {}
@@ -126,9 +138,24 @@ class _FakeVast:
         monkeypatch.setattr(cloud_manager, "pin_ssh_host_key", lambda *_a, **_k: {"ok": True})
         monkeypatch.setattr(cloud_manager, "check_ssh_access", lambda *_a, **_k: {"ok": True})
         ready = '{"python": "/opt/venv/bin/python", "repo": "/opt/LLaMA-Factory"}'
-        monkeypatch.setattr(auto_training, "_ssh", lambda *_a, **_k: subprocess.CompletedProcess([], 0, ready, ""))
-        monkeypatch.setattr(trainer, "start_run", lambda *_a, **_k: {"run": {"run_id": "run_1"}})
+        monkeypatch.setattr(auto_training, "CUDA_PREFLIGHT_RETRY_S", 0)
+
+        def ssh(host, _port, command, **_k):
+            if "torch" not in command:
+                return subprocess.CompletedProcess([], 0, ready, "")
+            machine = int(host.split(".")[0].removeprefix("gpu"))
+            self.preflights.append(machine)
+            if machine in self.cuda_busy:
+                return subprocess.CompletedProcess([], 1, CUDA_BUSY_TRACEBACK, "")
+            return subprocess.CompletedProcess([], 0, f"{auto_training.CUDA_PREFLIGHT_OK} NVIDIA A100-SXM4-80GB\n", "")
+
+        monkeypatch.setattr(auto_training, "_ssh", ssh)
+        monkeypatch.setattr(trainer, "start_run", self.start_run)
         monkeypatch.setattr(auto_training, "_monitor_run", lambda *_a, **_k: None)
+
+    def start_run(self, *_a, **_k):
+        self.started = getattr(self, "started", 0) + 1
+        return {"run": {"run_id": "run_1"}}
 
     def search(self, *_a, **kwargs):
         self.searches.append(kwargs)
@@ -148,7 +175,7 @@ class _FakeVast:
             return {"id": instance_id, "machine_id": machine, "is_running": False, "status": "created",
                     "actual_status": "created", "status_message": DAEMON_ERROR}
         return {"id": instance_id, "machine_id": machine, "is_running": True, "status": "running",
-                "actual_status": "running", "status_message": "success", "ssh_host": "gpu.example",
+                "actual_status": "running", "status_message": "success", "ssh_host": f"gpu{machine}.example",
                 "ssh_port": 2222}
 
 
@@ -296,3 +323,100 @@ def test_start_auto_stores_verified_only_in_the_job(monkeypatch):
     auto_training._THREADS[job["id"]].join(timeout=5)  # noqa: SLF001
     assert job["verified_only"] is True and saved[0]["verified_only"] is True
     assert started[0]["verified_only"] is True
+
+
+# --- a GPU that does not answer CUDA (prod, 2026-11-17) -----------------------------------
+# Job `auto_1794953975433` rented offer 29019380 on machine 25723; its run failed a
+# minute in at the first CUDA call, after the dataset sync, and the job neither
+# recorded the host nor tried another one.
+
+def test_a_busy_gpu_is_caught_before_the_sync_and_the_host_replaced(monkeypatch, tmp_path):
+    vast = _FakeVast([_offer(29019380, 25723), _offer(29019381, 25723), _offer(31000001, 7, dph=1.2)],
+                     bad=set(), cuda_busy={25723})
+    vast.install(monkeypatch, tmp_path)
+    job = _job()
+    _run(job)
+    assert vast.rented == [29019380, 31000001], "the other slot of the busy machine must be skipped"
+    assert vast.deleted == [61079485]
+    assert vast.preflights == [25723, 25723, 7], "the preflight is retried once, then the host replaced"
+    assert getattr(vast, "started", 0) == 1, "training (and the dataset sync) start only on the healthy host"
+    assert job["state"] == "running" and job["instance_id"] == 61079486
+    failed = job["failed_hosts"]
+    assert [(f["offer_id"], f["machine_id"]) for f in failed] == [(29019380, 25723)]
+    assert "busy or unavailable" in failed[0]["reason"]
+    assert "does not answer CUDA" in i18n.localize_detail(failed[0]["reason"], "en")
+    # The next job skips the machine too.
+    (tmp_path / "auto_new.json").write_text(json.dumps(job))
+    assert auto_training._recently_failed_hosts(_job("auto_next")) == ({29019380}, {25723})  # noqa: SLF001
+
+
+def test_busy_gpus_count_against_the_retry_budget(monkeypatch, tmp_path):
+    offers = [_offer(100 + i, 900 + i) for i in range(6)]
+    vast = _FakeVast(offers, bad=set(), cuda_busy={o["machine_id"] for o in offers})
+    vast.install(monkeypatch, tmp_path)
+    job = _job()
+    _run(job)
+    assert len(vast.rented) == auto_training.MAX_HOST_ATTEMPTS
+    assert getattr(vast, "started", 0) == 0
+    assert job["state"] == "failed" and job["instance_destroyed"] is True
+    assert "not usable" in i18n.localize_detail(job["error"], "en")
+
+
+def test_an_image_without_torch_fails_the_job_not_the_host(monkeypatch, tmp_path):
+    vast = _FakeVast([_offer(1, 11), _offer(2, 22)], bad=set())
+    vast.install(monkeypatch, tmp_path)
+    ready = '{"python": "/opt/venv/bin/python", "repo": "/opt/LLaMA-Factory"}'
+    monkeypatch.setattr(auto_training, "_ssh", lambda _h, _p, cmd, **_k: subprocess.CompletedProcess(
+        [], 1 if "torch" in cmd else 0,
+        "ModuleNotFoundError: No module named 'torch'\n" if "torch" in cmd else ready, ""))
+    job = _job()
+    _run(job)
+    assert vast.rented == [1] and job["state"] == "failed"
+    assert "torch" in job["error"] and not job.get("failed_hosts")
+
+
+def test_preflight_uses_the_training_python_and_passes_on_success(monkeypatch):
+    seen: list[str] = []
+    monkeypatch.setattr(auto_training, "_ssh", lambda _h, _p, cmd, **_k: seen.append(cmd) or subprocess.CompletedProcess(
+        [], 0, f"{auto_training.CUDA_PREFLIGHT_OK} NVIDIA A100\n", ""))
+    assert auto_training._cuda_preflight("h", 22, "/opt/venv/bin/python", threading.Event()) is None  # noqa: SLF001
+    assert seen[0].startswith("timeout 120 /opt/venv/bin/python -c ")
+    assert 'torch.ones(1, device="cuda")' in seen[0] and "synchronize" in seen[0]
+
+
+def _monitor_failed_run(monkeypatch, tmp_path, log: str, error: str = "manifest remoto vuoto: nessun checkpoint recuperato"):
+    run_dir = tmp_path / "run_1794954387239"
+    run_dir.mkdir()
+    (run_dir / "train.log").write_text(log)
+    monkeypatch.setattr(auto_training, "_save", lambda _job: None)
+    monkeypatch.setattr(trainer, "_load_run", lambda *_a: (run_dir, {"state": "failed", "error": error}))
+    monkeypatch.setattr(trainer, "write_run_meta", lambda *_a: None)
+    monkeypatch.setattr(auto_training, "_instance", lambda *_a: None)
+    deleted: list[int] = []
+    monkeypatch.setattr(cloud_manager, "control_vast_instance",
+                        lambda _key, iid, action: deleted.append(int(iid)) if action == "delete" else None)
+    job = {**_job("auto_1794953975433"), "state": "running", "run_id": "run_1794954387239",
+           "instance_id": 61079485, "offer": {"id": 29019380, "machine_id": 25723}}
+    auto_training._monitor_run(job, "key", 4, "run_1794954387239", 61079485, threading.Event())  # noqa: SLF001
+    assert deleted == [61079485] and job["state"] == "failed"
+    return job
+
+
+def test_a_training_failed_on_a_busy_gpu_records_the_host(monkeypatch, tmp_path):
+    # The real log: the CUDA error, then a long torchrun shutdown report after it.
+    log = ("[rank0]: " + CUDA_BUSY_TRACEBACK.replace("\n", "\n[rank0]: ")
+           + "\n" + "E1117 torch/distributed/elastic/multiprocessing/api.py: failed\n" * 400)
+    job = _monitor_failed_run(monkeypatch, tmp_path, log)
+    failed = job["failed_hosts"]
+    assert [(f["offer_id"], f["machine_id"], f["instance_id"]) for f in failed] == [(29019380, 25723, 61079485)]
+    assert "busy or unavailable" in failed[0]["reason"]
+    (tmp_path / "jobs").mkdir()
+    (tmp_path / "jobs" / "auto_1794953975433.json").write_text(json.dumps(job))
+    monkeypatch.setattr(auto_training, "_job_dir", lambda: tmp_path / "jobs")
+    assert auto_training._recently_failed_hosts({**_job("auto_next"), "project_id": 9}) == ({29019380}, {25723})  # noqa: SLF001
+
+
+def test_an_ordinary_training_failure_does_not_blame_the_host(monkeypatch, tmp_path):
+    job = _monitor_failed_run(monkeypatch, tmp_path, "torch.OutOfMemoryError: CUDA out of memory.\n",
+                              error="training failed")
+    assert not job.get("failed_hosts")
