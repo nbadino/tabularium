@@ -13,6 +13,7 @@ import type { AutoTrainingJob, TrainingRunItem, TrainingStatus } from '../../lib
 import { Badge, Module } from '../../app/ui'
 import { familyLabel, runStateLabel, RUN_STATE_TONE } from '../../lib/vocab'
 import { useI18n } from '../../i18n'
+import { GoldEvalPanel } from './GoldEvalPanel'
 
 export interface GpuPoint {
   i: number
@@ -105,6 +106,9 @@ export default function TrainingDashboard({ projectId, status, autoJob, metricsD
   const comparisonJob = run?.comparison_job
   const comparison = evaluation?.comparison
   const comparing = comparisonJob?.state === 'running'
+  const gold = run?.gold_eval
+  const goldPlan = job?.gold_eval
+  const goldExact = gold?.state === 'finished' && gold.aggregate?.cell_exact != null ? `${(gold.aggregate.cell_exact * 100).toFixed(1)}%` : '—'
   const recoveringComparison = comparing && comparisonJob?.instance_id != null
   const gpu = gpuHistory[gpuHistory.length - 1]
   const gpuName = comparing ? comparisonJob.gpu ?? job?.offer?.gpu_name ?? status?.gpu?.[0]?.name : job?.offer?.gpu_name ?? status?.gpu?.[0]?.name
@@ -114,7 +118,7 @@ export default function TrainingDashboard({ projectId, status, autoJob, metricsD
   const rentalElapsed = comparisonJob?.hourly_rate ? seconds(comparisonJob.started_at, comparisonJob.ended_at) : job ? seconds(job.created_at, terminalJob ? job.updated_at : undefined) : elapsed
   const rawPhase = job?.state === 'finished' ? 'done' : job?.phase ?? (run?.state === 'finished' ? 'done' : run?.state === 'running' ? 'train' : 'rent')
   const failedPhase = job?.failure_stage === 'training' ? 'train' : job?.failure_stage
-  const phase = rawPhase === 'failed' ? failedPhase ?? (summary?.steps && summary.steps === summary.total_steps ? 'prepare' : 'train') : rawPhase === 'training' ? 'train' : rawPhase
+  const phase = rawPhase === 'failed' ? failedPhase ?? (summary?.steps && summary.steps === summary.total_steps ? 'prepare' : 'train') : rawPhase === 'training' ? 'train' : rawPhase === 'gold_eval' ? 'prepare' : rawPhase
   const phaseIndex = AUTO_PHASES.indexOf(phase as (typeof AUTO_PHASES)[number])
   const failed = job?.state === 'failed' || run?.state === 'failed'
   const prepare = run?.prepare_job
@@ -224,6 +228,7 @@ export default function TrainingDashboard({ projectId, status, autoJob, metricsD
             [t('training.dashboard.cost'), job?.cost_unknown ? '—' : money(dph, rentalElapsed)],
             [t('training.dashboard.loss'), checkpointOnly ? '—' : (latest?.loss ?? summary?.train_loss)?.toFixed(4) ?? '—'],
             [t('training.evalLoss'), (latestEval ?? summary?.eval_loss)?.toFixed(4) ?? '—'],
+            [t('training.gold.cellExact'), goldExact],
             [t(summary?.peak_gib != null ? 'training.peakMemory' : 'training.dashboard.memory'), summary?.peak_gib != null ? `${summary.peak_gib.toFixed(1)} GiB` : gpu ? `${gpu.mem}%` : '—'],
           ].filter(([, value]) => value !== '—').map(([label, value]) => (
             <div key={label} className="min-w-24">
@@ -398,9 +403,10 @@ export default function TrainingDashboard({ projectId, status, autoJob, metricsD
         </Module>}
       </div>}
 
-      {(evaluation || summary?.eval_token_acc != null || comparisonJob) && <Module
+      {(evaluation || summary?.eval_token_acc != null || comparisonJob || gold || goldPlan) && <Module
         tab={t('training.dashboard.performance')}
       >
+        <GoldEvalPanel record={gold} plan={goldPlan} />
         {comparisonJob && <div className="mb-4 space-y-2">
           <p className="text-[13px] font-semibold">{t('training.comparison.title')}</p>
           <p className="text-[12px]">{t(`training.comparison.phases.${comparisonJob.phase}`)}{comparisonJob.target ? ` · ${t(`training.comparison.${comparisonJob.target}`)}` : ''}</p>
@@ -460,7 +466,7 @@ export default function TrainingDashboard({ projectId, status, autoJob, metricsD
             <p className="mt-1 text-[11px] text-[color:var(--color-ink-3)]">{t('training.dashboard.tokenAccuracyHint')}</p>
           </div></details>
         )}
-        {runs.filter((item) => item.summary?.train_loss != null || item.summary?.eval_loss != null).length > 1 && (
+        {runs.filter((item) => item.summary?.train_loss != null || item.summary?.eval_loss != null || item.gold_eval?.aggregate).length > 1 && (
           <details className="mt-5">
             <summary className="w-fit cursor-pointer text-[12px] font-medium text-[color:var(--color-ink-2)]">{t('training.dashboard.compareRuns')}</summary>
             <table className="mt-1 w-full text-[11px]">
@@ -470,15 +476,19 @@ export default function TrainingDashboard({ projectId, status, autoJob, metricsD
                   <th className="py-1">{t('training.trainLoss')}</th>
                   <th className="py-1">{t('training.evalLoss')}</th>
                   <th className="py-1">{t('training.tokenAccuracy')}</th>
+                  <th className="py-1">{t('training.gold.columnExact')}</th>
+                  <th className="py-1">{t('training.gold.columnCer')}</th>
                 </tr>
               </thead>
               <tbody>
-                {runs.filter((item) => item.summary?.train_loss != null || item.summary?.eval_loss != null).slice(0, 5).map((item) => (
+                {runs.filter((item) => item.summary?.train_loss != null || item.summary?.eval_loss != null || item.gold_eval?.aggregate).slice(0, 5).map((item) => (
                   <tr key={item.run_id} className="border-t border-[color:var(--color-rule)]">
                     <td className="mono py-1">{item.run_id}</td>
                     <td className="mono py-1">{item.summary?.train_loss?.toFixed(4) ?? '—'}</td>
                     <td className="mono py-1">{item.summary?.eval_loss?.toFixed(4) ?? '—'}</td>
                     <td className="mono py-1">{item.summary?.eval_token_acc != null ? `${(item.summary.eval_token_acc * 100).toFixed(1)}%` : '—'}</td>
+                    <td className="mono py-1">{item.gold_eval?.aggregate?.cell_exact != null ? `${(item.gold_eval.aggregate.cell_exact * 100).toFixed(1)}%${item.gold_eval.complete === false ? '*' : ''}` : '—'}</td>
+                    <td className="mono py-1">{item.gold_eval?.aggregate?.cer != null ? `${(item.gold_eval.aggregate.cer * 100).toFixed(1)}%` : '—'}</td>
                   </tr>
                 ))}
               </tbody>

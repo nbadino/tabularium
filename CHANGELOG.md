@@ -7,6 +7,17 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **One-click training scores the new checkpoint on the gold set on the same GPU.** After the
+  remote merge and before the download and the GPU release, a Xiaomi-OCR-0 run reads the
+  project's approved gold tables with the merged model (training crops, training prompt and image
+  bounds, greedy, 12,288 new tokens; truncated or unparsable output scores zero), in the fixed
+  `tabularium-eval-xiaomi:v1` environment (torch 2.14.0, transformers 5.17.0; digest and measured
+  versions recorded). Per-table and aggregate metrics (exact cells, CER, header structure,
+  missing/extra rows) are stored in the run and shown next to the loss and in *Compare runs*. On by
+  default, with a time cap (60 min); `gold_eval: false` skips it. An evaluation failure is
+  recorded and never stops the model from being prepared. This removes the separate eval rental.
+  `evaluate.table_metrics` now also reports row-aligned exact cells, CER, missing/extra rows and
+  header structure.
 - **One-click training replaces a Vast.ai host that does not start.** While waiting for SSH the job
   polls the instance; a container error in Vast's `status_msg` (e.g. "Error response from daemon:
   failed to create task for container", seen on prod with two A100 SXM4 rentals stuck in `created`

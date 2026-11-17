@@ -111,6 +111,28 @@
   no table-content quality claim. A failed comparison must remain visibly failed even when the
   checkpoint itself was saved successfully. `scripts/compare_training.py` recovers an already
   saved run whose original GPU is gone; it is not the normal post-training path.
+- **Gold-set evaluation on the training GPU** (`services/gold_eval.py`). A one-click run whose
+  recipe declares `gold_eval` (today Xiaomi-OCR-0) on a project with approved gold pages
+  (`study_protocol.gold_pages`, never in a snapshot) reads the gold Table blocks with the merged
+  checkpoint after the remote merge and before the download, so no second rental is needed. The job
+  rents the recipe's evaluation image instead of the training image
+  (`ghcr.io/nbadino/tabularium-eval-xiaomi:v1`: the `qwen-v1` layers unchanged plus
+  `/root/eval-env`, torch 2.14.0+cu130 and transformers 5.17.0, so the offer search asks for CUDA
+  ≥ 13.0) and records the decision in `job.gold_eval` (`planned`, or `skipped`/`not_applicable`
+  with `disabled`, `not_declared`, `no_gold_tables`). Inputs: crops cut by `pages.crop_block_jpeg`
+  from the block bbox (the training crop, SHA-256 recorded), tables with an unverified cell left
+  out; the recipe's table prompt and image-size bounds; greedy decoding, `max_new_tokens` 12288,
+  1500 s per crop; `scripts/cloud/gold_infer.py` runs with the declared interpreter. Hitting the
+  token limit, an unparsable answer, an exception or an image hash mismatch scores zero on every
+  reference cell; nothing is repaired. Scoring is `evaluate.table_metrics` (rows aligned by
+  Needleman-Wunsch, then exact cells, CER, missing/extra rows, header structure, TEDS), micro
+  over cells. The remote stack must match the declared one or the evaluation fails. A time cap
+  (`gold_eval_max_minutes`, 60 by default, 5–240) stops starting new crops; unread crops are
+  `not_run` and the result is `complete: false`. `run.json` keeps `gold_eval` (state, aggregate,
+  per-table metrics, environment with image digest and measured versions, protocol), the full
+  outputs go to `gold_eval.json`, `GET /training/runs` carries the aggregate. Training runs have no
+  database table: `run.json` is their record. Any evaluation error is stored in `gold_eval.error`
+  and preparation goes on: the model is downloaded and registered.
 - **Run history and selection.** `GET /training/runs` lists every run of the project;
   `GET /training/status?run_id=` reads an old one without pretending it is active. The UI selects a
   run to see its metrics/log/checkpoint and offers *Resume from this run* (fills `resume_run_id`).

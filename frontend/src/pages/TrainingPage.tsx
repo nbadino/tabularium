@@ -245,7 +245,7 @@ export default function TrainingPage() {
     model_path: cfg.model_path?.trim() ? cfg.model_path.trim() : undefined,
   })
 
-  const startAuto = async (maxDph: number, hosts: { datacenterOnly: boolean; verifiedOnly: boolean }) => {
+  const startAuto = async (maxDph: number, hosts: { datacenterOnly: boolean; verifiedOnly: boolean; goldEval: boolean; goldEvalMinutes: number }) => {
     if (projectId === '') return
     // A snapshot older than the latest approval or edit is refused by the
     // server unless the person says, here, to train on it anyway.
@@ -271,6 +271,8 @@ export default function TrainingPage() {
         min_gpu_ram_gb: 24,
         datacenter_only: hosts.datacenterOnly,
         verified_only: hosts.verifiedOnly,
+        gold_eval: hosts.goldEval,
+        gold_eval_max_minutes: hosts.goldEvalMinutes,
         lang: document.documentElement.lang || 'en',
       })
       setAutoJob(job)
