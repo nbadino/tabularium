@@ -147,7 +147,7 @@ interface TrainingConfigFormProps {
   autoJob: AutoTrainingJob | null
   autoBusy: boolean
   autoError: unknown
-  onAutoStart: (maxDph: number, hosts: { datacenterOnly: boolean; verifiedOnly: boolean }) => void
+  onAutoStart: (maxDph: number, hosts: { datacenterOnly: boolean; verifiedOnly: boolean; goldEval: boolean; goldEvalMinutes: number }) => void
   onAutoCancel: () => void
 }
 
@@ -230,6 +230,14 @@ export default function TrainingConfigForm({
       return false
     }
   })
+  const [autoGold, setAutoGold] = useState(() => {
+    try {
+      return window.localStorage.getItem('tabularium.training.goldEval') !== '0'
+    } catch {
+      return true
+    }
+  })
+  const [autoGoldMinutes, setAutoGoldMinutes] = useState('60')
   const [showAutoLogs, setShowAutoLogs] = useState(false)
 
   // Noleggia e prepara da sé un host Vast per il training (M18): cerca l'offerta
@@ -549,10 +557,35 @@ export default function TrainingConfigForm({
                 />
                 {t('training.auto.verifiedOnly')}
               </label>
+              <label className="flex items-center gap-1.5 pb-2 text-[12px]" title={t('training.auto.goldEvalHint')}>
+                <input
+                  type="checkbox"
+                  checked={autoGold}
+                  onChange={(e) => {
+                    setAutoGold(e.target.checked)
+                    try {
+                      window.localStorage.setItem('tabularium.training.goldEval', e.target.checked ? '1' : '0')
+                    } catch {
+                      // A blocked storage only loses the remembered choice.
+                    }
+                  }}
+                />
+                {t('training.auto.goldEval')}
+              </label>
+              {autoGold && <Field label={t('training.auto.goldEvalMinutes')}>
+                <input
+                  className="input w-20"
+                  type="number"
+                  min={5}
+                  max={240}
+                  value={autoGoldMinutes}
+                  onChange={(e) => setAutoGoldMinutes(e.target.value)}
+                />
+              </Field>}
               <button
               type="button"
               className="btn btn-primary"
-              onClick={() => onAutoStart(Number(autoDph) || 1, { datacenterOnly: autoDatacenter, verifiedOnly: autoVerified })}
+              onClick={() => onAutoStart(Number(autoDph) || 1, { datacenterOnly: autoDatacenter, verifiedOnly: autoVerified, goldEval: autoGold, goldEvalMinutes: Number(autoGoldMinutes) || 60 })}
               disabled={
                 autoBusy ||
                 projectId === '' ||

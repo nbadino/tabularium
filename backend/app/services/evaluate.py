@@ -185,6 +185,81 @@ def teds(gt_grid: dict, pred_grid: dict) -> float:
     return tree_teds(gt_grid, pred_grid)
 
 
+def _cell_text(value) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _row_strings(grid: dict) -> list[str]:
+    rows: list[list[tuple[int, str]]] = [[] for _ in range(int(grid.get("rows") or 0))]
+    for cell in grid.get("cells") or []:
+        r = int(cell.get("r") or 0)
+        if 0 <= r < len(rows):
+            rows[r].append((int(cell.get("c") or 0), _cell_text(cell.get("text"))))
+    return [" ".join(text for _, text in sorted(row)) for row in rows]
+
+
+def header_rows(grid: dict) -> int:
+    """Rows the header spans: the tallest cell of the first row (1 without spans)."""
+    first = [c for c in grid.get("cells") or [] if int(c.get("r") or 0) == 0]
+    return max([int(c.get("rowspan") or 1) for c in first] or [0])
+
+
+def _header_shape(grid: dict, rows: int) -> list[tuple]:
+    return sorted(
+        (int(c.get("r") or 0), int(c.get("c") or 0), int(c.get("rowspan") or 1), int(c.get("colspan") or 1))
+        for c in grid.get("cells") or [] if int(c.get("r") or 0) < rows
+    )
+
+
+def table_cell_metrics(gt_grid: dict, pred_grid: dict) -> dict:
+    """Cell-level accuracy of a predicted grid against the reference.
+
+    Rows are aligned first (Needleman-Wunsch on the row text, `domain.consensus`
+    gap cost), so one dropped row costs that row and not every row below it;
+    within an aligned row a reference cell is compared with the predicted cell
+    that starts at the same column, so a row shifted by one column scores as
+    wrong. A reference cell is exact when its text, whitespace collapsed, is the
+    same. Cells of unaligned reference rows count as missed with all their
+    characters as errors.
+    """
+    from ..domain.consensus import _align  # noqa: PLC0415 - the one NW alignment
+
+    ref_rows, pred_rows = _row_strings(gt_grid), _row_strings(pred_grid)
+    path = _align(len(ref_rows), len(pred_rows),
+                  lambda i, j: min(1.0, cer(ref_rows[i], pred_rows[j])))
+    row_map = {i: j for i, j in path if i is not None and j is not None}
+    predicted = {(int(c.get("r") or 0), int(c.get("c") or 0)): _cell_text(c.get("text"))
+                 for c in pred_grid.get("cells") or []}
+    cells = exact = characters = errors = 0
+    for cell in gt_grid.get("cells") or []:
+        reference = _cell_text(cell.get("text"))
+        row = row_map.get(int(cell.get("r") or 0))
+        guess = predicted.get((row, int(cell.get("c") or 0)), "") if row is not None else ""
+        cells += 1
+        characters += len(reference)
+        exact += int(reference == guess)
+        errors += _edit_distance(reference, guess)
+    ref_header, pred_header = header_rows(gt_grid), header_rows(pred_grid)
+    return {
+        "reference_cells": cells,
+        "exact_cells": exact,
+        "cell_exact": exact / cells if cells else None,
+        "reference_characters": characters,
+        "character_errors": errors,
+        "cer": errors / characters if characters else None,
+        "reference_rows": len(ref_rows),
+        "predicted_rows": len(pred_rows),
+        "missing_rows": sum(1 for i, j in path if i is not None and j is None),
+        "extra_rows": sum(1 for i, j in path if i is None and j is not None),
+        "header_rows": ref_header,
+        "header_structure_ok": (
+            pred_grid.get("cols") == gt_grid.get("cols")
+            and pred_header == ref_header
+            and _header_shape(pred_grid, pred_header) == _header_shape(gt_grid, ref_header)
+        ),
+    }
+
+
 def table_metrics(gt_grid: dict, pred_otsl: str, lang: str = "it") -> dict:
     try:
         pred = otslmod.otsl_to_grid(pred_otsl)
@@ -214,6 +289,7 @@ def table_metrics(gt_grid: dict, pred_otsl: str, lang: str = "it") -> dict:
         "teds": teds(gt_grid, pred),
         "teds_method": "tree_edit_distance_apted",
         "row_aligned_similarity": row_aligned_similarity(gt_grid, pred),
+        **table_cell_metrics(gt_grid, pred),
     }
 
 

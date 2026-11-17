@@ -248,6 +248,9 @@ def training_auto(
             allow_stale_dataset=payload.get("allow_stale_dataset") is True,
             datacenter_only=payload.get("datacenter_only") is True,
             verified_only=payload.get("verified_only") is True,
+            # On by default: only an explicit false skips the gold-set evaluation.
+            gold_eval_enabled=payload.get("gold_eval") is not False,
+            gold_eval_max_minutes=payload.get("gold_eval_max_minutes"),
         )
     except (ValueError, TypeError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

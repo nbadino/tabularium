@@ -947,6 +947,13 @@ def dataset_collection_scope(project_id: int) -> dict:
     return scope if isinstance(scope, dict) else whole
 
 
+def gold_eval_summary(record: dict | None) -> dict | None:
+    """The gold-set result of a run without its per-table detail, for the history."""
+    if not isinstance(record, dict):
+        return None
+    return {key: record.get(key) for key in ("state", "complete", "aggregate", "error", "ended_at")}
+
+
 def list_runs(project_id: int, *, limit: int = 50) -> list[dict]:
     """Le run del progetto, dalla più recente: servono allo storico e al resume."""
     root = runs_dir(project_id)
@@ -974,6 +981,7 @@ def list_runs(project_id: int, *, limit: int = 50) -> list[dict]:
                     ended_at=meta.get("ended_at"),
                 ),
                 "remote_cleaned_at": meta.get("remote_cleaned_at"),
+                "gold_eval": gold_eval_summary(meta.get("gold_eval")),
                 # Runs from before collections trained on the whole project.
                 "collection_scope": meta.get("collection_scope")
                 or {"kind": "project", "collections": [], "include_unassigned": True},

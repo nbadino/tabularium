@@ -196,6 +196,26 @@ class SshExecutor:
             stream.flush()
             subprocess.run(command, check=True, stdout=stream, stderr=subprocess.STDOUT)
 
+    def upload(self, local_dir: Path, remote_path: str, *, log_file: Path | None = None) -> None:
+        """Copy a local directory to the remote host (the mirror of `download`)."""
+        remote_path = remote_path.rstrip("/")
+        made = self.run(f"mkdir -p {shlex.quote(remote_path)}", timeout=60)
+        if made.returncode != 0:
+            raise RuntimeError(f"cannot create {remote_path} on the remote host: {(made.stderr or '')[-300:]}")
+        command = [
+            "rsync", "--archive", "--checksum",
+            "-e", "ssh " + " ".join(shlex.quote(x) for x in self._options()),
+            f"{local_dir}/", f"{self._target()}:{remote_path}/",
+        ]
+        if log_file is None:
+            subprocess.run(command, check=True)
+            return
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        with log_file.open("ab") as stream:
+            stream.write(f">> rsync {local_dir} -> {self._target()}:{remote_path}\n".encode())
+            stream.flush()
+            subprocess.run(command, check=True, stdout=stream, stderr=subprocess.STDOUT)
+
     def mkdir_argv(self, recipe: TrainingRecipe) -> list[str]:
         """Crea la cartella remota della run prima del primo rsync.
 

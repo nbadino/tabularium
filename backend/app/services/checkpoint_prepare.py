@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 from .. import config
-from . import custom_models, remote_eval, train_recipes, trainer
+from . import custom_models, gold_eval, remote_eval, train_recipes, trainer
 from .trainer_script import _now, remote_shell_path
 from .training_executor import SshExecutor, executor_from_config
 from .trainer import REMOTE_PROVIDERS
@@ -263,6 +263,10 @@ def _run_job(project_id: int, run_id: str, plan: dict, run_dir: Path) -> None:
                     run_dir,
                     f"!! merge remoto non riuscito ({exc}); provo il merge locale",
                 )
+                gold = meta.get("gold_eval") or {}
+                if (meta.get("config") or {}).get("gold_eval", {}).get("enabled") and gold.get("state") != "finished":
+                    meta["gold_eval"] = {**gold, "state": "failed", "ended_at": _now(),
+                                         "error": f"remote preparation failed before the gold set was read: {exc}"[-2000:]}
                 _set_phase(run_dir, meta, job, "merge")
                 model = custom_models.register_training_checkpoint(
                     project_id, run_id, log_file=run_dir / "prepare.log"
@@ -355,6 +359,48 @@ def _merge_script(plan: dict, cfg: dict, remote_run: str) -> tuple[str, str, str
     return "\n".join(lines), actual, output_rel
 
 
+def _gold_evaluate(project_id: int, plan: dict, cfg: dict, run_dir: Path, meta: dict, job: dict,
+                   executor: SshExecutor, remote_run: str, merged_remote: str) -> None:
+    """Score the merged checkpoint on the gold set before it leaves the GPU.
+
+    Never raises: the training artifacts are already verified and the merged model
+    is still to be downloaded, so an evaluation error is recorded in
+    `meta["gold_eval"]` and preparation goes on (`docs/guide/training.md`).
+    """
+    settings = cfg.get("gold_eval") or {}
+    _set_phase(run_dir, meta, job, "gold_eval")
+    job["progress"] = {"phase": "gold_eval", "done": 0, "total": 0, "percent": None, "bytes_per_s": 0}
+    record = {"state": "running", "started_at": _now(), "max_minutes": settings.get("max_minutes"),
+              "completed": 0, "total": 0}
+    meta["gold_eval"] = record
+    _save(run_dir, meta, job)
+    _append(run_dir, f">> gold-set evaluation on the training GPU ({merged_remote})")
+
+    def progress(*, phase: str, completed: int, total: int) -> None:
+        record.update(phase=phase, completed=completed, total=total, updated_at=_now())
+        job["progress"] = {"phase": "gold_eval", "done": completed, "total": total,
+                           "percent": round(100.0 * completed / total, 1) if total else None, "bytes_per_s": 0}
+        _save(run_dir, meta, job)
+
+    try:
+        report = gold_eval.evaluate_on_remote(
+            executor=executor, project_id=project_id, adapter_id=plan["adapter_id"], run_dir=run_dir,
+            remote_run=remote_run, model_remote=merged_remote,
+            max_minutes=settings.get("max_minutes") or gold_eval.DEFAULT_MAX_MINUTES,
+            log_file=run_dir / "gold_eval.log", on_progress=progress,
+        )
+        meta["gold_eval"] = {**record, **report, "state": "finished", "error": None,
+                             "completed": len([p for p in report["pages"] if p.get("failure") != "not_run"]),
+                             "total": len(report["pages"])}
+        aggregate = report["aggregate"]
+        _append(run_dir, f">> gold set: {aggregate['tables']} tables, exact cells "
+                         f"{aggregate['cell_exact']}, CER {aggregate['cer']}, failures {aggregate['failed']}")
+    except Exception as exc:  # noqa: BLE001 - the trained model must survive any evaluation error
+        meta["gold_eval"] = {**record, "state": "failed", "ended_at": _now(), "error": str(exc)[-2000:]}
+        _append(run_dir, f"!! gold-set evaluation failed (the model is kept): {exc}")
+    _save(run_dir, meta, job)
+
+
 def _prepare_remote(
     project_id: int,
     run_id: str,
@@ -421,6 +467,10 @@ def _prepare_remote(
             meta['comparison_job'] = {**meta.get('comparison_job', {}), 'state': 'failed', 'phase': 'failed', 'ended_at': _now(), 'error': str(exc)[-1000:]}
             _append(run_dir, f"!! Automatic paired comparison failed: {exc}")
         _save(run_dir, meta, job)
+
+    if (cfg.get("gold_eval") or {}).get("enabled"):
+        _gold_evaluate(project_id, plan, cfg, run_dir, meta, job, executor, remote_run,
+                       f"{remote_run}/{actual_rel}")
 
     local_merged = run_dir / "checkpoints" / f"{plan['checkpoint']['name']}-merged"
     if local_merged.exists() and not custom_models._has_weights(local_merged):  # noqa: SLF001

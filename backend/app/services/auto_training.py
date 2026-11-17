@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 
 from .. import config
-from . import cloud_manager, i18n, train_recipes, trainer
+from . import cloud_manager, gold_eval, i18n, train_recipes, trainer
 from .i18n import msg
 from .trainer_script import _now
 
@@ -355,6 +355,8 @@ def start_auto(
     allow_stale_dataset: bool = False,
     datacenter_only: bool = False,
     verified_only: bool = False,
+    gold_eval_enabled: bool = True,
+    gold_eval_max_minutes: int | None = gold_eval.DEFAULT_MAX_MINUTES,
 ) -> dict:
     """Noleggia e prepara in background; ritorna subito il job.
 
@@ -364,6 +366,9 @@ def start_auto(
     `datacenter_only` rents only Vast.ai datacenter (Secure Cloud) hosts, and
     fails with an explicit message rather than fall back to community hosts.
     `verified_only` rents only hosts Vast marks verified (the `verified` filter).
+    `gold_eval_enabled` scores the merged checkpoint on the project's gold tables on
+    the training GPU before it is released (`services/gold_eval.py`), within
+    `gold_eval_max_minutes`; the job records why when it does not (`gold_eval`).
     """
     adapter_id = str(cfg.get("adapter_id") or "").strip()
     recipe = train_recipes.get_recipe(adapter_id)
@@ -407,6 +412,8 @@ def start_auto(
             'dataset_stale', i18n.SOURCE, built=stale['built_at'], snapshot=stale['snapshot_pages'],
             eligible=stale['eligible_pages'], changed=stale['changed_pages'],
         ))
+    gold = gold_eval.plan(int(project_id), adapter_id, enabled=bool(gold_eval_enabled),
+                          max_minutes=gold_eval_max_minutes)
     job_id = f"auto_{int(time.time() * 1000)}"
     job = {
         "id": job_id,
@@ -429,6 +436,7 @@ def start_auto(
         "verified_only": bool(verified_only),
         "dataset_snapshot": (coverage.get('dataset') or {}).get('snapshot_id'),
         "dataset_stale": stale or None,
+        "gold_eval": gold,
         "created_at": _now(),
         "updated_at": _now(),
     }
@@ -443,6 +451,7 @@ def start_auto(
                 "gpu_name": str(gpu_name or "").strip(),
                 "datacenter_only": bool(datacenter_only),
                 "verified_only": bool(verified_only),
+                "gold": gold,
             },
             name=f"auto-{job_id}",
             daemon=True,
@@ -545,7 +554,10 @@ def _monitor_run(
                 return
             if pstate in {"running", "queued", "starting"}:
                 prepare_wait_deadline = 0.0
-                _update(job, phase="prepare", message="training completato; preparo il modello…")
+                if prepare.get("phase") == "gold_eval":
+                    _update(job, phase="gold_eval", message="training completed; reading the gold set on this GPU…")
+                else:
+                    _update(job, phase="prepare", message="training completato; preparo il modello…")
             else:
                 # auto_prepare non è ancora partito: dagliene il tempo, poi
                 # chiudi comunque per non lasciare la GPU accesa.
@@ -642,7 +654,18 @@ def _offer_summary(offer: dict) -> dict:
     return {k: offer.get(k) for k in ("id", "machine_id", "gpu_name", "dph_total", "cuda_max_good")}
 
 
-def _image_for(profile: str, offer: dict) -> str:
+def _gold_environment(job: dict) -> dict | None:
+    """The evaluation environment the rental must boot, when the job evaluates on gold."""
+    if (job.get("gold_eval") or {}).get("state") != "planned":
+        return None
+    return gold_eval.environment(str(job.get("adapter_id") or ""))
+
+
+def _image_for(profile: str, offer: dict, gold_env: dict | None = None) -> str:
+    # The evaluation image is the training image plus the evaluation venv
+    # (`docker/eval-xiaomi`): training runs from it unchanged.
+    if gold_env:
+        return str(gold_env["image"])
     if profile in PREBUILT_IMAGES:
         return PREBUILT_IMAGES[profile]
     if profile == "paddle":
@@ -673,6 +696,10 @@ def _rent_best_offer(
     failed_hosts: int,
 ) -> tuple[dict, dict]:
     """Search, skip excluded offers and machines, rent the best: (offer, rental)."""
+    gold_env = _gold_environment(job)
+    min_cuda = PREBUILT_CUDA[profile] if profile in PREBUILT_IMAGES else None
+    if gold_env:
+        min_cuda = max(float(min_cuda or 0), float(gold_env["min_cuda"]))
     offers = cloud_manager.search_vast_offers(
         api_key,
         gpu_name=gpu_name,
@@ -683,7 +710,7 @@ def _rent_best_offer(
         disk_gb=disk_gb,
         min_gpu_ram_gb=min_gpu_ram_gb,
         min_compute_capability=8.0,
-        min_cuda=(PREBUILT_CUDA[profile] if profile in PREBUILT_IMAGES else None),
+        min_cuda=min_cuda,
         blackwell_ready=blackwell_ready(profile),
         datacenter_only=datacenter_only,
         verified_only=verified_only,
@@ -713,7 +740,7 @@ def _rent_best_offer(
     if best is None:
         raise none_left()
     prebuilt = profile in PREBUILT_IMAGES
-    image = _image_for(profile, best)
+    image = _image_for(profile, best, gold_env)
     _update(
         job,
         phase="rent",
@@ -748,7 +775,7 @@ def _rent_best_offer(
             best = best_offer(offers, max_dph)
             if best is None:
                 raise none_left(exc) from exc
-            if not prebuilt and profile != 'paddle':
+            if not prebuilt and profile != 'paddle' and not gold_env:
                 image = cloud_manager.vast_image_for(best.get('cuda_max_good'))
             _update(job, message="offerta non più disponibile; provo la successiva…", offer=_offer_summary(best))
     raise RuntimeError("nessuna offerta disponibile entro il budget")  # pragma: no cover - loop returns or raises
@@ -802,6 +829,7 @@ def _run(
     gpu_name: str = "",
     datacenter_only: bool = False,
     verified_only: bool = False,
+    gold: dict | None = None,
 ) -> None:
     instance_id: int | None = None
     try:
@@ -959,6 +987,11 @@ def _run(
             # solo un optimizer wrapper che può rompere lo scheduler. La run
             # manuale può ancora usare DeepSpeed; l'avvio automatico no.
             "disable_deepspeed": True,
+            # Gold-set evaluation on this GPU, after the merge and before the download.
+            "gold_eval": {
+                "enabled": (gold or {}).get("state") == "planned",
+                "max_minutes": (gold or {}).get("max_minutes") or gold_eval.DEFAULT_MAX_MINUTES,
+            },
         }
         started = trainer.start_run(int(job["project_id"]), remote_cfg, owner_id=owner_id, lang=lang,
             on_run_created=lambda rid: _update(job, run_id=rid, phase='sync', message='transferring dataset and checkpoints to the GPU'))

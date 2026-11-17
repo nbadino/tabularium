@@ -730,6 +730,35 @@ the pixels a run actually reads.
 
 See [the researcher workflow trial](../VAST_WORKFLOW_TRIAL_20261022.md) for browser evidence, training metrics and the distinction between a saved LoRA checkpoint and a complete merged model. The automatic monitor reconciles provider state on restart; replay falls back to persisted logs if the metrics file is empty. The Monkey legacy launcher normalizes the vLLM 0.11.x version tuple before serving.
 
+### Gold-set evaluation on the training GPU
+
+When the project has a gold set (`POST /api/projects/{id}/gold-set`, approved pages kept out of
+every dataset), a one-click Xiaomi-OCR-0 run reads the gold tables with the new checkpoint **on the
+GPU that trained it**, after the merge and before the model is downloaded and the GPU released. No
+second rental, no scripts.
+
+- **Option.** *Evaluate on the gold set* next to *Datacenter only* (on by default, remembered in the
+  browser) and a *Time cap (min)*, 60 by default. API: `gold_eval: false` and
+  `gold_eval_max_minutes` (5–240) on `POST /api/projects/{id}/training/auto`. The job says before
+  training whether the run will be evaluated, and why not (switched off, model without an
+  evaluation environment, no approved gold page with a verified table).
+- **Same inputs every time.** Each gold Table block is cropped from its box exactly as the dataset
+  builder crops a training table, sent with the training prompt and the training image-token bounds,
+  and decoded greedily with up to 12,288 new tokens. An output that hits the limit, does not parse
+  as OTSL or fails scores zero on every cell of that table: nothing is repaired.
+- **Same environment every time.** The rental boots `ghcr.io/nbadino/tabularium-eval-xiaomi:v1`,
+  the qwen training image plus `/root/eval-env` with torch 2.14.0 and transformers 5.17.0 (the stack
+  of the manual evaluations). Training still runs from `/opt/tabularium/venv`, unchanged. The torch
+  wheel needs a host driver for CUDA 13.0, so the search only offers such hosts. The run records the
+  image digest and the versions the GPU actually ran; another stack fails the evaluation.
+- **Results.** *Exact cells* appears next to the loss; the performance panel shows exact cells,
+  character error rate, correct headers, missing/extra rows, failed tables, the environment and
+  each table; *Compare runs* gains gold columns. The run keeps them in `run.json` (`gold_eval`) and
+  the outputs in `gold_eval.json`. If the time cap stops the evaluation, unread tables score zero
+  and the panel says the result is not comparable with a complete one.
+- **The model is never lost for it.** If the evaluation fails (driver, memory, time), the error is
+  shown and preparation carries on: the model is downloaded and registered as usual.
+
 ### Automatic held-out comparison before GPU release
 
 For automatic MonkeyOCRv2 runs, checkpoint preparation now runs the base and merged models

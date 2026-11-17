@@ -36,8 +36,32 @@ XIAOMI_TASK_PROMPTS: dict[str, str] = {
 # 2048 x 2048 px (MAX_IMAGE_EDGE), i.e. at most 4096 tokens of 32 x 32 px (patch 16, merge 2);
 # the HF `processor_config.json` sets `shortest_edge` 65536 px, i.e. at least 64 tokens.
 XIAOMI_PAGE_MAX_EDGE = 2048
-XIAOMI_IMAGE_MIN_TOKENS = 65_536 // (32 * 32)
-XIAOMI_IMAGE_MAX_TOKENS = XIAOMI_PAGE_MAX_EDGE * XIAOMI_PAGE_MAX_EDGE // (32 * 32)
+XIAOMI_TOKEN_PX = 32
+XIAOMI_IMAGE_MIN_TOKENS = 65_536 // (XIAOMI_TOKEN_PX * XIAOMI_TOKEN_PX)
+XIAOMI_IMAGE_MAX_TOKENS = XIAOMI_PAGE_MAX_EDGE * XIAOMI_PAGE_MAX_EDGE // (XIAOMI_TOKEN_PX * XIAOMI_TOKEN_PX)
+
+# Gold-set evaluation on the training GPU (`services/gold_eval.py`). The image is the
+# qwen training image unchanged (its 11 layers are the first 11 of this one, checked on
+# GHCR on 2026-11-17) plus `/root/eval-env`, the stack the manual gold evaluations of
+# November 2026 were scored with; the digest is what `:v1` pointed to that day. Its torch
+# wheel is built for CUDA 13.0, so the host driver must support 13.0.
+XIAOMI_GOLD_EVAL = {
+    "image": "ghcr.io/nbadino/tabularium-eval-xiaomi:v1",
+    "image_digest": "sha256:fd41c392fb545b1cc6a27aa8af211fa6ad6e8c1f78594c3756d485f2f3e14fbd",
+    "python": "/root/eval-env/bin/python",
+    "min_cuda": 13.0,
+    "stack": {"torch": "2.14.0+cu130", "transformers": "5.17.0"},
+    # The processor `size` bounds of the trained image tokens (64 to 4096 tokens of 32 x 32 px).
+    "image_size": {
+        "shortest_edge": XIAOMI_IMAGE_MIN_TOKENS * XIAOMI_TOKEN_PX * XIAOMI_TOKEN_PX,
+        "longest_edge": XIAOMI_IMAGE_MAX_TOKENS * XIAOMI_TOKEN_PX * XIAOMI_TOKEN_PX,
+    },
+    "chat_template_kwargs": {"enable_thinking": False},
+    # A full register table in OTSL: the longest of the 135 manual gold outputs (Nov 2026)
+    # took 4,997 tokens, none was truncated at this limit.
+    "max_new_tokens": 12288,
+    "page_timeout_s": 1500,
+}
 
 # `config.json` `text_config` (revision bbd8cf8) and the size of `model.safetensors`.
 XIAOMI_OCR_0_ARCH = {
@@ -135,6 +159,7 @@ SPEC = ModelSpec(
             FAMILY_FORMULA: XIAOMI_TASK_PROMPTS["formula"],
         },
         "architecture": XIAOMI_OCR_0_ARCH,
+        "gold_eval": XIAOMI_GOLD_EVAL,
         "official_notes": (
             "Xiaomi publishes no training code; the model card describes its method (Q-Mask "
             "anchoring, CPT, Mix-RL) in prose only. The checkpoint is a stock "

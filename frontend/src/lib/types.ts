@@ -689,7 +689,61 @@ export interface PrepareStatus {
   model: { id: string; display_name?: string } | null
 }
 
+/** Gold-set evaluation of a run's checkpoint on the training GPU (`services/gold_eval.py`). */
+export interface GoldEvalAggregate {
+  tables: number
+  pages: number
+  cell_exact: number | null
+  exact_cells: number
+  reference_cells: number
+  cer: number | null
+  header_structure_ok: number
+  structure_ok: number
+  missing_rows: number
+  extra_rows: number
+  mean_teds: number | null
+  failures: Record<string, number>
+  failed: number
+  seconds: number
+}
+
+export interface GoldEvalTable {
+  id: string
+  page_id: number
+  block_id: number
+  failure?: string
+  seconds?: number | null
+  generated_tokens?: number | null
+  metrics: { cell_exact: number | null; cer: number | null; missing_rows: number; extra_rows: number; header_structure_ok: boolean; reference_cells: number; exact_cells: number }
+}
+
+export interface GoldEvalRecord {
+  state: 'running' | 'finished' | 'failed'
+  phase?: string
+  completed?: number
+  total?: number
+  max_minutes?: number
+  started_at?: string
+  ended_at?: string
+  error?: string | null
+  complete?: boolean
+  aggregate?: GoldEvalAggregate
+  pages?: GoldEvalTable[]
+  environment?: { image: string; image_digest: string; torch?: string; transformers?: string; gpu?: string; driver?: string | null }
+  protocol?: { prompt: string; max_new_tokens: number; decoding: string }
+}
+
+/** What the one-click job decided at launch. */
+export interface GoldEvalPlan {
+  state: 'planned' | 'skipped' | 'not_applicable'
+  reason?: 'disabled' | 'not_declared' | 'no_gold_tables'
+  max_minutes?: number
+  pages?: number
+  tables?: number
+}
+
 export interface TrainingRun {
+  gold_eval?: GoldEvalRecord
   data_view_manifest?: { counts?: Record<string, {train: number; val: number}> }
   activity?: { stage: string; started_at: number; updated_at: number; files_done: number; files_total: number; bytes_done: number; bytes_total: number }
 
@@ -762,6 +816,7 @@ export interface TrainingRunItem {
   summary?: RunSummary
   remote_cleaned_at?: string | null
   collection_scope?: CollectionScope
+  gold_eval?: Pick<GoldEvalRecord, 'state' | 'complete' | 'aggregate' | 'error' | 'ended_at'> | null
 }
 
 export interface TrainingStatus {
@@ -1141,6 +1196,7 @@ export interface AutoTrainingJob {
   verified_only?: boolean
   /** Hosts whose container never started: deleted, replaced, and skipped for 24 h. */
   failed_hosts?: { machine_id: number | null; offer_id: number | null; instance_id: number; reason: string; at: string }[]
+  gold_eval?: GoldEvalPlan
   created_at: string
   updated_at: string
 }

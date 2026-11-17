@@ -95,6 +95,10 @@ class TrainRecipe:
     official_notes: tuple[str, ...] = ()
     # Data e macchina dell'ultima run reale che ha promosso la ricetta.
     verified_on: str = ""
+    # The environment a one-click run evaluates its checkpoint in on the gold set
+    # (`services/gold_eval.py`): image, digest, interpreter, stack, generation bounds.
+    # `None`: the recipe declares none, and its runs are not gold-evaluated.
+    gold_eval: dict[str, Any] | None = None
 
     @property
     def trainable(self) -> bool:
@@ -182,6 +186,7 @@ def _build() -> dict[str, TrainRecipe]:
             architecture=dict(spec["architecture"]) if spec.get("architecture") else None,
             official_notes=tuple(spec.get("official_notes") or ()),
             verified_on=str(spec.get("verified_on") or ""),
+            gold_eval=dict(spec["gold_eval"]) if spec.get("gold_eval") else None,
         )
     return recipes
 
