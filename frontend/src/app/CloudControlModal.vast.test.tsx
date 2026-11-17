@@ -6,7 +6,7 @@
  * un altro.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import '@testing-library/jest-dom/vitest'
 import { MemoryRouter } from 'react-router'
 import { ConfirmProvider } from './confirm'
@@ -52,6 +52,7 @@ vi.mock('../lib/api', () => ({
       return fake.tunnel
     }
     if (path === '/system/inference/test') return { ok: fake.probeOk }
+    if (path === '/system/cloud/vast/offers') return { items: [] }
     return {}
   }),
   apiPut: vi.fn(async () => ({})),
@@ -99,6 +100,19 @@ describe('Vast.ai guidato', () => {
     } finally {
       fake.noRecipes = false
     }
+  })
+
+  it('searches datacenter hosts only when asked, and says when there are none', async () => {
+    renderVast()
+    const search = await screen.findByRole('button', { name: 'Cerca offerte' })
+    await waitFor(() => expect(search).toBeEnabled())
+    const offersBody = () => vi.mocked(apiPost).mock.calls.filter(([path]) => path === '/system/cloud/vast/offers').slice(-1)[0]?.[1] as Record<string, unknown> | undefined
+    fireEvent.click(search)
+    await waitFor(() => expect(offersBody()?.datacenter_only).toBe(false))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Solo host datacenter (Secure Cloud)' }))
+    fireEvent.click(search)
+    await waitFor(() => expect(offersBody()?.datacenter_only).toBe(true))
+    expect(await screen.findByText(/Nessuna offerta datacenter entro questi filtri/)).toBeInTheDocument()
   })
 
   it('su una GPU mai toccata la tappa server dice «da preparare»', async () => {

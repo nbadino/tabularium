@@ -147,7 +147,7 @@ interface TrainingConfigFormProps {
   autoJob: AutoTrainingJob | null
   autoBusy: boolean
   autoError: unknown
-  onAutoStart: (maxDph: number) => void
+  onAutoStart: (maxDph: number, datacenterOnly: boolean) => void
   onAutoCancel: () => void
 }
 
@@ -215,6 +215,14 @@ export default function TrainingConfigForm({
   // Il budget è la decisione che l'utente può davvero prendere; il resto
   // (GPU, immagine, ambiente) lo sceglie il backend dentro quel tetto.
   const [autoDph, setAutoDph] = useState(() => window.localStorage.getItem('tabularium.training.maxDph') || '1')
+  // Datacenter (Secure Cloud) hosts only: remembered like the budget.
+  const [autoDatacenter, setAutoDatacenter] = useState(() => {
+    try {
+      return window.localStorage.getItem('tabularium.training.datacenterOnly') === '1'
+    } catch {
+      return false
+    }
+  })
   const [showAutoLogs, setShowAutoLogs] = useState(false)
 
   // Noleggia e prepara da sé un host Vast per il training (M18): cerca l'offerta
@@ -231,6 +239,7 @@ export default function TrainingConfigForm({
           credential_ref: 'vault:vast_api_key',
           max_dph: Number(rentDph) || 1,
           min_gpu_ram_gb: Number(rentVram) || 16,
+          datacenter_only: autoDatacenter,
           adapter_id: recipe?.adapter_id,
         },
       )
@@ -503,10 +512,25 @@ export default function TrainingConfigForm({
                   }}
                 />
               </Field>
+              <label className="flex items-center gap-1.5 pb-2 text-[12px]" title={t('training.auto.datacenterHint')}>
+                <input
+                  type="checkbox"
+                  checked={autoDatacenter}
+                  onChange={(e) => {
+                    setAutoDatacenter(e.target.checked)
+                    try {
+                      window.localStorage.setItem('tabularium.training.datacenterOnly', e.target.checked ? '1' : '0')
+                    } catch {
+                      // A blocked storage only loses the remembered choice.
+                    }
+                  }}
+                />
+                {t('training.auto.datacenterOnly')}
+              </label>
               <button
               type="button"
               className="btn btn-primary"
-              onClick={() => onAutoStart(Number(autoDph) || 1)}
+              onClick={() => onAutoStart(Number(autoDph) || 1, autoDatacenter)}
               disabled={
                 autoBusy ||
                 projectId === '' ||
@@ -637,6 +661,10 @@ export default function TrainingConfigForm({
                     <Field label={t('training.where.rentMinVram')}>
                       <input className="fld !w-24" value={rentVram} onChange={(e) => setRentVram(e.target.value)} />
                     </Field>
+                    <label className="flex items-center gap-1.5 pb-2 text-[12px]" title={t('training.auto.datacenterHint')}>
+                      <input type="checkbox" checked={autoDatacenter} onChange={(e) => setAutoDatacenter(e.target.checked)} />
+                      {t('training.auto.datacenterOnly')}
+                    </label>
                     <button type="button" className="btn btn-sm" disabled={rentBusy} onClick={() => void rentTraining()}>
                       {rentBusy ? t('training.where.rentBusy') : t('training.where.rentGo')}
                     </button>

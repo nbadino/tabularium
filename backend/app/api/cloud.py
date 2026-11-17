@@ -152,6 +152,7 @@ def search_vast_offers(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             min_inet_down=payload.get("min_inet_down"),
             min_cuda=payload.get("min_cuda"),
             verified_only=bool(payload.get("verified_only", False)),
+            datacenter_only=payload.get("datacenter_only") is True,
         )
         return {"items": items}
     except Exception as exc:
@@ -174,6 +175,8 @@ def rent_vast(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             location=payload.get("location"),
             cpu_arch=payload.get("cpu_arch"),
             gpu_name=payload.get("gpu_name"),
+            hosting_type=payload.get("hosting_type"),
+            datacenter_only=payload.get("datacenter_only") is True,
             adapter_id=payload.get("adapter_id") or "",
             disk_gb=payload.get("disk_gb", 40),
             model=payload.get("model", reference.HF_REPO),
@@ -220,6 +223,8 @@ def rent_training(payload: dict, _admin: dict = Depends(_admin)) -> dict:
         )
     ref = str(payload.get("tabularium_ref") or "main").strip() or "main"
     disk_gb = int(payload.get("disk_gb") or 80)
+    datacenter_only = payload.get("datacenter_only") is True
+    max_dph = payload.get("max_dph", 1.0)
     adapter_id = str(payload.get("adapter_id") or "").strip()
     if adapter_id:
         from ..services import train_recipes
@@ -240,10 +245,11 @@ def rent_training(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             api_key,
             gpu_name=payload.get("gpu_name", ""),
             num_gpus=1,
-            max_dph=payload.get("max_dph", 1.0),
+            max_dph=max_dph,
             min_reliability=payload.get("min_reliability", 0.95),
             instance_type="on-demand",
             disk_gb=disk_gb,
+            datacenter_only=datacenter_only,
             min_gpu_ram_gb=payload.get("min_gpu_ram_gb", 16),
             # Il training usa bf16: serve Ampere+ (compute capability 8.0). Le
             # Pascal/Volta costano meno ma non hanno bf16 accelerato.
@@ -251,6 +257,13 @@ def rent_training(payload: dict, _admin: dict = Depends(_admin)) -> dict:
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not offers and datacenter_only:
+        from ..services import i18n
+
+        raise HTTPException(status_code=400, detail=i18n.msg(
+            "vast_no_datacenter_offer", i18n.SOURCE,
+            dph=f"{float(max_dph or 0):.2f}", vram=payload.get("min_gpu_ram_gb", 16),
+        ))
     if not offers:
         raise HTTPException(status_code=400, detail="nessuna offerta Vast.ai con questi minimi")
     best = min(offers, key=lambda o: (o.get("dph_total") or 1e9))
@@ -262,6 +275,8 @@ def rent_training(payload: dict, _admin: dict = Depends(_admin)) -> dict:
             location=best.get("location"),
             cpu_arch=best.get("cpu_arch"),
             gpu_name=best.get("gpu_name"),
+            hosting_type=best.get("hosting_type"),
+            datacenter_only=datacenter_only,
             disk_gb=disk_gb,
             tabularium_ref=ref,
             prepare_training=True,

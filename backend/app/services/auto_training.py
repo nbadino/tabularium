@@ -353,12 +353,15 @@ def start_auto(
     disk_gb: int = 100,
     gpu_name: str = "",
     allow_stale_dataset: bool = False,
+    datacenter_only: bool = False,
 ) -> dict:
     """Noleggia e prepara in background; ritorna subito il job.
 
     `gpu_name` pins the search to one Vast GPU model (e.g. "A100 SXM4").
     A snapshot older than the latest approval or edit of its eligible pages
     (`dataset.stale` in the preflight) is refused unless `allow_stale_dataset`.
+    `datacenter_only` rents only Vast.ai datacenter (Secure Cloud) hosts, and
+    fails with an explicit message rather than fall back to community hosts.
     """
     adapter_id = str(cfg.get("adapter_id") or "").strip()
     recipe = train_recipes.get_recipe(adapter_id)
@@ -420,6 +423,7 @@ def start_auto(
         "run_id": None,
         "instance_destroyed": False,
         "gpu_name": str(gpu_name or "").strip() or None,
+        "datacenter_only": bool(datacenter_only),
         "dataset_snapshot": (coverage.get('dataset') or {}).get('snapshot_id'),
         "dataset_stale": stale or None,
         "created_at": _now(),
@@ -432,7 +436,7 @@ def start_auto(
         thread = threading.Thread(
             target=_run,
             args=(job, dict(cfg), api_key, profile, owner_id, lang, max_dph, int(min_gpu_ram_gb), int(disk_gb), event),
-            kwargs={"gpu_name": str(gpu_name or "").strip()},
+            kwargs={"gpu_name": str(gpu_name or "").strip(), "datacenter_only": bool(datacenter_only)},
             name=f"auto-{job_id}",
             daemon=True,
         )
@@ -573,6 +577,7 @@ def _run(
     cancel: threading.Event,
     *,
     gpu_name: str = "",
+    datacenter_only: bool = False,
 ) -> None:
     instance_id: int | None = None
     try:
@@ -591,6 +596,7 @@ def _run(
             min_compute_capability=8.0,
             min_cuda=(PREBUILT_CUDA[profile] if profile in PREBUILT_IMAGES else None),
             blackwell_ready=blackwell_ready(profile),
+            datacenter_only=datacenter_only,
             limit=50,
         )
         # A retry should not immediately select the same offer that just failed
@@ -611,12 +617,16 @@ def _run(
             except (OSError, ValueError, TypeError):
                 continue
         offers = [offer for offer in offers if int(offer.get('id') or 0) not in recent_failed_offers]
+        if not offers and datacenter_only:
+            raise RuntimeError(msg('vast_no_datacenter_offer', i18n.SOURCE, dph=f"{max_dph:.2f}", vram=min_gpu_ram_gb))
         if not offers:
             raise RuntimeError(
                 f"nessuna GPU Vast.ai entro ${max_dph:.2f}/h con almeno {min_gpu_ram_gb} GB; "
                 "alza il budget o il minimo VRAM"
             )
         best = best_offer(offers, max_dph)
+        if best is None and datacenter_only:
+            raise RuntimeError(msg('vast_no_datacenter_offer', i18n.SOURCE, dph=f"{max_dph:.2f}", vram=min_gpu_ram_gb))
         if best is None:
             raise RuntimeError(f"nessuna GPU Vast.ai entro ${max_dph:.2f}/h")
         prebuilt = profile in PREBUILT_IMAGES
@@ -651,6 +661,8 @@ def _run(
                     location=best.get("location"),
                     cpu_arch=best.get("cpu_arch"),
                     gpu_name=best.get("gpu_name"),
+                    hosting_type=best.get("hosting_type"),
+                    datacenter_only=datacenter_only,
                     disk_gb=disk_gb,
                     onstart_script="" if prebuilt else _onstart(profile, job["adapter_id"]),
                 )
@@ -662,6 +674,10 @@ def _run(
                     raise
                 offers = [offer for offer in offers if offer.get('id') != best['id']]
                 best = best_offer(offers, max_dph)
+                if best is None and datacenter_only:
+                    raise RuntimeError(msg(
+                        'vast_no_datacenter_offer', i18n.SOURCE, dph=f"{max_dph:.2f}", vram=min_gpu_ram_gb,
+                    )) from exc
                 if best is None:
                     raise RuntimeError("nessuna offerta disponibile entro il budget") from exc
                 if not prebuilt and profile != 'paddle':
