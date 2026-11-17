@@ -2084,6 +2084,8 @@ export const fr: Dict = {
       budget: 'Budget ($/h)',
       datacenterOnly: 'Datacenter uniquement',
       datacenterHint: 'Ne louer que des hôtes datacenter (Secure Cloud) de Vast.ai : plus chers, mais SSH, conteneur et réseau tiennent. Si aucun ne rentre dans le budget, le lancement échoue au lieu de se rabattre sur les hôtes community.',
+      verifiedOnly: 'Hôtes vérifiés uniquement',
+      verifiedHint: 'Ne louer que des machines vérifiées par Vast.ai (filtre « verified »). Dans tous les cas, un hôte dont le conteneur ne démarre pas est supprimé et remplacé (jusqu’à 3 hôtes), et sa machine est exclue pendant 24 heures.',
       button: 'Louer et entraîner',
       starting: 'Démarrage…',
       cancel: 'Annuler',

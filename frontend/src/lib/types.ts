@@ -1129,7 +1129,7 @@ export interface AutoTrainingJob {
   message: string
   error: string | null
   log: string
-  offer: { id?: number; gpu_name?: string; dph_total?: number; cuda_max_good?: number } | null
+  offer: { id?: number; machine_id?: number; gpu_name?: string; dph_total?: number; cuda_max_good?: number } | null
   instance_id: number | null
   host: string | null
   port: number | null
@@ -1137,6 +1137,10 @@ export interface AutoTrainingJob {
   instance_destroyed: boolean
   /** Only Vast.ai datacenter (Secure Cloud) hosts were searched for this job. */
   datacenter_only?: boolean
+  /** Only hosts Vast.ai marks verified were searched for this job. */
+  verified_only?: boolean
+  /** Hosts whose container never started: deleted, replaced, and skipped for 24 h. */
+  failed_hosts?: { machine_id: number | null; offer_id: number | null; instance_id: number; reason: string; at: string }[]
   created_at: string
   updated_at: string
 }

@@ -2084,6 +2084,8 @@ export const en: Dict = {
       budget: 'Budget ($/h)',
       datacenterOnly: 'Datacenter only',
       datacenterHint: 'Rent only Vast.ai datacenter (Secure Cloud) hosts: they cost more but keep SSH, the container and the network up. If none fits the budget the start fails instead of falling back to community hosts.',
+      verifiedOnly: 'Verified hosts only',
+      verifiedHint: 'Rent only machines Vast.ai has verified (the "verified" filter). Either way, a host whose container does not start is deleted and replaced (up to 3 hosts), and its machine is skipped for 24 hours.',
       button: 'Rent and train',
       starting: 'Starting…',
       cancel: 'Cancel',

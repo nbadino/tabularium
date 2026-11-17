@@ -354,6 +354,7 @@ def start_auto(
     gpu_name: str = "",
     allow_stale_dataset: bool = False,
     datacenter_only: bool = False,
+    verified_only: bool = False,
 ) -> dict:
     """Noleggia e prepara in background; ritorna subito il job.
 
@@ -362,6 +363,7 @@ def start_auto(
     (`dataset.stale` in the preflight) is refused unless `allow_stale_dataset`.
     `datacenter_only` rents only Vast.ai datacenter (Secure Cloud) hosts, and
     fails with an explicit message rather than fall back to community hosts.
+    `verified_only` rents only hosts Vast marks verified (the `verified` filter).
     """
     adapter_id = str(cfg.get("adapter_id") or "").strip()
     recipe = train_recipes.get_recipe(adapter_id)
@@ -424,6 +426,7 @@ def start_auto(
         "instance_destroyed": False,
         "gpu_name": str(gpu_name or "").strip() or None,
         "datacenter_only": bool(datacenter_only),
+        "verified_only": bool(verified_only),
         "dataset_snapshot": (coverage.get('dataset') or {}).get('snapshot_id'),
         "dataset_stale": stale or None,
         "created_at": _now(),
@@ -436,7 +439,11 @@ def start_auto(
         thread = threading.Thread(
             target=_run,
             args=(job, dict(cfg), api_key, profile, owner_id, lang, max_dph, int(min_gpu_ram_gb), int(disk_gb), event),
-            kwargs={"gpu_name": str(gpu_name or "").strip(), "datacenter_only": bool(datacenter_only)},
+            kwargs={
+                "gpu_name": str(gpu_name or "").strip(),
+                "datacenter_only": bool(datacenter_only),
+                "verified_only": bool(verified_only),
+            },
             name=f"auto-{job_id}",
             daemon=True,
         )
@@ -564,6 +571,222 @@ def _monitor_run(
     _update(job, instance_destroyed=True)
 
 
+# A host whose container never starts is replaced instead of waited on, a bounded
+# number of times: each replacement is a new rental, so a run of bad hosts costs at
+# most this many short rentals. A machine that failed (or whose job was cancelled
+# before training started) is skipped for `FAILED_HOST_TTL_S`, by machine id:
+# Vast lists one offer per GPU slot, so on prod a retry picked offer 29019280 on
+# the same broken machine as offer 29019285.
+MAX_HOST_ATTEMPTS = 3
+FAILED_HOST_TTL_S = 24 * 60 * 60
+SSH_WAIT_S = 60 * 60
+SSH_POLL_S = 8
+
+
+class HostProvisioningFailed(RuntimeError):
+    """The rented instance will never start: replace the host."""
+
+    def __init__(self, reason: str, machine_id: int | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.machine_id = machine_id
+
+
+def _int_or_none(value) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _recently_failed_hosts(job: dict) -> tuple[set[int], set[int]]:
+    """Offer ids and machine ids to skip, from the jobs of the last 24 hours.
+
+    A host recorded in `failed_hosts` (its container never started) is skipped for
+    every project. The offer of a job of the same project and model that failed or
+    was cancelled before a training run existed is skipped too, with its machine:
+    that is where a slow or broken host shows. Completed training runs do not
+    exclude their hosts.
+    """
+    offers: set[int] = set()
+    machines: set[int] = set()
+    for previous_path in _job_dir().glob('auto_*.json'):
+        try:
+            if previous_path.stat().st_mtime < time.time() - FAILED_HOST_TTL_S:
+                continue
+            previous = json.loads(previous_path.read_text(encoding='utf-8'))
+        except (OSError, ValueError, TypeError):
+            continue
+        if previous.get('id') == job.get('id'):
+            continue
+        for failed in previous.get('failed_hosts') or []:
+            if not isinstance(failed, dict):
+                continue
+            for target, key in ((offers, 'offer_id'), (machines, 'machine_id')):
+                value = _int_or_none(failed.get(key))
+                if value is not None:
+                    target.add(value)
+        if (previous.get('project_id') == job['project_id']
+                and previous.get('adapter_id') == job['adapter_id']
+                and previous.get('state') in {'failed', 'cancelled'}
+                and not previous.get('run_id')):
+            offer = previous.get('offer') or {}
+            for target, key in ((offers, 'id'), (machines, 'machine_id')):
+                value = _int_or_none(offer.get(key))
+                if value is not None:
+                    target.add(value)
+    return offers, machines
+
+
+def _offer_summary(offer: dict) -> dict:
+    return {k: offer.get(k) for k in ("id", "machine_id", "gpu_name", "dph_total", "cuda_max_good")}
+
+
+def _image_for(profile: str, offer: dict) -> str:
+    if profile in PREBUILT_IMAGES:
+        return PREBUILT_IMAGES[profile]
+    if profile == "paddle":
+        return PADDLE_IMAGE
+    if float(offer.get("compute_cap") or 0) >= 1200 or float(offer.get("cuda_max_good") or 0) < 12.8:
+        # Blackwell (sm_120) richiede CUDA >= 12.9; un driver più vecchio
+        # di 12.8 non regge l'immagine stabile. Negli altri casi si usa
+        # 12.8.1, già presente su molte macchine e più rapidamente avviabile
+        # della 13.0.
+        return cloud_manager.vast_image_for(offer.get("cuda_max_good"))
+    return "vastai/pytorch:cuda-12.8.1-auto"
+
+
+def _rent_best_offer(
+    job: dict,
+    api_key: str,
+    profile: str,
+    max_dph: float,
+    min_gpu_ram_gb: int,
+    disk_gb: int,
+    cancel: threading.Event,
+    *,
+    gpu_name: str,
+    datacenter_only: bool,
+    verified_only: bool,
+    excluded_offers: set[int],
+    excluded_machines: set[int],
+    failed_hosts: int,
+) -> tuple[dict, dict]:
+    """Search, skip excluded offers and machines, rent the best: (offer, rental)."""
+    offers = cloud_manager.search_vast_offers(
+        api_key,
+        gpu_name=gpu_name,
+        num_gpus=1,
+        max_dph=max_dph,
+        min_reliability=0.95,
+        instance_type="on-demand",
+        disk_gb=disk_gb,
+        min_gpu_ram_gb=min_gpu_ram_gb,
+        min_compute_capability=8.0,
+        min_cuda=(PREBUILT_CUDA[profile] if profile in PREBUILT_IMAGES else None),
+        blackwell_ready=blackwell_ready(profile),
+        datacenter_only=datacenter_only,
+        verified_only=verified_only,
+        limit=50,
+    )
+    offers = [
+        offer for offer in offers
+        if _int_or_none(offer.get('id')) not in excluded_offers
+        and _int_or_none(offer.get('machine_id')) not in excluded_machines
+    ]
+
+    def none_left(cause: Exception | None = None) -> RuntimeError:
+        if failed_hosts:
+            return RuntimeError(msg('vast_no_other_host', i18n.SOURCE, dph=f"{max_dph:.2f}", failed=failed_hosts))
+        if datacenter_only:
+            return RuntimeError(msg('vast_no_datacenter_offer', i18n.SOURCE, dph=f"{max_dph:.2f}", vram=min_gpu_ram_gb))
+        if cause is not None:
+            return RuntimeError("nessuna offerta disponibile entro il budget")
+        if not offers:
+            return RuntimeError(
+                f"nessuna GPU Vast.ai entro ${max_dph:.2f}/h con almeno {min_gpu_ram_gb} GB; "
+                "alza il budget o il minimo VRAM"
+            )
+        return RuntimeError(f"nessuna GPU Vast.ai entro ${max_dph:.2f}/h")
+
+    best = best_offer(offers, max_dph) if offers else None
+    if best is None:
+        raise none_left()
+    prebuilt = profile in PREBUILT_IMAGES
+    image = _image_for(profile, best)
+    _update(
+        job,
+        phase="rent",
+        message=f"noleggio {best.get('gpu_name') or 'GPU'} a ${float(best.get('dph_total') or 0):.3f}/h",
+        offer=_offer_summary(best),
+    )
+    for attempt in range(5):
+        if cancel.is_set():
+            raise RuntimeError("annullato")
+        try:
+            rented = cloud_manager.rent_vast_instance(
+                api_key,
+                int(best["id"]),
+                image=image,
+                cuda_max_good=best.get("cuda_max_good"),
+                compute_cap=best.get("compute_cap"),
+                location=best.get("location"),
+                cpu_arch=best.get("cpu_arch"),
+                gpu_name=best.get("gpu_name"),
+                hosting_type=best.get("hosting_type"),
+                datacenter_only=datacenter_only,
+                disk_gb=disk_gb,
+                onstart_script="" if prebuilt else _onstart(profile, job["adapter_id"]),
+            )
+            return best, rented
+        except RuntimeError as exc:
+            # Retry only a definitive refusal: network timeouts may hide a
+            # successful rental and must never create a second instance.
+            if 'no_such_ask' not in str(exc) or attempt == 4:
+                raise
+            offers = [offer for offer in offers if offer.get('id') != best['id']]
+            best = best_offer(offers, max_dph)
+            if best is None:
+                raise none_left(exc) from exc
+            if not prebuilt and profile != 'paddle':
+                image = cloud_manager.vast_image_for(best.get('cuda_max_good'))
+            _update(job, message="offerta non più disponibile; provo la successiva…", offer=_offer_summary(best))
+    raise RuntimeError("nessuna offerta disponibile entro il budget")  # pragma: no cover - loop returns or raises
+
+
+def _wait_for_ssh_endpoint(job: dict, api_key: str, instance_id: int, cancel: threading.Event) -> tuple[str, int]:
+    """Poll the instance until Vast publishes SSH; raise `HostProvisioningFailed` when
+    `cloud_manager.vast_provisioning_failure` says the container will never start."""
+    _update(job, state="waiting_ssh", phase="ssh", message="attendo che l'istanza esponga SSH…")
+    deadline = time.time() + SSH_WAIT_S
+    status: str | None = None
+    status_since = time.time()
+    while time.time() < deadline:
+        if cancel.is_set():
+            raise RuntimeError("annullato")
+        inst = _instance(api_key, int(instance_id))
+        if inst:
+            _update(job, provider_status=inst.get("status"), provider_message=inst.get("status_message"),
+                    message=f"attendo l'istanza (stato {inst.get('status') or 'unknown'})…")
+            current = str(inst.get("actual_status") or inst.get("status") or "").lower()
+            if current != status:
+                status, status_since = current, time.time()
+            failure = cloud_manager.vast_provisioning_failure(inst, time.time() - status_since)
+            if failure:
+                raise HostProvisioningFailed(failure, _int_or_none(inst.get("machine_id")))
+            # `ssh_host`/`ssh_port` sono già la coppia coerente scelta da
+            # Vast; incrociare `ssh_direct_host` con la porta proxy crea un
+            # endpoint che non esiste (→ ssh-keyscan fallisce per sempre).
+            host = inst.get("ssh_host")
+            port = inst.get("ssh_port")
+            if not (host and port) and inst.get("ssh_direct_host") and inst.get("ssh_direct_port"):
+                host, port = inst.get("ssh_direct_host"), inst.get("ssh_direct_port")
+            if host and port and inst.get("is_running"):
+                return str(host), int(port)
+        time.sleep(SSH_POLL_S)
+    raise RuntimeError("l'istanza non ha esposto SSH entro 60 minuti")
+
+
 def _run(
     job: dict,
     cfg: dict,
@@ -578,147 +801,69 @@ def _run(
     *,
     gpu_name: str = "",
     datacenter_only: bool = False,
+    verified_only: bool = False,
 ) -> None:
     instance_id: int | None = None
     try:
         if cancel.is_set():
             raise RuntimeError("annullato")
         _update(job, state="renting", phase="rent", message="cerco una GPU adatta…")
-        offers = cloud_manager.search_vast_offers(
-            api_key,
-            gpu_name=gpu_name,
-            num_gpus=1,
-            max_dph=max_dph,
-            min_reliability=0.95,
-            instance_type="on-demand",
-            disk_gb=disk_gb,
-            min_gpu_ram_gb=min_gpu_ram_gb,
-            min_compute_capability=8.0,
-            min_cuda=(PREBUILT_CUDA[profile] if profile in PREBUILT_IMAGES else None),
-            blackwell_ready=blackwell_ready(profile),
-            datacenter_only=datacenter_only,
-            limit=50,
-        )
-        # A retry should not immediately select the same offer that just failed
-        # to provision. Completed training runs do not exclude their hosts.
-        recent_failed_offers: set[int] = set()
-        for previous_path in _job_dir().glob('auto_*.json'):
-            try:
-                if previous_path.stat().st_mtime < time.time() - 24 * 60 * 60:
-                    continue
-                previous = json.loads(previous_path.read_text(encoding='utf-8'))
-                if (previous.get('project_id') == job['project_id']
-                        and previous.get('adapter_id') == job['adapter_id']
-                        and previous.get('state') in {'failed', 'cancelled'}
-                        and not previous.get('run_id')):
-                    offer_id = (previous.get('offer') or {}).get('id')
-                    if offer_id is not None:
-                        recent_failed_offers.add(int(offer_id))
-            except (OSError, ValueError, TypeError):
-                continue
-        offers = [offer for offer in offers if int(offer.get('id') or 0) not in recent_failed_offers]
-        if not offers and datacenter_only:
-            raise RuntimeError(msg('vast_no_datacenter_offer', i18n.SOURCE, dph=f"{max_dph:.2f}", vram=min_gpu_ram_gb))
-        if not offers:
-            raise RuntimeError(
-                f"nessuna GPU Vast.ai entro ${max_dph:.2f}/h con almeno {min_gpu_ram_gb} GB; "
-                "alza il budget o il minimo VRAM"
-            )
-        best = best_offer(offers, max_dph)
-        if best is None and datacenter_only:
-            raise RuntimeError(msg('vast_no_datacenter_offer', i18n.SOURCE, dph=f"{max_dph:.2f}", vram=min_gpu_ram_gb))
-        if best is None:
-            raise RuntimeError(f"nessuna GPU Vast.ai entro ${max_dph:.2f}/h")
+        excluded_offers, excluded_machines = _recently_failed_hosts(job)
         prebuilt = profile in PREBUILT_IMAGES
-        if prebuilt:
-            image = PREBUILT_IMAGES[profile]
-        elif profile == "paddle":
-            image = PADDLE_IMAGE
-        elif float(best.get("compute_cap") or 0) >= 1200 or float(best.get("cuda_max_good") or 0) < 12.8:
-            # Blackwell (sm_120) richiede CUDA >= 12.9; un driver più vecchio
-            # di 12.8 non regge l'immagine stabile. Negli altri casi si usa
-            # 12.8.1, già presente su molte macchine e più rapidamente avviabile
-            # della 13.0.
-            image = cloud_manager.vast_image_for(best.get("cuda_max_good"))
-        else:
-            image = "vastai/pytorch:cuda-12.8.1-auto"
-        _update(
-            job,
-            phase="rent",
-            message=f"noleggio {best.get('gpu_name') or 'GPU'} a ${float(best.get('dph_total') or 0):.3f}/h",
-            offer={k: best.get(k) for k in ("id", "gpu_name", "dph_total", "cuda_max_good")},
-        )
-        for attempt in range(5):
-            if cancel.is_set():
-                raise RuntimeError("annullato")
-            try:
-                rented = cloud_manager.rent_vast_instance(
-                    api_key,
-                    int(best["id"]),
-                    image=image,
-                    cuda_max_good=best.get("cuda_max_good"),
-                    compute_cap=best.get("compute_cap"),
-                    location=best.get("location"),
-                    cpu_arch=best.get("cpu_arch"),
-                    gpu_name=best.get("gpu_name"),
-                    hosting_type=best.get("hosting_type"),
-                    datacenter_only=datacenter_only,
-                    disk_gb=disk_gb,
-                    onstart_script="" if prebuilt else _onstart(profile, job["adapter_id"]),
-                )
-                break
-            except RuntimeError as exc:
-                # Retry only a definitive refusal: network timeouts may hide a
-                # successful rental and must never create a second instance.
-                if 'no_such_ask' not in str(exc) or attempt == 4:
-                    raise
-                offers = [offer for offer in offers if offer.get('id') != best['id']]
-                best = best_offer(offers, max_dph)
-                if best is None and datacenter_only:
-                    raise RuntimeError(msg(
-                        'vast_no_datacenter_offer', i18n.SOURCE, dph=f"{max_dph:.2f}", vram=min_gpu_ram_gb,
-                    )) from exc
-                if best is None:
-                    raise RuntimeError("nessuna offerta disponibile entro il budget") from exc
-                if not prebuilt and profile != 'paddle':
-                    image = cloud_manager.vast_image_for(best.get('cuda_max_good'))
-                _update(job, message="offerta non più disponibile; provo la successiva…",
-                        offer={k: best.get(k) for k in ('id', 'gpu_name', 'dph_total', 'cuda_max_good')})
-        instance_id = rented.get("contract_id")
-        if instance_id is None:
-            raise RuntimeError("Vast.ai non ha restituito l'istanza noleggiata")
-        job["instance_id"] = int(instance_id)
-        _save(job)
-        cloud_manager.track_cloud_resource(
-            "vast",
-            int(instance_id),
-            owner_id=owner_id,
-            hourly_rate=best.get("dph_total"),
-            metadata={"offer_id": best.get("id"), "purpose": "auto-training", "profile": profile},
-        )
-
-        _update(job, state="waiting_ssh", phase="ssh", message="attendo che l'istanza esponga SSH…")
-        deadline = time.time() + 60 * 60
         host = port = None
-        while time.time() < deadline:
+        attempt = 0
+        while True:
+            attempt += 1
             if cancel.is_set():
                 raise RuntimeError("annullato")
-            inst = _instance(api_key, int(instance_id))
-            if inst:
-                _update(job, provider_status=inst.get("status"), provider_message=inst.get("status_message"),
-                        message=f"attendo l'istanza (stato {inst.get('status') or 'unknown'})…")
-                # `ssh_host`/`ssh_port` sono già la coppia coerente scelta da
-                # Vast; incrociare `ssh_direct_host` con la porta proxy crea un
-                # endpoint che non esiste (→ ssh-keyscan fallisce per sempre).
-                host = inst.get("ssh_host")
-                port = inst.get("ssh_port")
-                if not (host and port) and inst.get("ssh_direct_host") and inst.get("ssh_direct_port"):
-                    host, port = inst.get("ssh_direct_host"), inst.get("ssh_direct_port")
-                if host and port and inst.get("is_running"):
-                    break
-            time.sleep(8)
-        if not host or not port:
-            raise RuntimeError("l'istanza non ha esposto SSH entro 60 minuti")
+            best, rented = _rent_best_offer(
+                job, api_key, profile, max_dph, min_gpu_ram_gb, disk_gb, cancel,
+                gpu_name=gpu_name, datacenter_only=datacenter_only, verified_only=verified_only,
+                excluded_offers=excluded_offers, excluded_machines=excluded_machines,
+                failed_hosts=attempt - 1,
+            )
+            instance_id = rented.get("contract_id")
+            if instance_id is None:
+                raise RuntimeError("Vast.ai non ha restituito l'istanza noleggiata")
+            job["instance_id"] = int(instance_id)
+            job["instance_destroyed"] = False
+            _save(job)
+            cloud_manager.track_cloud_resource(
+                "vast",
+                int(instance_id),
+                owner_id=owner_id,
+                hourly_rate=best.get("dph_total"),
+                metadata={"offer_id": best.get("id"), "machine_id": best.get("machine_id"),
+                          "purpose": "auto-training", "profile": profile},
+            )
+            try:
+                host, port = _wait_for_ssh_endpoint(job, api_key, int(instance_id), cancel)
+                break
+            except HostProvisioningFailed as failure:
+                machine_id = failure.machine_id if failure.machine_id is not None else _int_or_none(best.get("machine_id"))
+                job.setdefault("failed_hosts", []).append({
+                    "machine_id": machine_id,
+                    "offer_id": best.get("id"),
+                    "instance_id": int(instance_id),
+                    "reason": failure.reason[:500],
+                    "at": _now(),
+                })
+                if best.get("id") is not None:
+                    excluded_offers.add(int(best["id"]))
+                if machine_id is not None:
+                    excluded_machines.add(int(machine_id))
+                _update(job, message=failure.reason[:300])
+                _destroy(api_key, int(instance_id))
+                _update(job, instance_destroyed=True)
+                instance_id = None
+                if attempt >= MAX_HOST_ATTEMPTS:
+                    raise RuntimeError(msg(
+                        "vast_hosts_exhausted", i18n.SOURCE, total=attempt, reason=failure.reason[:300],
+                    )) from failure
+                _update(job, state="renting", phase="rent", message=msg(
+                    "vast_host_replaced", i18n.SOURCE, machine=machine_id if machine_id is not None else "?",
+                    reason=failure.reason[:300], attempt=attempt + 1, total=MAX_HOST_ATTEMPTS,
+                ))
         _update(job, host=host, port=int(port), message="verifico la chiave SSH…")
         # Vast pubblica host/porta prima che sshd accetti connessioni: il pin
         # della host key va ritentato, altrimenti si distrugge un'istanza

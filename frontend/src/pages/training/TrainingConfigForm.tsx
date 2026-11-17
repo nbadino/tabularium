@@ -147,7 +147,7 @@ interface TrainingConfigFormProps {
   autoJob: AutoTrainingJob | null
   autoBusy: boolean
   autoError: unknown
-  onAutoStart: (maxDph: number, datacenterOnly: boolean) => void
+  onAutoStart: (maxDph: number, hosts: { datacenterOnly: boolean; verifiedOnly: boolean }) => void
   onAutoCancel: () => void
 }
 
@@ -219,6 +219,13 @@ export default function TrainingConfigForm({
   const [autoDatacenter, setAutoDatacenter] = useState(() => {
     try {
       return window.localStorage.getItem('tabularium.training.datacenterOnly') === '1'
+    } catch {
+      return false
+    }
+  })
+  const [autoVerified, setAutoVerified] = useState(() => {
+    try {
+      return window.localStorage.getItem('tabularium.training.verifiedOnly') === '1'
     } catch {
       return false
     }
@@ -527,10 +534,25 @@ export default function TrainingConfigForm({
                 />
                 {t('training.auto.datacenterOnly')}
               </label>
+              <label className="flex items-center gap-1.5 pb-2 text-[12px]" title={t('training.auto.verifiedHint')}>
+                <input
+                  type="checkbox"
+                  checked={autoVerified}
+                  onChange={(e) => {
+                    setAutoVerified(e.target.checked)
+                    try {
+                      window.localStorage.setItem('tabularium.training.verifiedOnly', e.target.checked ? '1' : '0')
+                    } catch {
+                      // A blocked storage only loses the remembered choice.
+                    }
+                  }}
+                />
+                {t('training.auto.verifiedOnly')}
+              </label>
               <button
               type="button"
               className="btn btn-primary"
-              onClick={() => onAutoStart(Number(autoDph) || 1, autoDatacenter)}
+              onClick={() => onAutoStart(Number(autoDph) || 1, { datacenterOnly: autoDatacenter, verifiedOnly: autoVerified })}
               disabled={
                 autoBusy ||
                 projectId === '' ||
