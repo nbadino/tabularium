@@ -247,6 +247,7 @@ def training_auto(
             gpu_name=str(payload.get("gpu_name") or "")[:64],
             allow_stale_dataset=payload.get("allow_stale_dataset") is True,
             datacenter_only=payload.get("datacenter_only") is True,
+            verified_only=payload.get("verified_only") is True,
         )
     except (ValueError, TypeError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

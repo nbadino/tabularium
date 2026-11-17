@@ -2084,6 +2084,8 @@ export const it = {
       budget: 'Budget ($/h)',
       datacenterOnly: 'Solo datacenter',
       datacenterHint: 'Noleggia solo host datacenter (Secure Cloud) di Vast.ai: costano di più ma reggono SSH, container e rete. Se non ce ne sono entro il budget, l’avvio fallisce invece di ripiegare sugli host community.',
+      verifiedOnly: 'Solo host verificati',
+      verifiedHint: 'Noleggia solo macchine che Vast.ai ha verificato (filtro «verified»). In ogni caso un host il cui container non parte viene eliminato e sostituito (fino a 3 host), e la sua macchina è esclusa per 24 ore.',
       button: 'Affitta e addestra',
       starting: 'Avvio…',
       cancel: 'Annulla',

@@ -459,6 +459,21 @@ N GB": it never falls back to community hosts. The choice is remembered in the b
 the job (`datacenter_only`), and also applies to the manual rent button under Advanced. The same
 toggle (*Datacenter hosts only*) sits under the price filter in the Vast.ai serving panel, where
 datacenter offers carry a *datacenter* badge.
+
+**Verified hosts only.** *Verified hosts only*, next to it, adds Vast's `verified` filter: only
+machines Vast has verified are rented. Tabularium does not send that filter by default (the
+official vast-cli does), so unverified hosts stay available unless you tick it. The choice is
+remembered in the browser and stored in the job (`verified_only`).
+
+**A host that does not start is replaced.** While it waits for SSH, the job polls the instance.
+When Vast reports a container error (`status_msg` containing "Error", for example "Error response
+from daemon: failed to create task for container: … unresolvable CDI devices"), or the instance
+stays `created` or `offline` for 10 minutes, Tabularium deletes it, records the machine under
+`failed_hosts` in the job and rents the next best offer on another machine, saying so in the job
+message. Image pulls happen while Vast shows `loading`, so a slow download is not cut short. After
+3 hosts in a row fail the job stops with an explicit error. A machine that failed, or whose job was
+cancelled before training started, is skipped by **machine id** for 24 hours, not just by offer id:
+Vast lists one offer per GPU slot, so a different offer can sit on the same broken machine.
 The GPU is destroyed automatically if rental, provisioning or training fails; after the remote
 merge/download and registration it is destroyed too, so the one-click path leaves no instance
 running. The merged model stays locally and in Models.

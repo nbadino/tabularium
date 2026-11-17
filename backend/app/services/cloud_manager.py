@@ -626,6 +626,36 @@ def is_datacenter_offer(hosting_type: Any) -> bool:
         return False
 
 
+# A rented instance that never starts its container. The official vast-cli
+# (`wait_for_instance`, used by `self-test machine`) destroys an instance whose
+# `status_msg` contains "Error" or whose `actual_status` is "offline". Tabularium
+# applies the first rule at once (seen on prod: "Error response from daemon:
+# failed to create task for container: ... unresolvable CDI devices" with
+# `actual_status` "created" for 20+ minutes) and gives "created" and "offline" a
+# short grace period: image pulls happen in "loading", so a healthy host leaves
+# "created" in seconds.
+VAST_STUCK_STATUSES = frozenset({"created", "offline"})
+VAST_STUCK_LIMIT_S = 10 * 60
+
+
+def vast_provisioning_failure(inst: dict[str, Any], stuck_for_s: float = 0.0) -> str | None:
+    """Why a normalised instance that is not yet running will never start, or None.
+
+    `stuck_for_s` is how long the instance has been in its current `actual_status`.
+    """
+    if not inst or inst.get("is_running"):
+        return None
+    from . import i18n  # noqa: PLC0415
+
+    detail = str(inst.get("status_message") or "").strip()
+    if "Error" in detail:
+        return i18n.msg("vast_container_error", i18n.SOURCE, detail=" ".join(detail.split())[:400])
+    status = str(inst.get("actual_status") or "").lower()
+    if status in VAST_STUCK_STATUSES and stuck_for_s >= VAST_STUCK_LIMIT_S:
+        return i18n.msg("vast_status_stuck", i18n.SOURCE, status=status, minutes=int(stuck_for_s // 60))
+    return None
+
+
 class VastDeprecatedEndpoint(RuntimeError):
     """Rotta rimossa dal provider: chi la chiama può ricadere sull'alternativa."""
 
@@ -742,6 +772,9 @@ def search_vast_offers(
             "cpu_arch": offer.get("cpu_arch"),
             "hosting_type": offer.get("hosting_type"),
             "datacenter": is_datacenter_offer(offer.get("hosting_type")),
+            # The physical host (official vast-cli `search offers`: "machine_id
+            # int machine id of instance"). Offer ids change; the machine does not.
+            "machine_id": offer.get("machine_id"),
         })
     # Vast's search API cannot express a conditional rule such as
     # "Blackwell needs CUDA 12.9, other supported cards need 12.8". Apply that
@@ -1411,7 +1444,9 @@ def _normalize_vast_instance(inst: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": inst.get("id"),
         "status": inst.get("actual_status") or inst.get("status_msg") or "unknown",
+        "actual_status": str(inst.get("actual_status") or "").lower() or None,
         "status_message": str(inst.get("status_msg") or "")[-2000:],
+        "machine_id": inst.get("machine_id"),
         "gpu_name": inst.get("gpu_name"),
         "num_gpus": inst.get("num_gpus", 1),
         "dph_total": inst.get("dph_total"),

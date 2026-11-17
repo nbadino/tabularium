@@ -7,6 +7,16 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **One-click training replaces a Vast.ai host that does not start.** While waiting for SSH the job
+  polls the instance; a container error in Vast's `status_msg` (e.g. "Error response from daemon:
+  failed to create task for container", seen on prod with two A100 SXM4 rentals stuck in `created`
+  for 20+ minutes until cancelled by hand), or 10 minutes stuck in `created`/`offline`, deletes the
+  instance and rents the next offer on another machine, up to 3 hosts, with an explicit message.
+  Failed hosts are listed in the job (`failed_hosts`). Hosts that failed or were cancelled before
+  training are now skipped for 24 h by `machine_id`, not only by offer id: the second prod job had
+  picked another GPU slot of the same machine.
+- **Verified hosts only.** `POST /training/auto` accepts `verified_only` (stored in the job), with a
+  *Verified hosts only* toggle next to *Datacenter only*.
 - **Structure guard for model tables.** A fine-tuned model's OTSL can no longer break a page's
   columns unnoticed: before a model grid is stored, `domain/table_guard.py` folds a column split by
   a broken printed header ("Gr ss" read as "Gr" | "as") into its neighbour, and realigns a row
