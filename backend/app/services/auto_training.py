@@ -486,6 +486,18 @@ def _training_log_tail(run_dir: Path, lines: int = 120) -> str:
     return "\n".join(text.splitlines()[-lines:])[-4000:]
 
 
+def _training_log_end(run_dir: Path, size: int = 1024 * 1024) -> str:
+    """The last `size` bytes of the training log: where a startup CUDA error sits
+    even when a long shutdown traceback follows it."""
+    try:
+        with (run_dir / "train.log").open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - size))
+            return fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
 def _monitor_run(
     job: dict,
     api_key: str,
@@ -517,6 +529,11 @@ def _monitor_run(
         state = str(meta.get("state") or "")
         if state in {"failed", "stopped"}:
             err = _training_log_tail(run_dir)
+            cuda_error = _cuda_error_line(_training_log_end(run_dir)) or _cuda_error_line(str(meta.get("error") or ""))
+            if cuda_error:
+                # The GPU, not the training: keep the next jobs off this machine.
+                _record_failed_host(job, job.get("offer"), instance_id,
+                                    msg("vast_cuda_unavailable", i18n.SOURCE, detail=cuda_error))
             _update(
                 job,
                 state="failed",
@@ -609,6 +626,80 @@ def _int_or_none(value) -> int | None:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+# A GPU another process holds, or one the driver cannot open, fails the first CUDA
+# call of the training (prod, 2026-11-17: machine 25723, `run_1794954387239`). These
+# are the host-side signatures; an out-of-memory or a code error is not one.
+CUDA_HOST_ERRORS = re.compile(
+    r"CUDA-capable device\(s\) is/are busy or unavailable"
+    r"|cudaErrorDevicesUnavailable"
+    r"|no CUDA-capable device is detected"
+    r"|cudaErrorNoDevice"
+    r"|CUDA driver initialization failed"
+    r"|cudaErrorInitializationError"
+    r"|Found no NVIDIA driver on your system"
+)
+CUDA_PREFLIGHT_OK = "__TABULARIUM_CUDA_OK__"
+CUDA_PREFLIGHT_TRIES = 2
+CUDA_PREFLIGHT_RETRY_S = 15
+
+
+def _cuda_error_line(text: str) -> str | None:
+    """The line of `text` with a host-side CUDA error, or None."""
+    for line in reversed((text or "").splitlines()):
+        if CUDA_HOST_ERRORS.search(line):
+            return " ".join(line.split())[:400]
+    return None
+
+
+def _record_failed_host(job: dict, offer: dict | None, instance_id: int | None, reason: str,
+                        machine_id: int | None = None) -> int | None:
+    """Add the host to `failed_hosts`, which `_recently_failed_hosts` skips for 24 hours."""
+    offer = offer or {}
+    if machine_id is None:
+        machine_id = _int_or_none(offer.get("machine_id"))
+    job.setdefault("failed_hosts", []).append({
+        "machine_id": machine_id,
+        "offer_id": offer.get("id"),
+        "instance_id": _int_or_none(instance_id),
+        "reason": reason[:500],
+        "at": _now(),
+    })
+    return machine_id
+
+
+def _cuda_preflight(host: str, port: int, python: str, cancel: threading.Event) -> str | None:
+    """Allocate a tensor on the GPU with the training python: None when it works,
+    else why the host is not usable (`HostProvisioningFailed`).
+
+    Without it a busy GPU showed only as a training run failed a minute in, after
+    the dataset sync, and the job did not try another host.
+    """
+    code = (
+        'import torch; x = torch.ones(1, device="cuda"); x.add_(1); torch.cuda.synchronize(); '
+        f'print("{CUDA_PREFLIGHT_OK}", torch.cuda.get_device_name(0))'
+    )
+    command = f"timeout 120 {shlex.quote(python or 'python3')} -c {shlex.quote(code)} 2>&1"
+    detail = ""
+    for attempt in range(CUDA_PREFLIGHT_TRIES):
+        if cancel.is_set():
+            raise RuntimeError("annullato")
+        if attempt:
+            time.sleep(CUDA_PREFLIGHT_RETRY_S)
+        try:
+            proc = _ssh(host, int(port), command, timeout=180)
+        except subprocess.TimeoutExpired:
+            detail = "CUDA preflight timed out"
+            continue
+        output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        if proc.returncode == 0 and CUDA_PREFLIGHT_OK in output:
+            return None
+        if re.search(r"ModuleNotFoundError|ImportError", output) and not CUDA_HOST_ERRORS.search(output):
+            # The image, not the host: another rental would fail the same way.
+            raise RuntimeError(f"the training python cannot import torch:\n{output[-1500:]}")
+        detail = _cuda_error_line(output) or (output.splitlines()[-1] if output else f"exit {proc.returncode}")
+    return msg("vast_cuda_unavailable", i18n.SOURCE, detail=" ".join(detail.split())[:400])
 
 
 def _recently_failed_hosts(job: dict) -> tuple[set[int], set[int]]:
@@ -814,6 +905,84 @@ def _wait_for_ssh_endpoint(job: dict, api_key: str, instance_id: int, cancel: th
     raise RuntimeError("l'istanza non ha esposto SSH entro 60 minuti")
 
 
+def _ready_environment(job: dict, host: str, port: int, profile: str, cancel: threading.Event) -> dict:
+    """Wait for SSH access and the profile environment on the rented host: its paths."""
+    prebuilt = profile in PREBUILT_IMAGES
+    _update(job, host=host, port=int(port), message="verifico la chiave SSH…")
+    # Vast pubblica host/porta prima che sshd accetti connessioni: il pin
+    # della host key va ritentato, altrimenti si distrugge un'istanza
+    # perfettamente sana solo perché ssh-keyscan è arrivato troppo presto.
+    access: dict = {"ok": False}
+    ssh_deadline = time.time() + 10 * 60
+    while time.time() < ssh_deadline:
+        if cancel.is_set():
+            raise RuntimeError("annullato")
+        try:
+            cloud_manager.pin_ssh_host_key(host, int(port))
+        except Exception as exc:  # noqa: BLE001
+            _update(job, message=f"SSH non ancora pronto: {str(exc)[:160]}")
+            time.sleep(10)
+            continue
+        access = cloud_manager.check_ssh_access(host, int(port))
+        if access.get("ok"):
+            break
+        _update(job, message=(access.get("message") or "SSH non ancora pronto")[:200])
+        time.sleep(10)
+    if not access.get("ok"):
+        raise RuntimeError(access.get("message") or "SSH non raggiungibile dopo 10 minuti")
+    if prebuilt:
+        _update(job, state="provisioning", phase="env", message="avvio l'immagine prebuilt già pronta…")
+        deadline = time.time() + 10 * 60
+        paths = expected_paths(profile)
+        last_error = ""
+        while time.time() < deadline:
+            if cancel.is_set():
+                raise RuntimeError("annullato")
+            proc = _ssh(host, int(port), f"cat {PREBUILT_MARKER} 2>/dev/null || true")
+            output = (proc.stdout or "").strip()
+            if output.startswith("{"):
+                paths = {**paths, **json.loads(output)}
+                _update(job, state="starting", phase="train", log=output[-2000:], message="immagine prebuilt pronta")
+                break
+            last_error = (proc.stderr or output or "ready.json non trovato").strip()[-500:]
+            time.sleep(5)
+        else:
+            raise RuntimeError(f"immagine prebuilt non pronta entro 10 minuti: {last_error}")
+    else:
+        _update(job, state="provisioning", phase="env", message=f"installo l'ambiente {profile}…")
+        ready_path = f"/root/tabularium-train/{profile}/ready.json"
+        failed_path = f"/root/tabularium-train/{profile}/.failed"
+        log_path = f"/root/tabularium-train/{profile}/setup.log"
+        deadline = time.time() + 75 * 60
+        paths = expected_paths(profile)
+        last_log = ""
+        while time.time() < deadline:
+            if cancel.is_set():
+                raise RuntimeError("annullato")
+            proc = _ssh(
+                host,
+                int(port),
+                f"if [ -f {failed_path} ]; then echo __FAILED__; tail -n 80 {log_path}; exit 3; fi; "
+                f"cat {ready_path} 2>/dev/null || tail -n 20 {log_path} 2>/dev/null || true",
+            )
+            output = (proc.stdout or "").strip()
+            if output.startswith("{"):
+                paths = {**paths, **json.loads(output)}
+                break
+            if "__FAILED__" in output or proc.returncode == 3:
+                detail = output.replace("__FAILED__", "").strip()[-1500:]
+                raise RuntimeError(f"installazione dell'ambiente fallita:\n{detail}")
+            if output:
+                last_log = output[-2000:]
+                _update(job, log=last_log, message="installazione in corso…")
+            time.sleep(10)
+        else:
+            raise RuntimeError(
+                "l'ambiente non è pronto entro 75 minuti. Ultime righe:\n" + (last_log or "nessun log")
+            )
+    return paths
+
+
 def _run(
     job: dict,
     cfg: dict,
@@ -837,8 +1006,8 @@ def _run(
             raise RuntimeError("annullato")
         _update(job, state="renting", phase="rent", message="cerco una GPU adatta…")
         excluded_offers, excluded_machines = _recently_failed_hosts(job)
-        prebuilt = profile in PREBUILT_IMAGES
         host = port = None
+        paths: dict = {}
         attempt = 0
         while True:
             attempt += 1
@@ -866,16 +1035,14 @@ def _run(
             )
             try:
                 host, port = _wait_for_ssh_endpoint(job, api_key, int(instance_id), cancel)
+                paths = _ready_environment(job, host, int(port), profile, cancel)
+                _update(job, message="checking that the GPU answers CUDA…")
+                cuda_failure = _cuda_preflight(host, int(port), str(paths.get("python") or ""), cancel)
+                if cuda_failure:
+                    raise HostProvisioningFailed(cuda_failure)
                 break
             except HostProvisioningFailed as failure:
-                machine_id = failure.machine_id if failure.machine_id is not None else _int_or_none(best.get("machine_id"))
-                job.setdefault("failed_hosts", []).append({
-                    "machine_id": machine_id,
-                    "offer_id": best.get("id"),
-                    "instance_id": int(instance_id),
-                    "reason": failure.reason[:500],
-                    "at": _now(),
-                })
+                machine_id = _record_failed_host(job, best, int(instance_id), failure.reason, failure.machine_id)
                 if best.get("id") is not None:
                     excluded_offers.add(int(best["id"]))
                 if machine_id is not None:
@@ -892,78 +1059,6 @@ def _run(
                     "vast_host_replaced", i18n.SOURCE, machine=machine_id if machine_id is not None else "?",
                     reason=failure.reason[:300], attempt=attempt + 1, total=MAX_HOST_ATTEMPTS,
                 ))
-        _update(job, host=host, port=int(port), message="verifico la chiave SSH…")
-        # Vast pubblica host/porta prima che sshd accetti connessioni: il pin
-        # della host key va ritentato, altrimenti si distrugge un'istanza
-        # perfettamente sana solo perché ssh-keyscan è arrivato troppo presto.
-        access: dict = {"ok": False}
-        ssh_deadline = time.time() + 10 * 60
-        while time.time() < ssh_deadline:
-            if cancel.is_set():
-                raise RuntimeError("annullato")
-            try:
-                cloud_manager.pin_ssh_host_key(host, int(port))
-            except Exception as exc:  # noqa: BLE001
-                _update(job, message=f"SSH non ancora pronto: {str(exc)[:160]}")
-                time.sleep(10)
-                continue
-            access = cloud_manager.check_ssh_access(host, int(port))
-            if access.get("ok"):
-                break
-            _update(job, message=(access.get("message") or "SSH non ancora pronto")[:200])
-            time.sleep(10)
-        if not access.get("ok"):
-            raise RuntimeError(access.get("message") or "SSH non raggiungibile dopo 10 minuti")
-        if prebuilt:
-            _update(job, state="provisioning", phase="env", message="avvio l'immagine prebuilt già pronta…")
-            deadline = time.time() + 10 * 60
-            paths = expected_paths(profile)
-            last_error = ""
-            while time.time() < deadline:
-                if cancel.is_set():
-                    raise RuntimeError("annullato")
-                proc = _ssh(host, int(port), f"cat {PREBUILT_MARKER} 2>/dev/null || true")
-                output = (proc.stdout or "").strip()
-                if output.startswith("{"):
-                    paths = {**paths, **json.loads(output)}
-                    _update(job, state="starting", phase="train", log=output[-2000:], message="immagine prebuilt pronta")
-                    break
-                last_error = (proc.stderr or output or "ready.json non trovato").strip()[-500:]
-                time.sleep(5)
-            else:
-                raise RuntimeError(f"immagine prebuilt non pronta entro 10 minuti: {last_error}")
-        else:
-            _update(job, state="provisioning", phase="env", message=f"installo l'ambiente {profile}…")
-            ready_path = f"/root/tabularium-train/{profile}/ready.json"
-            failed_path = f"/root/tabularium-train/{profile}/.failed"
-            log_path = f"/root/tabularium-train/{profile}/setup.log"
-            deadline = time.time() + 75 * 60
-            paths = expected_paths(profile)
-            last_log = ""
-            while time.time() < deadline:
-                if cancel.is_set():
-                    raise RuntimeError("annullato")
-                proc = _ssh(
-                    host,
-                    int(port),
-                    f"if [ -f {failed_path} ]; then echo __FAILED__; tail -n 80 {log_path}; exit 3; fi; "
-                    f"cat {ready_path} 2>/dev/null || tail -n 20 {log_path} 2>/dev/null || true",
-                )
-                output = (proc.stdout or "").strip()
-                if output.startswith("{"):
-                    paths = {**paths, **json.loads(output)}
-                    break
-                if "__FAILED__" in output or proc.returncode == 3:
-                    detail = output.replace("__FAILED__", "").strip()[-1500:]
-                    raise RuntimeError(f"installazione dell'ambiente fallita:\n{detail}")
-                if output:
-                    last_log = output[-2000:]
-                    _update(job, log=last_log, message="installazione in corso…")
-                time.sleep(10)
-            else:
-                raise RuntimeError(
-                    "l'ambiente non è pronto entro 75 minuti. Ultime righe:\n" + (last_log or "nessun log")
-                )
         if cancel.is_set():
             raise RuntimeError("annullato")
         _update(job, phase="train", message="avvio il training…")

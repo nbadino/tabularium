@@ -94,7 +94,8 @@ def test_run_rents_provisions_and_starts_training(monkeypatch):
     monkeypatch.setattr(cloud_manager, "pin_ssh_host_key", lambda *args, **kwargs: {"ok": True})
     monkeypatch.setattr(cloud_manager, "check_ssh_access", lambda *args, **kwargs: {"ok": True})
     ready = '{"python": "/root/tabularium-train/glm/venv/bin/python", "repo": "/root/tabularium-train/glm/LLaMA-Factory"}'
-    monkeypatch.setattr(auto_training, "_ssh", lambda *args, **kwargs: subprocess.CompletedProcess([], 0, ready, ""))
+    monkeypatch.setattr(auto_training, "_ssh", lambda _h, _p, cmd, **_k: subprocess.CompletedProcess(
+        [], 0, auto_training.CUDA_PREFLIGHT_OK if "torch" in cmd else ready, ""))
     started: dict = {}
 
     def fake_start(project_id, cfg, **kwargs):
@@ -165,7 +166,8 @@ def test_monkey_run_uses_the_prebuilt_image(monkeypatch):
     monkeypatch.setattr(cloud_manager, "pin_ssh_host_key", lambda *args, **kwargs: {"ok": True})
     monkeypatch.setattr(cloud_manager, "check_ssh_access", lambda *args, **kwargs: {"ok": True})
     ready = '{"python": "/opt/tabularium/venv/bin/python", "repo": "/opt/tabularium/MonkeyOCRv2/parsing/train"}'
-    monkeypatch.setattr(auto_training, "_ssh", lambda *args, **kwargs: subprocess.CompletedProcess([], 0, ready, ""))
+    monkeypatch.setattr(auto_training, "_ssh", lambda _h, _p, cmd, **_k: subprocess.CompletedProcess(
+        [], 0, auto_training.CUDA_PREFLIGHT_OK if "torch" in cmd else ready, ""))
     started: dict = {}
     monkeypatch.setattr(trainer, "start_run", lambda project_id, cfg, **kwargs: started.update({"cfg": cfg, **kwargs}) or {"run": {"run_id": "run_2"}})
     monkeypatch.setattr(auto_training, "_monitor_run", lambda *args, **kwargs: None)
