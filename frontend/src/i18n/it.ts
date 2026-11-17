@@ -1683,6 +1683,18 @@ export const it = {
       'Nessun modello configurato: l’hint verrà usato dal primo modello che lo accetta.',
   },
 
+  tableGuard: {
+    title: 'Controllo struttura delle tabelle del modello',
+    intro: 'Ripara in modo deterministico le tabelle prodotte dal modello: unisce una colonna spezzata da un’intestazione rotta e riallinea una riga con una cella vuota inserita, solo quando i tipi di colonna del profilo lo confermano. Ogni riparazione resta elencata nella tabella.',
+    enabled: 'Attivo',
+    followsProfile: 'Segue il profilo {profile} (predefinito: {state})',
+    projectSet: 'Impostato per questo progetto',
+    reset: 'Torna al predefinito del profilo',
+    stateOn: 'attivo',
+    stateOff: 'spento',
+    noColumns: 'Il profilo non dichiara i tipi di colonna: si uniscono solo le colonne con intestazione duplicata, le righe non vengono riallineate.',
+  },
+
   table: {
     backToStudio: 'Torna allo Studio',
     blockVerified: "Blocco verificato",
@@ -1736,6 +1748,11 @@ export const it = {
     markVerified: 'Segna la cella come verificata',
     phantomColumn: 'Colonna fantasma (senza filetto)',
     phantomColumns: 'Colonne fantasma: {n}',
+    structureRepairs: 'Riparazioni della struttura: {n}',
+    structureRepairsIntro: 'Il controllo struttura ha modificato la bozza del modello:',
+    repair_column_merged: 'colonna {col} unita alla vicina ({header})',
+    repair_empty_cell_moved: 'riga {row}: cella vuota spostata dalla colonna {col}',
+    repair_glued_value_split: 'riga {row}: valore staccato dalla cella a sinistra (colonna {col})',
     hintSheet: 'Tasto destro per inserire righe e colonne, unire, separare, segnare la colonna fantasma. Invio e Tab scendono di riga; il salvataggio è automatico.',
     notice: 'Foglio tabella',
     detectStructureOnly: 'solo struttura',

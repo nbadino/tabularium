@@ -30,6 +30,8 @@ from ..schemas import (
     ScanReportOut,
     StudyProtocolIn,
     StudyProtocolOut,
+    TableGuardIn,
+    TableGuardOut,
     TableHintIn,
     TableHintOut,
 )
@@ -41,6 +43,7 @@ from ..services import auth as authsvc
 from ..services import audit as auditsvc
 from ..services import project_members as members
 from ..services import domain_profiles
+from ..services import table_guard as table_guard_svc
 from ..services import table_hint as table_hint_svc
 from ..services.i18n import msg, parse_lang
 from .deps import require_resource
@@ -544,6 +547,37 @@ def _table_hint_out(settings: dict) -> TableHintOut:
         hint=table_hint_svc.get_table_hint(settings),
         active_model=display,
         accepts_hint=accepts,
+    )
+
+
+@router.get("/api/projects/{project_id}/table-guard", response_model=TableGuardOut)
+def get_table_guard(
+    project_id: int,
+    _auth: dict = Depends(require_resource()),
+) -> TableGuardOut:
+    """Whether model tables pass through the structure guard, and why."""
+    return _table_guard_out(_settings_or_404(project_id))
+
+
+@router.put("/api/projects/{project_id}/table-guard", response_model=TableGuardOut)
+def put_table_guard(
+    project_id: int,
+    payload: TableGuardIn,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> TableGuardOut:
+    with _editing_settings(project_id) as settings:
+        table_guard_svc.set_enabled(settings, payload.enabled)
+    return _table_guard_out(settings)
+
+
+def _table_guard_out(settings: dict) -> TableGuardOut:
+    guard = table_guard_svc.resolve(settings)
+    return TableGuardOut(
+        enabled=guard.enabled,
+        source=guard.source,
+        profile_id=guard.profile_id,
+        profile_default=guard.profile_default,
+        declares_columns=bool(guard.columns),
     )
 
 

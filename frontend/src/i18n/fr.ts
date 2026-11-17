@@ -1683,6 +1683,18 @@ export const fr: Dict = {
       'Aucun modèle configuré : l’indication sera utilisée par le premier modèle qui l’accepte.',
   },
 
+  tableGuard: {
+    title: 'Contrôle de structure des tableaux du modèle',
+    intro: 'Répare de façon déterministe les tableaux produits par le modèle : fusionne une colonne coupée par un en-tête cassé et réaligne une ligne contenant une cellule vide insérée, seulement quand les types de colonne du profil le confirment. Chaque réparation reste listée sur le tableau.',
+    enabled: 'Activé',
+    followsProfile: 'Suit le profil {profile} (par défaut : {state})',
+    projectSet: 'Réglé pour ce projet',
+    reset: 'Revenir au réglage du profil',
+    stateOn: 'activé',
+    stateOff: 'désactivé',
+    noColumns: 'Le profil ne déclare pas de types de colonne : seules les colonnes à l’en-tête dupliqué sont fusionnées, les lignes ne sont jamais réalignées.',
+  },
+
   table: {
     backToStudio: 'Retour au Studio',
     blockVerified: "Bloc vérifié",
@@ -1736,6 +1748,11 @@ export const fr: Dict = {
     markVerified: 'Marquer la cellule comme vérifiée',
     phantomColumn: 'Colonne fantôme (sans filet)',
     phantomColumns: 'Colonnes fantômes : {n}',
+    structureRepairs: 'Réparations de structure : {n}',
+    structureRepairsIntro: 'Le contrôle de structure a modifié le brouillon du modèle :',
+    repair_column_merged: 'colonne {col} fusionnée avec sa voisine ({header})',
+    repair_empty_cell_moved: 'ligne {row} : cellule vide déplacée depuis la colonne {col}',
+    repair_glued_value_split: 'ligne {row} : valeur détachée de la cellule de gauche (colonne {col})',
     hintSheet: 'Clic droit pour insérer lignes et colonnes, fusionner, séparer, marquer la colonne fantôme. Entrée et Tab descendent ; l’enregistrement est automatique.',
     notice: 'Feuille de table',
     detectStructureOnly: 'structure seule',

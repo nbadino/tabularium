@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 from .models import monkeyocrv2 as reference
+from .services.domain_profiles import DEFAULT_PROFILE_ID
 
 
 # --- Autenticazione & utenti (self-hosted) ---------------------------------------
@@ -227,7 +228,7 @@ class StudyProtocolIn(BaseModel):
     time_start: str | None = None
     time_end: str | None = None
     objective: str = Field(default="", max_length=4000)
-    domain_profile: str = "shipping-registers-1900s"
+    domain_profile: str = DEFAULT_PROFILE_ID
     model_adapter: str = "monkeyocrv2-parsing"
     gold_pages: list[int] = Field(default_factory=list, max_length=500)
 
@@ -426,6 +427,25 @@ class TableCell(BaseModel):
     verification_source: Literal["page_approval"] | None = None
 
 
+class TableStructureRepair(BaseModel):
+    """One repair of the structure guard (`domain/table_guard.py`) on a model draft.
+
+    `rule`: `column_merged` (a split or duplicated column folded into its
+    neighbour; `reason`, `header`, body `rows` that moved), `empty_cell_moved` or
+    `glued_value_split` (one row realigned; `before`/`after` from column `col`).
+    Coordinates are those of the repaired grid at the time of the repair.
+    """
+
+    rule: Literal["column_merged", "empty_cell_moved", "glued_value_split"]
+    row: int | None = None
+    col: int | None = None
+    reason: str | None = None
+    header: list[str] = []
+    rows: list[int] = []
+    before: list[str] = []
+    after: list[str] = []
+
+
 class TableGrid(BaseModel):
     rows: int = Field(ge=1, le=256)
     cols: int = Field(ge=1, le=256)
@@ -444,6 +464,8 @@ class TableGrid(BaseModel):
     # Somme confrontate con la scansione e dichiarate refusi della stampa
     # (`table_checks.check_key`): non contano più come errori.
     misprints: list[str] = []
+    # What the structure guard changed in the model's draft: provenance, kept on save.
+    structure_repairs: list[TableStructureRepair] = []
 
 
 class TableGridOut(BaseModel):
@@ -541,6 +563,21 @@ class ConventionsIn(BaseModel):
 # --- Hint di schema tabella (per progetto) ------------------------------------
 class TableHintIn(BaseModel):
     hint: str = Field(default="", max_length=2000)
+
+
+class TableGuardIn(BaseModel):
+    # `None`: follow the domain profile's default.
+    enabled: bool | None = None
+
+
+class TableGuardOut(BaseModel):
+    enabled: bool
+    source: Literal["project", "profile"]
+    profile_id: str
+    profile_default: bool
+    # Whether the profile declares column types: without them only duplicated
+    # header columns are merged and rows are never realigned.
+    declares_columns: bool
 
 
 class TableHintOut(BaseModel):

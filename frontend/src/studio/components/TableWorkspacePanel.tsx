@@ -13,6 +13,7 @@ import SplitColumnDialog from './SplitColumnDialog'
 import TablePageImage from './TablePageImage'
 import Splitter from './Splitter'
 import KnownHeaderDialog from './KnownHeaderDialog'
+import StructureRepairsMenu from './StructureRepairsMenu'
 import { API_BASE } from '../../lib/endpoints'
 import { describeError } from '../../lib/errors'
 import { cellBand, charDiff, confirmGroups, disputedCells, estimateRowBand, nextDisputedCell, type GridConsensus } from '../consensus'
@@ -790,6 +791,7 @@ export function TableWorkspacePanel({
             Σ <span className="mono">{checks.passed}/{checks.checks.length}</span>
           </span>
         )}
+        <StructureRepairsMenu repairs={grid.structure_repairs} />
 
         <div className="ml-auto flex items-center gap-1">
           <Menu label={<><IconTable size={12} />{t('table.structure')}</>} className="z-20">
