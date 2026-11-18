@@ -170,3 +170,160 @@ def test_cli_restore_db_refuses_while_the_app_runs(monkeypatch):
     before = set(config.ROOT_DIR.glob("pre-restore-*"))
     assert cli.main(["restore-db", name, "--yes"]) == 2
     assert set(config.ROOT_DIR.glob("pre-restore-*")) == before
+
+
+def test_fine_tuned_model_paths_follow_a_moved_data_root():
+    _reset_db()
+    db.init_db()
+    old = "/old/place/Tabularium"
+    root = str(config.ROOT_DIR)
+    with db.connect() as conn:
+        conn.execute("UPDATE meta SET value=? WHERE key='data_root'", (old,))
+        conn.execute(
+            "INSERT INTO custom_models(id, display_name, hf_repo, served_model_name, source_path) VALUES('custom-moved', 'm', 'r', 's', ?)",
+            (f"{old}/projects/4/runs/run_1/checkpoints/checkpoint-315-merged",),
+        )
+    db.init_db()
+    with db.connect() as conn:
+        path = conn.execute("SELECT source_path FROM custom_models WHERE id='custom-moved'").fetchone()[0]
+        conn.execute("DELETE FROM custom_models WHERE id='custom-moved'")
+    assert path == f"{root}/projects/4/runs/run_1/checkpoints/checkpoint-315-merged"
+
+
+def _make_run(project: str, run_id: str) -> None:
+    run = config.DATA_DIR / project / "runs" / run_id
+    (run / "checkpoints" / "checkpoint-1-merged").mkdir(parents=True, exist_ok=True)
+    (run / "checkpoints" / "checkpoint-1-merged" / "model.safetensors").write_bytes(b"w")
+    (run / "metrics.jsonl").write_text("{}\n")
+
+
+def test_cli_backup_keeps_only_the_checkpoints_of_the_chosen_runs(tmp_path):
+    _reset_db()
+    db.init_db()
+    _make_run("7", "run_keep")
+    _make_run("7", "run_drop")
+    out = tmp_path / "b.tar.gz"
+    assert cli.main(["backup", "--out", str(out), "--runs", "run_keep"]) == 0
+    with tarfile.open(out) as tar:
+        names = tar.getnames()
+    assert "data/projects/7/runs/run_keep/checkpoints/checkpoint-1-merged/model.safetensors" in names
+    assert "data/projects/7/runs/run_drop/metrics.jsonl" in names
+    assert not any(n.startswith("data/projects/7/runs/run_drop/checkpoints") for n in names)
+
+
+def test_cli_backup_refuses_an_unknown_run(tmp_path):
+    _reset_db()
+    db.init_db()
+    out = tmp_path / "b.tar.gz"
+    assert cli.main(["backup", "--out", str(out), "--runs", "run_typo"]) == 2
+    assert not out.exists()
+
+
+def test_cli_backup_warns_about_pages_outside_the_data_root(tmp_path, capsys):
+    _reset_db()
+    db.init_db()
+    with db.connect() as conn:
+        pid = conn.execute("INSERT INTO projects(name, root_dir) VALUES('ext', '/scans')").lastrowid
+        conn.execute(
+            "INSERT INTO pages(project_id, rel_path, abs_path) VALUES(?, 'x.png', '/scans/x.png')", (pid,)
+        )
+    assert cli.main(["backup", "--out", str(tmp_path / "b.tar.gz")]) == 0
+    assert "/scans/x.png" in capsys.readouterr().err
+
+
+def _use_root(monkeypatch, root):
+    monkeypatch.setattr(config, "ROOT_DIR", root)
+    monkeypatch.setattr(config, "DATA_DIR", root / "projects")
+    monkeypatch.setattr(config, "DB_PATH", root / "tabularium.db")
+
+
+def _server_archive(tmp_path, monkeypatch) -> "Path":
+    """An archive written on a 'server' with its own data root and vault key."""
+    server = tmp_path / "server"
+    _use_root(monkeypatch, server)
+    db.init_db()
+    _make_run("4", "run_1")
+    with db.connect() as conn:
+        conn.execute("INSERT INTO meta(key, value) VALUES('origin', 'server')")
+        conn.execute(
+            "INSERT INTO custom_models(id, display_name, hf_repo, served_model_name, source_path) VALUES('custom-run-1', 'm', 'r', 's', ?)",
+            (str(server / "projects/4/runs/run_1/checkpoints/checkpoint-1-merged"),),
+        )
+    env = tmp_path / "server.env"
+    env.write_text("TABULARIUM_VAULT_KEY=server-key\n")
+    monkeypatch.setattr(config, "ENV_FILE", env)
+    out = tmp_path / "server.tar.gz"
+    assert cli.main(["backup", "--out", str(out)]) == 0
+    return out
+
+
+def _local_root(tmp_path, monkeypatch):
+    local = tmp_path / "local"
+    _use_root(monkeypatch, local)
+    db.init_db()
+    (local / "projects" / "1").mkdir(parents=True, exist_ok=True)
+    (local / "projects" / "1" / "mine.png").write_bytes(b"local")
+    (local / "mlx-runtime").mkdir()
+    (local / "mlx-runtime" / "python").write_bytes(b"rt")
+    env = tmp_path / "local.env"
+    env.write_text("OTHER=1\nTABULARIUM_VAULT_KEY=local-key\n")
+    monkeypatch.setattr(config, "ENV_FILE", env)
+    return local, env
+
+
+def test_cli_restore_replace_swaps_the_data_folder_and_keeps_the_old_one(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_app_running", lambda port: False)
+    archive = _server_archive(tmp_path, monkeypatch)
+    local, env = _local_root(tmp_path, monkeypatch)
+    assert cli.main(["restore", str(archive), "--replace"]) == 2  # no --yes: nothing happens
+    assert (local / "projects" / "1" / "mine.png").is_file()
+    assert cli.main(["restore", str(archive), "--replace", "--yes"]) == 0
+    with db.connect() as conn:
+        assert conn.execute("SELECT value FROM meta WHERE key='origin'").fetchone()[0] == "server"
+        assert conn.execute("SELECT value FROM meta WHERE key='data_root'").fetchone()[0] == str(local)
+        source = conn.execute("SELECT source_path FROM custom_models WHERE id='custom-run-1'").fetchone()[0]
+    assert source == str(local / "projects/4/runs/run_1/checkpoints/checkpoint-1-merged")
+    assert (local / "projects/4/runs/run_1/checkpoints/checkpoint-1-merged/model.safetensors").is_file()
+    assert (local / "mlx-runtime" / "python").is_file(), "this computer's runtimes are carried over"
+    (aside,) = tmp_path.glob("local.pre-restore-*")
+    assert (aside / "projects" / "1" / "mine.png").read_bytes() == b"local"
+    assert env.read_text().splitlines() == ["OTHER=1", "TABULARIUM_VAULT_KEY=server-key"]
+    assert "local-key" in (aside / "env.pre-restore").read_text()
+    assert not list(tmp_path.glob(".local.restore-*")), "the staging folder is cleaned up"
+
+
+def test_cli_restore_needs_a_mode_and_refuses_while_the_app_runs(tmp_path, monkeypatch):
+    archive = _server_archive(tmp_path, monkeypatch)
+    local, _ = _local_root(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit):
+        cli.main(["restore", str(archive), "--yes"])
+    monkeypatch.setattr(cli, "_app_running", lambda port: True)
+    assert cli.main(["restore", str(archive), "--replace", "--yes"]) == 2
+    assert not list(tmp_path.glob("local.pre-restore-*"))
+
+
+def test_cli_restore_refuses_an_archive_from_a_newer_release(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_app_running", lambda port: False)
+    server = tmp_path / "server"
+    _use_root(monkeypatch, server)
+    db.init_db()
+    _set_version(str(int(db.SCHEMA_VERSION) + 1))
+    out = tmp_path / "new.tar.gz"
+    assert cli.main(["backup", "--out", str(out)]) == 0
+    local, _ = _local_root(tmp_path, monkeypatch)
+    assert cli.main(["restore", str(out), "--replace", "--yes"]) == 2
+    assert (local / "projects" / "1" / "mine.png").is_file()
+    assert not list(tmp_path.glob(".local.restore-*"))
+
+
+def test_cli_restore_rejects_entries_outside_a_backup(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_app_running", lambda port: False)
+    local, _ = _local_root(tmp_path, monkeypatch)
+    evil = tmp_path / "evil.tar.gz"
+    payload = tmp_path / "p.txt"
+    payload.write_text("x")
+    with tarfile.open(evil, "w:gz") as tar:
+        tar.add(payload, arcname="../escape.txt")
+    assert cli.main(["restore", str(evil), "--replace", "--yes"]) == 2
+    assert not (tmp_path.parent / "escape.txt").exists()
+    assert (local / "projects" / "1" / "mine.png").is_file()
