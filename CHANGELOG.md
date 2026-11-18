@@ -91,6 +91,11 @@ Notable changes to Tabularium. The format follows
   with the vendor's weights under its own name. It now serves the run's merged checkpoint with
   `mlx-vlm`; an unmerged LoRA, or a base whose MLX checkpoint is a separate port (PaddleOCR-VL,
   Qwen3-VL 4-bit), declares that it has no MLX path instead.
+- **A local model server answers behind a network proxy.** Python sent the app's calls to its own
+  servers on `127.0.0.1` through the macOS/Windows system proxy when that proxy had no
+  `localhost` exception, so a local MLX server stayed "loading" and recognition failed. The app
+  now adds the loopback hosts to `no_proxy` at start, after copying the system proxy to the
+  environment so downloads still use it.
 - A fine-tuned model follows a moved data folder: `custom_models.source_path` is rewritten
   with the other stored paths, instead of pointing at the old machine's checkpoint.
 - **A transient SSH timeout no longer fails a finished training.** After a Vast run trained to the
