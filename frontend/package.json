@@ -19,7 +19,7 @@
     "@tanstack/react-query": "^5.107.1",
     "@univerjs/core": "^0.25.1",
     "@univerjs/preset-sheets-core": "^0.25.1",
-    "@univerjs/presets": "^0.25.1",
+    "@univerjs/presets": "^1.5.0",
     "@univerjs/ui": "^0.25.1",
     "konva": "^10.9.1",
     "react": "^19.3.1",
