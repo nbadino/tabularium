@@ -102,3 +102,40 @@ def test_the_paddle_runtime_follows_the_adapter_declaration():
     assert model_registry._needs_paddle_runtime("xiaomi-ocr-0")
     assert not model_registry._needs_paddle_runtime("surya-ocr-2.5")
     assert not model_registry._needs_paddle_runtime("does-not-exist")
+
+
+def _custom(base: str, **row):
+    from app.services.model_adapters import CustomVllmAdapter
+
+    return CustomVllmAdapter({
+        "id": f"custom-{base}-run-1", "display_name": "fine-tuned", "served_model_name": "ft",
+        "hf_repo": "xiaomi-research/Xiaomi-OCR-0", "hf_revision": None,
+        "base_adapter_id": base, **row,
+    })
+
+
+def test_a_fine_tuned_xiaomi_checkpoint_serves_its_own_weights_on_mlx(tmp_path):
+    from app.services import hardware
+
+    adapter = _custom("xiaomi-ocr-0", source_path=str(tmp_path), source_train_type="full")
+    cap = adapter.capabilities
+    assert "mlx-vlm" in cap.local_runtimes
+    # Never the base checkpoint: that would serve the vendor's weights under the fine-tune's name.
+    assert cap.local_mlx_repo == str(tmp_path)
+    assert cap.local_mlx_repo_choices == ()
+    assert hardware.pick_mlx_repo(cap, {"apple_silicon": True, "memory_gb": 64, "available_gb": 32}) == str(tmp_path)
+
+
+def test_a_fine_tune_without_local_mlx_weights_says_mlx_is_not_available(tmp_path):
+    lora = _custom("xiaomi-ocr-0", source_path=str(tmp_path), source_train_type="lora")
+    assert "mlx-vlm" not in lora.capabilities.local_runtimes
+    assert lora.capabilities.local_mlx_repo == ""
+    # PaddleOCR-VL's MLX checkpoint is a separate 4-bit port: fine-tuned weights are not it.
+    paddle = _custom("paddleocr-vl", source_path=str(tmp_path), source_train_type="full")
+    assert "mlx-vlm" not in paddle.capabilities.local_runtimes
+    assert paddle.capabilities.local_mlx_repo == ""
+
+
+def test_a_hub_repo_on_the_xiaomi_architecture_serves_that_repo_on_mlx():
+    adapter = _custom("xiaomi-ocr-0", hf_repo="someone/xiaomi-ocr-0-finetune", source_path=None)
+    assert adapter.capabilities.local_mlx_repo == "someone/xiaomi-ocr-0-finetune"

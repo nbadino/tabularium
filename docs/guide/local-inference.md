@@ -62,6 +62,7 @@ environment pinned to the official release.
 | Unlimited-OCR | ✅ (Docker image) | 🧪 `mlx-community/Unlimited-OCR-{bf16,8bit}` | `mlx-vlm` ≥ 0.6.4 ships `unlimited_ocr` with R-SWA; protocol verified, quality test on gold pages pending |
 | dots.mocr | ✅ | ❌ | actually served: END2END stops at 682 characters, run fails |
 | GLM-OCR | ✅ | ❌ | actually served: run "succeeds" with **zero** blocks inserted |
+| Xiaomi-OCR-0 | ✅ | ✅ `xiaomi-research/Xiaomi-OCR-0` (bf16, as published) | — |
 
 **How the MLX column was decided.** A checkpoint or a declared backend is not
 enough: confirmation requires serving and recognizing real pages.
@@ -79,6 +80,16 @@ in different ways:
 
 In both cases the checkpoint loads; what's missing is the path (prompt,
 template, decoding). The local column is a measurement, not a promise.
+
+**Fine-tuned models on MLX.** A model registered from a training run serves its own
+weights, never its base's MLX checkpoint: that would answer under the fine-tune's name with
+the vendor's weights. It works when the base's MLX checkpoint is its original repository
+(Xiaomi-OCR-0: `mlx-vlm` 0.7.1 loads the merged `checkpoint-*-merged` folder as it is) and
+the weights are complete. A LoRA adapter that was not merged, or a base whose MLX checkpoint is
+a separate port (PaddleOCR-VL 4-bit, Qwen3-VL 4-bit), has no MLX path: the registry says
+so instead of serving the base. Measured on 2026-11-18: a Xiaomi-OCR-0 fine-tune on an unseen
+Lloyd's register table (1665×2048 px, 68 rows) read 572 of 576 cells exactly in 32 s on an
+Apple Silicon Mac, the same as through `mlx_vlm.generate`.
 
 Two practical differences of the MLX path:
 

@@ -2535,6 +2535,7 @@ class CustomVllmAdapter(_StubAdapter):
                 display_name=row["display_name"],
                 served_model_name=row["served_model_name"],
                 hf_revision=row.get("hf_revision") or self._base.capabilities.hf_revision,
+                **self._mlx_from_row(self._base.capabilities, row),
             )
         else:
             self.capabilities = ModelCapabilities(
@@ -2554,6 +2555,27 @@ class CustomVllmAdapter(_StubAdapter):
                 serve_backend="vllm-openai",
                 served_model_name=row["served_model_name"],
             )
+
+    @staticmethod
+    def _mlx_from_row(base: ModelCapabilities, row: dict) -> dict:
+        """The MLX checkpoint of this model, never the base's.
+
+        Inherited as is, `local_mlx_repo` would serve the vendor's weights under the
+        fine-tune's name. mlx-vlm loads this model's own weights only when the base's
+        MLX checkpoint is its original one (not a separate port such as a 4-bit
+        conversion) and the weights are complete (a LoRA adapter is not).
+        """
+        source = str(row.get("source_path") or "").strip()
+        if source:
+            own = "" if str(row.get("source_train_type") or "").lower() == "lora" else source
+        else:
+            own = str(row.get("hf_repo") or "").strip()
+        if own and base.local_mlx_repo and base.local_mlx_repo == base.hf_repo:
+            return {"local_mlx_repo": own, "local_mlx_repo_choices": (), "local_mlx_variant_weight_factors": ()}
+        return {
+            "local_runtimes": tuple(r for r in base.local_runtimes if r != "mlx-vlm"),
+            "local_mlx_repo": "", "local_mlx_repo_choices": (), "local_mlx_variant_weight_factors": (),
+        }
 
     def prompt_for(self, task: str, label: str | None = None) -> str | None:
         if self._base is None:
