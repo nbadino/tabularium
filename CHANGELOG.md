@@ -86,6 +86,11 @@ Notable changes to Tabularium. The format follows
   in flight, each worker with its own client; the stop rule still counts the model's failures.
 
 ### Fixed
+- **A fine-tuned model on a Mac serves its own weights.** A model registered from a training run
+  inherited its base's MLX checkpoint, so on Apple Silicon a Xiaomi-OCR-0 fine-tune was served
+  with the vendor's weights under its own name. It now serves the run's merged checkpoint with
+  `mlx-vlm`; an unmerged LoRA, or a base whose MLX checkpoint is a separate port (PaddleOCR-VL,
+  Qwen3-VL 4-bit), declares that it has no MLX path instead.
 - A fine-tuned model follows a moved data folder: `custom_models.source_path` is rewritten
   with the other stored paths, instead of pointing at the old machine's checkpoint.
 - **A transient SSH timeout no longer fails a finished training.** After a Vast run trained to the
