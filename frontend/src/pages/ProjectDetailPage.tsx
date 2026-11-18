@@ -28,6 +28,7 @@ import { matchesCollection, parseCollectionFilter, useCollections } from '../app
 import type { CollectionFilter } from '../app/collections'
 import type { CollectionItem } from '../lib/types'
 import { describeError } from '../lib/errors'
+import { batchFiles, mergeReports } from '../lib/uploadBatches'
 
 /** Il referto di scansione sopravvive alla navigazione: è un risultato, non un lampo. */
 const reportKey = (id: number) => `tabularium.scanReport.${id}`
@@ -162,13 +163,19 @@ export default function ProjectDetailPage() {
     setUploading(true)
     setError(null)
     try {
-      const form = new FormData()
-      files.forEach((file) => form.append('files', file, file.name))
       const into = typeof collectionFilter === 'number' ? `?collection_id=${collectionFilter}` : ''
-      const response = await fetch(`${API_BASE}/projects/${projectId}/import-upload${into}`, { method: 'POST', body: form })
-      if (!response.ok) throw new Error(t('project.importFailed', { status: response.status, detail: await response.text() }))
-      const rep = await response.json() as ScanReport
-      setReport(rep)
+      let rep: ScanReport | null = null
+      // Batches keep each request under Cloudflare's 100 MB body limit.
+      for (const batch of batchFiles(files)) {
+        const form = new FormData()
+        batch.forEach((file) => form.append('files', file, file.name))
+        const response = await fetch(`${API_BASE}/projects/${projectId}/import-upload${into}`, { method: 'POST', body: form })
+        if (!response.ok) throw new Error(t('project.importFailed', { status: response.status, detail: await response.text() }))
+        const part = await response.json() as ScanReport
+        rep = rep ? mergeReports(rep, part) : part
+        setReport(rep)
+      }
+      if (!rep) return
       sessionStorage.setItem(reportKey(projectId), JSON.stringify(rep))
       setPages((await apiGet<{ items: PageItem[] }>(`/projects/${projectId}/pages`)).items)
       void refreshCollections()
