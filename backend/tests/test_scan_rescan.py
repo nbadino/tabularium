@@ -15,7 +15,7 @@ def test_rescanning_a_registered_pdf_does_not_render_it_again(tmp_path, monkeypa
     (archive / "issue.pdf").write_bytes(b"%PDF-1.4 fake")
     renders: list[int] = []
 
-    def pages(_path):
+    def pages(_path, skip=frozenset()):
         for index in range(2):
             renders.append(index)
             yield Image.new("RGB", (300, 400), "white"), (300, 400)

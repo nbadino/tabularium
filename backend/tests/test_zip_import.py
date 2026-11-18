@@ -300,3 +300,18 @@ def test_status_says_where_an_interrupted_upload_resumes(client):
     client.put(base, params={"offset": 100}, content=data[100:])
     assert client.post(f"{base}/inspect").json()["files"] == 2
     assert client.get(f"/api/projects/{pid}/zip-uploads/{'0' * 32}").status_code == 404
+
+
+def test_progress_counts_pdf_pages(client):
+    pytest.importorskip("pypdfium2")
+    pid = _project(client)
+    uid = _upload(client, pid, _zip({"doc.pdf": _pdf(3), "x.png": _png()}))
+    calls: list[tuple[str, int, int]] = []
+    zip_import.run_import(
+        pid, uid, layout="flat", collection_id=None,
+        on_progress=lambda phase, current, total: calls.append((phase, current, total)),
+    )
+    registering = [(c, t) for phase, c, t in calls if phase == "registering"]
+    assert {t for _c, t in registering} == {4}, "3 PDF pages + 1 image"
+    assert [c for c, _t in registering] == sorted(c for c, _t in registering)
+    assert registering[-1] == (4, 4)
