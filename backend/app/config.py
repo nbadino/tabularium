@@ -67,6 +67,30 @@ _ENV_ROOT = Path(os.environ.get("TABULARIUM_ROOT", "").strip() or _DEFAULT_ROOT)
 ENV_FILE: Path = (_ENV_ROOT / ".env") if INSTALLED else (_CHECKOUT_DIR / ".env")
 load_dotenv(ENV_FILE, override=False)
 
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+def bypass_proxy_for_loopback() -> None:
+    """Never send the app's calls to its own local servers (127.0.0.1) through a proxy.
+
+    Python reads the operating system's proxy (macOS, Windows) when no `*_proxy` variable
+    is set; a network proxy without a localhost exception then swallows every readiness
+    probe and recognition sent to a local model server. Setting `no_proxy` alone would make
+    Python ignore the system proxy for the internet too, so it is copied to the environment
+    first and keeps working for downloads.
+    """
+    import urllib.request
+
+    for scheme, url in urllib.request.getproxies().items():
+        if scheme != "no":
+            os.environ.setdefault(f"{scheme}_proxy", url)
+    current = [h.strip() for h in (os.environ.get("no_proxy") or os.environ.get("NO_PROXY") or "").split(",") if h.strip()]
+    merged = ",".join(current + [h for h in _LOOPBACK_HOSTS if h not in current])
+    os.environ["no_proxy"] = os.environ["NO_PROXY"] = merged
+
+
+bypass_proxy_for_loopback()
+
 
 def _root() -> Path:
     env = os.environ.get("TABULARIUM_ROOT", "").strip()

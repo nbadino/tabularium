@@ -24,5 +24,12 @@ The backend serves `frontend/dist`, so the frontend must have been built once
 They need a model being served: start one from **Models**. Everything else
 (local OCR, annotation, review, export) works without it.
 
+**A local model server stays "loading" behind a network proxy.** Up to 0.7 Python sent the
+app's calls to its own server on `127.0.0.1` through the operating system's proxy (macOS,
+Windows) when the proxy had no `localhost` exception. Tabularium now always adds
+`127.0.0.1`, `localhost` and `::1` to `no_proxy` and keeps the system proxy for the internet.
+If downloads fail too, check the proxy itself: on macOS the server field takes the host only
+(`proxy.example.org`), not `http://proxy.example.org`.
+
 **OCR fails to import on a headless Linux box.**
 Install `libgl1` and `libglib2.0-0` (see [Installation](installation.md#linux-prerequisites)).
