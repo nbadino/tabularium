@@ -7,6 +7,14 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **`tabularium restore <archive> --replace` puts a full backup back.** With the app stopped it
+  swaps the data folder for the archive's, moving the current one next to it
+  (`<data>.pre-restore-<time>/`, never deleted), carries this computer's model runtimes and
+  caches over, installs the archive's vault key in `.env` (the old one kept aside) and rewrites
+  the stored paths. It refuses an archive from a newer release and entries outside `data/`/`.env`.
+- **`tabularium backup --runs ID,…`** keeps the checkpoints of those training runs only, so a
+  server moves to a laptop with the model that matters; the other runs keep logs and metrics. The
+  backup now lists the paths outside the data folder that the archive does not carry.
 - **One-click training scores the new checkpoint on the gold set on the same GPU.** After the
   remote merge and before the download and the GPU release, a Xiaomi-OCR-0 run reads the
   project's approved gold tables with the merged model (training crops, training prompt and image
@@ -83,6 +91,8 @@ Notable changes to Tabularium. The format follows
   with the vendor's weights under its own name. It now serves the run's merged checkpoint with
   `mlx-vlm`; an unmerged LoRA, or a base whose MLX checkpoint is a separate port (PaddleOCR-VL,
   Qwen3-VL 4-bit), declares that it has no MLX path instead.
+- A fine-tuned model follows a moved data folder: `custom_models.source_path` is rewritten
+  with the other stored paths, instead of pointing at the old machine's checkpoint.
 - **A transient SSH timeout no longer fails a finished training.** After a Vast run trained to the
   end and its checkpoints were downloaded, the single 20 s SSH read of the remote artifact manifest
   timed out, the run was marked failed, the instance destroyed and the model stranded. The rsync

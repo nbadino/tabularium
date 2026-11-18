@@ -13,6 +13,8 @@ dist/
 
 # Data sensibili / locali (mai versionare)
 data/
+# Set aside by `tabularium restore --replace`, next to data/.
+data.pre-restore-*/
 checkpoints/
 crops/
 uploads/

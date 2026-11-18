@@ -760,6 +760,8 @@ _ROOT_PATH_COLUMNS = (
     ("pages", "abs_path"),
     ("pages", "thumb_path"),
     ("jobs", "log_path"),
+    # A fine-tuned model registered from a run: without it the model is lost on a move.
+    ("custom_models", "source_path"),
 )
 
 

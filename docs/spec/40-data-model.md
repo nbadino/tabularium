@@ -73,10 +73,14 @@
   `schema_version` is newer than `SCHEMA_VERSION` is refused with an error; one that is behind (or
   has no version) is first copied to `backups/tabularium-<time>-pre-migration-v<version>.db`.
   `tabularium restore-db` puts a backup back offline without migrating it (the rollback path);
-  `tabularium backup` archives the data root plus `config.ENV_FILE`.
+  `tabularium backup` archives the data root plus `config.ENV_FILE` (`--runs` drops the
+  `checkpoints/` of the other runs; paths outside the root are listed, not archived);
+  `tabularium restore --replace` moves the root aside to `<root>.pre-restore-<time>`, extracts
+  with tarfile's `data` filter, carries `*-runtime/`, `vendor/`, `cache/` over, swaps only the
+  `TABULARIUM_VAULT_KEY` line of `config.ENV_FILE`, and runs `init_db`.
 - **Data root relocation** (`db.py::_follow_data_root`): paths are stored absolute
   (`projects.root_dir`, `projects.archive_dir`, `pages.abs_path`, `pages.thumb_path`,
-  `jobs.log_path`, `pages.meta_json.extracted_path`). `meta.data_root` records the root the
+  `jobs.log_path`, `custom_models.source_path`, `pages.meta_json.extracted_path`). `meta.data_root` records the root the
   database last ran from; when it differs from `config.ROOT_DIR`, paths under the old root are
   rewritten after a `pre-relocation` backup. Paths outside the root (server folders) are left
   alone, and so are paths inside `jobs.command_json`.

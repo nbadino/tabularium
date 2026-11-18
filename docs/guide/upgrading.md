@@ -32,6 +32,7 @@ Inside the data root:
 | `*-runtime/`, `vendor/`, `cache/` | model runtimes and caches the app prepares; they can be rebuilt |
 | `backups/` | database backups (the last 10, `TABULARIUM_BACKUP_RETENTION`) |
 | `pre-restore-<time>/` | a database set aside by `tabularium restore-db` |
+| `../<data root>.pre-restore-<time>/` | the whole data folder set aside by `tabularium restore --replace`, next to it |
 | `known_hosts`, `ssh/` | remote GPU host keys |
 
 Three things to know before you touch anything:
@@ -294,14 +295,33 @@ for undoing a mistake within the same version; it takes a `pre-restore` backup f
 
 ### From a full archive
 
-If the archive from `tabularium backup` is all you have, stop the app, move the
-current data root aside and extract the archive:
+If the archive from `tabularium backup` is all you have, stop the app and restore it:
 
 ```bash
-mkdir restore && tar -xzf tabularium-backup.tar.gz -C restore
-# restore/data is the data root, restore/.env the key
+tabularium restore tabularium-backup.tar.gz --replace --yes
 ```
 
-Put `restore/data` where the data root goes and `restore/.env` where `.env` goes (see
-the first table). Tabularium rewrites the stored paths if the data root is now
-somewhere else.
+Without `--yes` it only says what it would do. `--replace` swaps the whole data folder:
+the current one is moved next to it, to `<data root>.pre-restore-<time>/`, never deleted;
+this computer's model runtimes and caches (`*-runtime/`, `vendor/`, `cache/`) are carried
+over. The archive's vault key replaces the one in `.env`, whose previous copy is kept in
+that folder as `env.pre-restore`. The stored paths are rewritten to the new data root,
+fine-tuned models included, and the command reports pages whose image is missing. It
+refuses while the app runs, an archive from a newer release, and any entry outside
+`data/` and `.env`. In 0.7 and earlier, extract by hand: `restore/data` is the data root,
+`restore/.env` the key.
+
+### Moving a server to another computer
+
+On the server, keep only the training runs whose model you want to carry: the other runs
+keep their logs and metrics, without the weights.
+
+```bash
+sudo -u tabularium env HOME=/var/lib/tabularium TABULARIUM_ROOT=/var/lib/tabularium/data \
+  tabularium backup --runs run_1794925799807 --out /var/lib/tabularium/transfer.tar.gz
+```
+
+Pages registered in place (outside the data folder) are not in the archive: the command
+lists them, copy them to the same path on the other computer. Copy the archive there
+(`scp`), stop Tabularium, and run `tabularium restore … --replace`. The fine-tuned models
+of the runs left out show as not installed.
