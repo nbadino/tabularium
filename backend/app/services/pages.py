@@ -176,14 +176,14 @@ def _load_source_image(page: sqlite3.Row, use_deskew: bool = True) -> Image.Imag
         except (TypeError, ValueError, OSError):
             pass
         idx = page["pdf_page"] or 0
-        rendered = scanmod.render_pdf_page(src, idx)
+        rendered = scanmod.render_pdf_page(src, idx, target_width=page["width"])
         if rendered is None:
             return None
         image = rendered[0]
         # Materializzazione lazy per i PDF già presenti nel database: la prima
         # apertura converte solo quella pagina, senza rileggere il documento.
         cached.parent.mkdir(parents=True, exist_ok=True)
-        image.save(cached, format="PNG", optimize=True)
+        image.save(cached, format="PNG")
         return Image.open(cached)
     return Image.open(src)
 
