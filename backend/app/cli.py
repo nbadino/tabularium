@@ -136,10 +136,14 @@ def _backup(argv: list[str]) -> int:
     )
     parser.add_argument("--data", metavar="DIR", help="data folder (default: ~/Tabularium)")
     parser.add_argument("--out", metavar="FILE", help="archive to write (default: tabularium-backup-<time>.tar.gz in the current directory)")
+    parser.add_argument("--runs", metavar="ID[,ID...]",
+                        help="keep the checkpoints of these training runs only; the other runs keep "
+                             "their logs and metrics without weights (default: every run)")
     args = parser.parse_args(argv)
     if args.data:
         os.environ["TABULARIUM_ROOT"] = os.path.abspath(os.path.expanduser(args.data))
 
+    import sqlite3
     import tarfile
     import tempfile
     from datetime import datetime
@@ -161,6 +165,15 @@ def _backup(argv: list[str]) -> int:
         return name in _BACKUP_SKIP_NAMES or name.endswith(_BACKUP_SKIP_SUFFIXES)
 
     root = config.ROOT_DIR
+    keep_runs = None
+    if args.runs is not None:
+        keep_runs = {run.strip() for run in args.runs.split(",") if run.strip()}
+        # A typo would write an archive without the model the user wanted to move.
+        unknown = keep_runs - {path.name for path in config.DATA_DIR.glob("*/runs/*") if path.is_dir()}
+        if unknown:
+            print(f"tabularium backup: no training run named {', '.join(sorted(unknown))}", file=sys.stderr)
+            return 2
+    outside: list[str] = []
     # Installed, the .env lives in the data root: archive it once, as `.env`.
     env_file = config.ENV_FILE.resolve() if config.ENV_FILE.is_file() else None
     with tempfile.TemporaryDirectory() as tmp, tarfile.open(out, "w:gz") as tar:
@@ -170,11 +183,19 @@ def _backup(argv: list[str]) -> int:
                 print("tabularium backup: the database copy failed its integrity check", file=sys.stderr)
                 return 1
             tar.add(db_copy, arcname="data/tabularium.db")
+            # Pages registered in place keep their images where they are: say so.
+            prefix = str(root).rstrip("/\\") + os.sep
+            with sqlite3.connect(db_copy) as conn:
+                rows = conn.execute("SELECT abs_path FROM pages UNION SELECT archive_dir FROM projects").fetchall()
+            outside = sorted({row[0] for row in rows if row[0] and not row[0].startswith(prefix)})
         for dirpath, dirnames, filenames in os.walk(root):
             here = Path(dirpath)
             if here == root:
                 dirnames[:] = [d for d in dirnames if not skipped(d)]
                 filenames = [f for f in filenames if not skipped(f)]
+            elif (keep_runs is not None and here.parent.name == "runs"
+                  and here.parent.parent.parent == config.DATA_DIR and here.name not in keep_runs):
+                dirnames[:] = [d for d in dirnames if d != "checkpoints"]
             # os.walk does not descend into symlinked folders: keep them as links.
             entries = filenames + [d for d in dirnames if (here / d).is_symlink()]
             for name in entries:
@@ -189,6 +210,9 @@ def _backup(argv: list[str]) -> int:
             tar.add(env_file, arcname=".env")
     out.chmod(0o600)
     print(f"{out} ({out.stat().st_size / (1024 ** 2):.1f} MiB)")
+    if outside:
+        print(f"warning: {len(outside)} paths are outside {root} and not in the archive; "
+              f"copy them yourself to the same place, e.g. {outside[0]}", file=sys.stderr)
     print("It contains the vault key (.env): keep it as private as the credentials it protects.")
     return 0
 
@@ -254,6 +278,128 @@ def _restore_db(argv: list[str]) -> int:
     return 0
 
 
+def _extract_backup(archive, dest) -> list[str]:
+    """Extract a `tabularium backup` archive into `dest`; return the links left out."""
+    import tarfile
+
+    left_out = []
+    with tarfile.open(archive) as tar:
+        for member in tar:
+            if member.name != ".env" and not member.name.startswith("data/"):
+                raise ValueError(f"{member.name!r} is not part of a Tabularium backup")
+            try:
+                # `data` refuses absolute names, `..` and device files (CVE-2007-4559).
+                tar.extract(member, dest, filter="data")
+            except (tarfile.AbsoluteLinkError, tarfile.LinkOutsideDestinationError):
+                left_out.append(member.name)  # a folder linked from elsewhere on the other machine
+    return left_out
+
+
+def _restore(argv: list[str]) -> int:
+    """`tabularium restore`: put a `tabularium backup` archive back, offline."""
+    parser = argparse.ArgumentParser(
+        prog="tabularium restore",
+        description=(
+            "Restore an archive written by `tabularium backup`, with Tabularium stopped. "
+            "--replace swaps the whole data folder: the current one is moved next to it, "
+            "to <data>.pre-restore-<time>, never deleted, and this computer's model runtimes "
+            "and caches are carried over. The archive's vault key replaces the one in .env, "
+            "whose previous copy is kept aside. Stored paths follow the new folder."
+        ),
+    )
+    parser.add_argument("archive", help="a .tar.gz written by `tabularium backup`")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--replace", action="store_true",
+                      help="replace every project here with the archive's")
+    parser.add_argument("--data", metavar="DIR", help="data folder (default: ~/Tabularium)")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("TABULARIUM_PORT", "8787")),
+                        help="port of the running app, to refuse while it runs (default: 8787)")
+    parser.add_argument("--yes", action="store_true", help="confirm the replacement")
+    args = parser.parse_args(argv)
+    if args.data:
+        os.environ["TABULARIUM_ROOT"] = os.path.abspath(os.path.expanduser(args.data))
+
+    import shutil
+    import sqlite3
+    import tarfile
+    from datetime import datetime
+    from pathlib import Path
+
+    from . import config, db
+    from .services import backup
+
+    archive = Path(args.archive).expanduser().resolve()
+    if not archive.is_file():
+        print(f"tabularium restore: {args.archive} not found", file=sys.stderr)
+        return 2
+    if _app_running(args.port):
+        print(f"tabularium restore: Tabularium answers on port {args.port}; stop it first", file=sys.stderr)
+        return 2
+    root = config.ROOT_DIR
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    aside = root.parent / f"{root.name}.pre-restore-{stamp}"
+    if not args.yes:
+        print(f"This replaces the data folder {root} with the one in {archive.name}.")
+        print(f"The current folder is moved to {aside}. Run again with --yes to confirm.")
+        return 2
+
+    # Same parent as the data folder: the final swap is a rename, not a copy.
+    staging = root.parent / f".{root.name}.restore-{stamp}"
+    staging.mkdir(parents=True)
+    try:
+        left_out = _extract_backup(archive, staging)
+        restored_db = staging / "data" / "tabularium.db"
+        if not restored_db.is_file():
+            raise ValueError("the archive has no data/tabularium.db")
+        if not backup.integrity(restored_db)["ok"]:
+            raise ValueError("the archive's database fails the integrity check")
+        with sqlite3.connect(restored_db) as conn:
+            row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+        if row and str(row[0]).isdigit() and int(row[0]) > int(db.SCHEMA_VERSION):
+            raise ValueError("the archive comes from a newer release: upgrade Tabularium first")
+        env_file = staging / ".env"
+        vault_lines = [line for line in env_file.read_text().splitlines()
+                       if line.startswith("TABULARIUM_VAULT_KEY=")] if env_file.is_file() else []
+    except (ValueError, OSError, tarfile.TarError) as exc:
+        shutil.rmtree(staging, ignore_errors=True)  # only the copy extracted above
+        print(f"tabularium restore: {exc}", file=sys.stderr)
+        return 2
+
+    env_inside = config.ENV_FILE.resolve().is_relative_to(root.resolve()) if root.exists() else False
+    if root.exists():
+        root.rename(aside)
+    else:
+        aside.mkdir(parents=True)
+    (staging / "data").rename(root)
+    for child in aside.iterdir():
+        # Rebuildable and specific to this computer: the archive never carries them.
+        if child.name in ("vendor", "cache") or child.name.endswith(_BACKUP_SKIP_SUFFIXES):
+            if not (root / child.name).exists():
+                child.rename(root / child.name)
+    if vault_lines:
+        current = aside / config.ENV_FILE.name if env_inside else config.ENV_FILE
+        lines = current.read_text().splitlines() if current.is_file() else []
+        if current.is_file() and not env_inside:
+            shutil.copy2(current, aside / "env.pre-restore")
+        lines = [line for line in lines if not line.startswith("TABULARIUM_VAULT_KEY=")] + vault_lines[-1:]
+        config.ENV_FILE.write_text("\n".join(lines) + "\n")
+        config.ENV_FILE.chmod(0o600)
+    shutil.rmtree(staging, ignore_errors=True)  # holds at most the archive's .env
+
+    db.init_db()  # migrates, and rewrites the paths of the other machine's data folder
+    with db.connect() as conn:
+        pages = [row[0] for row in conn.execute("SELECT abs_path FROM pages WHERE abs_path IS NOT NULL")]
+    missing = sum(1 for path in pages if not Path(path).is_file())
+    print(f"Restored {archive.name} into {root}; the previous folder is in {aside}.")
+    if not vault_lines:
+        print("warning: the archive has no vault key; credentials saved in the UI must be entered again", file=sys.stderr)
+    if missing:
+        print(f"warning: {missing} of {len(pages)} pages have no image at their stored path", file=sys.stderr)
+    if left_out:
+        print(f"warning: {len(left_out)} links to folders outside the data folder were left out", file=sys.stderr)
+    return 0
+
+
 def _reset_password(argv: list[str]) -> int:
     """`tabularium reset-password`: a new password for a user locked out of the app."""
     parser = argparse.ArgumentParser(
@@ -312,6 +458,7 @@ _COMMANDS = {
     "doctor": (_doctor, "check this installation without starting the app"),
     "models": (_models, "install a checkpoint offline, list the installed ones"),
     "backup": (_backup, "archive the data folder and the vault key"),
+    "restore": (_restore, "restore a backup archive, with the app stopped"),
     "restore-db": (_restore_db, "put a database backup back, with the app stopped"),
     "reset-password": (_reset_password, "set a new password for a user"),
 }

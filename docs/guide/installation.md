@@ -76,7 +76,8 @@ press `Ctrl+C` to stop it.
 | `tabularium --host 0.0.0.0` | accept connections from other computers (for a shared lab server; for a public one, see [Server deployment](server-deployment.md)) |
 | `uv tool upgrade --python 3.13 tabularium` | upgrade to the latest release ([back up first](upgrading.md)) |
 | `uv tool uninstall tabularium` | remove the app (your data folder is kept) |
-| `tabularium backup` | archive the data folder and the vault key into the current directory, or `--out FILE` ([Upgrading](upgrading.md)) |
+| `tabularium backup` | archive the data folder and the vault key into the current directory, or `--out FILE`; `--runs ID,…` keeps only those runs' checkpoints ([Upgrading](upgrading.md)) |
+| `tabularium restore FILE --replace` | replace the data folder with a backup archive, the current one kept aside ([Upgrading](upgrading.md)) |
 | `tabularium doctor` | check the installation without starting it; `--data DIR` for another data folder |
 | `tabularium reset-password <user>` | set a new password for a user locked out of the app |
 | `tabularium --help` | list every command |
