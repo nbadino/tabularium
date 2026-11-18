@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.107.1",
-    "@univerjs/core": "^0.25.1",
+    "@univerjs/core": "^1.5.0",
     "@univerjs/preset-sheets-core": "^0.25.1",
     "@univerjs/presets": "^0.25.1",
     "@univerjs/ui": "^0.25.1",
