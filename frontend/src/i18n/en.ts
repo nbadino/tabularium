@@ -1191,6 +1191,8 @@ export const en: Dict = {
     starting: 'Starting the import…',
     extracting: 'Extracting files: {current} of {total}',
     registering: 'Creating pages: {current} of {total}',
+    inBackground: 'Pages appear in the project as they are created: you can close this window, the import goes on.',
+    banner: 'Importing {name}: page {current} of {total}. Pages appear as they are created.',
     importingLabel: 'Importing the archive',
     foldersFound: { one: 'The archive contains {count} folder.', other: 'The archive contains {count} folders.' },
     files: { one: '{count} file', other: '{count} files' },

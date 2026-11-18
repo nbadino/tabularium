@@ -79,6 +79,8 @@ PDF_DEFAULT_DPI = 200
 # Scanned pages render at the resolution of their embedded scan, within these bounds.
 PDF_MIN_DPI = 200
 PDF_MAX_DPI = 600
+# Pages of a PDF saved per commit: they appear in the project as the import goes.
+PDF_COMMIT_PAGES = 20
 # Guard against a huge page size times a high DPI exhausting memory.
 PDF_MAX_PIXELS = 60_000_000
 
@@ -124,15 +126,22 @@ def render_pdf_pages(pdf_path: str | Path) -> list[tuple[object, tuple[int, int]
     return list(iter_pdf_pages(pdf_path))
 
 
-def iter_pdf_pages(pdf_path: str | Path):
-    """Itera le pagine con un solo PdfDocument, rilasciandone una alla volta."""
+def iter_pdf_pages(pdf_path: str | Path, skip: frozenset[int] | set[int] = frozenset()):
+    """Itera le pagine con un solo PdfDocument, rilasciandone una alla volta.
+
+    Per gli indici in `skip` (pagine già registrate) produce `None` senza renderizzare.
+    """
     try:
         import pypdfium2 as pdfium
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("PDF richiede pypdfium2 (pip install pypdfium2)") from exc
     pdf = pdfium.PdfDocument(str(pdf_path))
     try:
-        for page in pdf:
+        for index in range(len(pdf)):
+            if index in skip:
+                yield None
+                continue
+            page = pdf[index]
             try:
                 bitmap = page.render(scale=pdf_render_scale(page))
                 try:
@@ -216,8 +225,13 @@ def register_candidate(
     report: ScanReport,
     lang: str = "it",
     collection_id: int | None = None,
+    on_page=None,
 ) -> None:
     """Registra un candidato (immagine o PDF) come pagine del progetto.
+
+    Le pagine di un PDF vengono salvate a blocchi di `PDF_COMMIT_PAGES`, così
+    compaiono mentre l'import prosegue; `on_page(fatte, totale)` segue il PDF
+    pagina per pagina.
 
     Aggiorna il report con l'esito (registrato, duplicato, non supportato,
     errore). È la logica condivisa da scansione e import manuale: il router
@@ -278,65 +292,95 @@ def register_candidate(
         report.unsupported += 1
         report.errors.append(f"{cand.path.name}: {msg('no_pages_rendered', lang)}")
         return
-    # A rescan of a PDF whose pages are all known renders nothing: rendering every
-    # page at full resolution only to learn it was a duplicate cost minutes per archive.
+    # Known pages are not rendered again: rendering a page at full resolution only to
+    # learn it was a duplicate cost minutes per archive. A PDF left half imported
+    # (an error, a restart) is completed by rendering just the missing pages.
     known = pagestore.registered_pdf_pages(conn, project_id, abs_path)
-    if known >= set(range(page_count)):
+    if known:
         pagestore.revive_pdf_pages(conn, project_id, abs_path)
+    if known >= set(range(page_count)):
         report.duplicates += page_count
+        if on_page is not None:
+            on_page(page_count, page_count)
         return
     meta = pagemeta.parse_filename(cand.path.name)
     extra = {"publication": meta.publication} if meta.publication else {}
-    # A PDF is all or nothing: a page that fails to render rolls back only this file,
-    # and the rest of the scan (one transaction) goes on.
-    if not conn.in_transaction:
-        conn.execute("BEGIN")
-    conn.execute("SAVEPOINT pdf_file")
+    # Pages are committed in blocks, so they show up while the rest renders. A page
+    # that fails rolls back only its own block: committed blocks stay, the error is
+    # reported, and a rescan renders just the pages still missing.
     registered = duplicates = 0
-    written: list[Path] = []
+    block: list[Path] = []
+    block_registered = 0
+
+    def open_block() -> None:
+        if not conn.in_transaction:
+            conn.execute("BEGIN")
+        conn.execute("SAVEPOINT pdf_block")
+
+    def close_block() -> None:
+        nonlocal registered, block_registered
+        conn.execute("RELEASE pdf_block")
+        conn.commit()
+        registered += block_registered
+        block_registered = 0
+        block.clear()
+
+    open_block()
+    done = 0
     try:
-        for page_idx, rendered in enumerate(iter_pdf_pages(cand.path)):
-            pil_img, (width, height) = rendered
-            page_id = pagestore.insert_pdf_page(
-                conn,
-                project_id=project_id,
-                rel_path=rel_path,
-                abs_path=abs_path,
-                pdf_page=page_idx,
-                width=width,
-                height=height,
-                issue_no=meta.issue_no,
-                # In un PDF multipagina il numero di pagina è l'indice, non il
-                # suffisso del nome file (che identifica il fascicolo intero).
-                page_no=meta.page_no if page_count == 1 else str(page_idx + 1),
-                page_type=meta.page_type,
-                meta_json=json.dumps(extra),
-                collection_id=collection_id,
-            )
-            if page_id is None:
+        for page_idx, rendered in enumerate(iter_pdf_pages(cand.path, skip=known)):
+            if rendered is None:
                 duplicates += 1
-                pil_img.close()
-                continue
-            written += [pagesvc.pdf_image_path(page_id), pagesvc.thumb_path(page_id)]
-            extracted = pagesvc.pdf_image_path(page_id)
-            # optimize=True costs ~1.5 s a page for ~4% less space.
-            pil_img.save(extracted, format="PNG")
-            pagestore.set_meta(
-                conn, page_id, json.dumps({**extra, "extracted_path": str(extracted)})
-            )
-            thumb = pagesvc.save_pdf_thumb(pil_img, page_id)
-            pagestore.set_thumb(conn, page_id, str(thumb))
-            pil_img.close()
-            registered += 1
+            else:
+                pil_img, (width, height) = rendered
+                page_id = pagestore.insert_pdf_page(
+                    conn,
+                    project_id=project_id,
+                    rel_path=rel_path,
+                    abs_path=abs_path,
+                    pdf_page=page_idx,
+                    width=width,
+                    height=height,
+                    issue_no=meta.issue_no,
+                    # In un PDF multipagina il numero di pagina è l'indice, non il
+                    # suffisso del nome file (che identifica il fascicolo intero).
+                    page_no=meta.page_no if page_count == 1 else str(page_idx + 1),
+                    page_type=meta.page_type,
+                    meta_json=json.dumps(extra),
+                    collection_id=collection_id,
+                )
+                if page_id is None:
+                    duplicates += 1
+                    pil_img.close()
+                else:
+                    block.extend([pagesvc.pdf_image_path(page_id), pagesvc.thumb_path(page_id)])
+                    extracted = pagesvc.pdf_image_path(page_id)
+                    # optimize=True costs ~1.5 s a page for ~4% less space.
+                    pil_img.save(extracted, format="PNG")
+                    pagestore.set_meta(
+                        conn, page_id, json.dumps({**extra, "extracted_path": str(extracted)})
+                    )
+                    thumb = pagesvc.save_pdf_thumb(pil_img, page_id)
+                    pagestore.set_thumb(conn, page_id, str(thumb))
+                    pil_img.close()
+                    block_registered += 1
+                    if block_registered >= PDF_COMMIT_PAGES:
+                        close_block()
+                        open_block()
+            done += 1
+            if on_page is not None:
+                on_page(done, page_count)
     except Exception as exc:  # noqa: BLE001 - any render/save failure is a per-file error
-        conn.execute("ROLLBACK TO pdf_file")
-        conn.execute("RELEASE pdf_file")
-        for path in written:
+        conn.execute("ROLLBACK TO pdf_block")
+        conn.execute("RELEASE pdf_block")
+        for path in block:
             path.unlink(missing_ok=True)
+        report.registered += registered
+        report.duplicates += duplicates
         report.unsupported += 1
         report.errors.append(f"{cand.path.name}: {exc}")
         return
-    conn.execute("RELEASE pdf_file")
+    close_block()
     report.registered += registered
     report.duplicates += duplicates
 
