@@ -43,7 +43,9 @@ class PageWriter:
         return int(row[0] or 0)
 
     # --- writes --------------------------------------------------------
-    def replace_blocks(self, page_id: int, mode: str) -> dict[str, int]:
+    def replace_blocks(
+        self, page_id: int, mode: str, *, clear_consensus: bool = True
+    ) -> dict[str, int]:
         """Delete the blocks the chosen mode allows, and say how many went."""
         if mode == "merge":
             return {"blocks": 0, "grids": 0}
@@ -56,6 +58,26 @@ class PageWriter:
                 (page_id,),
             ).fetchall()
         else:  # replace / replace_all
+            # Wiping every block on an approved/exported page invalidates its approval
+            # even in solo projects without a `page_work` row. Unless this comes from
+            # adopting an active comparison model (`clear_consensus=False`), also mark
+            # older consensus comparisons superseded so stale diffs do not reappear.
+            if clear_consensus:
+                self._conn.execute(
+                    "UPDATE pages "
+                    "SET status = CASE WHEN status IN ('approved','exported') THEN 'review' ELSE status END, "
+                    "    consensus_cleared_through = MAX("
+                    "        consensus_cleared_through, "
+                    "        COALESCE((SELECT MAX(run_id) FROM consensus_outputs WHERE page_id=?), 0)"
+                    "    ) "
+                    "WHERE id=?",
+                    (page_id, page_id),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE pages SET status='review' WHERE id=? AND status IN ('approved','exported')",
+                    (page_id,),
+                )
             rows = self._conn.execute(
                 "SELECT id FROM blocks WHERE page_id=?", (page_id,)
             ).fetchall()
@@ -138,7 +160,9 @@ class ReadOnlyPageWriter(PageWriter):
     def has_blocks(self, page_id: int) -> bool:
         return True
 
-    def replace_blocks(self, page_id: int, mode: str) -> dict[str, int]:
+    def replace_blocks(
+        self, page_id: int, mode: str, *, clear_consensus: bool = True
+    ) -> dict[str, int]:
         return {"blocks": 0, "grids": 0}
 
     def insert_block(self, page_id: int, **_fields: Any) -> int:

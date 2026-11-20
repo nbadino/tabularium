@@ -15,6 +15,9 @@ const withKeys = [
   { id: 3, name: 'OCRia-1 (LlamaIndex)', model_adapter_id: 'llamaindex-ocria-1', served_model_name: 'ocria-1', key_required: true, has_key: true },
 ]
 let savedModels = withKeys
+let mockPages: Array<Record<string, unknown>> = [
+  { id: 376, rel_path: 'LDI_1920_Apr1_Page_003.tif', status: 'todo', drafts: 0 },
+]
 vi.mock('../lib/api', () => ({
   ApiError: class ApiError extends Error { status = 0 },
   apiGet: vi.fn(async (path: string) => {
@@ -22,7 +25,7 @@ vi.mock('../lib/api', () => ({
       return { items: savedModels }
     }
     if (path === '/system/prefill-engines') return { recommended: 'ocr', ocr: { available: true }, model: { available: false } }
-    if (path === '/projects/4/pages') return { items: [{ id: 376, rel_path: 'LDI_1920_Apr1_Page_003.tif', status: 'todo', drafts: 0 }] }
+    if (path === '/projects/4/pages') return { items: mockPages }
     if (path.startsWith('/recognition-runs')) return { items: [] }
     if (path.endsWith('/consensus-runs')) return { items: [] }
     return { items: [] }
@@ -126,3 +129,59 @@ describe('RecognizePage engines', () => {
     }
   })
 })
+
+describe('RecognizePage replace modes', () => {
+  it('asks before replacing approved pages and submits mode=replace_all with confirm=true', async () => {
+    setLocale('it')
+    const prevPages = mockPages
+    mockPages = [{ id: 376, rel_path: 'p1.tif', status: 'approved', blocks: 4, drafts: 0 }]
+    const beforeCount = posted.length
+    try {
+      render(<MemoryRouter initialEntries={['/progetti/4/riconoscimenti?project=4&pages=376']}><RecognizePage /></MemoryRouter>)
+      const engine = await screen.findByTestId('engine')
+      await waitFor(() => expect(engine).toHaveValue('profile:1'))
+      await userEvent.click(await screen.findByRole('button', { name: /Avvia/ }))
+
+      expect(posted.length).toBe(beforeCount)
+      expect(await screen.findByText(/gia approvate|già approvate/i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Aggiungi senza sostituire' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Sostituisci tutto (anche approvate)' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Sostituisci le bozze' })).toBeNull()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Sostituisci tutto (anche approvate)' }))
+      await waitFor(() => expect(posted.length).toBeGreaterThan(beforeCount))
+      expect(posted[posted.length - 1]?.body).toMatchObject({ mode: 'replace_all', confirm: true })
+    } finally {
+      mockPages = prevPages
+    }
+  })
+
+  it('offers both replace_drafts and replace_all when selection mixes drafts and approved pages', async () => {
+    setLocale('it')
+    const prevPages = mockPages
+    mockPages = [
+      { id: 376, rel_path: 'p1.tif', status: 'approved', blocks: 4, drafts: 0 },
+      { id: 377, rel_path: 'p2.tif', status: 'in_progress', blocks: 3, drafts: 2 },
+    ]
+    const beforeCount = posted.length
+    try {
+      render(<MemoryRouter initialEntries={['/progetti/4/riconoscimenti?project=4&pages=376,377']}><RecognizePage /></MemoryRouter>)
+      const engine = await screen.findByTestId('engine')
+      await waitFor(() => expect(engine).toHaveValue('profile:1'))
+      await userEvent.click(await screen.findByRole('button', { name: /Avvia/ }))
+
+      expect(await screen.findByRole('button', { name: 'Aggiungi senza sostituire' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Sostituisci le bozze' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Sostituisci tutto (anche approvate)' })).toBeInTheDocument()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Sostituisci le bozze' }))
+      await waitFor(() => expect(posted.length).toBeGreaterThan(beforeCount))
+      const payload = posted[posted.length - 1]?.body as Record<string, unknown>
+      expect(payload).toMatchObject({ mode: 'replace_drafts' })
+      expect(payload.confirm).not.toBe(true)
+    } finally {
+      mockPages = prevPages
+    }
+  })
+})
+

@@ -13,7 +13,10 @@
   compute profile / model settings, and the split ratio is a request parameter (see §7).
   `owner_id` = who created the project (see permissions below).
 - `pages(id, project_id, rel_path, abs_path, width, height, issue_date, issue_no, page_no,
-  page_type, status, meta_json)`.
+  page_type, status, meta_json, annotation_revision, collection_id, consensus_cleared_through)`
+  (`consensus_cleared_through`, migration 27, additive, backfilled from `recognition_runs` with
+  `mode='replace_all'`: highest consensus `run_id` superseded by a full-page overwrite so Studio and
+  the Table Editor ignore older comparisons while keeping explicit `?run_id=` history intact).
 - `blocks(id, page_id, label, bbox_px_json [x1,y1,x2,y2 pixels], content, order_idx, kind
   ['text','table','formula','picture','custom'], prefill_source, confirmed, updated_at)`.
 - `tables(id, block_id, grid_json)` — `grid_json`: `{rows: n, cols: m, cells:[{r,c,rowspan,colspan,

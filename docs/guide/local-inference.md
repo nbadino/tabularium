@@ -87,9 +87,14 @@ the vendor's weights. It works when the base's MLX checkpoint is its original re
 (Xiaomi-OCR-0: `mlx-vlm` 0.7.1 loads the merged `checkpoint-*-merged` folder as it is) and
 the weights are complete. A LoRA adapter that was not merged, or a base whose MLX checkpoint is
 a separate port (PaddleOCR-VL 4-bit, Qwen3-VL 4-bit), has no MLX path: the registry says
-so instead of serving the base. Measured on 2026-11-18: a Xiaomi-OCR-0 fine-tune on an unseen
-Lloyd's register table (1665×2048 px, 68 rows) read 572 of 576 cells exactly in 32 s on an
-Apple Silicon Mac, the same as through `mlx_vlm.generate`.
+so instead of serving the base. Measured on 2026-11-18/19 on an Apple M5 Pro (24 GB): a
+Xiaomi-OCR-0 fine-tune served via `xiaomi_mlx_server.py` reads single interactive register
+pages in ~14–17 s (solo `mtp.*` speculative fastpath) and sustains safe bulk multi-page runs
+(`BatchGenerator`, `B=8` default on >16 GB Macs with `6 GB` wired cap, `256 MB` buffer cache cap,
+and automatic 24-completion recycling, sustaining `~6.1 pages/min` on complex 4–11 region
+archive pages with `< 1 GB` server RSS and zero swap growth; `504+ tok/s`) at full 4096-token
+crop sharpness (`mean TEDS = 0.9931`, `CER = 0.81%` on 8 held-out gold pages — 34% fewer character
+errors than 2048-px page downscaling, down from ~43 s/page / 1.4 pages/min on generic `mlx_vlm.server`).
 
 Two practical differences of the MLX path:
 
@@ -124,8 +129,10 @@ backend: 6–7 `prompt_tokens` instead of 1,518, empty or hallucinated output),
 whereas the `mlx_vlm.generate` API works. Tabularium therefore serves this
 model with a **dedicated server**
 (`backend/app/services/unlimited_ocr_mlx_server.py`, run in the MLX venv): the
-same OpenAI interface, built on the API that works. Every other model uses
-`mlx_vlm.server`.
+same OpenAI interface, built on the API that works. Xiaomi-OCR-0 (and its merged
+fine-tunes) likewise uses `backend/app/services/xiaomi_mlx_server.py` (`local_serve="mlx-xiaomi"`)
+to activate its native `mtp.*` speculative drafter and fused Q8 projections; the
+remaining MLX models use `mlx_vlm.server` (or `mineru_mlx_gateway.py` for MinerU).
 
 **PaddleOCR-VL's official path has a second runtime.** The Paddle pipeline
 (PP-DocLayout for layout + recognition) lives in `<root>/paddle-runtime` and

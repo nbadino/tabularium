@@ -99,6 +99,12 @@ Notable changes to Tabularium. The format follows
   in flight, each worker with its own client; the stop rule still counts the model's failures.
 
 ### Fixed
+- **A register cut into side-by-side halves is read as one table.** On curved pages of bound
+  volumes PP-DocLayoutV3 split one borderless register into a left half (often in stacked pieces
+  too narrow for the stacked-table repair) and a right half, so Xiaomi-OCR-0 read fragments that
+  no longer lined up. Adjacent `table` boxes at least a fifth of the page tall are now joined, and
+  pieces lying inside the union are absorbed; a narrow strip of the facing page at the edge stays
+  out.
 - **A fine-tuned model on a Mac serves its own weights.** A model registered from a training run
   inherited its base's MLX checkpoint, so on Apple Silicon a Xiaomi-OCR-0 fine-tune was served
   with the vendor's weights under its own name. It now serves the run's merged checkpoint with
