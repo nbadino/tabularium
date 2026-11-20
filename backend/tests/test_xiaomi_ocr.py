@@ -62,7 +62,9 @@ def test_xiaomi_native_page_crops_each_region_with_its_task_prompt(monkeypatch):
 
     items = client.xiaomi_native_page(Image.new("RGB", (4096, 2048), "white"))
 
-    # The page is fitted to the vendor's 2048 px edge before layout and cropping.
+    # Layout runs on the 2048 px fitted page; crops come from the full-resolution scan
+    # (capped per crop to XIAOMI_IMAGE_MAX_TOKENS * 1024 = 4,194,304 px, matching training
+    # and gold_eval so dense tables never suffer double-downscale blur).
     assert seen_layout == [(2048, 1024)]
     assert items == [
         {"bbox": [0, 0, 1000, 100], "label": "Title", "content": "Extract out"},
@@ -71,9 +73,9 @@ def test_xiaomi_native_page_crops_each_region_with_its_task_prompt(monkeypatch):
         {"bbox": [500, 600, 1000, 1000], "label": "Picture", "content": ""},
     ]
     assert sorted(calls) == sorted([
-        ((2048, 102), "Extract the text in the image."),
-        ((1024, 512), "Parse the table in the image into OTSL."),
-        ((1024, 102), "Identify the formula in the image and represent it using LATEX format."),
+        ((4096, 204), "Extract the text in the image."),
+        ((2048, 1024), "Parse the table in the image into OTSL."),
+        ((2048, 205), "Identify the formula in the image and represent it using LATEX format."),
     ])
 
 
@@ -179,3 +181,205 @@ def test_a_fine_tune_without_local_mlx_weights_says_mlx_is_not_available(tmp_pat
 def test_a_hub_repo_on_the_xiaomi_architecture_serves_that_repo_on_mlx():
     adapter = _custom("xiaomi-ocr-0", hf_repo="someone/xiaomi-ocr-0-finetune", source_path=None)
     assert adapter.capabilities.local_mlx_repo == "someone/xiaomi-ocr-0-finetune"
+
+
+def test_apple_silicon_serves_xiaomi_and_finetunes_through_dedicated_turbo_server(monkeypatch, tmp_path):
+    from pathlib import Path
+    from app import config
+    from app.services import custom_models, mlx_runtime, serve_manager, serve_recipes
+
+    assert serve_recipes.recipe_for("xiaomi-ocr-0").local_serve == "mlx-xiaomi"
+    monkeypatch.setattr(config, "MODELS_DIR", tmp_path / "models")
+
+    monkeypatch.setattr(
+        serve_manager.hardware,
+        "pick_serve_runtime",
+        lambda capabilities, machine=None: serve_manager.hardware.RUNTIME_MLX,
+    )
+    monkeypatch.setattr(mlx_runtime, "ensure_ready", lambda: None)
+    monkeypatch.setattr(mlx_runtime, "python_bin", lambda: Path("/tmp/mlx-python"))
+    monkeypatch.setattr(
+        serve_manager.hardware,
+        "summary",
+        lambda: {
+            "apple_silicon": True, "cuda": {"devices": []}, "memory_gb": 24.0,
+            "runtimes": {"vllm": {"supported": False}, "mlx-vlm": {"supported": True}},
+            "usable_runtimes": ["mlx-vlm"],
+        },
+    )
+    captured: list[list[str]] = []
+
+    class FakeProc:
+        pid = 4399
+
+        def poll(self):
+            return None
+
+    def fake_popen(argv, **kwargs):
+        captured.append(list(argv))
+        return FakeProc()
+
+    monkeypatch.setattr(serve_manager.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(serve_manager, "_reclaim_port", lambda port, settle=10.0: None)
+    monkeypatch.setattr(serve_manager, "_set_phase", lambda *a, **k: None)
+    monkeypatch.setattr(serve_manager, "is_installed", lambda adapter_id: False)
+    monkeypatch.setattr(serve_manager, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(serve_manager.jobstore, "start_process_job", lambda **kw: 999)
+    monkeypatch.setattr(serve_manager, "_mark_job", lambda *a, **k: None)
+
+    serve_manager.start("xiaomi-ocr-0", port=18921)
+    assert captured[-1][1].endswith("xiaomi_mlx_server.py"), captured[-1]
+    assert captured[-1][captured[-1].index("--model") + 1] == "xiaomi-research/Xiaomi-OCR-0"
+    assert captured[-1][captured[-1].index("--port") + 1] == "18921"
+
+    # A fine-tuned full checkpoint inherits the base model's dedicated MLX runner too.
+    ft_dir = tmp_path / "ft_ckpt"
+    ft_dir.mkdir()
+    ft_row = {
+        "id": "custom-xiaomi-ocr-0-run-1",
+        "display_name": "fine-tuned",
+        "served_model_name": "ft",
+        "hf_repo": "xiaomi-research/Xiaomi-OCR-0",
+        "hf_revision": None,
+        "base_adapter_id": "xiaomi-ocr-0",
+        "source_path": str(ft_dir),
+        "source_train_type": "full",
+    }
+    monkeypatch.setattr(
+        custom_models, "get",
+        lambda aid: ft_row if aid == ft_row["id"] else None,
+    )
+    serve_manager.start(ft_row["id"], port=18922)
+    assert captured[-1][1].endswith("xiaomi_mlx_server.py"), captured[-1]
+    assert captured[-1][captured[-1].index("--model") + 1] == str(ft_dir)
+    serve_manager._ACTIVE_PROC = None
+    serve_manager._ACTIVE_INFO = {}
+
+
+def test_fine_tuned_xiaomi_adapter_runs_native_region_pipeline(monkeypatch, tmp_path):
+    ft_adapter = _custom("xiaomi-ocr-0", source_path=str(tmp_path), source_train_type="full")
+    assert ft_adapter.native_runner == "xiaomi"
+    assert ft_adapter.official_runtime == "paddle"
+    assert ft_adapter.region_max_tokens == 16_384
+    assert ft_adapter.page_max_edge == 2048
+
+    monkeypatch.setattr(
+        paddle_official,
+        "detect_layout",
+        lambda image, *, threshold, model_dir=None: [{"label": "table", "bbox": [0, 0, 1000, 1000]}],
+    )
+    monkeypatch.setattr(
+        infmod.VllmClient,
+        "_chat",
+        lambda self, image, prompt, **kw: "<fcel>OK<nl>",
+    )
+    client = infmod.VllmClient(
+        url="http://127.0.0.1:8000/v1", model=str(tmp_path), adapter=ft_adapter,
+    )
+    items = client.xiaomi_native_page(Image.new("RGB", (1000, 800), "white"))
+    assert items == [{"bbox": [0, 0, 1000, 1000], "label": "Table", "content": "<fcel>OK<nl>"}]
+
+
+def test_xiaomi_stage1_recovers_misclassified_and_split_borderless_tables(monkeypatch):
+    """PP-DocLayoutV3 occasionally labels borderless multi-column registers as `content`
+    or splits one register across two stacked `table` boxes. Verify both are repaired when
+    geometric multi-column structure holds, while prose and separated tables stay untouched."""
+    monkeypatch.setattr(
+        infmod,
+        "_looks_like_borderless_table",
+        lambda image, px_bbox: (px_bbox[2] - px_bbox[0]) >= 600,
+    )
+
+    # Case 1: `content` region passing multi-column check is promoted to `table`;
+    # narrow `content` failing the check stays `Text`.
+    repaired_1 = infmod._repair_xiaomi_layout_regions(
+        Image.new("RGB", (1000, 1000), "white"),
+        [
+            {"label": "header", "bbox": [40, 20, 900, 50]},
+            {"label": "content", "bbox": [30, 60, 970, 950]},
+            {"label": "content", "bbox": [50, 955, 300, 990]},
+        ],
+    )
+    assert repaired_1 == [
+        {"label": "header", "bbox": [40, 20, 900, 50]},
+        {"label": "table", "bbox": [30, 60, 970, 950]},
+        {"label": "content", "bbox": [50, 955, 300, 990]},
+    ]
+
+    # Case 2: Two stacked `table` boxes with matching horizontal span and no intervening
+    # block coalesce into one table; a third `table` below a `paragraph_title` stays separate.
+    repaired_2 = infmod._repair_xiaomi_layout_regions(
+        Image.new("RGB", (1000, 1000), "white"),
+        [
+            {"label": "table", "bbox": [25, 60, 955, 380]},
+            {"label": "table", "bbox": [30, 435, 960, 700]},
+            {"label": "paragraph_title", "bbox": [30, 720, 400, 750]},
+            {"label": "table", "bbox": [30, 760, 960, 950]},
+        ],
+    )
+    assert repaired_2 == [
+        {"label": "table", "bbox": [25, 60, 960, 700]},
+        {"label": "paragraph_title", "bbox": [30, 720, 400, 750]},
+        {"label": "table", "bbox": [30, 760, 960, 950]},
+    ]
+
+
+def test_xiaomi_stage1_joins_register_split_side_by_side(monkeypatch):
+    """A register cut into a left half (stacked in three pieces, none half the page wide) and
+    a right half becomes one table, as on LDI_1920_Apr1_Page_057 (boxes from that page).
+    The narrow strip of the facing page at the right edge stays out; two tables far apart
+    stay two."""
+    monkeypatch.setattr(
+        infmod,
+        "_looks_like_borderless_table",
+        lambda image, px_bbox: (px_bbox[2] - px_bbox[0]) >= 600,
+    )
+    page = Image.new("RGB", (1000, 1000), "white")
+    repaired = infmod._repair_xiaomi_layout_regions(
+        page,
+        [
+            {"label": "header", "bbox": [360, 12, 682, 31]},
+            {"label": "text", "bbox": [953, 20, 1000, 34]},
+            {"label": "table", "bbox": [38, 41, 448, 439]},
+            {"label": "table", "bbox": [47, 444, 459, 679]},
+            {"label": "table", "bbox": [56, 683, 466, 961]},
+            {"label": "table", "bbox": [433, 53, 983, 955]},
+            {"label": "table", "bbox": [945, 311, 1000, 485]},
+        ],
+    )
+    assert repaired == [
+        {"label": "header", "bbox": [360, 12, 682, 31]},
+        {"label": "text", "bbox": [953, 20, 1000, 34]},
+        {"label": "table", "bbox": [38, 41, 983, 961]},
+        {"label": "table", "bbox": [945, 311, 1000, 485]},
+    ]
+
+    # The facing page can be wider than a column (LDI_1920_Apr1_Page_063: 869-1000) and can
+    # come as `text` (Page_123): it is never joined, and it does not block the halves.
+    facing = infmod._repair_xiaomi_layout_regions(
+        page,
+        [
+            {"label": "table", "bbox": [29, 60, 404, 355]},
+            {"label": "table", "bbox": [392, 61, 975, 772]},
+            {"label": "table", "bbox": [869, 30, 1000, 831]},
+            {"label": "text", "bbox": [880, 64, 999, 627]},
+        ],
+    )
+    assert facing == [
+        {"label": "table", "bbox": [29, 60, 975, 772]},
+        {"label": "table", "bbox": [869, 30, 1000, 831]},
+        {"label": "text", "bbox": [880, 64, 999, 627]},
+    ]
+
+    apart = [
+        {"label": "table", "bbox": [30, 60, 400, 950]},
+        {"label": "table", "bbox": [600, 60, 970, 950]},
+    ]
+    assert infmod._repair_xiaomi_layout_regions(page, [dict(r) for r in apart]) == apart
+    # Two short adjacent tables (an advert beside a box) are not a split register.
+    short = [
+        {"label": "table", "bbox": [30, 300, 480, 420]},
+        {"label": "table", "bbox": [490, 300, 970, 420]},
+    ]
+    assert infmod._repair_xiaomi_layout_regions(page, [dict(r) for r in short]) == short
+

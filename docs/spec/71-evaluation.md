@@ -135,9 +135,15 @@ writes the model's stored blocks of the run, grids included, as unverified draft
 model's `prefill_source`, as a prefill would: the drafts already on the page are replaced
 (`replace_drafts`). A page with blocks a person drew or verified (`prefill_source IS NULL OR
 confirmed=1`) is skipped as `human_work`, unless `replace_human` asks to replace everything
-(`replace_all`); a page the model has no finished output for is `no_result`. The coordinates are
-those of the current page master: a consensus run never rotates it. The revision advances, so an
-approval lapses and an open Studio reloads (live `annotations_changed`, action `consensus`).
+(`replace_all`); a page the model has no finished output for is `no_result` (`adopt_output` passes
+`clear_consensus=False` to `replace_blocks` so adopting with `replace_human=True` keeps the
+active comparison visible). Otherwise, overwriting a page with `replace_all` prefill or bulk
+recognition advances `pages.consensus_cleared_through` to the page's highest existing consensus
+`run_id` (and migration 27 backfills that from finished `replace_all` runs), so Studio
+(`GET /pages/{id}/consensus`) and the Table Editor (`POST /api/blocks/{id}/consensus`) stop
+showing superseded comparisons while explicit `?run_id=` historical views remain readable. The
+revision advances, so an approval lapses and an open Studio reloads (live `annotations_changed`,
+action `consensus`).
 It does not wait for the run to end: while it is going, only the pages the model has already
 read are written, and repeating it at the end writes the rest.
 

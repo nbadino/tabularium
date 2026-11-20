@@ -662,3 +662,139 @@ def test_stopping_a_paused_run_cancels_the_pages_left(tmp_path, monkeypatch):
     assert body["state"] == "cancelled"
     assert calls == page_ids[:1]
     assert [item["state"] for item in body["items"]] == ["finished", "cancelled"]
+
+
+def test_bulk_model_run_processes_pages_concurrently_when_adapter_declares_concurrency(tmp_path, monkeypatch):
+    """Adapters backed by continuous batching (such as Xiaomi-OCR-0 on MLX/vLLM) process
+    multiple pages in flight simultaneously to maximize pages parsed per minute."""
+    import threading
+    from app.services import model_adapters, recognition
+
+    archive = tmp_path / "archive4"
+    archive.mkdir(parents=True)
+    for idx in range(4):
+        Image.new("RGB", (200, 300), "white").save(archive / f"p{idx}.png")
+
+    barrier = threading.Barrier(4, timeout=3.0)
+
+    class FakeConcurrentClient:
+        adapter = model_adapters.get_adapter("xiaomi-ocr-0")
+        url = "http://127.0.0.1:18999/v1"
+        model = "xiaomi-research/Xiaomi-OCR-0"
+        provider = "local"
+
+        def test_connection(self, timeout=5.0):
+            return {"ok": True}
+
+    def concurrent_recognize(run, item, opts, client, engine, cancel):
+        barrier.wait()
+        return [{"bbox": [0, 0, 100, 100], "label": "Text", "content": "ok"}], {"detected": 1, "inserted": 1}, None
+
+    monkeypatch.setattr(
+        recognition.inference,
+        "get_inference_config",
+        lambda: {
+            "enabled": True,
+            "provider": "local",
+            "model": "xiaomi-research/Xiaomi-OCR-0",
+            "adapter_id": "xiaomi-ocr-0",
+            "url": "http://127.0.0.1:18999/v1",
+        },
+    )
+    monkeypatch.setattr(recognition.inference, "get_vllm_client", lambda **kw: FakeConcurrentClient())
+    monkeypatch.setattr(recognition, "_recognize_page", concurrent_recognize)
+    monkeypatch.setattr(
+        recognition.hardware,
+        "summary",
+        lambda: {"apple_silicon": True, "memory_gb": 24.0},
+        raising=False,
+    )
+
+    with TestClient(app) as client:
+        project_id = client.post(
+            "/api/projects", json={"name": "ConcurrentBulk", "archive_dir": str(archive)}
+        ).json()["id"]
+        client.post(f"/api/projects/{project_id}/scan")
+        pages = client.get(f"/api/projects/{project_id}/pages").json()["items"]
+        pids = [p["id"] for p in pages]
+        created = client.post(
+            f"/api/projects/{project_id}/recognition-runs",
+            json={"page_ids": pids, "engine": "model", "mode": "replace_drafts", "stop_policy": "none"},
+        )
+        assert created.status_code == 202, created.text
+        body = _wait_run(client, project_id, created.json()["id"])
+
+    assert body["state"] == "finished", body
+    assert body["completed_pages"] == 4
+    assert body["succeeded_pages"] == 4
+
+
+def test_recognition_run_replace_all_requires_confirm_and_replaces_approved_page(tmp_path, monkeypatch):
+    """R9: bulk `replace_all` refuses without `confirm=True` (409) and, when confirmed,
+    deletes human/confirmed blocks and invalidates the page's approval."""
+    from app.db import connect
+    from app.services import recognition
+
+    monkeypatch.setattr(recognition.ocrmod, "OcrEngine", FakeOcr)
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        page_id = page_ids[0]
+        with connect() as conn:
+            conn.execute(
+                "INSERT INTO blocks (page_id, label, kind, points, content, order_idx, "
+                "prefill_source, confirmed) VALUES (?,?,?,?,?,?,NULL,1)",
+                (page_id, "Text", "rect", "[[0,0],[50,50]]", "Manual approved block", 1),
+            )
+            conn.execute("UPDATE pages SET status='approved' WHERE id=?", (page_id,))
+
+        refused = client.post(
+            f"/api/projects/{project_id}/recognition-runs",
+            json={
+                "page_ids": [page_id],
+                "engine": "ocr",
+                "mode": "replace_all",
+                "stop_policy": "none",
+            },
+        )
+        assert refused.status_code == 409, refused.text
+
+        accepted = client.post(
+            f"/api/projects/{project_id}/recognition-runs",
+            json={
+                "page_ids": [page_id],
+                "engine": "ocr",
+                "mode": "replace_all",
+                "confirm": True,
+                "stop_policy": "none",
+            },
+        )
+        assert accepted.status_code == 202, accepted.text
+        body = _wait_run(client, project_id, accepted.json()["id"])
+        assert body["state"] == "finished"
+
+        blocks = client.get(f"/api/pages/{page_id}/annotations").json()["items"]
+        assert [b["content"] for b in blocks] == ["Recognized text"]
+        assert blocks[0]["confirmed"] is False
+
+        listed = client.get(f"/api/projects/{project_id}/pages").json()["items"]
+        page_row = next(p for p in listed if p["id"] == page_id)
+        assert page_row["status"] == "review"
+
+
+def test_effective_page_workers_caps_16gb_local_mac_and_allows_full_batch_on_24gb_plus(monkeypatch):
+    """<=16 GB unified memory caps local Xiaomi concurrent pages to B=2; >=24 GB Macs
+    and remote cloud providers run at full declared B=8 inside bounded wired/cache limits."""
+    from app.services import model_adapters, recognition
+
+    class DummyClient:
+        adapter = model_adapters.get_adapter("xiaomi-ocr-0")
+
+    client = DummyClient()
+    for mem_gb, expected in ((12.0, 2), (16.0, 2), (24.0, 8), (36.0, 8), (64.0, 8)):
+        monkeypatch.setattr(recognition.hardware, "summary", lambda g=mem_gb: {"memory_gb": g})
+        assert recognition._effective_page_workers({"provider": "local"}, client) == expected
+
+    monkeypatch.setattr(recognition.hardware, "summary", lambda: {"memory_gb": 24.0})
+    assert recognition._effective_page_workers({"provider": "vast"}, client) == 8
+
+

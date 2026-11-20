@@ -159,12 +159,11 @@ def ensure_ready() -> None:
 def unlimited_ocr_serve_argv(
     repo: str, *, port: int, host: str = "127.0.0.1", cache_limit_gb: float | None = None,
 ) -> list[str]:
-    """Comando del server MLX dedicato di Unlimited-OCR.
+    """Command for Unlimited-OCR's dedicated MLX OpenAI server.
 
-    Non usa `mlx_vlm.server`: per l'architettura `unlimited_ocr` quel server
-    non inietta l'immagine (v. `unlimited_ocr_mlx_server.py`). Il server
-    dedicato espone la stessa interfaccia OpenAI ma usa l'API `mlx_vlm.generate`
-    che funziona. Gira comunque nel venv MLX, come il server generico.
+    `mlx_vlm.server` does not inject the image for the `unlimited_ocr` architecture
+    (see `unlimited_ocr_mlx_server.py`). The dedicated server exposes the same OpenAI
+    interface over `mlx_vlm.generate` inside `<root>/mlx-runtime`.
     """
     script = Path(__file__).with_name("unlimited_ocr_mlx_server.py")
     return [
@@ -178,6 +177,45 @@ def unlimited_ocr_serve_argv(
         str(int(port)),
         *(["--cache-limit-gb", f"{cache_limit_gb:g}"] if cache_limit_gb is not None else []),
     ]
+
+
+def xiaomi_ocr_serve_argv(
+    repo: str,
+    *,
+    port: int,
+    host: str = "127.0.0.1",
+    settings: dict | None = None,
+    cache_limit_gb: float | None = None,
+) -> list[str]:
+    """Command for Xiaomi-OCR-0's dedicated MLX OpenAI server (`xiaomi_mlx_server.py`).
+
+    Activates Xiaomi-OCR-0's native `mtp.*` speculative decoding (including local
+    grafting onto `ms-swift` fine-tuned checkpoints), fused surgical Q8 linear layers,
+    and folded 2D vision encoding with an SHA-256 LRU feature cache.
+    """
+    script = Path(__file__).with_name("xiaomi_mlx_server.py")
+    argv = [
+        str(python_bin()),
+        str(script),
+        "--model",
+        repo,
+        "--host",
+        host,
+        "--port",
+        str(int(port)),
+    ]
+    if cache_limit_gb is not None:
+        argv.extend(["--cache-limit-gb", f"{cache_limit_gb:g}"])
+    options = settings or {}
+    for key, flag in (
+        ("max_kv_size", "--max-kv-size"),
+        ("vision_cache_size", "--vision-cache-size"),
+        ("log_level", "--log-level"),
+    ):
+        value = options.get(key)
+        if value is not None:
+            argv.extend([flag, str(value)])
+    return argv
 
 
 def serve_argv(

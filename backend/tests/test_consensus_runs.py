@@ -797,3 +797,117 @@ def test_a_model_reads_several_pages_at_once(tmp_path, monkeypatch):
         assert run["state"] == "finished" and run["succeeded"] == 16
         assert seen["max"] == consensus.PAGES_IN_PARALLEL
         assert len(seen["clients"]) == consensus.PAGES_IN_PARALLEL
+
+
+def test_replace_all_supersedes_older_consensus_without_deleting_history(tmp_path, monkeypatch):
+    """Overwriting a page with `mode='replace_all'` clears stale consensus comparisons
+    in the Studio and Table Editor while preserving explicit `?run_id=` history and
+    allowing a subsequent newer consensus run to appear."""
+    _fake_clients(monkeypatch)
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path, pages=2)
+        ocria = _save_profile(client, OCRIA, "OCRia-1 (supersede)")
+        argon = _save_profile(client, ARGON, "Argon (supersede)")
+
+        created1 = client.post(
+            f"/api/projects/{project_id}/consensus-runs",
+            json={"page_ids": page_ids, "profile_ids": [ocria["id"], argon["id"]]},
+        )
+        assert created1.status_code == 202, created1.text
+        run1 = _wait(client, project_id, created1.json()["id"])
+
+        before = client.get(f"/api/pages/{page_ids[0]}/consensus").json()
+        assert before["run_id"] == run1["id"]
+        assert before["comparison"] is not None
+
+        # Full-page `replace_all` recognition on page 0 supersedes `run1` there,
+        # while leaving page 1 untouched.
+        rec = client.post(
+            f"/api/projects/{project_id}/recognition-runs",
+            json={
+                "page_ids": [page_ids[0]],
+                "engine": "model",
+                "profile_id": argon["id"],
+                "mode": "replace_all",
+                "confirm": True,
+                "stop_policy": "none",
+            },
+        )
+        assert rec.status_code == 202, rec.text
+        rec_id = rec.json()["id"]
+        rec_body: dict = {}
+        for _ in range(200):
+            rec_body = client.get(f"/api/projects/{project_id}/recognition-runs/{rec_id}").json()
+            if rec_body["state"] not in {"queued", "running"}:
+                break
+            time.sleep(0.02)
+        assert rec_body["state"] == "finished", rec_body
+
+        # Default Studio comparison is now empty for page 0, and Table Editor gets no stale cells.
+        after = client.get(f"/api/pages/{page_ids[0]}/consensus").json()
+        assert after["run_id"] is None
+        assert after["comparison"] is None
+
+        blocks = client.get(f"/api/pages/{page_ids[0]}/annotations").json()["items"]
+        (table_block,) = [b for b in blocks if b["label"] == "Table"]
+        grid = client.get(f"/api/blocks/{table_block['id']}/table").json()["grid"]
+        tbl_cmp = client.post(f"/api/blocks/{table_block['id']}/consensus", json=grid).json()
+        assert tbl_cmp["run_id"] is None
+        assert tbl_cmp["cells"] == []
+
+        decisions = client.get(f"/api/pages/{page_ids[0]}/consensus/decisions").json()
+        assert decisions["items"] == [] and decisions["resolved"] == []
+
+        # Historical comparison remains readable when explicitly requested by run_id (R9/R13).
+        hist = client.get(f"/api/pages/{page_ids[0]}/consensus?run_id={run1['id']}").json()
+        assert hist["run_id"] == run1["id"]
+        assert hist["comparison"] is not None
+
+        # Untouched page 1 still keeps its comparison from run1.
+        p1_cmp = client.get(f"/api/pages/{page_ids[1]}/consensus").json()
+        assert p1_cmp["run_id"] == run1["id"]
+        assert p1_cmp["comparison"] is not None
+
+        # A newer consensus run supersedes the clearance and shows up normally.
+        created2 = client.post(
+            f"/api/projects/{project_id}/consensus-runs",
+            json={"page_ids": [page_ids[0]], "profile_ids": [ocria["id"], argon["id"]]},
+        )
+        assert created2.status_code == 202, created2.text
+        run2 = _wait(client, project_id, created2.json()["id"])
+        latest = client.get(f"/api/pages/{page_ids[0]}/consensus").json()
+        assert latest["run_id"] == run2["id"]
+        assert latest["comparison"] is not None
+
+
+def test_adopting_consensus_with_replace_human_keeps_comparison_active(tmp_path, monkeypatch):
+    """Adopting a model from the active comparison with `replace_human=True` overwrites
+    blocks on purpose without hiding the comparison users are still working through."""
+    from app.adapters import blocks as blockstore
+
+    _fake_clients(monkeypatch)
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path, pages=1)
+        with blockstore.writing() as writer:
+            writer.insert_block(
+                page_ids[0], label="Text", points=[[1, 1], [50, 50]],
+                content="human block", order_idx=1, prefill_source=None,
+            )
+            writer.commit()
+        ocria = _save_profile(client, OCRIA, "OCRia-1 (keep)")
+        argon = _save_profile(client, ARGON, "Argon (keep)")
+        created = client.post(
+            f"/api/projects/{project_id}/consensus-runs",
+            json={"page_ids": page_ids, "profile_ids": [ocria["id"], argon["id"]]},
+        )
+        run = _wait(client, project_id, created.json()["id"])
+        argon_key = next(m["key"] for m in run["models"] if m["profile_id"] == argon["id"])
+
+        adopted = client.post(
+            f"/api/projects/{project_id}/consensus-runs/{run['id']}/adopt",
+            json={"model_key": argon_key, "page_ids": page_ids, "replace_human": True},
+        )
+        assert adopted.status_code == 200, adopted.text
+        cmp = client.get(f"/api/pages/{page_ids[0]}/consensus").json()
+        assert cmp["run_id"] == run["id"]
+        assert cmp["comparison"] is not None

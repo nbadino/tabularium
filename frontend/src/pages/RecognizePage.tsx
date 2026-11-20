@@ -304,21 +304,31 @@ export default function RecognizePage() {
     })
   }
 
-  // Le pagine scelte che hanno già bozze: una sostituzione le cancella, e con
-  // loro le correzioni fatte senza spuntare «Verificato» (restano bozze).
-  // Si chiede prima, invece di sostituire in silenzio.
-  const [askReplace, setAskReplace] = useState<{ pages: number; drafts: number } | null>(null)
+  // Le pagine scelte che hanno già bozze, blocchi verificati/manuali o approvazione:
+  // si chiede prima se aggiungere, sostituire le sole bozze, oppure sostituire tutto (R9).
+  const [askReplace, setAskReplace] = useState<{
+    pagesWithDrafts: number
+    drafts: number
+    pagesWithHuman: number
+    humanBlocks: number
+    approvedPages: number
+  } | null>(null)
   const onStartClick = () => {
     if (projectId === '' || selected.size === 0) return
-    const withDrafts = pages.filter((page) => selected.has(page.id) && (page.drafts ?? 0) > 0)
-    if (withDrafts.length > 0) {
-      setAskReplace({ pages: withDrafts.length, drafts: withDrafts.reduce((sum, page) => sum + (page.drafts ?? 0), 0) })
+    const picked = pages.filter((page) => selected.has(page.id))
+    const withDrafts = picked.filter((page) => (page.drafts ?? 0) > 0)
+    const drafts = withDrafts.reduce((sum, page) => sum + (page.drafts ?? 0), 0)
+    const humanBlocks = picked.reduce((sum, page) => sum + Math.max(0, (page.blocks ?? 0) - (page.drafts ?? 0)), 0)
+    const pagesWithHuman = picked.filter((page) => Math.max(0, (page.blocks ?? 0) - (page.drafts ?? 0)) > 0).length
+    const approvedPages = picked.filter((page) => page.status === 'approved' || page.status === 'exported').length
+    if (drafts > 0 || humanBlocks > 0 || approvedPages > 0) {
+      setAskReplace({ pagesWithDrafts: withDrafts.length, drafts, pagesWithHuman, humanBlocks, approvedPages })
       return
     }
     void start('replace_drafts')
   }
 
-  const start = async (mode: 'replace_drafts' | 'merge') => {
+  const start = async (mode: 'replace_drafts' | 'merge' | 'replace_all', confirm = false) => {
     setAskReplace(null)
     if (projectId === '' || selected.size === 0) return
     setBusy(true)
@@ -329,6 +339,7 @@ export default function RecognizePage() {
         engine: savedModelId != null ? 'model' : engine,
         ...(savedModelId != null ? { profile_id: savedModelId } : {}),
         mode,
+        ...(mode === 'replace_all' ? { confirm } : {}),
         model_mode: documentCapable && asDocument ? 'document' : 'native',
         stop_policy: canManageInference && disableAfter && engine === 'model' ? 'disable_inference' : 'none',
       })
@@ -459,6 +470,9 @@ export default function RecognizePage() {
                           />
                           <span className="mono min-w-0 flex-1 truncate text-[11px]" title={pageLabel(page)}>{pageShortLabel(page)}</span>
                           {(page.drafts ?? 0) > 0 && <Badge tone="warn">{t('home.draftsBadge', { n: page.drafts ?? 0 })}</Badge>}
+                          {!(page.drafts ?? 0) && (page.status === 'approved' || page.status === 'exported') && (
+                            <Badge tone="ok">{t('vocab.status.approved')}</Badge>
+                          )}
                         </span>
                       </label>
                     </li>
@@ -619,25 +633,47 @@ export default function RecognizePage() {
           </Collapsible>
         </div>
       </div>
-      {askReplace && (
-        <Modal
-          title={t('recognition.replace.title')}
-          onClose={() => setAskReplace(null)}
-          footer={
-            <div className="flex flex-wrap justify-end gap-2">
-              <button type="button" className="btn" onClick={() => setAskReplace(null)}>{t('common.cancel')}</button>
-              <button type="button" className="btn" onClick={() => void start('merge')}>{t('recognition.replace.merge')}</button>
-              <button type="button" className="btn btn-primary" onClick={() => void start('replace_drafts')}>{t('recognition.replace.replace')}</button>
+      {askReplace && (() => {
+        const hasProtected = askReplace.approvedPages > 0 || askReplace.humanBlocks > 0
+        return (
+          <Modal
+            title={t(hasProtected ? 'recognition.replace.titleAll' : 'recognition.replace.title')}
+            onClose={() => setAskReplace(null)}
+            footer={
+              <div className="flex flex-wrap justify-end gap-2">
+                <button type="button" className="btn" onClick={() => setAskReplace(null)}>{t('common.cancel')}</button>
+                <button type="button" className="btn" onClick={() => void start('merge')}>{t('recognition.replace.merge')}</button>
+                {askReplace.drafts > 0 && (
+                  <button type="button" className="btn btn-primary" onClick={() => void start('replace_drafts')}>{t('recognition.replace.replace')}</button>
+                )}
+                {hasProtected && (
+                  <button type="button" className="btn btn-danger" onClick={() => void start('replace_all', true)}>{t('recognition.replace.replaceAll')}</button>
+                )}
+              </div>
+            }
+          >
+            <div className="space-y-2 p-3 text-[13px]">
+              {askReplace.drafts > 0 && (
+                <p>{t('recognition.replace.body', { pages: askReplace.pagesWithDrafts, drafts: askReplace.drafts })}</p>
+              )}
+              {askReplace.approvedPages > 0 ? (
+                <p>{t('recognition.replace.approvedBody', { pages: askReplace.approvedPages, blocks: askReplace.humanBlocks })}</p>
+              ) : askReplace.humanBlocks > 0 ? (
+                <p>{t('recognition.replace.humanBody', { pages: askReplace.pagesWithHuman, blocks: askReplace.humanBlocks })}</p>
+              ) : null}
+              {askReplace.drafts > 0 && (
+                <p className="text-[12px] text-[color:var(--color-warn)]">{t('recognition.replace.warning')}</p>
+              )}
+              {hasProtected && (
+                <p className="border border-[color:var(--color-warn-rule)] bg-[color:var(--color-warn-wash)] p-2 text-[12px] text-[color:var(--color-warn)]">
+                  {t('recognition.replace.replaceAllWarning')}
+                </p>
+              )}
+              <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.replace.mergeHint')}</p>
             </div>
-          }
-        >
-          <div className="space-y-2 p-3 text-[13px]">
-            <p>{t('recognition.replace.body', { pages: askReplace.pages, drafts: askReplace.drafts })}</p>
-            <p className="text-[12px] text-[color:var(--color-warn)]">{t('recognition.replace.warning')}</p>
-            <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.replace.mergeHint')}</p>
-          </div>
-        </Modal>
-      )}
+          </Modal>
+        )
+      })()}
     </div>
   )
 }
