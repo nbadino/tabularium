@@ -92,6 +92,7 @@ DATA_VIEWS = {
     "ms-swift": "ms-swift-jsonl",
     "llama-factory": "llamafactory-sharegpt",
     "paddleformers": "paddleformers-messages",
+    "paddlex": "paddlex-layout",
     "none": "none",
 }
 
@@ -292,7 +293,8 @@ class WorkflowField:
 
     `kind` decides both how the value is validated and how the panel renders it:
     "bool", "int", "float", "enum", "version" (latest or YYYY-MM-DD), "str",
-    "str_list", "int_pair", "crop_box". `nullable` means the user can leave it to the
+    "str_list", "int_pair", "crop_box", "layout_model" (`official` or a PP-DocLayoutV3
+    training run, `<project_id>/<run_id>`). `nullable` means the user can leave it to the
     vendor ("auto"), which is the default for the Paddle knobs.
     """
 

@@ -26,6 +26,8 @@ Toolchain supportati (uno per modello, quello della sua doc):
   (`examples/finetune/README.md`), non ms-swift.
 - ``paddleformers`` — PaddleOCR-VL: il vendor documenta `paddleformers-cli`
   (before PaddleFormers, ERNIEKit was the only path and it was full-SFT only).
+- ``paddlex`` — the PP-DocLayoutV3 layout detector (`models/pp_doclayoutv3.py`):
+  PaddleX `main.py -c <module config> -o Global.mode=train`.
 """
 from __future__ import annotations
 
@@ -33,6 +35,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .. import models as model_specs
+from ..models import pp_doclayoutv3 as detector
 from ..models.types import (
     ALL_FAMILIES,
     CANONICAL_TRAIN_PROMPTS,
@@ -113,6 +116,8 @@ class TrainRecipe:
             return bool(self.llamafactory_template)
         if self.toolchain == "paddleformers":
             return bool(self.paddleformers_config.get("full") or self.paddleformers_config.get("lora"))
+        if self.toolchain == "paddlex":
+            return bool(self.flags.get("paddlex_config"))
         return False
 
     @property
@@ -188,7 +193,29 @@ def _build() -> dict[str, TrainRecipe]:
             verified_on=str(spec.get("verified_on") or ""),
             gold_eval=dict(spec["gold_eval"]) if spec.get("gold_eval") else None,
         )
+    recipes[detector.DETECTOR_ID] = _detector_recipe()
     return recipes
+
+
+def _detector_recipe() -> TrainRecipe:
+    """PP-DocLayoutV3: a detector, not an OCR adapter, so its recipe is not in the loop."""
+    spec = detector.TRAIN
+    return TrainRecipe(
+        adapter_id=detector.DETECTOR_ID,
+        display_name=detector.DISPLAY_NAME,
+        hf_repo="",
+        toolchain=spec["toolchain"],
+        train_types=tuple(spec["train_types"]),
+        data_view=spec["data_view"],
+        families=tuple(spec["families"]),
+        official_doc=spec["official_doc"],
+        maturity=spec["maturity"],
+        note=spec["note"],
+        defaults=dict(spec["defaults"]),
+        flags=dict(spec["flags"]),
+        environment=dict(spec["environment"]),
+        official_notes=tuple(spec["official_notes"]),
+    )
 
 
 TRAIN_RECIPES: dict[str, TrainRecipe] = _build()

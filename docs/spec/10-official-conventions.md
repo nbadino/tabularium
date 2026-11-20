@@ -277,4 +277,29 @@ already knows it, so transfer is free, while a custom class starts from zero and
 away from the others. `Title`, `Page-header`, `Section-header` and `List-item` entered the
 taxonomy for this reason.
 
+### 2.8 PP-DocLayoutV3 fine-tuning (PaddleX release/3.7, read 2026-11-20)
+The layout detector of Xiaomi-OCR-0's region mode (and of PaddleOCR-VL). Owner:
+`backend/app/models/pp_doclayoutv3.py`. Sources: the layout analysis tutorial, the module config
+`paddlex/configs/modules/layout_analysis/PP-DocLayoutV3.yaml`, the PaddleDetection config
+`paddlex/repo_apis/PaddleDetection_api/configs/PP-DocLayoutV3.yaml`, its registration in
+`instance_seg/register.py`, the checker `modules/layout_analysis/dataset_checker/dataset_src/check_dataset.py`.
+
+| Fact | Value |
+|---|---|
+| Command | `python main.py -c paddlex/configs/modules/layout_analysis/PP-DocLayoutV3.yaml -o Global.mode=check_dataset\|train\|evaluate\|predict` (plus `pdparams2safetensors`; no export mode documented) |
+| Dataset | `COCOInstSegDataset` + `read_order`; `images/`, `images_mask/` (same content, read by no code), `annotations/instance_train.json`, `annotations/instance_val.json`; `file_name` is relative to `images/` |
+| `read_order` | int ≥ 0, consecutive within an image: missing → error, gaps → warning |
+| Categories | 25, the official `inference.yml` `label_list` order, id = index: abstract, algorithm, aside_text, chart, content, display_formula, doc_title, figure_title, footer, footer_image, footnote, formula_number, header, header_image, image, inline_formula, number, paragraph_title, reference, reference_content, seal, table, text, vertical_text, vision_footnote |
+| Train defaults (module config) | `epochs_iters 100`, `batch_size 4`, `learning_rate 1e-4`, `warmup_steps 100`, `log_interval 10`, `eval_interval 1`, `pretrain_weight_path …/PP-DocLayoutV3_pretrained.pdparams` |
+| `num_classes` | the module config says 11 (its demo set), the PaddleDetection config and the pretrained head 25: Tabularium passes `Train.num_classes=25` |
+| Devices | registered: cpu, gpu, xpu, npu, mlu; AMP off, dy2st off. Install documented for Linux/Docker only. Apple Silicon CPU (paddle 3.3.1, measured 2026-11-20): check_dataset and evaluate work, training gets inf gradients at the first backward pass (`silu_grad`) |
+| Outputs | `output/best_model/best_model.pdparams`, `output/best_model/inference/` (`inference.json`, `inference.pdiparams`, `inference.yml`) |
+| Inference with it | `create_model("PP-DocLayoutV3", model_dir=<best_model/inference>)` |
+| Metric | `DocLayoutV3Metric` (bbox AP), returned by `Global.mode=evaluate` |
+
+Known upstream defects worked around outside the vendor tree: `instance_seg.model.evaluate` calls
+`len()` on the device ids, `None` on `cpu` (patched in Tabularium's evaluate wrapper);
+PaddleDetection imports `pkg_resources` (setuptools < 81), and its numpy 1.x pin needs a pycocotools
+built against that numpy.
+
 ---

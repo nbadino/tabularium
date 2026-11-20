@@ -645,6 +645,10 @@ export interface CheckpointInfo {
   merged_relative_path: string | null
   merged_bytes: number
   needs_merge: boolean
+  /** A PP-DocLayoutV3 export: used as it is, with the vendor evaluation before and after. */
+  layout?: boolean
+  eval_base?: { metrics?: Record<string, number> } | null
+  eval_trained?: { metrics?: Record<string, number> } | null
 }
 
 export interface PreparePlan {

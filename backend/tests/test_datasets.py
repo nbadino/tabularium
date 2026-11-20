@@ -181,8 +181,8 @@ def test_build_datasets(tmp_path: Path):
         assert paddle.status_code == 200, paddle.text
         paddle_manifest = paddle.json()
         paddle_root = Path(paddle_manifest["files"]["layout_dataset_dir"])
-        assert paddle_manifest["format"] == "paddlex-layout-ppocr-rec-v1"
-        assert (paddle_root / "annotations/train.json").exists()
+        assert paddle_manifest["format"] == "paddlex-layout-ppocr-rec-v2"
+        assert (paddle_root / "annotations/instance_train.json").exists()
         assert (paddle_root / "rec_train.txt").exists()
         # Il VLM PaddleOCR-VL non passa più da qui: PaddleFormers consuma la
         # vista `messages` del run (v. training_views.py).

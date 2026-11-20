@@ -11,6 +11,8 @@ di quel modello prescrive. Oggi i toolchain sono tre:
 - ``llama-factory`` (GLM-OCR): ``llamafactory-cli train <yaml>``.
 - ``paddleformers`` (PaddleOCR-VL): ``paddleformers-cli train <config>
   key=value``.
+- ``paddlex`` (the PP-DocLayoutV3 layout detector): ``python main.py -c <module
+  config> -o Global.mode=...`` from a PaddleX checkout.
 
 Se una ricetta non è eseguibile il generatore **fallisce**, indicando la doc
 ufficiale: non produce mai uno script che sembra giusto e non lo è.
@@ -181,6 +183,10 @@ def _python_bootstrap(cfg: dict, *, remote: bool, toolchain: str) -> str:
     python_path = str(cfg.get("ssh_python") or "") if remote else config.TRAIN_PYTHON
     if python_path:
         return f'export PATH="$(dirname {remote_shell_path(python_path)}):$PATH"\n'
+    if toolchain == "paddlex" and not remote and config.PADDLEX_DIR:
+        venv = Path(config.PADDLEX_DIR) / ".venv" / "bin"
+        if (venv / "python").exists():
+            return f'export PATH={shlex.quote(str(venv))}:"$PATH"\n'
     if toolchain == "ms-swift" and str(cfg.get("adapter_id") or "") == "monkeyocrv2-parsing":
         return (
             'if command -v conda >/dev/null 2>&1; then\n'
@@ -199,6 +205,8 @@ def _workdir(cfg: dict, *, remote: bool, toolchain: str, adapter_id: str) -> str
         return config.LLAMAFACTORY_DIR
     if toolchain == "paddleformers":
         return config.PADDLEFORMERS_DIR
+    if toolchain == "paddlex":
+        return config.PADDLEX_DIR
     if adapter_id == "monkeyocrv2-parsing":
         repo = Path(config.TRAIN_REPO) / "parsing" / "train" if config.TRAIN_REPO else None
         return str(repo) if repo and repo.is_dir() else ""
@@ -578,6 +586,101 @@ def _paddleformers_script(cfg: dict, recipe: recipes.TrainRecipe, run_dir: Path,
     )
 
 
+# ---------------------------------------------------------------------------
+# PaddleX (PP-DocLayoutV3)
+# ---------------------------------------------------------------------------
+# `main.py` as it is, plus one patch: PaddleX 3.7 `instance_seg.model.evaluate` calls len() on
+# the device ids, which are None on "cpu" (an empty list means the same single device).
+# shortcut: drop the patch when PaddleX fixes it upstream.
+_PADDLEX_EVAL = """from paddlex.engine import Engine
+from paddlex.repo_apis.PaddleDetection_api.instance_seg import model as instance_seg
+_parse_device = instance_seg.parse_device
+instance_seg.parse_device = lambda device: (lambda kind, ids: (kind, ids or []))(*_parse_device(device))
+Engine().run()
+"""
+
+
+def _paddlex_script(cfg: dict, recipe: recipes.TrainRecipe, run_dir: Path, train_file: Path, val_file: Path) -> str:
+    """check_dataset -> evaluate the official weights -> train -> evaluate best_model.
+
+    Both evaluations use the vendor's metric on the same val split, so the run says what
+    fine-tuning changed. `Global.output` sits under `checkpoints/`, the folder a remote run
+    brings home.
+    """
+    from ..models import pp_doclayoutv3 as detector
+
+    if str(cfg.get("resume_run_id") or "").strip():
+        raise NotImplementedError("PP-DocLayoutV3: resuming a run is not supported yet; start a new run")
+    remote = str(cfg.get("executor", "local")).strip().lower() in {"ssh", "vast", "runpod"}
+    workdir = _workdir(cfg, remote=remote, toolchain="paddlex", adapter_id=recipe.adapter_id)
+    dataset = '"$RUN_DIR/dataset"' if remote else shlex.quote(str(train_file.parent.parent))
+    out_dir = _output_dir(cfg, recipe, run_dir, "full", remote=remote)
+    output = f'"$RUN_DIR/{out_dir}"' if remote else shlex.quote(out_dir)
+    flags = recipe.flags
+    url = str(flags["pretrained_weights"])
+    # `Evaluate.weight_path` must be a local file (PaddleX takes its abspath), so the official
+    # weights are fetched once into the shared PaddleX cache, never into the run.
+    weights = str(cfg.get("model_path") or "").strip()
+    fetch = []
+    if not weights:
+        weights = "$WEIGHTS"
+        fetch = [
+            f'WEIGHTS="${{PADDLE_PDX_CACHE_HOME:-$HOME/.paddlex}}/official_pretrained_model/{url.rsplit("/", 1)[-1]}"',
+            'if [ ! -s "$WEIGHTS" ]; then',
+            '  mkdir -p "$(dirname "$WEIGHTS")"',
+            f'  python -c "import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2] + \'.part\')" {shlex.quote(url)} "$WEIGHTS"',
+            '  mv "$WEIGHTS.part" "$WEIGHTS"',
+            "fi",
+        ]
+    weights_arg = '"$WEIGHTS"' if weights == "$WEIGHTS" else shlex.quote(weights)
+    gpus = str(cfg.get("gpus") or "0")
+    train = [
+        f"Train.epochs_iters={int(cfg['epochs'])}",
+        f"Train.batch_size={int(cfg['batch_size'])}",
+        f"Train.learning_rate={float(cfg['learning_rate']):g}",
+        f"Train.warmup_steps={int(cfg['warmup_steps'])}",
+        f"Train.log_interval={int(cfg['log_interval'])}",
+        f"Train.eval_interval={int(cfg['eval_interval'])}",
+        f"Train.pretrain_weight_path={weights_arg}",
+    ]
+    lines = [
+        _preamble(cfg, remote=remote, toolchain="paddlex", workdir=workdir, nproc_env=False),
+        f"CONFIG={shlex.quote(str(flags['paddlex_config']))}",
+        f"DATA={dataset}",
+        f"OUT={output}",
+        # A registered training device of the module: GPU when this paddle has CUDA, else CPU.
+        f'DEVICE=$(python -c "import paddle; print(\'gpu:{gpus}\' if paddle.device.is_compiled_with_cuda() else \'cpu\')")',
+        'echo ">> PaddleX device: $DEVICE"',
+        *fetch,
+        "pdx() {",
+        '  python main.py -c "$CONFIG" -o Global.dataset_dir="$DATA" -o Global.device="$DEVICE" \\',
+        f'    -o Train.num_classes={int(flags["num_classes"])} "$@"',
+        "}",
+        # PaddleX writes `<Global.output>/evaluate_result.json`; the run keeps a copy.
+        "pdx_eval() {",
+        '  local name="$1"; shift',
+        '  python - -c "$CONFIG" -o Global.mode=evaluate -o Global.dataset_dir="$DATA" \\',
+        f'    -o Global.device="$DEVICE" -o Train.num_classes={int(flags["num_classes"])} \\',
+        '    -o Global.output="$OUT/$name" "$@" <<\'PY\'',
+        _PADDLEX_EVAL.rstrip(),
+        "PY",
+        '  cp "$OUT/$name/evaluate_result.json" "$RUN_DIR/$name.json"',
+        '  echo ">> $name: $(cat "$RUN_DIR/$name.json" | tr -d "\\n ")"',
+        "}",
+        "",
+        'pdx -o Global.mode=check_dataset -o Global.output="$OUT/check_dataset"',
+        'echo ">> evaluate the official weights on the val split"',
+        f"pdx_eval eval_base -o Evaluate.weight_path={weights_arg}",
+        'pdx -o Global.mode=train -o Global.output="$OUT" \\',
+        "".join(f"  -o {arg} \\\n" for arg in train).rstrip(" \\\n"),
+        'echo ">> evaluate best_model on the val split"',
+        f'pdx_eval eval_trained -o Evaluate.weight_path="$OUT/{detector.BEST_WEIGHTS}"',
+        f'test -f "$OUT/{detector.INFERENCE_DIR}/inference.yml"',
+        f'echo ">> layout checkpoint: $OUT/{detector.INFERENCE_DIR}"',
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def generate_script(cfg: dict, run_dir: Path, train_file: Path, val_file: Path) -> str:
     """Script della ricetta dell'adapter, nel toolchain che il vendor documenta."""
     recipe, effective, train_type = resolve_config(cfg)
@@ -588,6 +691,8 @@ def generate_script(cfg: dict, run_dir: Path, train_file: Path, val_file: Path) 
         return _llama_factory_script(effective, recipe, run_dir, train_file, val_file)
     if recipe.toolchain == "paddleformers":
         return _paddleformers_script(effective, recipe, run_dir, train_file, val_file)
+    if recipe.toolchain == "paddlex":
+        return _paddlex_script(effective, recipe, run_dir, train_file, val_file)
     raise NotImplementedError(
         f"toolchain '{recipe.toolchain}' non eseguito da questo generatore "
         f"(vista dati '{recipe.data_view}'); doc ufficiale: {recipe.official_doc}"

@@ -379,6 +379,16 @@ def _validated_workflow_field(field: "WorkflowField", value: Any) -> Any:
             limit = field.max_len if field.max_len is not None else "illimitato"
             raise _workflow_error(field.key, f"deve essere testo fino a {limit} caratteri")
         return value.strip()
+    if kind == "layout_model":
+        from . import trainer
+
+        if not isinstance(value, str):
+            raise _workflow_error(field.key, "must be 'official' or a layout training run")
+        try:
+            trainer.layout_model_dir(value)
+        except ValueError as exc:
+            raise _workflow_error(field.key, str(exc)) from exc
+        return value.strip()
     if kind == "str_list":
         if (
             not isinstance(value, list)

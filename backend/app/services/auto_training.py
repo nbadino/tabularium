@@ -40,6 +40,8 @@ PROFILES = {
     "dots-ocr": "dots",
     "glm-ocr": "glm",
     "paddleocr-vl": "paddle",
+    # PaddleX checkout + PaddleDetection plugin (`docker/train-layout`).
+    "pp-doclayoutv3": "layout",
 }
 
 PADDLE_IMAGE = "paddlepaddle/paddle:3.3.0-gpu-cuda12.6-cudnn9.5"
@@ -52,6 +54,7 @@ PREBUILT_IMAGES = {
     "uocr2": "ghcr.io/nbadino/tabularium-train-uocr2:uocr2-v1",
     "glm": "ghcr.io/nbadino/tabularium-train-glm:glm-v1",
     "paddle": "ghcr.io/nbadino/tabularium-train-paddle:paddle-v1",
+    "layout": "ghcr.io/nbadino/tabularium-train-layout:layout-v1",
 }
 PREBUILT_MARKER = "/opt/tabularium/ready.json"
 # The CUDA toolkit each versioned image is built on (its base image tag; the
@@ -60,6 +63,7 @@ PREBUILT_MARKER = "/opt/tabularium/ready.json"
 PREBUILT_CUDA = {
     "monkey": 12.8,  # pytorch 2.8.0-cuda12.8
     "paddle": 12.6,  # paddlepaddle/paddle 3.3.0-gpu-cuda12.6
+    "layout": 12.6,  # same base image as paddle
     "qwen": 12.4,  # pytorch 2.6.0-cuda12.4 (torch 2.6.0+cu124)
     "legacy": 12.4,
     "uocr2": 12.4,
@@ -119,6 +123,8 @@ def expected_paths(profile: str) -> dict:
         repo = f"{root}/LLaMA-Factory"
     elif profile == "paddle":
         repo = f"{root}/PaddleFormers"
+    elif profile == "layout":
+        repo = f"{root}/PaddleX"
     else:
         repo = root
     return {"python": f"{root}/venv/bin/python", "repo": repo, "root": root}
@@ -541,6 +547,14 @@ def _monitor_run(
                 message="training fallito; istanza eliminata",
                 error=(meta.get("error") or err or f"training {state}")[-4000:],
             )
+            _destroy(api_key, instance_id)
+            _update(job, instance_destroyed=True)
+            return
+        if state == "finished" and meta.get("toolchain") == "paddlex":
+            # A layout run has nothing to merge or register: the exported model came home
+            # with the checkpoints and is selected in the Xiaomi-OCR-0 settings.
+            _update(job, state="finished", phase="done",
+                    message="layout model downloaded; GPU released")
             _destroy(api_key, instance_id)
             _update(job, instance_destroyed=True)
             return
