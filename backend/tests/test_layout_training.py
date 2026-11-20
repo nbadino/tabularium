@@ -122,3 +122,21 @@ def test_a_layout_run_has_nothing_to_prepare(tmp_path):
     with pytest.raises(ValueError, match="Xiaomi-OCR-0"):
         checkpoint_prepare.prepare_plan(993, "run_1")
     assert trainer.checkpoint_info(run_dir) is None  # not exported yet
+
+
+def test_the_remote_gpu_check_uses_paddle_for_the_layout_recipe(monkeypatch, tmp_path):
+    import subprocess
+
+    _snapshot(994, tmp_path)
+    seen: list[str] = []
+
+    def run(argv, **_kwargs):
+        seen.append(argv[-1])
+        return subprocess.CompletedProcess(argv, 0, "READY\nTrue\n", "")
+
+    monkeypatch.setattr(trainer.subprocess, "run", run)
+    cfg = {**CFG, "executor": "ssh", "ssh_host": "h", "ssh_train_repo": "/opt/tabularium/PaddleX",
+           "ssh_python": "/opt/tabularium/venv/bin/python"}
+    check = trainer.preflight(994, cfg, lang="en")
+    assert check["ready"], check["errors"]
+    assert seen and "import paddle" in seen[0] and "torch" not in seen[0]

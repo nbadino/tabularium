@@ -387,6 +387,15 @@ def test_preflight_uses_the_training_python_and_passes_on_success(monkeypatch):
     assert 'torch.ones(1, device="cuda")' in seen[0] and "synchronize" in seen[0]
 
 
+def test_the_layout_image_is_probed_with_paddle_not_torch(monkeypatch):
+    # First one-click layout run (2026-11-20): the probe imported torch, which the Paddle image lacks.
+    seen: list[str] = []
+    monkeypatch.setattr(auto_training, "_ssh", lambda _h, _p, cmd, **_k: seen.append(cmd) or subprocess.CompletedProcess(
+        [], 0, f"{auto_training.CUDA_PREFLIGHT_OK} RTX A6000\n", ""))
+    assert auto_training._cuda_preflight("h", 22, "/opt/tabularium/venv/bin/python", threading.Event(), "layout") is None  # noqa: SLF001
+    assert "import paddle" in seen[0] and "torch" not in seen[0]
+
+
 def _monitor_failed_run(monkeypatch, tmp_path, log: str, error: str = "manifest remoto vuoto: nessun checkpoint recuperato"):
     run_dir = tmp_path / "run_1794954387239"
     run_dir.mkdir()
