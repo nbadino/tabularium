@@ -589,13 +589,24 @@ def _paddleformers_script(cfg: dict, recipe: recipes.TrainRecipe, run_dir: Path,
 # ---------------------------------------------------------------------------
 # PaddleX (PP-DocLayoutV3)
 # ---------------------------------------------------------------------------
-# `main.py` as it is, plus one patch: PaddleX 3.7 `instance_seg.model.evaluate` calls len() on
-# the device ids, which are None on "cpu" (an empty list means the same single device).
-# shortcut: drop the patch when PaddleX fixes it upstream.
-_PADDLEX_EVAL = """from paddlex.engine import Engine
+# `main.py` (`Engine().run()`) with two in-process patches, the vendor tree untouched.
+# 1. PaddleX 3.7 `instance_seg.model.evaluate` calls len() on the device ids, which are None
+#    on "cpu" (an empty list means the same single device).
+# 2. The PaddleDetection config picks `best_model` by `target_metrics: mask`, but its metric
+#    runs with `eval_mask: False`, so mask AP is never computed: every epoch scored 0 and
+#    `best_model` was simply the last one (run_1795177808184, 2026-11-20). The detector is
+#    used for its boxes, so the best epoch is chosen on bbox AP.
+# shortcut: drop each patch when PaddleX fixes it upstream.
+_PADDLEX_MAIN = """from paddlex.engine import Engine
+from paddlex.repo_apis.PaddleDetection_api.instance_seg import config as instance_config
 from paddlex.repo_apis.PaddleDetection_api.instance_seg import model as instance_seg
 _parse_device = instance_seg.parse_device
 instance_seg.parse_device = lambda device: (lambda kind, ids: (kind, ids or []))(*_parse_device(device))
+_dump = instance_config.InstanceSegConfig.dump
+def _dump_bbox(self, config_path):
+    self._dict["target_metrics"] = "bbox"
+    return _dump(self, config_path)
+instance_config.InstanceSegConfig.dump = _dump_bbox
 Engine().run()
 """
 
@@ -652,18 +663,17 @@ def _paddlex_script(cfg: dict, recipe: recipes.TrainRecipe, run_dir: Path, train
         f'DEVICE=$(python -c "import paddle; print(\'gpu:{gpus}\' if paddle.device.is_compiled_with_cuda() else \'cpu\')")',
         'echo ">> PaddleX device: $DEVICE"',
         *fetch,
+        # Run from the PaddleX checkout (its `paddlex/` package), as `python main.py` would.
         "pdx() {",
-        '  python main.py -c "$CONFIG" -o Global.dataset_dir="$DATA" -o Global.device="$DEVICE" \\',
-        f'    -o Train.num_classes={int(flags["num_classes"])} "$@"',
+        '  python - -c "$CONFIG" -o Global.dataset_dir="$DATA" -o Global.device="$DEVICE" \\',
+        f'    -o Train.num_classes={int(flags["num_classes"])} "$@" <<\'PY\'',
+        _PADDLEX_MAIN.rstrip(),
+        "PY",
         "}",
         # PaddleX writes `<Global.output>/evaluate_result.json`; the run keeps a copy.
         "pdx_eval() {",
         '  local name="$1"; shift',
-        '  python - -c "$CONFIG" -o Global.mode=evaluate -o Global.dataset_dir="$DATA" \\',
-        f'    -o Global.device="$DEVICE" -o Train.num_classes={int(flags["num_classes"])} \\',
-        '    -o Global.output="$OUT/$name" "$@" <<\'PY\'',
-        _PADDLEX_EVAL.rstrip(),
-        "PY",
+        '  pdx -o Global.mode=evaluate -o Global.output="$OUT/$name" "$@"',
         '  cp "$OUT/$name/evaluate_result.json" "$RUN_DIR/$name.json"',
         '  echo ">> $name: $(cat "$RUN_DIR/$name.json" | tr -d "\\n ")"',
         "}",
