@@ -81,6 +81,11 @@ def test_the_script_runs_the_vendor_modes_and_keeps_both_evaluations(tmp_path):
     assert 'WEIGHTS="${PADDLE_PDX_CACHE_HOME:-$HOME/.paddlex}/official_pretrained_model/' in script
     assert 'Evaluate.weight_path="$WEIGHTS"' in script and 'Train.pretrain_weight_path="$WEIGHTS"' in script
     assert "Train.epochs_iters=100" in script and "Train.learning_rate=0.0001" in script
+    # One 632 MB snapshot per evaluation: every 5 epochs, not every epoch.
+    assert "Train.eval_interval=5" in script
+    # Every mode runs through the patched Engine: best_model chosen on bbox AP, not mask AP.
+    assert 'self._dict["target_metrics"] = "bbox"' in script
+    assert script.count("Engine().run()") == 1 and "python main.py" not in script
     assert f"DATA={run / 'dataset'}" in script
     assert "is_compiled_with_cuda" in script  # GPU when available, else the registered CPU
     remote = trainer_script.generate_script(

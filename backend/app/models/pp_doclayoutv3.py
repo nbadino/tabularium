@@ -73,14 +73,17 @@ TRAIN = {
     "train_types": ("full",),
     "official_doc": "https://paddlepaddle.github.io/PaddleX/latest/en/module_usage/tutorials/ocr_modules/layout_analysis.html",
     "note": "Layout detector only: trains the boxes Xiaomi-OCR-0's region mode reads, not the reader.",
-    # The module config's Train section, as PaddleX ships it.
+    # The module config's Train section, as PaddleX ships it, except `eval_interval`: PaddleX
+    # maps it to PaddleDetection's `snapshot_epoch`, so every evaluation also keeps a 632 MB
+    # checkpoint folder, and at 1 a 100-epoch run fills a 60 GB host (run_1795177808184,
+    # 2026-11-20). At 5 a run keeps 20 of them and still picks the best epoch (on bbox AP).
     "defaults": {
         "epochs": 100,
         "batch_size": 4,
         "learning_rate": 1e-4,
         "warmup_steps": 100,
         "log_interval": 10,
-        "eval_interval": 1,
+        "eval_interval": 5,
     },
     "flags": {
         # The module config says 11 (its demo set); the PaddleDetection config and the
@@ -105,5 +108,10 @@ TRAIN = {
         "weights before training and on `best_model` after.",
         "The module config sets `num_classes: 11` (its demo set); the PaddleDetection config and "
         "the pretrained head have 25, so the recipe passes `Train.num_classes=25`.",
+        "`best_model`: the PaddleDetection config selects on `target_metrics: mask` while its "
+        "metric runs with `eval_mask: False`, so every epoch tied at 0 and the last one won. "
+        "Tabularium selects on bbox AP (an in-process patch of the dumped config).",
+        "`Train.eval_interval` is also PaddleDetection's `snapshot_epoch`: each evaluation keeps "
+        "a 632 MB checkpoint. The vendor's 1 is raised to 5.",
     ),
 }

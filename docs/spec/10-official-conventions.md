@@ -296,9 +296,12 @@ The layout detector of Xiaomi-OCR-0's region mode (and of PaddleOCR-VL). Owner:
 | Outputs | `output/best_model/best_model.pdparams`, `output/best_model/inference/` (`inference.json`, `inference.pdiparams`, `inference.yml`) |
 | Inference with it | `create_model("PP-DocLayoutV3", model_dir=<best_model/inference>)` |
 | Metric | `DocLayoutV3Metric` (bbox AP), returned by `Global.mode=evaluate` |
+| `best_model` | the PaddleDetection config selects on `target_metrics: mask` with `eval_mask: False`, so mask AP is never computed, every epoch ties at 0 and the last wins; Tabularium selects on bbox |
+| Snapshots | `Train.eval_interval` is PaddleDetection's `snapshot_epoch`: every evaluation keeps a ~632 MB folder (vendor default 1); Tabularium uses 5 |
 
 Known upstream defects worked around outside the vendor tree: `instance_seg.model.evaluate` calls
-`len()` on the device ids, `None` on `cpu` (patched in Tabularium's evaluate wrapper);
+`len()` on the device ids, `None` on `cpu`, and the best-model key above; both are patched
+in-process by the script's `Engine().run()` wrapper;
 PaddleDetection imports `pkg_resources` (setuptools < 81), and its numpy 1.x pin needs a pycocotools
 built against that numpy.
 

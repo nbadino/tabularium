@@ -29,7 +29,7 @@
     `pp-doclayoutv3`, registered next to the adapters' recipes since it reads no text). View
     `paddlex-layout` (§7); the script runs `check_dataset`, evaluates the official weights on the
     val split (`eval_base.json`), trains, evaluates `best_model` (`eval_trained.json`), with
-    `Train.num_classes=25` and `Global.device` GPU when paddle has CUDA, else CPU (without a GPU the
+    `Train.num_classes=25`, `best_model` chosen on bbox AP, a snapshot every 5 epochs, and `Global.device` GPU when paddle has CUDA, else CPU (without a GPU the
     preflight warns, and refuses on Apple Silicon, where training diverged at the first step). `TABULARIUM_PADDLEX_DIR` is a PaddleX `release/3.7`
     checkout with `paddlex --install PaddleDetection` (its `.venv/bin` goes on `PATH` when present);
     one-click uses `ghcr.io/nbadino/tabularium-train-layout:layout-v1` (`docker/train-layout`).
