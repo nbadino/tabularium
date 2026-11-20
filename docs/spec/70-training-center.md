@@ -153,7 +153,7 @@
 - **One-click training is the non-developer path.** `POST /training/auto` takes the current
   config plus an hourly budget, rents the best Vast.ai offer within that ceiling (VRAM, then compute
   capability, reliability and price; with `datacenter_only` only Vast datacenter hosts, filter
-  `datacenter` plus a local `hosting_type == 1` check, and an explicit error when none fits; with `verified_only` the `verified` filter), skips for 24 h the `machine_id` of every host that failed or was cancelled before training (`failed_hosts`, `offer.machine_id`), and replaces, up to `MAX_HOST_ATTEMPTS` = 3 hosts, an instance whose `status_msg` contains "Error" or that stays `created`/`offline` for `VAST_STUCK_LIMIT_S` (10 min) (rule of vast-cli `wait_for_instance`), boots the profile's versioned GHCR image (MonkeyOCRv2,
+  `datacenter` plus a local `hosting_type == 1` check, and an explicit error when none fits; with `verified_only` the `verified` filter), skips for 24 h the `machine_id` of every host that failed or was cancelled before training (`failed_hosts`, `offer.machine_id`), and replaces, up to `MAX_HOST_ATTEMPTS` = 3 hosts, an instance whose `status_msg` contains "Error" or that stays `created`/`offline` for `VAST_STUCK_LIMIT_S` (10 min) (rule of vast-cli `wait_for_instance`) or still pulls its image (`loading`) after `VAST_LOADING_LIMIT_S` (20 min), boots the profile's versioned GHCR image (MonkeyOCRv2,
   Qwen, legacy, GLM, Paddle; dots.ocr still provisions with `scripts/cloud/setup_train_env.sh`),
   waits for `/opt/tabularium/ready.json`, then calls `start_run`. The job is persisted under
   `<data>/auto-training/`, shows phases/log in the UI and destroys the instance if rental,

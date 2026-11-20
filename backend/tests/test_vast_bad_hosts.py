@@ -94,11 +94,14 @@ def test_created_or_offline_fails_only_after_the_grace_period(status):
     assert reason and status in reason and "10" in reason
 
 
-def test_a_slow_pull_or_a_running_instance_is_not_a_failure():
-    # Real prod status messages of hosts that were only slow.
+def test_a_slow_pull_gets_twenty_minutes_and_a_running_instance_is_not_a_failure():
+    # Real prod status messages of hosts that were only slow: fine inside the limit...
     for message in ("f1844fd52522: Retrying in 1 second\n", "150ae9de14cf: Download complete\n"):
-        assert cloud_manager.vast_provisioning_failure(
-            {"is_running": False, "actual_status": "loading", "status_message": message}, 3600) is None
+        inst = {"is_running": False, "actual_status": "loading", "status_message": message}
+        assert cloud_manager.vast_provisioning_failure(inst, cloud_manager.VAST_LOADING_LIMIT_S - 1) is None
+        # ...but a host still pulling after it is replaced, not paid to wait.
+        reason = cloud_manager.vast_provisioning_failure(inst, cloud_manager.VAST_LOADING_LIMIT_S)
+        assert reason and "loading" in reason and "20" in reason
     assert cloud_manager.vast_provisioning_failure(
         {"is_running": True, "actual_status": "running", "status_message": "Error: old"}, 3600) is None
 
