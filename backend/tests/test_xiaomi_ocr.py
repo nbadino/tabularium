@@ -35,9 +35,10 @@ def test_xiaomi_adapter_speaks_the_vendor_protocol():
 def test_xiaomi_native_page_crops_each_region_with_its_task_prompt(monkeypatch):
     seen_layout: list[tuple[int, int]] = []
 
-    def detect_layout(image, *, threshold):
+    def detect_layout(image, *, threshold, model_dir):
         seen_layout.append(image.size)
         assert threshold == 0.25
+        assert model_dir is None  # the official weights by default
         return [
             {"label": "doc_title", "bbox": [0, 0, 1000, 100]},
             {"label": "table", "bbox": [0, 100, 500, 600]},
@@ -81,7 +82,7 @@ def test_detect_layout_scales_detector_pixels_like_the_vendor(monkeypatch):
     monkeypatch.setattr(paddle_official.paddle_runtime, "cpu_unsupported_reason", lambda: None)
 
     def run(argv, **kwargs):
-        assert argv[-1] == "0.3"
+        assert argv[-2:] == ["0.3", ""]
         boxes = [
             {"label": "text", "coordinate": [10.0, 20.0, 190.0, 80.0]},
             {"label": "table", "coordinate": [-5.0, 50.0, 400.0, 90.0]},  # clamped to the page
@@ -95,6 +96,45 @@ def test_detect_layout_scales_detector_pixels_like_the_vendor(monkeypatch):
         {"label": "text", "bbox": [50, 200, 950, 800]},
         {"label": "table", "bbox": [0, 500, 1000, 900]},
     ]
+
+
+def test_detect_layout_passes_a_fine_tuned_model_dir(monkeypatch):
+    monkeypatch.setattr(paddle_official.paddle_runtime, "ready", lambda: True)
+    monkeypatch.setattr(paddle_official.paddle_runtime, "cpu_unsupported_reason", lambda: None)
+    seen = []
+
+    def run(argv, **kwargs):
+        seen.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(paddle_official.subprocess, "run", run)
+    paddle_official.detect_layout(Image.new("RGB", (20, 10)), threshold=0.3, model_dir="/runs/x/best_model/inference")
+    assert seen[0][-1] == "/runs/x/best_model/inference"
+    assert 'model_dir": model_dir' in paddle_official._LAYOUT_RUNNER  # noqa: SLF001
+
+
+def test_layout_model_resolves_a_finished_paddlex_run_only(monkeypatch, tmp_path):
+    from app import config
+    from app.services import trainer
+
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    run_dir = tmp_path / "4" / "runs" / "run_1"
+    inference = run_dir / "checkpoints" / "pp-doclayoutv3_full" / "best_model" / "inference"
+    inference.mkdir(parents=True)
+    (run_dir / "run.json").write_text(json.dumps({"toolchain": "paddlex", "state": "finished"}))
+    (run_dir / "eval_trained.json").write_text(json.dumps({"metrics": {"AP": 0.9}}))
+    assert trainer.layout_model_dir("official") is None
+    with pytest.raises(ValueError):  # not exported yet: never a silent fall-back
+        trainer.layout_model_dir("4/run_1")
+    for name in ("inference.json", "inference.pdiparams", "inference.yml"):
+        (inference / name).write_text("x")
+    assert trainer.layout_model_dir("4/run_1") == str(inference)
+    with pytest.raises(ValueError):
+        trainer.layout_model_dir("../../etc/run_1")
+    [item] = trainer.layout_checkpoints()
+    assert item["id"] == "4/run_1"
+    assert item["eval_trained"] == {"metrics": {"AP": 0.9}}
+    assert item["eval_base"] is None
 
 
 def test_the_paddle_runtime_follows_the_adapter_declaration():

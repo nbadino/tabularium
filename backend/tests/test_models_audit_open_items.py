@@ -298,7 +298,7 @@ def test_xiaomi_retries_a_looping_region_when_asked(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "xiaomi.db")
     init_db()
     model_settings.save_settings("xiaomi-ocr-0", {"workflow": {"retry_repetitive": True}})
-    monkeypatch.setattr(paddle_official, "detect_layout", lambda page, threshold: [
+    monkeypatch.setattr(paddle_official, "detect_layout", lambda page, threshold, model_dir: [
         {"bbox": [0, 0, 1000, 1000], "label": "text"},
     ])
     client = infmod.VllmClient(url="https://example.invalid/v1", adapter=model_adapters.get_adapter("xiaomi-ocr-0"))

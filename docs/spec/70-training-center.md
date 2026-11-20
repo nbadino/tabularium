@@ -25,6 +25,19 @@
     official prompts `Text Recognition:` / `Table Recognition:` / `Formula Recognition:`.
   - `paddleformers` — PaddleOCR-VL, `paddleformers-cli train <config> key=value`, full **and**
     LoRA; the `messages` dataset is the same shape as ms-swift.
+  - `paddlex` — the **PP-DocLayoutV3 layout detector** (`models/pp_doclayoutv3.py`, recipe id
+    `pp-doclayoutv3`, registered next to the adapters' recipes since it reads no text). View
+    `paddlex-layout` (§7); the script runs `check_dataset`, evaluates the official weights on the
+    val split (`eval_base.json`), trains, evaluates `best_model` (`eval_trained.json`), with
+    `Train.num_classes=25` and `Global.device` GPU when paddle has CUDA, else CPU (without a GPU the
+    preflight warns, and refuses on Apple Silicon, where training diverged at the first step). `TABULARIUM_PADDLEX_DIR` is a PaddleX `release/3.7`
+    checkout with `paddlex --install PaddleDetection` (its `.venv/bin` goes on `PATH` when present);
+    one-click uses `ghcr.io/nbadino/tabularium-train-layout:layout-v1` (`docker/train-layout`).
+    The exported `best_model/inference` needs no preparation: `checkpoint_prepare` refuses it,
+    the one-click job releases the GPU once it is downloaded, and Xiaomi-OCR-0's `layout_model`
+    setting (`official` or `<project_id>/<run_id>`, listed by `GET /api/system/layout-checkpoints`)
+    loads it with `create_model(model_dir=...)`; a choice that no longer resolves is an error,
+    never the official weights in disguise. Resume is not supported yet.
   - `mineru-sft` — MinerU2.5: its lesson explicitly forbids `swift sft` and ships the config only
     inside `mineru_sft_code.zip`, which no public source carries (checked 2026-11-16; the
     unmerged MetaX lesson's plain-`swift sft` stub is not adopted); the recipe is `planned`

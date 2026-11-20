@@ -52,6 +52,11 @@ def _plan_for(project_id: int, run_id: str) -> dict:
     recipe = train_recipes.get_recipe(adapter_id)
     if recipe is None:
         raise ValueError("adapter della run non riconosciuto")
+    if recipe.toolchain == "paddlex":
+        raise ValueError(
+            "a PP-DocLayoutV3 checkpoint needs no preparation: pick the run as layout model "
+            "in the Xiaomi-OCR-0 settings"
+        )
     checkpoint = trainer.checkpoint_info(run_dir)
     if checkpoint is None:
         raise ValueError("la run non contiene un checkpoint completo")
