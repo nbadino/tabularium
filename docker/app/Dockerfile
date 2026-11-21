@@ -10,7 +10,7 @@
 # Bind to loopback and put a TLS proxy in front. Creating the first admin needs the
 # setup token printed in the container log (docker logs) and stored in /data/setup-token.
 # Digests pinned for reproducible builds; Dependabot (docker) proposes the updates.
-FROM node:22-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da AS frontend
+FROM node:26-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS frontend
 WORKDIR /src/frontend
 # Serve the interface under a sub-path (e.g. /tabularium/) by building with
 # --build-arg TABULARIUM_BASE_PATH=/tabularium/ and stripping the prefix at the proxy.
