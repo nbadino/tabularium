@@ -16,7 +16,7 @@ from contextlib import closing
 
 from . import config
 
-SCHEMA_VERSION = "26"
+SCHEMA_VERSION = "27"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -584,6 +584,16 @@ _MIGRATIONS: list[tuple[str, str]] = [
          WHERE credential_ref LIKE 'vault:consensus_profile_%'
            AND id IN (SELECT profile_id FROM user_model_keys);
     """),
+    ("27", """
+        -- The content of a page's source file: its SHA-256 and byte size. An upload,
+        -- a zip import or a scan skips a file whose content is already a page of the
+        -- project, so sending a folder again is safe. Pages registered before this
+        -- migration get both values from a background backfill
+        -- (services/content_identity.py), until then name + size stands in.
+        ALTER TABLE pages ADD COLUMN content_sha256 TEXT;
+        ALTER TABLE pages ADD COLUMN file_size INTEGER;
+        CREATE INDEX IF NOT EXISTS idx_pages_content_sha256 ON pages(project_id, content_sha256);
+    """),
 ]
 
 
@@ -646,7 +656,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     for version, ddl in sorted(_MIGRATIONS, key=lambda m: int(m[0])):
         if int(version) <= current:
             continue
-        if version in {"16", "17", "18", "21", "22", "23", "24", "25", "26"}:
+        if version in {"16", "17", "18", "21", "22", "23", "24", "25", "26", "27"}:
             _execute_additive_migration(conn, ddl)
             conn.execute("UPDATE meta SET value=? WHERE key='schema_version'", (version,))
             conn.commit()

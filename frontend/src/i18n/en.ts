@@ -1089,6 +1089,19 @@ export const en: Dict = {
     chooseFolder: 'Import folder',
     importHint: 'Scan reads the registered source folder. Import folder uploads new images or PDFs from the browser.',
     importFailed: 'Import failed ({status}): {detail}',
+    checkFolder: 'Check folder',
+    uploadProgress: 'Sending files: {sent} of {total}',
+    checkAllPresent: 'All {total} files of “{folder}” are already in the project.',
+    checkMissing: {
+      one: '{count} of the {total} files of “{folder}” is not in the project yet:',
+      other: '{count} of the {total} files of “{folder}” are not in the project yet:',
+    },
+    uploadMissing: { one: 'Upload the missing file', other: 'Upload the {count} missing files' },
+    failedCount: { one: '{count} file was not uploaded', other: '{count} files were not uploaded' },
+    failedBody:
+      'the connection kept failing after several tries. Import the same folder again: files already in the project are skipped and only what is missing is sent.',
+    alreadyPresentCount: { one: '{count} file already in the project, skipped', other: '{count} files already in the project, skipped' },
+    alreadyPresentBody: 'Same content as a page already imported: show the names',
     delete: 'Delete project',
     protocolTab: 'Study protocol · v{version}',
     protocolSaving: 'saving…',
@@ -1112,7 +1125,7 @@ export const en: Dict = {
     archive: 'Archive',
     foundFiles: 'Files found',
     registered: 'Registered',
-    duplicates: 'Duplicates',
+    duplicates: 'Already present',
     unsupported: 'Unsupported',
     skipCount: {
       one: '{count} file skipped',

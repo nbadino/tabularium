@@ -21,7 +21,7 @@ def _project(tmp_path: Path) -> tuple[int, list[int]]:
     archive = tmp_path / "archive"
     archive.mkdir(parents=True)
     for i in range(3):
-        Image.new("RGB", (1000, 1400), (210, 210, 210)).save(archive / f"{i:03}.png")
+        Image.new("RGB", (1000, 1400), (210, 210, 210 - i)).save(archive / f"{i:03}.png")
     with TestClient(app) as client:
         pid = client.post("/api/projects", json={"name": "S", "archive_dir": str(archive)}).json()["id"]
         client.post(f"/api/projects/{pid}/scan")

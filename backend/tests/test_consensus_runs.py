@@ -43,7 +43,7 @@ def _project(client: TestClient, root: Path, pages: int = 2) -> tuple[int, list[
     archive = root / "archive"
     archive.mkdir(parents=True)
     for index in range(pages):
-        Image.new("RGB", (200, 300), "white").save(archive / f"p{index}.png")
+        Image.new("RGB", (200, 300), (255, 255, 255 - index)).save(archive / f"p{index}.png")
     project_id = client.post(
         "/api/projects", json={"name": "Consensus", "archive_dir": str(archive)}
     ).json()["id"]

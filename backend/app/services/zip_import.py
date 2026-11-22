@@ -27,6 +27,7 @@ from pathlib import Path, PurePosixPath
 from .. import config
 from ..adapters import collections as collectionstore
 from ..db import connect
+from . import content_identity
 from . import images as imgmod
 from . import scan as scanmod
 
@@ -395,6 +396,8 @@ def run_import(
             collection_id, _name, flat_created = collectionstore.ensure(
                 conn, project_id, _collection_name(collection_name),
             )
+        # A zip sent again adds only what is new; a skipped file's extracted copy goes.
+        contents = content_identity.ProjectIndex(conn, project_id)
         # Progress counts pages, not files: one PDF can hold hundreds of them.
         units = [_page_units(target) for _entry, target in extracted]
         total_units = sum(units)
@@ -421,6 +424,7 @@ def run_import(
                 conn, project_id, scanmod.Candidate(target, kind), files_dir, report,
                 lang=lang, collection_id=target_collection,
                 on_page=on_page if kind == "pdf" else None,
+                index=contents, on_duplicate=lambda path: path.unlink(missing_ok=True),
             )
             units_done = base_done + units[index - 1]
             added = report.registered - before
@@ -440,6 +444,7 @@ def run_import(
     summary.update({
         "registered": report.registered,
         "duplicates": report.duplicates,
+        "already_present": report.already_present[:REPORTED_NAMES],
         "unsupported": report.unsupported,
         "errors": report.errors[:REPORTED_NAMES],
         "collections": sorted(collections.values(), key=lambda c: c["name"].lower()),

@@ -311,6 +311,27 @@ class ScanReportOut(BaseModel):
     unsupported: int = 0
     missing: int = 0
     errors: list[str] = []
+    # Names of the files skipped because their content is already a page of the project.
+    already_present: list[str] = []
+
+
+class UploadCheckFile(BaseModel):
+    name: str = Field(min_length=1, max_length=1024)
+    size: int = Field(ge=0)
+
+
+class UploadCheckIn(BaseModel):
+    """The files of a folder a browser is about to send: name and byte size."""
+    files: list[UploadCheckFile] = Field(max_length=50000)
+
+
+class UploadCheckOut(BaseModel):
+    # Names already in the project with the same size, and the ones still to send,
+    # each in the order they were asked.
+    present: list[str]
+    missing: list[str]
+    # Positions in the request of the files already present: names can repeat in a folder.
+    present_indexes: list[int]
 
 
 # --- Blocchi (annotazioni) ----------------------------------------------------

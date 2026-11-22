@@ -20,8 +20,8 @@ from app.services import paddle_dataset
 def _project_with_table(tmp_path: Path, *, verified: bool) -> int:
     archive = tmp_path / "archive"
     archive.mkdir(parents=True)
-    for name in ("p01.png", "p02.png"):
-        image = Image.new("RGB", (600, 400), (255, 255, 255))
+    for i, name in enumerate(("p01.png", "p02.png")):
+        image = Image.new("RGB", (600, 400), (255, 255, 255 - i))
         draw = ImageDraw.Draw(image)
         for y in range(40, 360, 40):
             draw.text((30, y), "Abava (m. tank)   Ru   71", fill=(0, 0, 0))

@@ -4,7 +4,7 @@ import type { InputHTMLAttributes, ReactNode } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
 import { PAGE_STATUSES, PAGE_TYPES } from '../lib/types'
-import type { PageItem, PrefillEngines, Project, RecognitionRun, ScanReport } from '../lib/types'
+import type { PageItem, PrefillEngines, Project, RecognitionRun, ScanReport, UploadCheck } from '../lib/types'
 import { pageTypeLabel, pages as pagesN, statusLabel, STATUS_TONE } from '../lib/vocab'
 import { Badge, ErrorNotice, Field, Loading, Menu, Modal, Module, WarnNotice } from '../app/ui'
 import { PageWall } from '../app/PageWall'
@@ -18,7 +18,7 @@ import { IconCheck, IconEnv, IconScan, IconTrash, IconUsers } from '../app/icons
 import { useI18n, tn } from '../i18n'
 import { writeActiveProject } from '../app/activeProject'
 import { accessLabel, projectAccess } from '../app/projectAccess'
-import { cleanRelPath, pageLabel } from '../lib/pageLabel'
+import { cleanRelPath, pageLabel, sortPagesByName } from '../lib/pageLabel'
 import { API_BASE } from '../lib/endpoints'
 import ZipImportDialog, { Bar as ProgressBar } from '../app/ZipImportDialog'
 import type { ZipJob } from '../lib/zipImport'
@@ -29,7 +29,7 @@ import { matchesCollection, parseCollectionFilter, useCollections } from '../app
 import type { CollectionFilter } from '../app/collections'
 import type { CollectionItem } from '../lib/types'
 import { describeError } from '../lib/errors'
-import { batchFiles, mergeReports } from '../lib/uploadBatches'
+import { CHECK_CHUNK, batchFiles, mergeReports, sendWithRetry, sortFilesByName, splitByCheck } from '../lib/uploadBatches'
 import { lastPageId, mergeNewPages } from '../lib/pageList'
 
 /** Scoped per authenticated user and project so another account never inherits a previous scan report. */
@@ -77,6 +77,11 @@ export default function ProjectDetailPage() {
   const [approveNotice, setApproveNotice] = useState<string | null>(null)
   const filesInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
+  const checkInputRef = useRef<HTMLInputElement>(null)
+  // Files sent so far in an upload, to show where a long one is.
+  const [uploadProgress, setUploadProgress] = useState<{ sent: number; total: number } | null>(null)
+  // A folder checked against the project without uploading: what it still lacks.
+  const [folderCheck, setFolderCheck] = useState<{ folder: string; total: number; missing: File[] } | null>(null)
   const [uploading, setUploading] = useState(false)
   // The ZIP import running in the background, shown after its dialog is closed.
   const [zipJob, setZipJob] = useState<{ name: string; job: ZipJob } | null>(null)
@@ -166,41 +171,122 @@ export default function ProjectDetailPage() {
     }
   }
 
-  const uploadFolder = async (input: FileList | File[] | null) => {
+  /** Which of `files` the project already has (same name and size), asked in chunks. */
+  const checkFiles = async (files: File[]): Promise<{ present: File[]; missing: File[] }> => {
+    const present: File[] = []
+    const missing: File[] = []
+    for (let i = 0; i < files.length; i += CHECK_CHUNK) {
+      const chunk = files.slice(i, i + CHECK_CHUNK)
+      const answer = await apiPost<UploadCheck>(`/projects/${projectId}/import-upload/check`, {
+        files: chunk.map((f) => ({ name: f.name, size: f.size })),
+      })
+      const split = splitByCheck(chunk, answer.present_indexes)
+      present.push(...split.present)
+      missing.push(...split.missing)
+    }
+    return { present, missing }
+  }
+
+  const folderName = (files: File[]) => files[0]?.webkitRelativePath?.split('/')[0] || files[0]?.name || ''
+
+  const resetInputs = () => {
+    if (folderInputRef.current) folderInputRef.current.value = ''
+    if (filesInputRef.current) filesInputRef.current.value = ''
+    if (checkInputRef.current) checkInputRef.current.value = ''
+  }
+
+  /**
+   * Sends a folder in name order. Files the project already has are left out before
+   * sending, a batch that fails is sent again, and one that still fails is named in the
+   * report: sending the same folder again then uploads only what is missing.
+   */
+  const uploadFolder = async (input: FileList | File[] | null, { checked = false }: { checked?: boolean } = {}) => {
     if (!input || input.length === 0) return
     const all = Array.from(input)
     const zips = all.filter(isZip)
     if (zips.length) setZipQueue((cur) => [...cur, ...zips])
-    const files = all.filter((file) => !isZip(file))
+    const files = sortFilesByName(all.filter((file) => !isZip(file)))
     if (files.length === 0) {
-      if (filesInputRef.current) filesInputRef.current.value = ''
+      resetInputs()
       return
     }
     setUploading(true)
     setError(null)
+    setFolderCheck(null)
     sessionStorage.removeItem(reportKey(reportUserId, projectId))
     setReport(null)
     try {
+      let toSend = files
+      let rep: ScanReport = { found_files: 0, registered: 0, duplicates: 0, unsupported: 0, errors: [], already_present: [], failed: [] }
+      if (!checked) {
+        setUploadProgress({ sent: 0, total: files.length })
+        try {
+          const split = await checkFiles(files)
+          toSend = split.missing
+          rep = { ...rep, found_files: split.present.length, duplicates: split.present.length, already_present: split.present.map((f) => f.name) }
+        } catch {
+          // The check is an optimisation: the server skips files it already has anyway.
+          toSend = files
+        }
+      }
+      setReport(rep)
       const into = typeof collectionFilter === 'number' ? `?collection_id=${collectionFilter}` : ''
-      let rep: ScanReport | null = null
+      let sent = 0
+      let stop: unknown = null
+      setUploadProgress({ sent, total: toSend.length })
       // Batches keep each request under Cloudflare's 100 MB body limit.
-      for (const batch of batchFiles(files)) {
-        const form = new FormData()
-        batch.forEach((file) => form.append('files', file, file.name))
-        const response = await fetch(`${API_BASE}/projects/${projectId}/import-upload${into}`, { method: 'POST', body: form })
-        if (!response.ok) throw new Error(t('project.importFailed', { status: response.status, detail: await response.text() }))
-        const part = await response.json() as ScanReport
-        rep = rep ? mergeReports(rep, part) : part
+      for (const batch of batchFiles(toSend)) {
+        if (stop != null) {
+          rep = mergeReports(rep, { found_files: batch.length, registered: 0, duplicates: 0, unsupported: 0, errors: [], failed: batch.map((f) => f.name) })
+          continue
+        }
+        try {
+          const response = await sendWithRetry(() => {
+            const form = new FormData()
+            batch.forEach((file) => form.append('files', file, file.name))
+            return fetch(`${API_BASE}/projects/${projectId}/import-upload${into}`, { method: 'POST', body: form })
+          })
+          if (response.ok) {
+            rep = mergeReports(rep, await response.json() as ScanReport)
+          } else {
+            const failed: ScanReport = { found_files: batch.length, registered: 0, duplicates: 0, unsupported: 0, errors: [], failed: batch.map((f) => f.name) }
+            rep = mergeReports(rep, failed)
+            // A refusal (expired session, no access, too large) will refuse every batch.
+            if (response.status < 500 && response.status !== 408 && response.status !== 429) {
+              stop = new Error(t('project.importFailed', { status: response.status, detail: await response.text() }))
+            }
+          }
+        } catch {
+          rep = mergeReports(rep, { found_files: batch.length, registered: 0, duplicates: 0, unsupported: 0, errors: [], failed: batch.map((f) => f.name) })
+        }
+        sent += batch.length
+        setUploadProgress({ sent, total: toSend.length })
         setReport(rep)
       }
-      if (!rep) return
+      if (stop != null) setError(stop)
+      setReport(rep)
       sessionStorage.setItem(reportKey(reportUserId, projectId), JSON.stringify(rep))
       setPages((await apiGet<{ items: PageItem[] }>(`/projects/${projectId}/pages`)).items)
       void refreshCollections()
     } catch (e) { setError(e) } finally {
       setUploading(false)
-      if (folderInputRef.current) folderInputRef.current.value = ''
-      if (filesInputRef.current) filesInputRef.current.value = ''
+      setUploadProgress(null)
+      resetInputs()
+    }
+  }
+
+  /** Compares a folder with the project without sending anything. */
+  const checkFolder = async (input: FileList | null) => {
+    if (!input || input.length === 0) return
+    const files = sortFilesByName(Array.from(input).filter((file) => !isZip(file)))
+    setError(null)
+    setUploading(true)
+    try {
+      const { missing } = await checkFiles(files)
+      setFolderCheck({ folder: folderName(files), total: files.length, missing })
+    } catch (e) { setError(e) } finally {
+      setUploading(false)
+      resetInputs()
     }
   }
 
@@ -353,7 +439,8 @@ export default function ProjectDetailPage() {
   }
 
   // The pages of the collection being looked at (all of them without a filter).
-  const scopedPages = useMemo(() => pages.filter((page) => matchesCollection(page, collectionFilter)), [pages, collectionFilter])
+  // In file-name order, so a gap in an uploaded folder shows where it is.
+  const scopedPages = useMemo(() => sortPagesByName(pages.filter((page) => matchesCollection(page, collectionFilter))), [pages, collectionFilter])
   const filteredPages = useMemo(() => {
     const query = pageQuery.trim().toLocaleLowerCase()
     return query ? scopedPages.filter((page) => pageLabel(page).toLocaleLowerCase().includes(query)) : scopedPages
@@ -486,6 +573,14 @@ export default function ProjectDetailPage() {
         className="hidden"
         {...({ webkitdirectory: '', directory: '' } as InputHTMLAttributes<HTMLInputElement>)}
       />
+      <input
+        ref={checkInputRef}
+        type="file"
+        multiple
+        onChange={(e) => void checkFolder(e.target.files)}
+        className="hidden"
+        {...({ webkitdirectory: '', directory: '' } as InputHTMLAttributes<HTMLInputElement>)}
+      />
       <div className="mb-3 flex flex-wrap items-end gap-x-4 gap-y-2">
         <div className="min-w-0">
           <h1 className="truncate text-[26px] font-bold leading-tight tracking-[-0.03em]">
@@ -501,6 +596,7 @@ export default function ProjectDetailPage() {
             <Menu label={uploading ? t('project.uploading') : busy ? t('project.scanBusy') : t('project.addPages')}>
               <button type="button" className="menu-item" disabled={uploading} onClick={() => filesInputRef.current?.click()}>{t('workflow.importFiles')}</button>
               <button type="button" className="menu-item" disabled={uploading} onClick={() => folderInputRef.current?.click()}>{t('project.chooseFolder')}</button>
+              <button type="button" className="menu-item" disabled={uploading} onClick={() => checkInputRef.current?.click()}>{t('project.checkFolder')}</button>
               {project?.archive_dir && <button type="button" className="menu-item" disabled={busy} onClick={() => void scan()}><IconScan size={13} />{t('project.scan')}</button>}
             </Menu>
           )}
@@ -611,6 +707,39 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
+      {uploadProgress && (
+        <div role="status" className="mb-3 text-[13px]">
+          <p>{t('project.uploadProgress', { sent: uploadProgress.sent, total: uploadProgress.total })}</p>
+          <ProgressBar value={uploadProgress.total ? uploadProgress.sent / uploadProgress.total : 0} label={t('project.uploading')} />
+        </div>
+      )}
+
+      {folderCheck && (
+        <div className="mb-3">
+          <Module
+            tab={t('project.checkFolder')}
+            quiet
+            aux={<button type="button" className="btn btn-sm" onClick={() => setFolderCheck(null)}>{t('common.close')}</button>}
+          >
+            {folderCheck.missing.length === 0 ? (
+              <p className="text-[13px]">{t('project.checkAllPresent', { total: folderCheck.total, folder: folderCheck.folder })}</p>
+            ) : (
+              <>
+                <p className="text-[13px]">{tn('project.checkMissing', folderCheck.missing.length, { total: folderCheck.total, folder: folderCheck.folder })}</p>
+                <ul className="mono mt-2 max-h-48 overflow-auto text-[11px]">
+                  {folderCheck.missing.map((f, i) => <li key={i} className="break-all">{f.webkitRelativePath || f.name}</li>)}
+                </ul>
+                {canEdit && (
+                  <button type="button" className="btn btn-primary mt-2" disabled={uploading} onClick={() => void uploadFolder(folderCheck.missing, { checked: true })}>
+                    {tn('project.uploadMissing', folderCheck.missing.length)}
+                  </button>
+                )}
+              </>
+            )}
+          </Module>
+        </div>
+      )}
+
       {zipJob && zipJob.job.total > 0 && zipQueue.length === 0 && (
         <div role="status" className="mb-3 text-[13px]">
           <p>{zipJob.job.phase === 'registering'
@@ -661,6 +790,27 @@ export default function ProjectDetailPage() {
               </div>
             </dl>
           </Module>
+          {(report.failed?.length ?? 0) > 0 && (
+            <WarnNotice title={tn('project.failedCount', report.failed?.length ?? 0)}>
+              <ul className="mono max-h-32 list-inside list-disc space-y-0.5 overflow-auto text-[11px]">
+                {report.failed?.map((name, i) => <li key={i} className="break-all">{name}</li>)}
+              </ul>
+              <p className="mt-1.5 text-[12px]">
+                <b className="font-semibold">{t('errors.whatToDo')}</b>
+                {t('project.failedBody')}
+              </p>
+            </WarnNotice>
+          )}
+          {(report.already_present?.length ?? 0) > 0 && (
+            <Module tab={tn('project.alreadyPresentCount', report.already_present?.length ?? 0)} quiet>
+              <details className="text-[12px]">
+                <summary className="cursor-pointer text-[color:var(--color-ink-2)]">{t('project.alreadyPresentBody')}</summary>
+                <ul className="mono mt-1 max-h-32 overflow-auto text-[11px]">
+                  {report.already_present?.map((name, i) => <li key={i} className="break-all">{name}</li>)}
+                </ul>
+              </details>
+            </Module>
+          )}
           {errorCount > 0 ? (
             <WarnNotice title={tn('project.skipCount', errorCount)}>
               <ul className="mono max-h-32 list-inside list-disc space-y-0.5 overflow-auto text-[11px]">

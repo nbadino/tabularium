@@ -124,7 +124,7 @@ def test_page_list_is_not_silently_truncated(tmp_path):
     archive = tmp_path / "big"
     archive.mkdir()
     for index in range(205):
-        Image.new("L", (8, 8), 255).save(archive / f"p{index:03d}.png")
+        Image.new("RGB", (8, 8), (255, index, 0)).save(archive / f"p{index:03d}.png")
     with TestClient(app) as client:
         pid = client.post("/api/projects", json={"name": "Big", "archive_dir": str(archive)}).json()["id"]
         client.post(f"/api/projects/{pid}/scan")

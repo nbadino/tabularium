@@ -274,6 +274,17 @@ export interface ScanReport {
   unsupported: number
   missing?: number
   errors: string[]
+  /** Files skipped because their content is already a page of the project. */
+  already_present?: string[]
+  /** Browser only: files of batches that still failed after every retry. */
+  failed?: string[]
+}
+
+/** `POST /projects/{id}/import-upload/check`: which files of a folder the project already has. */
+export interface UploadCheck {
+  present: string[]
+  missing: string[]
+  present_indexes: number[]
 }
 
 export const PAGE_TYPES = [

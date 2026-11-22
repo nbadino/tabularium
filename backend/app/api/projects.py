@@ -15,6 +15,8 @@ from ..adapters import collections as collectionstore
 from ..adapters import projects as projectstore
 from ..db import connect  # noqa: F401  (scan, membership, delete: P7.1)
 from ..schemas import (
+    UploadCheckIn,
+    UploadCheckOut,
     ConventionItem,
     ConventionsIn,
     ConventionsOut,
@@ -37,6 +39,7 @@ from ..schemas import (
 )
 from ..services import pages as pagesvc
 from ..services import scan as scanmod
+from ..services import content_identity
 from ..services import corpus as corpusmod
 from ..services import pilot as pilotmod
 from ..services import auth as authsvc
@@ -716,6 +719,32 @@ def scan_project(
     return ScanReportOut(**report.to_dict())
 
 
+@router.post("/api/projects/{project_id}/import-upload/check", response_model=UploadCheckOut)
+def check_upload(
+    project_id: int,
+    body: UploadCheckIn,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> UploadCheckOut:
+    """Which files of a folder are not in the project yet (by name and size)."""
+    _get_project_or_404(None, project_id)
+    names = [Path(f.name.replace("\\", "/")).name for f in body.files]
+    with connect() as conn:
+        present, missing = content_identity.check_names(
+            conn, project_id, [(name, f.size) for name, f in zip(names, body.files)],
+        )
+    return UploadCheckOut(
+        present=[names[i] for i in present], missing=[names[i] for i in missing], present_indexes=present,
+    )
+
+
+def _upload_destination(session_dir: Path, name: str, saved: int) -> Path:
+    """The file keeps its own name; a second file of that name in one request gets a counter."""
+    destination = session_dir / name
+    if destination.exists():
+        destination = session_dir / f"{saved:06d}_{name}"
+    return destination
+
+
 @router.post("/api/projects/{project_id}/import-upload", response_model=ScanReportOut)
 async def import_uploaded_folder(
     project_id: int,
@@ -725,7 +754,12 @@ async def import_uploaded_folder(
     collection_id: int | None = Query(default=None),
     _auth: dict = Depends(require_resource(write=True)),
 ) -> ScanReportOut:
-    """Importa una cartella scelta dal browser senza esporre percorsi locali."""
+    """Import files chosen in the browser, without exposing local paths.
+
+    Files whose content is already a page of the project are skipped and named in
+    `already_present`, so sending a folder again (a retry, a second try at a whole
+    year) only adds what is missing.
+    """
     lang = parse_lang(request.headers.get("accept-language"))
     with connect() as conn:
         _get_project_or_404(None, project_id)
@@ -739,17 +773,24 @@ async def import_uploaded_folder(
     errors: list[str] = []
     allowed = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff", ".pdf"}
     for upload in files:
-        name = Path(upload.filename or "").name
+        name = Path((upload.filename or "").replace("\\", "/")).name
         if not name or Path(name).suffix.lower() not in allowed:
             errors.append(msg("file_unsupported_fmt", lang, name=upload.filename or name))
             continue
-        destination = session_dir / f"{saved:06d}_{name}"
+        destination = _upload_destination(session_dir, name, saved)
         try:
-            destination.write_bytes(await upload.read())
+            # Copied in chunks: a whole scan is never held in memory.
+            with destination.open("wb") as out:
+                while chunk := await upload.read(1 << 20):
+                    out.write(chunk)
             saved += 1
         except OSError as exc:
+            destination.unlink(missing_ok=True)
             errors.append(f"{name}: {exc}")
     report = scanmod.ScanReport(found_files=saved)
     report.errors.extend(errors)
     scanmod.register_uploads(project_id, session_dir, report, lang=lang, collection_id=collection_id)
+    # Every file was already there: no empty folder left behind.
+    if not any(session_dir.iterdir()):
+        session_dir.rmdir()
     return ScanReportOut(**report.to_dict())

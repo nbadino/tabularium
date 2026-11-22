@@ -115,6 +115,10 @@ MODELS_DIR: Path = Path(
 ).expanduser()
 
 # --- Server ------------------------------------------------------------------
+# Hash the source files of pages registered before content dedup existed, in a
+# background thread at start-up (services/content_identity.py). Off only in tests,
+# where a thread racing the fixtures would make them flaky.
+CONTENT_HASH_BACKFILL = os.environ.get("TABULARIUM_CONTENT_HASH_BACKFILL", "1").strip() not in {"0", "false", "no"}
 HOST = os.environ.get("TABULARIUM_HOST", "127.0.0.1")
 PORT = int(os.environ.get("TABULARIUM_PORT", "8787"))
 

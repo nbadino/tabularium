@@ -43,7 +43,7 @@ def test_delete_page_single_and_bulk_permissions_and_external_files(client, tmp_
     p1_img = tmp_path / "u1.png"
     p2_img = tmp_path / "u2.png"
     Image.new("RGB", (40, 40), "white").save(p1_img)
-    Image.new("RGB", (40, 40), "white").save(p2_img)
+    Image.new("RGB", (40, 40), "black").save(p2_img)
     pid1 = client.post("/api/projects", json={"name": "UploadProj"}).json()["id"]
     client.post(
         f"/api/projects/{pid1}/import-upload",
@@ -83,8 +83,8 @@ def test_delete_page_single_and_bulk_permissions_and_external_files(client, tmp_
     ext_dir.mkdir()
     ext_a = ext_dir / "a.png"
     ext_b = ext_dir / "b.png"
-    Image.new("RGB", (40, 40), "white").save(ext_a)
-    Image.new("RGB", (40, 40), "white").save(ext_b)
+    Image.new("RGB", (40, 40), "red").save(ext_a)
+    Image.new("RGB", (40, 40), "blue").save(ext_b)
     pid2 = client.post("/api/projects", json={"name": "ServerProj", "archive_dir": str(ext_dir)}).json()["id"]
     assert client.post(f"/api/projects/{pid2}/scan").status_code == 200
     pages2 = client.get(f"/api/projects/{pid2}/pages").json()["items"]

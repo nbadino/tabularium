@@ -11,8 +11,9 @@ from app.main import app
 def test_the_queue_leaves_out_pages_whose_source_is_missing(tmp_path):
     archive = tmp_path / "archive"
     archive.mkdir()
-    for name in ("a.png", "b.png"):
-        Image.new("RGB", (300, 400), "white").save(archive / name)
+    # Distinct pixels: identical files would be one page (content dedup).
+    for i, name in enumerate(("a.png", "b.png")):
+        Image.new("RGB", (300, 400), (255, 255, 255 - i)).save(archive / name)
     with TestClient(app) as client:
         pid = client.post("/api/projects", json={"name": "Q", "archive_dir": str(archive)}).json()["id"]
         client.post(f"/api/projects/{pid}/scan")
