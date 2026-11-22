@@ -102,6 +102,7 @@ RECIPE_TELEOCR_SETTINGS="{}"
 RECIPE_USER_DTYPE=""
 RECIPE_MINERU_SETTINGS="{}"
 RECIPE_CONFIG_SIGNATURE=""
+RECIPE_HF_REVISION=""
 SERVE_ARGV=()
 if [ -n "$RECIPE_B64" ]; then
   RECIPE_JSON=$(printf '%s' "$RECIPE_B64" | base64 -d)
@@ -124,6 +125,8 @@ EOF
   RECIPE_DRAFT_HF_REPO=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('draft_hf_repo') or '')")
   RECIPE_DRAFT_MODEL_DIR=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('draft_model_dir') or '')")
   RECIPE_CONFIG_SIGNATURE=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('configuration_signature') or '')")
+  # A pinned Hugging Face revision (Indra OCR: the tag its package is tested with).
+  RECIPE_HF_REVISION=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('hf_revision') or '')")
   RECIPE_TELEOCR_SETTINGS=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('settings') or {},separators=(',',':'))) ")
   RECIPE_USER_DTYPE=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print((json.load(sys.stdin).get('serving_overrides') or {}).get('dtype') or '')")
   RECIPE_MINERU_SETTINGS=$(printf '%s' "$RECIPE_JSON" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('settings') or {},separators=(',',':'))) ")
@@ -250,7 +253,7 @@ if [ "$REPLACE_RUNNING_SERVER" = "1" ]; then
     for server_pid in $SERVER_PIDS; do
       if [ ! -r "/proc/$server_pid/cmdline" ]; then continue; fi
       SERVER_CMD=$(tr '\0' ' ' < "/proc/$server_pid/cmdline")
-      if [[ "$SERVER_CMD" != *"serve.py"* && "$SERVER_CMD" != *"vllm.entrypoints"* ]]; then
+      if [[ "$SERVER_CMD" != *"serve.py"* && "$SERVER_CMD" != *"vllm.entrypoints"* && "$SERVER_CMD" != *"indra_native_gateway.py"* ]]; then
         echo "!! Sostituzione server impossibile: PID $server_pid sulla porta $PORT non è un server vLLM riconosciuto; nessun processo è stato fermato." >&2
         exit 2
       fi
@@ -326,7 +329,8 @@ if command -v nvidia-smi &>/dev/null; then
   # vLLM supports Turing (sm_75), but those cards do not execute BF16. Keep
   # producer-recommended BF16 on Ampere+ and select the equivalent supported
   # FP16 engine dtype on older cards instead of excluding them from search.
-  if awk -v cap="$COMPUTE_CAP" 'BEGIN { exit !(cap + 0 < 8.0) }'; then
+  # ONNX Runtime (Indra OCR) picks its own precision per kernel: no dtype to adapt.
+  if [ "$RECIPE_RUNTIME" != "indra-native" ] && awk -v cap="$COMPUTE_CAP" 'BEGIN { exit !(cap + 0 < 8.0) }'; then
     if [ "$RECIPE_USER_DTYPE" = "bfloat16" ]; then
       echo "!! serving.dtype=bfloat16 non è supportato dalla GPU sm_${COMPUTE_CAP}; scegli half/float16 o ripristina Automatico." >&2
       exit 2
@@ -385,7 +389,8 @@ apt-get install -y -qq git git-lfs curl wget build-essential gcc g++ python3-ven
 # higher" — messaggio che indica il contrario del problema reale.
 NVCC_VERSION=$(nvcc --version 2>/dev/null | grep -oE 'release [0-9]+\.[0-9]+' | awk '{print $2}')
 NVCC_VERSION="${NVCC_VERSION:-0}"
-if awk -v cap="$COMPUTE_CAP" -v nv="$NVCC_VERSION" 'BEGIN { exit !(cap + 0 >= 12.0 && nv + 0 < 12.9) }'; then
+# ONNX Runtime brings its CUDA libraries as wheels and compiles nothing: Indra skips it.
+if [ "$RECIPE_RUNTIME" != "indra-native" ] && awk -v cap="$COMPUTE_CAP" -v nv="$NVCC_VERSION" 'BEGIN { exit !(cap + 0 >= 12.0 && nv + 0 < 12.9) }'; then
   echo ">> GPU sm_${COMPUTE_CAP} con nvcc ${NVCC_VERSION}: installo il toolkit CUDA ${CUDA_TOOLKIT_VERSION}..."
   # Serve il toolkit completo, non il solo nvcc: FlashInfer compila contro
   # curand/cublas e con i soli pacchetti minimi si ferma su "curand.h: No such
@@ -432,6 +437,37 @@ if [ "$RECIPE_RUNTIME" = "sglang" ]; then
   echo ">> Installazione SGLang della ricetta: $RECIPE_PIP_EXTRA"
   # shellcheck disable=SC2086
   uv pip install --python "$PY_BIN" --quiet "huggingface_hub" $RECIPE_PIP_EXTRA
+  RECIPE_PIP_EXTRA=""
+elif [ "$RECIPE_RUNTIME" = "indra-native" ]; then
+  # Indra OCR: ONNX Runtime, OpenCV and the gateway's FastAPI/Uvicorn; no vLLM, no
+  # PyTorch. `indra-ocr` pulls the CPU `onnxruntime`, which installs the same module
+  # as onnxruntime-gpu: it goes first, is removed, and the GPU build replaces it.
+  if [ ! -x "$VENV_DIR/bin/python" ]; then
+    echo ">> Creazione ambiente Indra OCR in $VENV_DIR..."
+    mkdir -p "$(dirname "$VENV_DIR")"
+    python3 -m venv "$VENV_DIR"
+  fi
+  PY_BIN="$VENV_DIR/bin/python"
+  "$PY_BIN" -m pip install --quiet --upgrade pip
+  INDRA_CPU_PACKAGES=()
+  INDRA_GPU_PACKAGES=()
+  for package in $RECIPE_PIP_EXTRA; do
+    case "$package" in
+      onnxruntime-gpu*) INDRA_GPU_PACKAGES+=("$package") ;;
+      *) INDRA_CPU_PACKAGES+=("$package") ;;
+    esac
+  done
+  echo ">> Installazione Indra OCR: ${INDRA_CPU_PACKAGES[*]} huggingface_hub"
+  "$PY_BIN" -m pip install --quiet "${INDRA_CPU_PACKAGES[@]}" huggingface_hub
+  if [ ${#INDRA_GPU_PACKAGES[@]} -gt 0 ]; then
+    echo ">> ONNX Runtime per CUDA: ${INDRA_GPU_PACKAGES[*]}"
+    "$PY_BIN" -m pip uninstall --quiet -y onnxruntime > /dev/null 2>&1 || true
+    "$PY_BIN" -m pip install --quiet "${INDRA_GPU_PACKAGES[@]}"
+  fi
+  if ! "$PY_BIN" -c "import onnxruntime as ort; ort.preload_dlls(); assert 'CUDAExecutionProvider' in ort.get_available_providers()"; then
+    echo "!! ONNX Runtime non vede CUDA su questa istanza: Indra girerebbe sulla CPU, rifiuto l'avvio." >&2
+    exit 1
+  fi
   RECIPE_PIP_EXTRA=""
 elif [ "$RECIPE_INSTALL_VLLM" = "0" ]; then
   # Immagine dedicata (es. Unlimited-OCR): vLLM e la sua architettura sono già
@@ -517,14 +553,14 @@ fi
 if [ ! -d "$MODEL_DIR" ] || [ ! -f "$MODEL_DIR/config.json" ]; then
   echo ">> Download pesi modello $MODEL_NAME in $MODEL_DIR..."
   mkdir -p "$(dirname "$MODEL_DIR")"
-  MODEL_NAME="$MODEL_NAME" MODEL_DIR="$MODEL_DIR" "$PY_BIN" - <<'PY'
+  MODEL_NAME="$MODEL_NAME" MODEL_DIR="$MODEL_DIR" MODEL_REVISION="$RECIPE_HF_REVISION" "$PY_BIN" - <<'PY'
 from huggingface_hub import snapshot_download
 import os
 
 model_id = os.environ["MODEL_NAME"]
 target_dir = os.environ["MODEL_DIR"]
 print(f"Scaricamento {model_id} da HuggingFace...")
-snapshot_download(repo_id=model_id, local_dir=target_dir)
+snapshot_download(repo_id=model_id, local_dir=target_dir, revision=os.environ.get("MODEL_REVISION") or None)
 print("Download completato!")
 PY
 fi
@@ -648,7 +684,7 @@ if [ -n "${RECIPE_SERVE_ENV:-}" ]; then
 fi
 
 # 6. Prepare serving flags
-if [ ${#SERVE_ARGV[@]} -eq 0 ] && [ "$RECIPE_RUNTIME" != "teleocr-native" ]; then
+if [ ${#SERVE_ARGV[@]} -eq 0 ] && [ "$RECIPE_RUNTIME" != "teleocr-native" ] && [ "$RECIPE_RUNTIME" != "indra-native" ]; then
   # Percorso storico senza ricetta: wrapper MonkeyOCRv2 con i flag verificati.
   SERVE_ARGV=(
     serve.py
@@ -676,6 +712,9 @@ rm -rf "$HOME/.cache/vllm/torch_compile_cache" 2>/dev/null || true
 echo "=========================================================="
 if [ "$RECIPE_RUNTIME" = "teleocr-native" ]; then
   echo ">> [Tabularium Cloud Runner] Preparazione runner TeleOCR nativo..."
+elif [ "$RECIPE_RUNTIME" = "indra-native" ]; then
+  echo ">> [Tabularium Cloud Server] Avvio gateway Indra OCR (ONNX Runtime, CUDA) su $HOST:$PORT..."
+  echo ">> Endpoint: http://$HOST:$PORT/v1 (pagine su /parse)"
 elif [ "$RECIPE_RUNTIME" = "sglang" ]; then
   echo ">> [Tabularium Cloud Server] Avvio SGLang su $HOST:$PORT..."
   echo ">> Endpoint: http://$HOST:$PORT/v1"
@@ -794,6 +833,18 @@ PY
   RESULT=$?
   set -e
   exit "$RESULT"
+fi
+
+if [ "$RECIPE_RUNTIME" = "indra-native" ]; then
+  if [ -z "$RECIPE_NATIVE_GATEWAY_B64" ] || [ ${#SERVE_ARGV[@]} -eq 0 ]; then
+    echo "!! Gateway Indra OCR non incluso nella ricetta; rifiuto un avvio parziale." >&2
+    exit 2
+  fi
+  # The recipe's argv names the script first (`indra_native_gateway.py --model-dir ...`):
+  # it lives in the environment, written from the recipe.
+  NATIVE_GATEWAY="$VENV_DIR/${SERVE_ARGV[0]}"
+  printf '%s' "$RECIPE_NATIVE_GATEWAY_B64" | base64 -d > "$NATIVE_GATEWAY"
+  SERVE_ARGV[0]="$NATIVE_GATEWAY"
 fi
 
 exec "$PY_BIN" "${SERVE_ARGV[@]}"

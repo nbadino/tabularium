@@ -741,6 +741,41 @@ class VllmClient:
             raise RuntimeError("risposta non JSON dal pipeline ufficiale MinerU") from exc
         return self.adapter.parse_native_result(payload.get("blocks"))
 
+    def indra_native_page(
+        self,
+        image: Image.Image,
+        *,
+        on_delta: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> list[dict]:
+        """Run Indra OCR's whole pipeline on its gateway: one page in, blocks out.
+
+        The gateway returns pixel boxes for the image it received; the adapter turns
+        them into the 0-1000 blocks the rest of the pipeline reads. Indra takes no
+        sampling or prompt, so nothing but the page and the key travels.
+        """
+        if self.adapter.adapter_id != "indra-ocr":
+            raise RuntimeError("il runner nativo Indra OCR richiede l'adapter Indra OCR")
+        if not self.native_url:
+            raise RuntimeError(
+                "gateway Indra OCR non raggiungibile: avvialo in locale, su Vast.ai o "
+                "indica l'URL del server che lo esegue"
+            )
+        headers = self._headers()
+        headers.pop("Content-Type", None)
+        started = time.perf_counter()
+        payload = self._native_parse_page(image, headers=headers, vendor="Indra OCR")
+        items = self.adapter.parse_native_result(
+            payload, image_width=image.width, image_height=image.height
+        )
+        self.last_trace = {
+            "elapsed_s": round(time.perf_counter() - started, 3),
+            "items": len(items),
+            "lines": len(payload.get("lines") or []) if isinstance(payload, dict) else 0,
+            "timings": payload.get("timings") if isinstance(payload, dict) else None,
+        }
+        return items
+
     def xiaomi_native_page(
         self,
         image: Image.Image,
@@ -2155,6 +2190,12 @@ def _native_url(adapter_id: str, provider: str | None, url: str) -> str | None:
         except Exception:  # noqa: BLE001 - legacy/non-Vast profiles have no sidecar
             return None
         return None
+    if adapter_id == "indra-ocr" and provider != "llamaindex":
+        # Indra's gateway answers `/v1/models` and `/parse` on the same port wherever
+        # it runs (local, Vast tunnel, a server started by hand): the sidecar is the
+        # endpoint itself, without its `/v1`.
+        base = url.rstrip("/")
+        return base[:-3].rstrip("/") if base.endswith("/v1") else base
     if adapter_id == "mineru2.5" and provider == "local":
         # Local Apple Silicon uses MinerUClient's native mlx-engine gateway on
         # the same port as the server's /v1/models readiness endpoint.
