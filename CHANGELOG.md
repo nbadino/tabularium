@@ -6,6 +6,8 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-22
+
 ### Added
 - **Fine-tune the PP-DocLayoutV3 layout detector on a project's pages** (experimental). A new
   Training Center recipe, `pp-doclayoutv3` (PaddleX `release/3.7`), trains the detector behind
@@ -99,6 +101,15 @@ Notable changes to Tabularium. The format follows
   in flight, each worker with its own client; the stop rule still counts the model's failures.
 
 ### Fixed
+- **Frontend UX and workflow polish across the entire app (99 audit findings).** Added a loading
+  fallback and IT/EN/FR language switcher on auth pages, `Ctrl+K`/`⌘K` palette scoping, ZIP/collection/
+  project-sharing clarity, localized Playground validation errors, Annotation Studio shortcut help,
+  sidebar filters, inline transcription rules, and vertical stacked mobile layout (`< 768px`).
+  Table Workspace now auto-verifies manually edited cells, separates merge/unmerge buttons, shows
+  clean page filenames without `#blockId` or 404 lookups; Fine-tuning adds dataset deletion (`DELETE
+  /api/projects/{id}/datasets`), overwrite confirmations, and explicit failed/unreachable benchmark
+  target reporting; Settings, Models Hub, and Users align tables, enforce non-admin/viewer guards,
+  and unify IT/EN/FR translations.
 - **A fine-tuned model on a Mac serves its own weights.** A model registered from a training run
   inherited its base's MLX checkpoint, so on Apple Silicon a Xiaomi-OCR-0 fine-tune was served
   with the vendor's weights under its own name. It now serves the run's merged checkpoint with
@@ -1263,7 +1274,8 @@ Notable changes to Tabularium. The format follows
 ### Added
 - Recognition, annotation, dataset export, training and evaluation workflow.
 
-[Unreleased]: https://github.com/nbadino/tabularium/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/nbadino/tabularium/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/nbadino/tabularium/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/nbadino/tabularium/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/nbadino/tabularium/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/nbadino/tabularium/compare/v0.4.0...v0.5.0

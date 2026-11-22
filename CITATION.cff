@@ -7,8 +7,8 @@ authors:
     given-names: Nicolò
 repository-code: "https://github.com/nbadino/tabularium"
 license: MIT
-version: "0.7.0"
-date-released: "2026-11-05"
+version: "0.8.0"
+date-released: "2026-11-22"
 keywords:
   - OCR
   - table recognition
