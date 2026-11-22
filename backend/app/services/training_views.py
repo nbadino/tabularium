@@ -9,6 +9,7 @@ OTSL. Ogni toolchain però vuole una forma diversa degli stessi campioni:
 | `ms-swift-jsonl` | `train.jsonl`, `val.jsonl` | MonkeyOCRv2, Qwen3-VL, Unlimited-OCR, DeepSeek-OCR-2, dots.ocr, MinerU2.5 |
 | `paddleformers-messages` | `train.jsonl`, `val.jsonl` | PaddleOCR-VL (`paddleformers-cli`) |
 | `llamafactory-sharegpt` | `train.json`, `val.json`, `dataset_info.json` | GLM-OCR (`llamafactory-cli`) |
+| `paddlex-layout` | `images/`, `images_mask/`, `annotations/instance_{train,val}.json` | PP-DocLayoutV3 (PaddleX) |
 
 La vista **non riscrive il target**: cambia solo il prompt quando il vendor ne
 impone uno proprio (GLM-OCR e PaddleOCR-VL pubblicano prompt di training
@@ -180,9 +181,11 @@ def build_view(
     e il manifest della ricetta può hashare ciò che è stato davvero letto.
     """
     destination_dir.mkdir(parents=True, exist_ok=True)
+    view = recipe.data_view
+    if view == "paddlex-layout":
+        return _paddlex_layout_view(recipe, source_dir, destination_dir)
     prompts = training_prompts(recipe)
     families = [family for family in recipe.families]
-    view = recipe.data_view
 
     if view in {"ms-swift-jsonl", "paddleformers-messages"}:
         return _messages_view(recipe, source_dir, destination_dir, families, prompts, images_prefix)
@@ -295,4 +298,66 @@ def _sharegpt_view(
     missing = [family for family in families if not counts.get(family, {}).get("train")]
     if missing:
         result.warnings.append("famiglie vuote nel dataset: " + ", ".join(missing))
+    return result
+
+
+def _paddlex_layout_view(recipe: TrainRecipe, source_dir: Path, destination_dir: Path) -> DataView:
+    """The snapshot's layout family as a PaddleX layout-analysis dataset.
+
+    The snapshot keeps boxes on the 0-1000 grid of the page image; PaddleX wants pixels,
+    so each box is scaled by the image's own size (the detector resizes to 800 px, finer
+    than the grid). Pixels are always linked into the run: the folder is `Global.dataset_dir`
+    as it is, locally and on a remote host. A label with no PP-DocLayoutV3 category stops
+    the view: training on a page with an unlabelled region would teach it to ignore ink.
+    """
+    from PIL import Image
+
+    from . import paddle_dataset
+
+    result = DataView(
+        view=recipe.data_view,
+        train=destination_dir / "annotations" / "instance_train.json",
+        val=destination_dir / "annotations" / "instance_val.json",
+    )
+    names: dict[str, str] = {}
+    unmapped: set[str] = set()
+    for split in ("train", "val"):
+        pages: list[dict] = []
+        for index, row in enumerate(_read_family(source_dir, "layout", split)):
+            source = Path((row.get("images") or [""])[0])
+            if not source.is_file():
+                raise FileNotFoundError(f"dataset image not found: {source}")
+            with Image.open(source) as image:
+                width, height = image.size
+            items = json.loads(row["messages"][-1]["content"])
+            if str(source) not in names:
+                digest = hashlib.sha1(str(source).encode("utf-8")).hexdigest()[:12]
+                names[str(source)] = paddle_dataset.link_layout_image(
+                    destination_dir, source, f"{digest}_{source.name}"
+                )
+            pages.append({
+                "id": index,
+                "file_name": names[str(source)],
+                "width": width,
+                "height": height,
+                "boxes": [
+                    (str(item["label"]), [
+                        round(item["bbox"][0] / 1000 * width, 1), round(item["bbox"][1] / 1000 * height, 1),
+                        round(item["bbox"][2] / 1000 * width, 1), round(item["bbox"][3] / 1000 * height, 1),
+                    ])
+                    for item in items
+                ],
+            })
+        coco, missing = paddle_dataset.layout_coco(pages)
+        unmapped.update(missing)
+        paddle_dataset.write_layout_split(destination_dir, split, coco)
+        result.counts.setdefault("layout", {})[split] = len(pages)
+    if unmapped:
+        raise ValueError(
+            "labels without a PP-DocLayoutV3 category (declare them in "
+            "models/pp_doclayoutv3.py CATEGORY_FOR_LABEL): " + ", ".join(sorted(unmapped))
+        )
+    if not result.counts["layout"]["train"]:
+        result.warnings.append("famiglie vuote nel dataset: layout")
+    result.files = [result.train, result.val]
     return result

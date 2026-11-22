@@ -150,9 +150,44 @@ def test_layout_images_live_inside_the_dataset_folder(tmp_path: Path):
     names = [
         image["file_name"]
         for split in ("train", "val")
-        for image in json.loads((out / "annotations" / f"{split}.json").read_text(encoding="utf-8"))["images"]
+        for image in json.loads((out / "annotations" / f"instance_{split}.json").read_text(encoding="utf-8"))["images"]
     ]
     assert names
     for name in names:
         assert not Path(name).is_absolute(), name
-        assert (out / name).exists(), name
+        # PaddleX resolves `file_name` against `images/` (layout_analysis check_dataset.py).
+        assert (out / "images" / name).exists(), name
+        assert (out / "images_mask" / name).exists(), name
+
+
+def test_layout_coco_is_paddlex_layout_analysis_format():
+    """COCOInstSegDataset + read_order with PP-DocLayoutV3's 25 categories (PaddleX 3.7)."""
+    from app.models import pp_doclayoutv3 as detector
+
+    coco, unmapped = paddle_dataset.layout_coco([{
+        "id": 7, "file_name": "page_7.tif", "width": 1000, "height": 2000,
+        "boxes": [("Title", [10, 20, 110, 70]), ("Mystery", [0, 0, 5, 5]), ("Table", [5, 100, 995, 1900])],
+    }])
+    assert unmapped == ["Mystery"]
+    assert [c["name"] for c in coco["categories"]] == list(detector.CATEGORIES)
+    assert [c["id"] for c in coco["categories"]] == list(range(25))
+    title, table = coco["annotations"]
+    assert title["category_id"] == detector.CATEGORIES.index("doc_title") == 6
+    assert table["category_id"] == 21
+    assert title["bbox"] == [10, 20, 100, 50]
+    assert title["segmentation"] == [[10, 20, 110, 20, 110, 70, 10, 70]]
+    # Consecutive from 0 even when a block is left out.
+    assert [a["read_order"] for a in coco["annotations"]] == [0, 1]
+    assert {a["image_id"] for a in coco["annotations"]} == {7}
+
+
+def test_label_map_is_the_inverse_of_the_xiaomi_reading():
+    """Where the detector has a class for a label, training and inference agree."""
+    from app.models import pp_doclayoutv3 as detector
+    from app.models.xiaomi_ocr import XIAOMI_LABELS
+
+    lossy = {"Issue-date", "Advertisement", "Byline", "Column", "Note", "Headline"}
+    for label, category in detector.CATEGORY_FOR_LABEL.items():
+        assert category in detector.CATEGORIES, category
+        if label not in lossy:
+            assert XIAOMI_LABELS[category] == label, (label, category)

@@ -318,6 +318,7 @@ model's environment.
 | ms-swift, other models | `swift` in the training env | `TABULARIUM_TRAIN_PYTHON`, or `swift` on `PATH` |
 | LLaMA-Factory | checkout + `llamafactory-cli` | `TABULARIUM_LLAMAFACTORY_DIR` |
 | PaddleFormers | checkout + `paddleformers-cli` | `TABULARIUM_PADDLEFORMERS_DIR` |
+| PaddleX (PP-DocLayoutV3 layout) | `release/3.7` checkout + `paddlex --install PaddleDetection` | `TABULARIUM_PADDLEX_DIR` |
 
 These are the toolchain environments. The **exact pins are per recipe** (`environment` in
 `GET /api/system/train-recipes`), because two models can need incompatible transformers:
@@ -429,6 +430,7 @@ repository to use:
 | `dots` | dots.ocr | **runtime provisioning** (flash-attn ABI still blocks a reliable image); ms-swift 4.6, transformers 4.57.1 |
 | `glm` | GLM-OCR | prebuilt `tabularium-train-glm:glm-v1`; LLaMA-Factory, transformers 5.8 |
 | `paddle` | PaddleOCR-VL | prebuilt `tabularium-train-paddle:paddle-v1`; PaddleFormers, Triton |
+| `layout` | PP-DocLayoutV3 (layout) | prebuilt `tabularium-train-layout:layout-v1`; PaddleX release/3.7 + PaddleDetection |
 
 Every trainable profile except dots.ocr boots a versioned image instead of installing at rental; the
 images are built by `.github/workflows/train-image-monkey.yml` and

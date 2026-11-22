@@ -59,9 +59,14 @@ def runs_dir(project_id: int) -> Path:
 
 
 REMOTE_EXECUTORS = {"ssh", "vast", "runpod"}
+# Prints True when the training framework sees a GPU. PaddleX (the layout recipe) has no torch.
+_CUDA_CHECK = {
+    "torch": "import torch;print(torch.cuda.is_available())",
+    "paddle": "import paddle;print(paddle.device.cuda.device_count() > 0)",
+}
 
 
-def _remote_train_ready(cfg: dict, *, require_marker: bool = True) -> dict | None:
+def _remote_train_ready(cfg: dict, *, require_marker: bool = True, framework: str = "torch") -> dict | None:
     """Sonda l'host di training remoto: ambiente pronto (`.train_ready`) e GPU.
 
     Ritorna `{"ready": bool, "cuda": bool}` oppure `None` quando non si riesce a
@@ -90,7 +95,7 @@ def _remote_train_ready(cfg: dict, *, require_marker: bool = True) -> dict | Non
     interpreter = str(cfg.get("ssh_python") or "").strip() or "python3"
     command = (
         marker
-        + f"{shlex.quote(interpreter)} -c 'import torch;print(torch.cuda.is_available())' 2>/dev/null"
+        + f"{shlex.quote(interpreter)} -c '{_CUDA_CHECK[framework]}' 2>/dev/null"
     )
     argv = [
         "ssh", "-p", str(port),
@@ -176,6 +181,12 @@ def _check_local_toolchain(
             errors.append(msg("toolchain_dir_missing", lang, toolchain="PaddleFormers", env="TABULARIUM_PADDLEFORMERS_DIR"))
         elif not _cli_available(config.PADDLEFORMERS_DIR, "paddleformers-cli"):
             errors.append(msg("toolchain_cli_missing", lang, toolchain="PaddleFormers", command="paddleformers-cli"))
+        return
+    if toolchain == "paddlex":
+        if not config.PADDLEX_DIR:
+            errors.append(msg("toolchain_dir_missing", lang, toolchain="PaddleX", env="TABULARIUM_PADDLEX_DIR"))
+        elif not (Path(config.PADDLEX_DIR) / "main.py").is_file():
+            errors.append(msg("toolchain_cli_missing", lang, toolchain="PaddleX", command="main.py"))
         return
 
 
@@ -270,7 +281,7 @@ def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dic
         if report.get('approved_only') and (excluded or legacy_excluded):
             coverage_errors.append(msg('train_tables_excluded', lang, n=len(excluded) or len(legacy_excluded)))
             errors.extend(coverage_errors)
-    if family_counts["table"]["train"] == 0:
+    if "table" in family_counts and family_counts["table"]["train"] == 0:
         warnings.append(msg("no_table_train_w", lang))
     stale = None
     if report_path.is_file():
@@ -311,6 +322,7 @@ def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dic
         probe = _remote_train_ready(
             cfg,
             require_marker=(toolchain == "ms-swift" and adapter_id == "monkeyocrv2-parsing"),
+            framework="paddle" if toolchain == "paddlex" else "torch",
         )
         if probe is not None:
             if not probe["ready"]:
@@ -320,7 +332,17 @@ def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dic
     else:
         _check_local_toolchain(toolchain, adapter_id, errors, warnings, lang)
         gpus = gpu_snapshot()
-        if not gpus:
+        if not gpus and toolchain == "paddlex":
+            from .hardware import is_apple_silicon  # noqa: PLC0415
+
+            # CPU is a registered training device of PaddleX's layout module, but on Apple
+            # Silicon (paddle 3.3.1, 2026-11-20) the first backward pass already returns inf
+            # gradients (`silu_grad`): the run would diverge, so it is refused here.
+            if is_apple_silicon():
+                errors.append(msg("train_cpu_apple_e", lang))
+            else:
+                warnings.append(msg("train_cpu_w", lang))
+        elif not gpus:
             errors.append(msg("no_gpu_w", lang))
     requested = str(cfg.get("gpus", "0"))
     if gpus and requested:
@@ -852,6 +874,83 @@ def _looks_like_model(path: Path) -> bool:
     )
 
 
+def layout_checkpoint(run_dir: Path) -> dict | None:
+    """The exported PP-DocLayoutV3 inference model of a PaddleX run, with its evaluations.
+
+    It is loaded as it is (`create_model(model_dir=...)`): nothing to merge or register.
+    """
+    from ..models import pp_doclayoutv3 as detector
+
+    for path in sorted((run_dir / "checkpoints").glob(f"*/{detector.INFERENCE_DIR}")):
+        if all((path / name).is_file() for name in detector.INFERENCE_FILES):
+            evaluations = {}
+            for key in ("eval_base", "eval_trained"):
+                try:
+                    evaluations[key] = json.loads((run_dir / f"{key}.json").read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    evaluations[key] = None
+            return {
+                "path": str(path),
+                "relative_path": path.relative_to(run_dir).as_posix(),
+                "name": "best_model",
+                "bytes": _dir_bytes(path),
+                "train_type": "full",
+                "merged_path": None,
+                "merged_relative_path": None,
+                "merged_bytes": 0,
+                "needs_merge": False,
+                "layout": True,
+                **evaluations,
+            }
+    return None
+
+
+def layout_checkpoints() -> list[dict]:
+    """Every finished PaddleX run with an exported model, across projects (newest first).
+
+    The layout model is a global Xiaomi-OCR-0 setting, so the choice spans projects; the
+    value stored is `<project_id>/<run_id>`, resolved by `layout_model_dir`.
+    """
+    items: list[dict] = []
+    for meta_path in config.DATA_DIR.glob("*/runs/*/run.json"):
+        run_dir = meta_path.parent
+        meta = _read_run_meta(run_dir) or {}
+        if meta.get("toolchain") != "paddlex" or meta.get("state") != "finished":
+            continue
+        checkpoint = layout_checkpoint(run_dir)
+        if checkpoint is None:
+            continue
+        project_id = run_dir.parent.parent.name
+        items.append({
+            "id": f"{project_id}/{run_dir.name}",
+            "project_id": int(project_id) if project_id.isdigit() else project_id,
+            "run_id": run_dir.name,
+            "ended_at": meta.get("ended_at"),
+            "eval_base": checkpoint["eval_base"],
+            "eval_trained": checkpoint["eval_trained"],
+        })
+    return sorted(items, key=lambda item: str(item["ended_at"] or ""), reverse=True)
+
+
+def layout_model_dir(choice: str) -> str | None:
+    """`official` -> None (the vendor weights); `<project_id>/<run_id>` -> its model dir.
+
+    A choice that no longer resolves is an error, never a silent fall-back to the
+    official weights: the user picked a model and would read pages from another one.
+    """
+    choice = str(choice or "official").strip()
+    if choice == "official":
+        return None
+    project, _, run_id = choice.partition("/")
+    run_dir = (config.DATA_DIR / project / "runs" / run_id).resolve()
+    if run_dir.parent.parent.parent != config.DATA_DIR.resolve() or not run_id:
+        raise ValueError(f"layout model '{choice}' is not a training run")
+    checkpoint = layout_checkpoint(run_dir)
+    if checkpoint is None:
+        raise ValueError(f"layout model '{choice}': the run has no exported PP-DocLayoutV3 model")
+    return checkpoint["path"]
+
+
 def checkpoint_info(run_dir: Path) -> dict | None:
     """Il checkpoint locale più recente, con peso su disco e merge disponibile.
 
@@ -861,6 +960,8 @@ def checkpoint_info(run_dir: Path) -> dict | None:
     saperlo prima di offrire il pulsante.
     """
     meta = _read_run_meta(run_dir) or {}
+    if meta.get("toolchain") == "paddlex":
+        return layout_checkpoint(run_dir)
     cfg = meta.get("config") or {}
     train_type = str(cfg.get("train_type") or "lora").strip().lower()
     root = run_dir / "checkpoints"

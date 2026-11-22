@@ -7,6 +7,15 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **Fine-tune the PP-DocLayoutV3 layout detector on a project's pages** (experimental). A new
+  Training Center recipe, `pp-doclayoutv3` (PaddleX `release/3.7`), trains the detector behind
+  Xiaomi-OCR-0's region mode from the approved snapshot's layout family, written as a PaddleX
+  layout-analysis dataset (COCOInstSegDataset + `read_order`, the 25 PP-DocLayoutV3 categories;
+  `Issue-date` trains as `header`, `Advertisement` as `text`). The run evaluates the official weights
+  and the trained ones on the same val split with the vendor metric. Locally it needs
+  `TABULARIUM_PADDLEX_DIR` (CPU allowed, except on Apple Silicon where training diverges); one-click uses the new `tabularium-train-layout:layout-v1`
+  image. Xiaomi-OCR-0's new *Layout model* setting picks the official weights (default) or a
+  trained run.
 - **`tabularium restore <archive> --replace` puts a full backup back.** With the app stopped it
   swaps the data folder for the archive's, moving the current one next to it
   (`<data>.pre-restore-<time>/`, never deleted), carries this computer's model runtimes and
@@ -68,6 +77,10 @@ Notable changes to Tabularium. The format follows
   `qwen` environment. It stays `experimental` until a real run.
 
 ### Changed
+- The Paddle export's layout view (`build-paddle`) is now the PaddleX layout-analysis format:
+  `annotations/instance_{train,val}.json`, `images_mask/`, `file_name` relative to `images/`, the
+  25 PP-DocLayoutV3 categories (manifest `paddlex-layout-ppocr-rec-v2`). The old
+  `layout_{train,val}.json` with project labels as categories is no longer written.
 - **MinerU2.5's training evidence is on record.** A fresh search found the vendor's
   `mineru_sft_code.zip` (the `run_mineru.py sft` wrapper the lesson requires) in no public source;
   the only public `run_mineru.py` is an unmerged lesson edition that swaps it for plain `swift sft`,

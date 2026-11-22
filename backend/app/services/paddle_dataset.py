@@ -11,6 +11,7 @@ import shutil
 from pathlib import Path
 
 from . import dataset_builder as builder
+from ..models import pp_doclayoutv3 as detector
 from . import pages as pagesvc
 
 
@@ -102,22 +103,66 @@ def _split(
     return train_ids & known, val_ids & known
 
 
-def _inside(out: Path, image: Path, page_id: int) -> str:
-    """The image's path relative to the dataset folder, linking (or copying) a source
-    image in: PaddleX resolves `file_name` against dataset_dir, and the folder is
-    meant to be moved to the training machine."""
-    try:
-        return image.relative_to(out).as_posix()
-    except ValueError:
-        pass
-    target = out / "images" / f"page_{page_id}{image.suffix.lower()}"
-    target.parent.mkdir(exist_ok=True)
-    target.unlink(missing_ok=True)
-    try:
-        os.link(image, target)  # same disk: no second copy of the scan
-    except OSError:
-        shutil.copy2(image, target)
-    return target.relative_to(out).as_posix()
+def link_layout_image(out: Path, image: Path, name: str) -> str:
+    """Hard-link (or copy) a page image into `images/` and `images_mask/` of a PaddleX
+    layout dataset and return its `file_name`, which PaddleX resolves against `images/`
+    (`layout_analysis/dataset_checker/.../check_dataset.py`). The tutorial's tree has
+    `images_mask/` with "the same content as images"; no code reads it, so it costs a link.
+    The folder is self-contained and can be moved to the training machine."""
+    for folder in ("images", "images_mask"):
+        target = out / folder / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.unlink(missing_ok=True)
+        try:
+            os.link(image, target)  # same disk: no second copy of the scan
+        except OSError:
+            shutil.copy2(image, target)
+    return name
+
+
+def layout_coco(pages: list[dict]) -> tuple[dict, list[str]]:
+    """PaddleX layout annotations (COCOInstSegDataset + `read_order`) for one split.
+
+    `pages`: `{"id", "file_name", "width", "height", "boxes": [(label, [x1, y1, x2, y2])]}`
+    with pixel boxes in reading order. Categories are PP-DocLayoutV3's 25 with the class
+    index as id, so fine-tuning keeps the pretrained head; a Tabularium label without a
+    declared category is left out and returned, for the caller to refuse or report.
+    """
+    images: list[dict] = []
+    annotations: list[dict] = []
+    unmapped: set[str] = set()
+    for page in pages:
+        images.append({key: page[key] for key in ("id", "file_name", "width", "height")})
+        order = 0
+        for label, (x1, y1, x2, y2) in page["boxes"]:
+            category = detector.CATEGORY_FOR_LABEL.get(label)
+            if category is None:
+                unmapped.add(label)
+                continue
+            width, height = x2 - x1, y2 - y1
+            annotations.append({
+                "id": len(annotations) + 1,
+                "image_id": page["id"],
+                "category_id": detector.CATEGORIES.index(category),
+                "bbox": [x1, y1, width, height],
+                # Tabularium blocks are rectangles: the polygon is the box itself.
+                "segmentation": [[x1, y1, x2, y1, x2, y2, x1, y2]],
+                "area": width * height,
+                "iscrowd": 0,
+                # From 0 and consecutive within the image, as the checker requires.
+                "read_order": order,
+            })
+            order += 1
+    categories = [{"id": index, "name": name} for index, name in enumerate(detector.CATEGORIES)]
+    return {"images": images, "annotations": annotations, "categories": categories}, sorted(unmapped)
+
+
+def write_layout_split(out: Path, split: str, coco: dict) -> Path:
+    """`annotations/instance_{train,val}.json`, the names the PaddleX checker requires."""
+    path = out / "annotations" / f"instance_{split}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(coco, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
 
 
 def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_only: bool = True) -> dict:
@@ -130,10 +175,7 @@ def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_on
     crops.mkdir(parents=True, exist_ok=True)
     train_ids, val_ids = _split(project_id, list(data), split_ratio, seed, approved_only)
     warnings: list[str] = []
-    layout: dict[str, dict] = {
-        "train": {"images": [], "annotations": []},
-        "val": {"images": [], "annotations": []},
-    }
+    layout: dict[str, list[dict]] = {"train": [], "val": []}
     # Riconoscitore di riga (PP-OCR rec): un campione per cella trascritta.
     # È un modello diverso dal VLM — quello che gira in locale dentro
     # `table_detect.fill_cells` — e vuole il suo formato: `percorso\ttesto`.
@@ -141,8 +183,6 @@ def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_on
     rec_cells = {"total": 0, "unverified_skipped": 0}
     cells_dir = out / "cells"
     cells_dir.mkdir(exist_ok=True)
-    categories: dict[str, int] = {}
-    ann_id = 1
     counts = {
         "layout": {"train": 0, "val": 0},
         "rec": {"train": 0, "val": 0},
@@ -160,11 +200,8 @@ def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_on
         page_image = builder._page_image_path(page, crops, warnings)
         if not page_image:
             continue
-        layout[split]["images"].append({
-            "id": int(page_id), "file_name": _inside(out, Path(page_image), page_id),
-            "width": int(page["width"]), "height": int(page["height"]),
-        })
-        for block in item["blocks"]:
+        boxes = []
+        for block in sorted(item["blocks"], key=lambda b: b["order_idx"] if b["order_idx"] is not None else 0):
             if approved_only and not bool(block["confirmed"]):
                 continue
             points = builder.parse_points(block["points"])
@@ -172,15 +209,12 @@ def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_on
                 continue
             xs = [float(p[0]) for p in points]
             ys = [float(p[1]) for p in points]
-            bbox = [min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)]
-            label = str(block["label"])
-            categories.setdefault(label, len(categories) + 1)
-            layout[split]["annotations"].append({
-                "id": ann_id, "image_id": int(page_id), "category_id": categories[label], "bbox": bbox,
-                "area": bbox[2] * bbox[3], "iscrowd": 0,
-                "reading_order": block["order_idx"],
-            })
-            ann_id += 1
+            boxes.append((str(block["label"]), [min(xs), min(ys), max(xs), max(ys)]))
+        layout[split].append({
+            "id": int(page_id),
+            "file_name": link_layout_image(out, Path(page_image), f"page_{page_id}{Path(page_image).suffix.lower()}"),
+            "width": int(page["width"]), "height": int(page["height"]), "boxes": boxes,
+        })
         # --- celle: dataset del riconoscitore di riga -----------------------
         # Passata separata dal VLM di proposito: una tabella il cui OTSL non si
         # genera (celle unite incoerenti) ha comunque celle leggibili, e sono
@@ -215,7 +249,6 @@ def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_on
                 rec[split].append((f"cells/{name}", sample["text"]))
                 counts["rec"][split] += 1
 
-        counts["layout"][split] += sum(1 for ann in layout[split]["annotations"] if ann["image_id"] == page_id)
 
     written = {}
     for split in ("train", "val"):
@@ -224,18 +257,12 @@ def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_on
             "".join(f"{image}\t{text}\n" for image, text in rec[split]), encoding="utf-8"
         )
         written[f"rec_{split}"] = str(path)
-        path = out / f"layout_{split}.json"
-        path.write_text(json.dumps({**layout[split], "categories": [{"id": i, "name": n} for n, i in categories.items()]}, ensure_ascii=False, indent=2), encoding="utf-8")
-        written[f"layout_{split}"] = str(path)
-    # PaddleX discovers the COCO annotation files relative to dataset_dir. Keep
-    # the JSONL/COCO flat files for reproducibility and also expose the
-    # conventional annotations/ layout expected by COCODetDataset.
-    annotations = out / "annotations"
-    annotations.mkdir(exist_ok=True)
+    unmapped: set[str] = set()
     for split in ("train", "val"):
-        source = out / f"layout_{split}.json"
-        target = annotations / f"{split}.json"
-        shutil.copyfile(source, target)
+        coco, missing = layout_coco(layout[split])
+        unmapped.update(missing)
+        counts["layout"][split] = len(coco["annotations"])
+        written[f"layout_{split}"] = str(write_layout_split(out, split, coco))
     # PP-OCR rec vuole il proprio dizionario di caratteri: quello del corpus,
     # non quello generico, altrimenti la testa di classificazione porta migliaia
     # di classi che questo materiale non contiene.
@@ -245,7 +272,11 @@ def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_on
     written["rec_dict"] = str(dict_path)
     written["rec_data_dir"] = str(out)
     written["layout_dataset_dir"] = str(out)
-    if not layout["val"]["images"]:
+    if unmapped:
+        warnings.append(
+            "layout: labels without a PP-DocLayoutV3 category, blocks left out: " + ", ".join(sorted(unmapped))
+        )
+    if not layout["val"]:
         warnings.append("validation layout vuota: servono almeno due pagine annotate per creare uno split")
     if rec_cells["unverified_skipped"]:
         warnings.append(
@@ -256,6 +287,6 @@ def build(project_id: int, split_ratio: float = 0.9, seed: int = 42, approved_on
         warnings.append(
             "dataset di riconoscimento vuoto: servono celle con testo verificato in una tabella"
         )
-    manifest = {"format": "paddlex-layout-ppocr-rec-v1", "project_id": project_id, "split_ratio": split_ratio, "seed": seed, "approved_only": approved_only, "categories": categories, "counts": counts, "cells": rec_cells, "charset": len(charset), "warnings": warnings, "files": written}
+    manifest = {"format": "paddlex-layout-ppocr-rec-v2", "project_id": project_id, "split_ratio": split_ratio, "seed": seed, "approved_only": approved_only, "categories": list(detector.CATEGORIES), "counts": counts, "cells": rec_cells, "charset": len(charset), "warnings": warnings, "files": written}
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest

@@ -25,6 +25,19 @@
     official prompts `Text Recognition:` / `Table Recognition:` / `Formula Recognition:`.
   - `paddleformers` — PaddleOCR-VL, `paddleformers-cli train <config> key=value`, full **and**
     LoRA; the `messages` dataset is the same shape as ms-swift.
+  - `paddlex` — the **PP-DocLayoutV3 layout detector** (`models/pp_doclayoutv3.py`, recipe id
+    `pp-doclayoutv3`, registered next to the adapters' recipes since it reads no text). View
+    `paddlex-layout` (§7); the script runs `check_dataset`, evaluates the official weights on the
+    val split (`eval_base.json`), trains, evaluates `best_model` (`eval_trained.json`), with
+    `Train.num_classes=25`, `best_model` chosen on bbox AP, a snapshot every 5 epochs, and `Global.device` GPU when paddle has CUDA, else CPU (without a GPU the
+    preflight warns, and refuses on Apple Silicon, where training diverged at the first step). `TABULARIUM_PADDLEX_DIR` is a PaddleX `release/3.7`
+    checkout with `paddlex --install PaddleDetection` (its `.venv/bin` goes on `PATH` when present);
+    one-click uses `ghcr.io/nbadino/tabularium-train-layout:layout-v1` (`docker/train-layout`).
+    The exported `best_model/inference` needs no preparation: `checkpoint_prepare` refuses it,
+    the one-click job releases the GPU once it is downloaded, and Xiaomi-OCR-0's `layout_model`
+    setting (`official` or `<project_id>/<run_id>`, listed by `GET /api/system/layout-checkpoints`)
+    loads it with `create_model(model_dir=...)`; a choice that no longer resolves is an error,
+    never the official weights in disguise. Resume is not supported yet.
   - `mineru-sft` — MinerU2.5: its lesson explicitly forbids `swift sft` and ships the config only
     inside `mineru_sft_code.zip`, which no public source carries (checked 2026-11-16; the
     unmerged MetaX lesson's plain-`swift sft` stub is not adopted); the recipe is `planned`
@@ -140,7 +153,7 @@
 - **One-click training is the non-developer path.** `POST /training/auto` takes the current
   config plus an hourly budget, rents the best Vast.ai offer within that ceiling (VRAM, then compute
   capability, reliability and price; with `datacenter_only` only Vast datacenter hosts, filter
-  `datacenter` plus a local `hosting_type == 1` check, and an explicit error when none fits; with `verified_only` the `verified` filter), skips for 24 h the `machine_id` of every host that failed or was cancelled before training (`failed_hosts`, `offer.machine_id`), and replaces, up to `MAX_HOST_ATTEMPTS` = 3 hosts, an instance whose `status_msg` contains "Error" or that stays `created`/`offline` for `VAST_STUCK_LIMIT_S` (10 min) (rule of vast-cli `wait_for_instance`), boots the profile's versioned GHCR image (MonkeyOCRv2,
+  `datacenter` plus a local `hosting_type == 1` check, and an explicit error when none fits; with `verified_only` the `verified` filter), skips for 24 h the `machine_id` of every host that failed or was cancelled before training (`failed_hosts`, `offer.machine_id`), and replaces, up to `MAX_HOST_ATTEMPTS` = 3 hosts, an instance whose `status_msg` contains "Error" or that stays `created`/`offline` for `VAST_STUCK_LIMIT_S` (10 min) (rule of vast-cli `wait_for_instance`) or still pulls its image (`loading`) after `VAST_LOADING_LIMIT_S` (20 min), boots the profile's versioned GHCR image (MonkeyOCRv2,
   Qwen, legacy, GLM, Paddle; dots.ocr still provisions with `scripts/cloud/setup_train_env.sh`),
   waits for `/opt/tabularium/ready.json`, then calls `start_run`. The job is persisted under
   `<data>/auto-training/`, shows phases/log in the UI and destroys the instance if rental,

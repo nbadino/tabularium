@@ -168,6 +168,13 @@ def save_model_settings(adapter_id: str, payload: dict, user: dict = Depends(_ad
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.get("/api/system/layout-checkpoints")
+def layout_checkpoints(user: dict = Depends(_admin)) -> dict:
+    """Fine-tuned PP-DocLayoutV3 runs a model setting can select (admin, like saving it)."""
+    from ..services import trainer
+    return {"items": trainer.layout_checkpoints()}
+
+
 @router.get("/api/system/model-adapters", dependencies=[Depends(authsvc.get_current_user)])
 def model_adapters() -> dict:
     """Elenco delle capacità modello disponibili per il wizard.

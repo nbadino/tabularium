@@ -759,16 +759,19 @@ class VllmClient:
         from concurrent.futures import ThreadPoolExecutor
 
         from ..models.xiaomi_ocr import XIAOMI_LABELS, XIAOMI_LAYOUT_TASKS
-        from . import model_settings
+        from . import model_settings, trainer
 
         workflow = model_settings.get_settings("xiaomi-ocr-0")["effective"]["workflow"]
+        layout_dir = trainer.layout_model_dir(workflow.get("layout_model", "official"))
         page = image.convert("RGB")
         edge = self.adapter.page_max_edge
         if page.width > edge or page.height > edge:
             page.thumbnail((edge, edge), Image.Resampling.LANCZOS)
         regions = [
             region
-            for region in paddle_official.detect_layout(page, threshold=float(workflow["layout_threshold"]))
+            for region in paddle_official.detect_layout(
+                page, threshold=float(workflow["layout_threshold"]), model_dir=layout_dir
+            )
             if region["label"] in XIAOMI_LAYOUT_TASKS
         ]
 

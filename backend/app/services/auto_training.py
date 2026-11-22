@@ -40,6 +40,8 @@ PROFILES = {
     "dots-ocr": "dots",
     "glm-ocr": "glm",
     "paddleocr-vl": "paddle",
+    # PaddleX checkout + PaddleDetection plugin (`docker/train-layout`).
+    "pp-doclayoutv3": "layout",
 }
 
 PADDLE_IMAGE = "paddlepaddle/paddle:3.3.0-gpu-cuda12.6-cudnn9.5"
@@ -52,6 +54,7 @@ PREBUILT_IMAGES = {
     "uocr2": "ghcr.io/nbadino/tabularium-train-uocr2:uocr2-v1",
     "glm": "ghcr.io/nbadino/tabularium-train-glm:glm-v1",
     "paddle": "ghcr.io/nbadino/tabularium-train-paddle:paddle-v1",
+    "layout": "ghcr.io/nbadino/tabularium-train-layout:layout-v1",
 }
 PREBUILT_MARKER = "/opt/tabularium/ready.json"
 # The CUDA toolkit each versioned image is built on (its base image tag; the
@@ -60,6 +63,7 @@ PREBUILT_MARKER = "/opt/tabularium/ready.json"
 PREBUILT_CUDA = {
     "monkey": 12.8,  # pytorch 2.8.0-cuda12.8
     "paddle": 12.6,  # paddlepaddle/paddle 3.3.0-gpu-cuda12.6
+    "layout": 12.6,  # same base image as paddle
     "qwen": 12.4,  # pytorch 2.6.0-cuda12.4 (torch 2.6.0+cu124)
     "legacy": 12.4,
     "uocr2": 12.4,
@@ -119,6 +123,8 @@ def expected_paths(profile: str) -> dict:
         repo = f"{root}/LLaMA-Factory"
     elif profile == "paddle":
         repo = f"{root}/PaddleFormers"
+    elif profile == "layout":
+        repo = f"{root}/PaddleX"
     else:
         repo = root
     return {"python": f"{root}/venv/bin/python", "repo": repo, "root": root}
@@ -544,6 +550,14 @@ def _monitor_run(
             _destroy(api_key, instance_id)
             _update(job, instance_destroyed=True)
             return
+        if state == "finished" and meta.get("toolchain") == "paddlex":
+            # A layout run has nothing to merge or register: the exported model came home
+            # with the checkpoints and is selected in the Xiaomi-OCR-0 settings.
+            _update(job, state="finished", phase="done",
+                    message="layout model downloaded; GPU released")
+            _destroy(api_key, instance_id)
+            _update(job, instance_destroyed=True)
+            return
         if state == "finished":
             prepare = meta.get("prepare_job") or {}
             pstate = str(prepare.get("state") or "")
@@ -669,17 +683,28 @@ def _record_failed_host(job: dict, offer: dict | None, instance_id: int | None, 
     return machine_id
 
 
-def _cuda_preflight(host: str, port: int, python: str, cancel: threading.Event) -> str | None:
+# The layout image trains with PaddlePaddle and has no torch: its probe is the same
+# allocation, made with the framework that will train.
+_PADDLE_PROFILES = {"layout"}
+
+
+def _cuda_preflight(host: str, port: int, python: str, cancel: threading.Event, profile: str = "") -> str | None:
     """Allocate a tensor on the GPU with the training python: None when it works,
     else why the host is not usable (`HostProvisioningFailed`).
 
     Without it a busy GPU showed only as a training run failed a minute in, after
     the dataset sync, and the job did not try another host.
     """
-    code = (
-        'import torch; x = torch.ones(1, device="cuda"); x.add_(1); torch.cuda.synchronize(); '
-        f'print("{CUDA_PREFLIGHT_OK}", torch.cuda.get_device_name(0))'
-    )
+    if profile in _PADDLE_PROFILES:
+        code = (
+            'import paddle; paddle.set_device("gpu"); x = paddle.ones([1]); x.add_(x); '
+            f'paddle.device.cuda.synchronize(); print("{CUDA_PREFLIGHT_OK}", paddle.device.cuda.get_device_name(0))'
+        )
+    else:
+        code = (
+            'import torch; x = torch.ones(1, device="cuda"); x.add_(1); torch.cuda.synchronize(); '
+            f'print("{CUDA_PREFLIGHT_OK}", torch.cuda.get_device_name(0))'
+        )
     command = f"timeout 120 {shlex.quote(python or 'python3')} -c {shlex.quote(code)} 2>&1"
     detail = ""
     for attempt in range(CUDA_PREFLIGHT_TRIES):
@@ -697,7 +722,8 @@ def _cuda_preflight(host: str, port: int, python: str, cancel: threading.Event) 
             return None
         if re.search(r"ModuleNotFoundError|ImportError", output) and not CUDA_HOST_ERRORS.search(output):
             # The image, not the host: another rental would fail the same way.
-            raise RuntimeError(f"the training python cannot import torch:\n{output[-1500:]}")
+            framework = "paddle" if profile in _PADDLE_PROFILES else "torch"
+            raise RuntimeError(f"the training python cannot import {framework}:\n{output[-1500:]}")
         detail = _cuda_error_line(output) or (output.splitlines()[-1] if output else f"exit {proc.returncode}")
     return msg("vast_cuda_unavailable", i18n.SOURCE, detail=" ".join(detail.split())[:400])
 
@@ -1037,7 +1063,7 @@ def _run(
                 host, port = _wait_for_ssh_endpoint(job, api_key, int(instance_id), cancel)
                 paths = _ready_environment(job, host, int(port), profile, cancel)
                 _update(job, message="checking that the GPU answers CUDA…")
-                cuda_failure = _cuda_preflight(host, int(port), str(paths.get("python") or ""), cancel)
+                cuda_failure = _cuda_preflight(host, int(port), str(paths.get("python") or ""), cancel, profile)
                 if cuda_failure:
                     raise HostProvisioningFailed(cuda_failure)
                 break

@@ -130,6 +130,9 @@ TRAIN_PYTHON = os.environ.get("TABULARIUM_TRAIN_PYTHON", "").strip()
 # manca, il preflight lo dice e non genera uno script che fallirà.
 LLAMAFACTORY_DIR = os.environ.get("TABULARIUM_LLAMAFACTORY_DIR", "").strip()
 PADDLEFORMERS_DIR = os.environ.get("TABULARIUM_PADDLEFORMERS_DIR", "").strip()
+# A PaddleX checkout (`main.py`) with `paddlex --install PaddleDetection` done, for the
+# PP-DocLayoutV3 layout recipe.
+PADDLEX_DIR = os.environ.get("TABULARIUM_PADDLEX_DIR", "").strip()
 
 # --- Serving locale (model_registry.py / serve_manager.py) --------------------
 # Python esplicito per servire i modelli generici via `vllm serve` (MinerU2.5,

@@ -55,8 +55,9 @@ import numpy as np
 from PIL import Image
 from paddlex import create_model
 
-image, threshold = sys.argv[1], float(sys.argv[2])
-model = create_model("PP-DocLayoutV3", threshold=threshold)
+image, threshold, model_dir = sys.argv[1], float(sys.argv[2]), sys.argv[3]
+# `model_dir`: a fine-tuned export (`best_model/inference`); empty = the official weights.
+model = create_model("PP-DocLayoutV3", threshold=threshold, **({"model_dir": model_dir} if model_dir else {}))
 result = list(model.predict(np.asarray(Image.open(image).convert("RGB"))))[0]
 boxes = result.get("boxes") if hasattr(result, "get") else None
 if boxes is None:
@@ -109,8 +110,10 @@ def _require_runtime() -> None:
         )
 
 
-def detect_layout(image: Image.Image, *, threshold: float) -> list[dict]:
+def detect_layout(image: Image.Image, *, threshold: float, model_dir: str | None = None) -> list[dict]:
     """PP-DocLayoutV3 regions as `{label, bbox}` with the bbox in 0-1000 integers.
+
+    `model_dir` loads a fine-tuned export instead of the official weights.
 
     The scaling is the vendor's (`layout_detect_paddlex.serialize_regions`): clamp to the
     image, drop empty boxes, `int(x / width * 1000)`.
@@ -121,7 +124,7 @@ def detect_layout(image: Image.Image, *, threshold: float) -> list[dict]:
         path = Path(tmp) / "page.png"
         image.convert("RGB").save(path, format="PNG")
         result = subprocess.run(
-            [str(paddle_runtime.python_bin()), "-c", _LAYOUT_RUNNER, str(path), str(threshold)],
+            [str(paddle_runtime.python_bin()), "-c", _LAYOUT_RUNNER, str(path), str(threshold), model_dir or ""],
             capture_output=True, text=True, timeout=int(config.VLLM_TIMEOUT) + 300,
         )
     if result.returncode:

@@ -44,8 +44,12 @@ Each training recipe (§10) points to its view; the builder never converts the t
 
 | View | Files | Model | Content |
 |---|---|---|---|
-| layout | `layout_{train,val}.json` + `annotations/` + `images/` | PaddleX detector (COCO) | block bbox + class, reading order; `file_name` relative to the folder (page images hard-linked or copied into `images/`, rendered PDF pages in `crops/`), so the folder can be moved |
+| layout | `annotations/instance_{train,val}.json` + `images/` + `images_mask/` | PP-DocLayoutV3 (PaddleX layout analysis) | COCOInstSegDataset + `read_order`: pixel bbox, rectangle `segmentation`, the 25 PP-DocLayoutV3 categories (id = index, labels mapped by `models/pp_doclayoutv3.py` `CATEGORY_FOR_LABEL`; an unmapped label is left out and reported); `file_name` relative to `images/` (page images hard-linked or copied in both folders), so the folder can be moved |
 | line | `rec_{train,val}.txt` + `rec_dict.txt` + `cells/` | PP-OCR rec | **one sample per cell**: crop → text |
+
+The same writer (`paddle_dataset.layout_coco`) builds the `paddlex-layout` view of a training run
+from the snapshot's layout family (0-1000 boxes scaled back by the image size); there an unmapped
+label stops the run instead of being left out. Format facts: `docs/spec/10-official-conventions.md` §2.8.
 
 PaddleOCR-VL itself is trained by the Training Center from the `messages` view
 (`training_views.py`), not from this module: PaddleFormers consumes the same JSONL shape as

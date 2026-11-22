@@ -93,7 +93,7 @@ export default function TrainingStatusPanel({
   // Il piano di merge si legge prima del clic: dove gira, cosa manca, quanto
   // pesa. Il pulsante non deve mai portare a un errore di shell.
   useEffect(() => {
-    if (projectId === '' || !runId || state !== 'finished') {
+    if (projectId === '' || !runId || state !== 'finished' || checkpoint?.layout) {
       setPrepare(null)
       setPrepareError(null)
       return
@@ -118,7 +118,7 @@ export default function TrainingStatusPanel({
       alive = false
       if (timer) clearTimeout(timer)
     }
-  }, [projectId, runId, state, prepareTick])
+  }, [projectId, runId, state, prepareTick, checkpoint?.layout])
 
   const startPrepare = async () => {
     if (projectId === '' || !runId) return
@@ -229,7 +229,20 @@ export default function TrainingStatusPanel({
               )}
             </details>
 
-            <div>
+            {checkpoint?.layout ? (
+              <div>
+                <Notice tone="ok">{t('training.layoutCheckpointReady')}</Notice>
+                {([['eval_base', 'training.layoutEvalBase'], ['eval_trained', 'training.layoutEvalTrained']] as const).map(([key, label]) => {
+                  const metrics = checkpoint[key]?.metrics
+                  return (
+                    <p key={key} className="mt-1 text-[12px] text-[color:var(--color-ink-2)]">
+                      {t(label)}:{' '}
+                      {metrics ? Object.entries(metrics).map(([name, value]) => `${name} ${Number(value).toFixed(3)}`).join(' · ') : t('training.layoutEvalMissing')}
+                    </p>
+                  )
+                })}
+              </div>
+            ) : <div>
               {jobRunning ? (
                 <Notice tone="neutral">
                   <span>{t('training.preparingCheckpoint')}</span>{' '}
@@ -302,7 +315,7 @@ export default function TrainingStatusPanel({
                   </pre>}
                 </div>
               )}
-            </div>
+            </div>}
 
           </div>
         )}

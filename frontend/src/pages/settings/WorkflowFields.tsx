@@ -7,13 +7,15 @@
  * adding a model — or a knob to an existing model — never means writing JSX here. The
  * row around it (label, official value, reset) belongs to the parameter panel.
  */
+import { useEffect, useState } from 'react'
 import { t } from '../../i18n'
+import { apiGet } from '../../lib/api'
 
 export type SettingValue = number | string | boolean | number[] | string[] | Record<string, number> | null
 
 export interface WorkflowFieldSpec {
   key: string
-  kind: 'bool' | 'int' | 'float' | 'enum' | 'version' | 'str' | 'str_list' | 'int_pair' | 'crop_box'
+  kind: 'bool' | 'int' | 'float' | 'enum' | 'version' | 'str' | 'str_list' | 'int_pair' | 'crop_box' | 'layout_model'
   default?: SettingValue
   minimum?: number | null
   maximum?: number | null
@@ -60,8 +62,41 @@ interface ControlProps {
   label: string
 }
 
+interface LayoutCheckpoint {
+  id: string
+  project_id: number | string
+  run_id: string
+  ended_at?: string | null
+}
+
+/** PP-DocLayoutV3 weights: the official ones, or a layout run trained in Tabularium. */
+function LayoutModelControl({ value, onChange, disabled, id }: { value: string; onChange: (value: SettingValue) => void; disabled: boolean; id: string }) {
+  const [runs, setRuns] = useState<LayoutCheckpoint[]>([])
+  useEffect(() => {
+    apiGet<{ items: LayoutCheckpoint[] }>('/system/layout-checkpoints')
+      .then((data) => setRuns(data.items ?? []))
+      .catch(() => setRuns([]))
+  }, [])
+  // A saved run that is no longer listed stays visible, so the panel never shows a choice
+  // the backend does not hold.
+  const known = value === 'official' || runs.some((run) => run.id === value)
+  return (
+    <select id={id} className={FIELD} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
+      <option value="official">{t('settings.layoutModelOfficial')}</option>
+      {runs.map((run) => (
+        <option key={run.id} value={run.id}>{t('settings.layoutModelRun', { project: String(run.project_id), run: run.run_id })}</option>
+      ))}
+      {!known && <option value={value}>{value}</option>}
+    </select>
+  )
+}
+
 export function WorkflowControl({ field, value: raw, onChange, disabled, id, label }: ControlProps) {
   const value = raw ?? null
+  if (field.kind === 'layout_model') {
+    return <LayoutModelControl id={id} disabled={disabled} onChange={onChange}
+      value={typeof value === 'string' ? value : String(field.default ?? 'official')} />
+  }
   if (field.kind === 'bool') {
     return (
       <select id={id} className={FIELD} value={value == null ? '' : String(value)} disabled={disabled}

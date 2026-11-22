@@ -115,7 +115,8 @@ SPEC = ModelSpec(
         "maturity": "experimental",
         "toolchain": "ms-swift",
         "data_view": "ms-swift-jsonl",
-        # The model emits no boxes: layout is PP-DocLayoutV3's, so it is never trained here.
+        # The model emits no boxes: its layout is PP-DocLayoutV3's, trained by its own recipe
+        # (`models/pp_doclayoutv3.py`) and picked with the `layout_model` setting.
         "families": RECOGNITION_FAMILIES,
         "official_doc": "https://github.com/modelscope/ms-swift/blob/main/docs/source_en/BestPractices/Qwen3_8-Best-Practice.md",
         "swift_model_type": "qwen3_5",
@@ -195,6 +196,10 @@ SPEC = ModelSpec(
         workflow=(
             WorkflowField("layout_threshold", "float", default=0.25, minimum=0.0, maximum=1.0,
                           step=0.05, label="settings.xiaomiLayoutThreshold"),
+            # PP-DocLayoutV3 weights: the vendor's, or a layout run trained here
+            # (`models/pp_doclayoutv3.py`), as `<project_id>/<run_id>`.
+            WorkflowField("layout_model", "layout_model", default="official",
+                          label="settings.xiaomiLayoutModel"),
             # `evaluation_pipeline/twostage_img2md.py`: `--retry-repetitive` (off by
             # default) reruns a region whose output looks like a loop with
             # `--retry-presence-penalty` 1.5.
