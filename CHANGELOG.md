@@ -6,6 +6,19 @@ Notable changes to Tabularium. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Indra OCR (Datalab, `datalab-to/indra-ocr`)** joins the catalogue (experimental): a 7.3M-parameter
+  OCR pipeline on ONNX Runtime (line detection, recognition in 80+ languages, layout and reading
+  order) that needs no GPU. Tabularium runs the vendor's `indra_ocr` package behind a small gateway
+  (`scripts/cloud/indra_native_gateway.py`, `/v1/models` + `/parse`) that returns the page's layout
+  blocks, with tables as HTML. The same gateway serves the local machine on the new
+  `onnxruntime` local runtime (CPU on Linux and Apple Silicon, CUDA via onnxruntime-gpu when an
+  NVIDIA GPU is present; its venv installs itself under `<root>/indra-runtime` on first start), a
+  rented Vast.ai GPU (recipe `indra-native`: no vLLM, onnxruntime-gpu 1.23.2 on CUDA 12, weights
+  pinned to the `v1.1.0` tag) and a server started by hand (manual endpoint). Settings: device,
+  threads per page, pages in parallel, math as LaTeX. Inference only: the vendor publishes no
+  training code, and there is no Modal template.
+
 ### Fixed
 - **A register cut into side-by-side halves is read as one table.** On curved pages of bound
   volumes PP-DocLayoutV3 split one borderless register into a left half (often in stacked pieces

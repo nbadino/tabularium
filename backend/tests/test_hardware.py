@@ -25,7 +25,7 @@ def _machine(monkeypatch, *, system: str, machine: str, gpus: list[dict] | None 
 def test_apple_silicon_hosts_mlx_not_vllm(monkeypatch):
     m = _machine(monkeypatch, system="Darwin", machine="arm64")
     assert m["apple_silicon"] is True
-    assert m["usable_runtimes"] == [hardware.RUNTIME_MLX]
+    assert m["usable_runtimes"] == [hardware.RUNTIME_MLX, hardware.RUNTIME_ONNX]
     # vLLM richiede CUDA: su macOS non è una questione di installazione.
     assert m["runtimes"][hardware.RUNTIME_VLLM]["supported"] is False
     assert m["runtimes"][hardware.RUNTIME_VLLM]["reason"] == hardware.REASON_CUDA_REQUIRED
@@ -38,18 +38,21 @@ def test_linux_with_nvidia_hosts_vllm_and_not_mlx(monkeypatch):
         machine="x86_64",
         gpus=[{"memory_total": 8188}],
     )
-    assert m["usable_runtimes"] == [hardware.RUNTIME_VLLM]
+    assert m["usable_runtimes"] == [hardware.RUNTIME_VLLM, hardware.RUNTIME_ONNX]
     assert m["runtimes"][hardware.RUNTIME_MLX]["reason"] == hardware.REASON_APPLE_SILICON_REQUIRED
 
 
 def test_linux_without_nvidia_says_which_piece_is_missing(monkeypatch):
     m = _machine(monkeypatch, system="Linux", machine="x86_64")
-    assert m["usable_runtimes"] == []
+    # Only Indra OCR's ONNX Runtime path is left: CPU on any Linux.
+    assert m["usable_runtimes"] == [hardware.RUNTIME_ONNX]
     assert m["runtimes"][hardware.RUNTIME_VLLM]["reason"] == hardware.REASON_NO_NVIDIA_GPU
 
 
 def test_windows_points_at_wsl_instead_of_denying_cuda(monkeypatch):
     m = _machine(monkeypatch, system="Windows", machine="AMD64")
+    # Indra OCR's vendor documents Linux and macOS only.
+    assert m["runtimes"][hardware.RUNTIME_ONNX]["supported"] is False
     assert m["runtimes"][hardware.RUNTIME_VLLM]["wsl"] is True
 
 

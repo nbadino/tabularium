@@ -798,6 +798,7 @@ export const it = {
       localBody: 'Gratis, e le pagine non lasciano questo computer.',
       localNeedsMlx: 'niente da installare: {repo} si scarica al primo avvio.',
       localNeedsVllm: 'spazio per i pesi ({size}) e una GPU NVIDIA con abbastanza VRAM.',
+      localNeedsOnnx: 'niente GPU necessaria: un ambiente ONNX Runtime ({size} di modelli) si installa al primo avvio; usa la GPU NVIDIA se c\'è.',
       modalBody: 'Paghi solo i secondi in cui il modello lavora; si spegne da solo.',
       modalNeeds: 'un account Modal.',
       vastBody: 'Noleggi una GPU a ore: Tabularium la prepara e la spegne quando hai finito.',
@@ -1009,6 +1010,7 @@ export const it = {
     memoryUnknown: 'memoria non rilevata',
     runtimeVllm: 'vLLM (CUDA)',
     runtimeMlx: 'MLX (Apple Silicon)',
+    runtimeOnnx: 'ONNX Runtime (CPU o CUDA)',
     reason: {
       cuda_required:
         'Il serving locale di questo modello richiede CUDA: macOS non ce l\u2019ha, su Windows si usa WSL2.',
@@ -3248,6 +3250,12 @@ export const it = {
     xiaomiWorkflowIntro: 'Modalità a regioni ufficiale di Xiaomi-OCR-0: PP-DocLayoutV3 individua i blocchi e ogni ritaglio viene letto con il prompt del suo task. Il vendor consiglia la pagina intera per libri storici e layout irregolari, ma quella modalità non produce riquadri.',
     xiaomiLayoutThreshold: 'Soglia del layout (PP-DocLayoutV3)',
     xiaomiLayoutModel: 'Modello di layout (PP-DocLayoutV3)',
+    indraWorkflowIntro: 'Indra OCR è un pipeline ONNX (rilevamento righe, riconoscimento, layout e ordine di lettura) che gira su CPU; con una GPU NVIDIA usa CUDA. Le modifiche valgono al prossimo avvio del server.',
+    indraDevice: 'Dispositivo',
+    indraDeviceAutoHint: 'CUDA se disponibile, altrimenti CPU',
+    indraThreads: 'Thread per pagina',
+    indraWorkers: 'Pagine in parallelo',
+    indraMath: 'Formule in LaTeX (più lento)',
     layoutModelOfficial: 'Pesi ufficiali',
     layoutModelRun: 'Addestrato: progetto {project}, {run}',
     xiaomiRetryRepetitive: 'Rilancia le regioni che si ripetono',

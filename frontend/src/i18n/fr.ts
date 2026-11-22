@@ -799,6 +799,7 @@ export const fr: Dict = {
       localBody: 'Gratuit, et les pages ne quittent pas cet ordinateur.',
       localNeedsMlx: 'rien à installer : {repo} se télécharge au premier démarrage.',
       localNeedsVllm: 'de la place pour les poids ({size}) et un GPU NVIDIA avec assez de VRAM.',
+      localNeedsOnnx: 'aucun GPU nécessaire : un environnement ONNX Runtime ({size} de modèles) s’installe au premier démarrage ; il utilise le GPU NVIDIA s’il y en a un.',
       modalBody: 'Vous ne payez que les secondes où le modèle travaille ; il s’éteint tout seul.',
       modalNeeds: 'un compte Modal.',
       vastBody: 'Louez un GPU à l’heure : Tabularium le prépare et l’éteint quand vous avez fini.',
@@ -1010,6 +1011,7 @@ export const fr: Dict = {
     memoryUnknown: 'mémoire non détectée',
     runtimeVllm: 'vLLM (CUDA)',
     runtimeMlx: 'MLX (Apple Silicon)',
+    runtimeOnnx: 'ONNX Runtime (CPU ou CUDA)',
     reason: {
       cuda_required:
         'Servir ce modèle en local exige CUDA : macOS ne l\u2019a pas, sous Windows on passe par WSL2.',
@@ -3248,6 +3250,12 @@ export const fr: Dict = {
     xiaomiWorkflowIntro: 'Mode par régions officiel de Xiaomi-OCR-0 : PP-DocLayoutV3 trouve les blocs et chaque découpe est lue avec le prompt de sa tâche. Le fournisseur recommande la page entière pour les livres anciens et les mises en page irrégulières, mais ce mode ne renvoie pas de cadres.',
     xiaomiLayoutThreshold: 'Seuil de mise en page (PP-DocLayoutV3)',
     xiaomiLayoutModel: 'Modèle de mise en page (PP-DocLayoutV3)',
+    indraWorkflowIntro: 'Indra OCR est un pipeline ONNX (détection des lignes, reconnaissance, mise en page et ordre de lecture) qui tourne sur le CPU ; avec un GPU NVIDIA il utilise CUDA. Les changements s’appliquent au prochain démarrage du serveur.',
+    indraDevice: 'Appareil',
+    indraDeviceAutoHint: 'CUDA si disponible, sinon CPU',
+    indraThreads: 'Threads par page',
+    indraWorkers: 'Pages en parallèle',
+    indraMath: 'Formules en LaTeX (plus lent)',
     layoutModelOfficial: 'Poids officiels',
     layoutModelRun: 'Entraîné : projet {project}, {run}',
     xiaomiRetryRepetitive: 'Relancer les régions qui bouclent',

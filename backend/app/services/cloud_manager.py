@@ -1951,10 +1951,12 @@ def build_provision_recipe(
         "teleocr": "teleocr_native_gateway.py",
         "glm-ocr": "glmocr_native_gateway.py",
         "mineru2.5": "mineru_native_gateway.py",
+        # Indra's gateway is the server itself, on the recipe's port: no sidecar port.
+        "indra-ocr": "indra_native_gateway.py",
     }.get(adapter_id, "__no_native_gateway__.py")
     native_gateway_b64 = (
         base64.b64encode(native_gateway.read_bytes()).decode("ascii")
-        if adapter_id in {"teleocr", "glm-ocr", "mineru2.5"} and native_gateway.is_file()
+        if adapter_id in {"teleocr", "glm-ocr", "mineru2.5", "indra-ocr"} and native_gateway.is_file()
         else ""
     )
     argv = serve_recipes.serve_argv(
@@ -1989,6 +1991,9 @@ def build_provision_recipe(
         "adapter_id": recipe.adapter_id,
         "runtime": recipe.runtime,
         "hf_repo": hf_repo,
+        # The checkpoint's pinned revision, when the model declares one and the user
+        # did not pick another repo (Indra OCR: the tag its package is tested with).
+        "hf_revision": (adapter.capabilities.hf_revision or "") if hf_repo == recipe.hf_repo else "",
         "model_dir": effective_model_dir,
         "vllm_version": recipe.vllm_version,
         "transformers_version": recipe.transformers_version,

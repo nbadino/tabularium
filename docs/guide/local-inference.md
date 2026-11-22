@@ -44,7 +44,8 @@ fails.
 | Linux + NVIDIA GPU | **vLLM** (`vllm serve`) | every model in the registry |
 | Windows | **vLLM via WSL2** | same as Linux, inside WSL2 |
 | Apple Silicon (M1+) | **MLX** (`mlx_vlm.server`) | only models with an MLX port |
-| Linux without an NVIDIA GPU | — | no local serving: use a remote provider |
+| Linux without an NVIDIA GPU | — | no local serving: use a remote provider (Indra OCR excepted) |
+| Linux or Apple Silicon, any CPU | **ONNX Runtime** (Indra OCR's gateway) | Indra OCR only: CPU, or CUDA when there is an NVIDIA GPU |
 
 vLLM does not run on Apple Silicon: it is CUDA-first and has no native Metal
 path. Local models there use MLX, but not all share the same server:
@@ -63,6 +64,22 @@ environment pinned to the official release.
 | dots.mocr | ✅ | ❌ | actually served: END2END stops at 682 characters, run fails |
 | GLM-OCR | ✅ | ❌ | actually served: run "succeeds" with **zero** blocks inserted |
 | Xiaomi-OCR-0 | ✅ | ✅ `xiaomi-research/Xiaomi-OCR-0` (bf16, as published) | — |
+| Indra OCR | — (ONNX Runtime, CPU or CUDA) | — (ONNX Runtime on the CPU) | not a VLM: see below |
+
+**Indra OCR** (`datalab-to/indra-ocr`) is not served by vLLM or MLX. It is a
+7.3M-parameter ONNX pipeline, and Tabularium runs the vendor's `indra_ocr`
+package behind `scripts/cloud/indra_native_gateway.py`, which answers
+`/v1/models` and `/parse` on the serve port. The first start creates
+`<root>/indra-runtime` (indra-ocr, FastAPI, Uvicorn; onnxruntime-gpu in place of
+the CPU build when an NVIDIA GPU is present). On a CPU without AVX2 (the
+production server) a 2337×1653 scan takes about 6–10 s with one thread; raise
+*Threads per page* and *Pages in parallel* in Settings on bigger machines. The
+same script runs on any host by hand, for the manual endpoint:
+
+```bash
+pip install indra-ocr==1.1.2 fastapi uvicorn
+python scripts/cloud/indra_native_gateway.py --model-dir <snapshot of datalab-to/indra-ocr@v1.1.0> --host 0.0.0.0 --port 8889 --api-key SECRET
+```
 
 **How the MLX column was decided.** A checkpoint or a declared backend is not
 enough: confirmation requires serving and recognizing real pages.

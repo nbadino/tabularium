@@ -22,7 +22,9 @@ from pathlib import Path
 from typing import Protocol
 
 from .. import config
+from ..models import indra_ocr as indra_spec
 from ..models import monkeyocrv2 as reference
+from ..models.indra_ocr import INDRA_LABELS
 from ..models.types import FAMILY_FORMULA, FAMILY_TABLE, FAMILY_TEXT, GLM_TRAIN_PROMPTS
 from ..models.xiaomi_ocr import XIAOMI_PAGE_MAX_EDGE, XIAOMI_TASK_PROMPTS
 
@@ -2508,6 +2510,124 @@ class LlamaIndexOcriaAdapter(_StubAdapter):
         return result
 
 
+class IndraOcrAdapter(_StubAdapter):
+    """datalab-to/indra-ocr — Datalab's CPU-first OCR pipeline on ONNX Runtime.
+
+    Not a chat model: the page goes whole to Tabularium's gateway
+    (`scripts/cloud/indra_native_gateway.py`), which runs the vendor's
+    `indra_ocr.load(...).ocr(gray)` and returns the `Page` as JSON: layout blocks in
+    reading order (`{"label", "bbox" (pixels), "text"}`, `layout_post.page_blocks`)
+    and the page markdown, where a table block of two or more lines is written as
+    HTML (`layout_post._block_part`). The same gateway serves the local machine (CPU,
+    or CUDA through onnxruntime-gpu), a rented Vast.ai GPU and any server the user
+    starts by hand; it also answers `/v1/models`, so readiness is probed as for vLLM.
+    """
+
+    adapter_id = "indra-ocr"
+    native_runner = "indra"
+    native_prefill_mode = "official"
+    page_layout_fallback = "official-pipeline"
+    # The pipeline has no prompts and no published training format.
+    supports_dataset_export = False
+    capabilities = ModelCapabilities(
+        adapter_id=adapter_id,
+        display_name="Indra OCR",
+        tasks=("layout", "text", "table"),
+        coordinate_system="normalized-0-1000",
+        table_format="html",
+        training_types=(),
+        inference_modes=("onnxruntime",),
+        hardware=("cpu", "cuda", "apple-silicon"),
+        languages=("multilingual",),
+        hf_repo=indra_spec.HF_REPO,
+        hf_revision=indra_spec.HF_REVISION,
+        # The `v1.1.0` snapshot: 76 MB of default models, 20 MB of math models,
+        # 5 MB of `model.safetensors` (for the Hub's count, never loaded), assets.
+        approx_size_gb=0.1,
+        license_note=(
+            "Code Apache-2.0; weights under a modified OpenRAIL-M licence: free for research, "
+            "personal use and startups under $20M funding/revenue, not for products competing "
+            "with Datalab's API."
+        ),
+        train_toolchain="none",
+        serve_backend="indra-native",
+        served_model_name=indra_spec.SERVED_MODEL_NAME,
+        maturity="experimental",
+        local_runtimes=("onnxruntime",),
+    )
+
+    _LABEL_MAP = INDRA_LABELS
+    _TABLE_HTML = re.compile(r"<table>.*?</table>", re.S)
+
+    def serve_command(self, model_path: str, port: int) -> list[str] | None:
+        """The gateway on this machine, inside Tabularium's ONNX Runtime environment."""
+        from . import indra_runtime, serve_recipes
+
+        argv = serve_recipes.serve_argv(
+            serve_recipes.recipe_for(self.adapter_id),
+            model_path=model_path, port=port, host="127.0.0.1",
+        )
+        script = config.RESOURCE_DIR / "scripts" / "cloud" / indra_spec.GATEWAY_SCRIPT
+        return [str(indra_runtime.python_bin()), str(script), *argv[1:]]
+
+    def parse_native_result(
+        self,
+        payload: object,
+        image_width: int | None = None,
+        image_height: int | None = None,
+    ) -> list[dict]:
+        """The gateway's page to Tabularium blocks, boxes normalized to 0-1000."""
+        if not isinstance(payload, dict):
+            return []
+        try:
+            width = float(payload.get("width") or image_width or 0)
+            height = float(payload.get("height") or image_height or 0)
+        except (TypeError, ValueError):
+            return []
+        blocks = payload.get("blocks")
+        if width <= 0 or height <= 0 or not isinstance(blocks, list):
+            return []
+        blocks = [block for block in blocks if isinstance(block, dict)]
+        # A table block of several lines is a `<table>` in the markdown, in the same
+        # order; a one-line table is plain text there. When the counts disagree the
+        # pairing cannot be trusted and every table keeps its lines.
+        tables = self._TABLE_HTML.findall(str(payload.get("markdown") or ""))
+        multiline = [
+            block for block in blocks
+            if block.get("label") == "Table" and "\n" in str(block.get("text") or "")
+        ]
+        html_for = (
+            {id(block): html for block, html in zip(multiline, tables)}
+            if len(multiline) == len(tables) else {}
+        )
+        items = []
+        for block in blocks:
+            raw = block.get("bbox")
+            if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+                continue
+            try:
+                x1, y1, x2, y2 = (float(value) for value in raw)
+            except (TypeError, ValueError):
+                continue
+            bbox = [
+                max(0, min(1000, round(x1 / width * 1000))),
+                max(0, min(1000, round(y1 / height * 1000))),
+                max(0, min(1000, round(x2 / width * 1000))),
+                max(0, min(1000, round(y2 / height * 1000))),
+            ]
+            if bbox[0] >= bbox[2] or bbox[1] >= bbox[3]:
+                continue
+            label = self._LABEL_MAP.get(str(block.get("label") or ""), "Text")
+            if label == "Picture":
+                content = ""
+            elif label == "Table":
+                content = html_for.get(id(block)) or str(block.get("text") or "").strip()
+            else:
+                content = str(block.get("text") or "").strip()
+            items.append({"bbox": bbox, "label": label, "content": content})
+        return items
+
+
 class CustomVllmAdapter(_StubAdapter):
     """Un modello aggiunto liberamente dall'utente (repo Hugging Face
     qualsiasi), riga della tabella `custom_models` — stesso principio di LM
@@ -2650,6 +2770,7 @@ _ADAPTERS: dict[str, ModelAdapter] = {
         LlamaIndexOcriaAdapter(),
         LightOnOcr3Adapter(),
         SuryaOcrAdapter(),
+        IndraOcrAdapter(),
         XiaomiOcrAdapter(),
         GeminiArgonAdapter(),
     )
