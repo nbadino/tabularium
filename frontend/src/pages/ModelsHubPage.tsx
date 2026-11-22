@@ -17,12 +17,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { Badge, Collapsible, ErrorNotice, Modal, Module, Notice, PageHeader } from '../app/ui'
-import { useCanAdminister } from '../app/auth'
+import { useAuth, useCanAdminister } from '../app/auth'
 import ModelSettingsSection from './settings/ModelSettingsSection'
 import { apiGet, apiPut } from '../lib/api'
 import type { SystemInfo } from '../lib/types'
 import { syncInferenceFromBackend, useInference } from '../app/inference'
 import { CloudControlModal } from '../app/CloudControlModal'
+import { IconPlayground } from '../app/icons'
 import { LlamaIndexSetup } from '../app/models/LlamaIndexSetup'
 import { ModelPicker } from '../app/models/ModelPicker'
 import { DestinationPicker } from '../app/models/DestinationPicker'
@@ -88,6 +89,7 @@ export default function ModelsHubPage() {
   // install opens on choosing a model, not on a "local" it cannot run.
   const configured = inference.configured && Boolean(inference.provider && inference.adapterId)
   const isAdmin = useCanAdminister()
+  const isViewer = useAuth().user?.role === 'viewer'
   const urlModel = params.get('modello')
   const urlDest = params.get('dove')
   const urlStep = PARAM_STEP[params.get('passo') ?? ''] ?? null
@@ -95,8 +97,9 @@ export default function ModelsHubPage() {
   const modelId = urlModel ?? (pristine && configured ? inference.adapterId : null)
   const destRaw = urlDest ?? (pristine && configured ? destinationForProvider(inference.provider) : null)
   const dest: Destination | null = isDestination(destRaw) ? destRaw : null
+  const rawStep = resolveStep(urlStep ?? (pristine && configured ? 'configure' : null), modelId ? models.find((m) => m.adapter_id === modelId) ?? null : null, dest)
+  const step = isViewer ? 'model' : rawStep
   const model = useMemo(() => models.find((m) => m.adapter_id === modelId) ?? null, [models, modelId])
-  const step = resolveStep(urlStep ?? (pristine && configured ? 'configure' : null), model, dest)
 
   const go = (next: { model?: string | null; dest?: Destination | null; step: StepId }) => {
     const p = new URLSearchParams()
@@ -138,6 +141,7 @@ export default function ModelsHubPage() {
   }
 
   const selectModel = (m: ModelItem) => {
+    if (isViewer) return
     // Cambiare modello invalida la destinazione solo se il nuovo modello non
     // la accetta: chi ha scelto «Modal» e prova un altro modello resta lì.
     const keep = dest && destinationVerdict(m, dest).ok ? dest : null
@@ -175,9 +179,18 @@ export default function ModelsHubPage() {
 
   return (
     <div className="p-4">
-      <PageHeader title={t('nav.models')} />
+      <PageHeader
+        title={t('nav.models')}
+        aux={
+          <Link to="/playground" className="btn btn-sm no-underline">
+            <IconPlayground size={13} />
+            {t('modelsHub.tryPlayground')}
+          </Link>
+        }
+      />
 
       {error != null && <div className="mb-3"><ErrorNotice error={error} /></div>}
+      {isViewer && <div className="mb-3"><Notice>{t('modelsHub.viewerReadOnly')}</Notice></div>}
 
       {/* Cosa usa Tabularium adesso: la risposta a «cosa sto usando?» non
           deve dipendere dal passo aperto. */}
@@ -205,7 +218,7 @@ export default function ModelsHubPage() {
               <div className="text-[14px] font-semibold" title={inference.url || undefined}>{t(`recognition.provider.${inUseDest ?? inference.provider}`)}</div>
             </div>
             <div className="ml-auto flex flex-wrap gap-2">
-              {!(step === 'configure' && modelId === inference.adapterId && dest === inUseDest) && (
+              {!isViewer && !(step === 'configure' && modelId === inference.adapterId && dest === inUseDest) && (
                 <button
                   type="button"
                   className="btn"
@@ -225,12 +238,12 @@ export default function ModelsHubPage() {
                   {t('modelsHub.tryPage')}
                 </Link>
               )}
-              {inUse && pristine && (
+              {!isViewer && inUse && pristine && (
                 <button type="button" className="btn" onClick={() => go({ model: null, dest: null, step: 'model' })}>
                   {t('modelsHub.chooseAnother')}
                 </button>
               )}
-              {inUseReady && (
+              {!isViewer && inUseReady && (
                 <Link to="/riconosci" className="btn btn-primary no-underline">
                   {t('modelsHub.goRecognize')}
                 </Link>
@@ -273,6 +286,7 @@ export default function ModelsHubPage() {
           <ModelPicker
             models={models}
             loading={loading}
+            readOnly={isViewer}
             selectedId={model?.adapter_id ?? null}
             onSelect={selectModel}
             onChanged={() => reload(true)}

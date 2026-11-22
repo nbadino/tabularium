@@ -636,6 +636,10 @@ def is_datacenter_offer(hosting_type: Any) -> bool:
 # "created" in seconds.
 VAST_STUCK_STATUSES = frozenset({"created", "offline"})
 VAST_STUCK_LIMIT_S = 10 * 60
+# The image pull ("loading") gets longer, but not forever: a host still pulling after 20 min
+# is billing for a download that a healthy host finishes in minutes (requested 2026-11-20,
+# after an L40 spent 15 min in "loading" on the 8 GB layout image).
+VAST_LOADING_LIMIT_S = 20 * 60
 
 
 def vast_provisioning_failure(inst: dict[str, Any], stuck_for_s: float = 0.0) -> str | None:
@@ -652,6 +656,8 @@ def vast_provisioning_failure(inst: dict[str, Any], stuck_for_s: float = 0.0) ->
         return i18n.msg("vast_container_error", i18n.SOURCE, detail=" ".join(detail.split())[:400])
     status = str(inst.get("actual_status") or "").lower()
     if status in VAST_STUCK_STATUSES and stuck_for_s >= VAST_STUCK_LIMIT_S:
+        return i18n.msg("vast_status_stuck", i18n.SOURCE, status=status, minutes=int(stuck_for_s // 60))
+    if status == "loading" and stuck_for_s >= VAST_LOADING_LIMIT_S:
         return i18n.msg("vast_status_stuck", i18n.SOURCE, status=status, minutes=int(stuck_for_s // 60))
     return None
 

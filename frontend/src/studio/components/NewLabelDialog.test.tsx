@@ -46,10 +46,10 @@ describe('NewLabelDialog', () => {
     // La nota di scope è visibile prima di creare.
     expect(screen.getByText(/a livello di progetto/i)).toBeTruthy()
 
-    await user.type(screen.getByPlaceholderText('Es. Vessel-name'), 'Vessel-name')
+    await user.type(screen.getByPlaceholderText('Es. Nome-nave'), 'Vessel-name')
     await user.type(screen.getByPlaceholderText('VSL'), 'VSL')
     await user.type(
-      screen.getByPlaceholderText('Es. Please output the text content from the image.'),
+      screen.getByPlaceholderText('Es. Trascrivi il testo contenuto nell’immagine.'),
       'text',
     )
     await user.click(screen.getByRole('button', { name: 'Crea' }))
@@ -59,6 +59,20 @@ describe('NewLabelDialog', () => {
     expect(path).toBe('/projects/5/labels')
     expect(body.name).toBe('Vessel-name')
     expect(onCreated).toHaveBeenCalledWith(EXISTING, 'Vessel-name')
+  })
+
+  it('non mostra errori rossi appena aperto', () => {
+    render(
+      <NewLabelDialog
+        projectId={5}
+        existingNames={['Title']}
+        onClose={() => {}}
+        onCreated={() => {}}
+      />,
+    )
+    expect(screen.queryByText(/Nome non valido/)).toBeNull()
+    expect(screen.queryByText(/Abbreviazione:/)).toBeNull()
+    expect(screen.queryByText(/Questo tipo richiede un prompt/)).toBeNull()
   })
 
   it('non crea con un nome già esistente', async () => {
@@ -71,10 +85,10 @@ describe('NewLabelDialog', () => {
         onCreated={() => {}}
       />,
     )
-    await user.type(screen.getByPlaceholderText('Es. Vessel-name'), 'Title')
+    await user.type(screen.getByPlaceholderText('Es. Nome-nave'), 'Title')
     await user.type(screen.getByPlaceholderText('VSL'), 'TTL')
     await user.type(
-      screen.getByPlaceholderText('Es. Please output the text content from the image.'),
+      screen.getByPlaceholderText('Es. Trascrivi il testo contenuto nell’immagine.'),
       'text',
     )
     expect(screen.getByRole('button', { name: 'Crea' })).toBeDisabled()

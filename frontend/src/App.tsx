@@ -23,7 +23,7 @@ const BenchmarkPage = lazy(() => import('./pages/BenchmarkPage'))
 const PlaygroundPage = lazy(() => import('./pages/PlaygroundPage'))
 const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'))
 const UsersPage = lazy(() => import('./pages/UsersPage'))
-import { Loading, Module } from './app/ui'
+import { Loading } from './app/ui'
 import { useI18n } from './i18n'
 
 type ChunkLoadBoundaryProps = { children: ReactElement }
@@ -68,18 +68,23 @@ class ChunkLoadBoundary extends Component<ChunkLoadBoundaryProps, ChunkLoadBound
 function NotFoundPage() {
   const { t } = useI18n()
   return (
-    <div className="p-3">
-      <Module tab={t('notFound.tab')}>
-        <h1 className="text-[19px] font-bold tracking-[-0.02em]">
-          {t('notFound.title')}
-        </h1>
-        <p className="mt-1 max-w-[60ch] text-[13px] text-[color:var(--color-ink-2)]">
-          {t('notFound.body')}
-        </p>
-        <Link to="/" className="btn btn-primary mt-3 no-underline">
-          {t('notFound.back')}
-        </Link>
-      </Module>
+    <div className="mx-auto max-w-lg px-4 py-12">
+      <section className="mod" aria-labelledby="not-found-title">
+        <header className="mod-head">
+          <span className="mod-tab">{t('notFound.tab')}</span>
+        </header>
+        <div className="mod-body">
+          <h1 id="not-found-title" className="text-[19px] font-bold tracking-[-0.02em]">
+            {t('notFound.title')}
+          </h1>
+          <p className="mt-1 max-w-[60ch] text-[13px] text-[color:var(--color-ink-2)]">
+            {t('notFound.body')}
+          </p>
+          <Link to="/" className="btn btn-primary mt-4 no-underline">
+            {t('notFound.back')}
+          </Link>
+        </div>
+      </section>
     </div>
   )
 }

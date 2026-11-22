@@ -59,9 +59,14 @@ def runs_dir(project_id: int) -> Path:
 
 
 REMOTE_EXECUTORS = {"ssh", "vast", "runpod"}
+# Prints True when the training framework sees a GPU. PaddleX (the layout recipe) has no torch.
+_CUDA_CHECK = {
+    "torch": "import torch;print(torch.cuda.is_available())",
+    "paddle": "import paddle;print(paddle.device.cuda.device_count() > 0)",
+}
 
 
-def _remote_train_ready(cfg: dict, *, require_marker: bool = True) -> dict | None:
+def _remote_train_ready(cfg: dict, *, require_marker: bool = True, framework: str = "torch") -> dict | None:
     """Sonda l'host di training remoto: ambiente pronto (`.train_ready`) e GPU.
 
     Ritorna `{"ready": bool, "cuda": bool}` oppure `None` quando non si riesce a
@@ -90,7 +95,7 @@ def _remote_train_ready(cfg: dict, *, require_marker: bool = True) -> dict | Non
     interpreter = str(cfg.get("ssh_python") or "").strip() or "python3"
     command = (
         marker
-        + f"{shlex.quote(interpreter)} -c 'import torch;print(torch.cuda.is_available())' 2>/dev/null"
+        + f"{shlex.quote(interpreter)} -c '{_CUDA_CHECK[framework]}' 2>/dev/null"
     )
     argv = [
         "ssh", "-p", str(port),
@@ -317,6 +322,7 @@ def preflight(project_id: int, cfg: dict | None = None, lang: str = "it") -> dic
         probe = _remote_train_ready(
             cfg,
             require_marker=(toolchain == "ms-swift" and adapter_id == "monkeyocrv2-parsing"),
+            framework="paddle" if toolchain == "paddlex" else "torch",
         )
         if probe is not None:
             if not probe["ready"]:

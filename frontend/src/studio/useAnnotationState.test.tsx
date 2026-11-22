@@ -189,3 +189,17 @@ it("la lettura di un modello entra in un solo passo di undo: riscrive, toglie e 
   act(() => result.current.undo())
   expect(result.current.blocks.map((b) => b.id)).toEqual([first, second])
 })
+
+it('addBlock, moveBlock e reorderReset mantengono orderIdx contiguo da 1', () => {
+  const { result } = renderHook(() => useAnnotationState(page(1), 1, []))
+  act(() => {
+    result.current.addBlock({ kind: 'rect', label: 'Text', points: [{ x: 0, y: 10 }, { x: 20, y: 20 }] })
+    result.current.addBlock({ kind: 'rect', label: 'Title', points: [{ x: 0, y: 0 }, { x: 20, y: 8 }] })
+  })
+  expect(result.current.blocks.map((b) => b.orderIdx)).toEqual([1, 2])
+  const firstId = result.current.blocks[0].id
+  act(() => result.current.moveBlock(firstId, 1))
+  expect([...result.current.blocks].sort((a, b) => (a.orderIdx ?? 0) - (b.orderIdx ?? 0)).map((b) => [b.label, b.orderIdx])).toEqual([['Title', 1], ['Text', 2]])
+  act(() => result.current.reorderReset())
+  expect([...result.current.blocks].sort((a, b) => (a.orderIdx ?? 0) - (b.orderIdx ?? 0)).map((b) => [b.label, b.orderIdx])).toEqual([['Title', 1], ['Text', 2]])
+})

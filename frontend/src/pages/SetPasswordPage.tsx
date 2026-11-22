@@ -8,7 +8,8 @@
  */
 import { useState } from 'react'
 import { apiPost } from '../lib/api'
-import { Field } from '../app/ui'
+import { Field, PasswordInput } from '../app/ui'
+import { LocaleSwitch } from '../app/LocaleSwitch'
 import { useAuth } from '../app/auth'
 import { useI18n } from '../i18n'
 
@@ -32,6 +33,13 @@ export default function SetPasswordPage() {
     setError(null)
     try {
       await apiPost('/auth/change-password', { current_password: current, new_password: next })
+      // Avoid dropping a newly activated user onto an admin-only route left in the tab URL.
+      if (
+        window.location.pathname.startsWith('/impostazioni') ||
+        window.location.pathname.startsWith('/utenti')
+      ) {
+        window.history.replaceState(null, '', '/progetti')
+      }
       // Il gate legge di nuovo l'utente: senza il flag, entra nell'app.
       await refresh()
     } catch {
@@ -45,37 +53,34 @@ export default function SetPasswordPage() {
       <div className="mod w-full max-w-sm rounded-lg p-6">
         <div className="mod-head border-b-[color:var(--color-rule-strong)]">
           <span className="mod-tab">{t('account.setTitle')}</span>
+          <div className="mod-head-aux">
+            <LocaleSwitch />
+          </div>
         </div>
         <div className="mod-body">
           <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('account.setIntro')}</p>
           <form onSubmit={submit} className="mt-3 space-y-3">
             <Field label={t('account.currentPassword')}>
-              <input
-                type="password"
+              <PasswordInput
                 value={current}
                 onChange={(e) => setCurrent(e.target.value)}
                 autoComplete="current-password"
                 autoFocus
-                className="fld"
               />
             </Field>
             <Field label={t('account.newPassword')} hint={t('auth.passwordHint')}>
-              <input
-                type="password"
+              <PasswordInput
                 value={next}
                 onChange={(e) => setNext(e.target.value)}
                 autoComplete="new-password"
-                className="fld"
                 aria-invalid={tooShort}
               />
             </Field>
             <Field label={t('account.confirmPassword')}>
-              <input
-                type="password"
+              <PasswordInput
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
                 autoComplete="new-password"
-                className="fld"
                 aria-invalid={mismatch}
               />
             </Field>
@@ -88,7 +93,7 @@ export default function SetPasswordPage() {
           </form>
           {user && (
             <p className="mt-3 text-[11px] text-[color:var(--color-ink-3)]">
-              {t('auth.inviteFor', { name: user.username })}
+              {t('account.setFor', { name: user.username })}
             </p>
           )}
         </div>

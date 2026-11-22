@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react'
 import { apiGet } from '../../lib/api'
 import type { HealthResponse, SystemInfo, UpdateStatus } from '../../lib/types'
 import { Badge, ErrorNotice, Module, Notice } from '../../app/ui'
+import { IconCopy } from '../../app/icons'
 import { useAuth } from '../../app/auth'
 import { useI18n } from '../../i18n'
 
@@ -17,6 +18,7 @@ export default function EnvironmentSection() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [loading, setLoading] = useState(true)
+  const [copiedData, setCopiedData] = useState(false)
 
   const load = () => {
     setLoading(true)
@@ -93,12 +95,32 @@ export default function EnvironmentSection() {
           <button type="button" className="btn mb-3" onClick={() => loadUpdate(true)}>{t('settings.envUpdateRecheck')}</button>
         )}
         <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
-          {rows.map(([label, value]) => (
-            <div key={label} className="min-w-0 border-t border-[color:var(--color-rule)] pt-2">
-              <dt className="lbl">{label}</dt>
-              <dd className="mono min-w-0 truncate text-[12px]" title={value}>{value}</dd>
-            </div>
-          ))}
+          {rows.map(([label, value]) => {
+            const isDataDir = label === t('settings.envData') && Boolean(info?.data_dir)
+            return (
+              <div key={label} className="min-w-0 border-t border-[color:var(--color-rule)] pt-2">
+                <dt className="lbl">{label}</dt>
+                <dd className="flex min-w-0 items-start justify-between gap-2">
+                  <span className={`mono min-w-0 text-[12px] ${isDataDir ? 'break-all' : 'truncate'}`} title={value}>{value}</span>
+                  {isDataDir && (
+                    <button
+                      type="button"
+                      className="btn btn-sm shrink-0"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(value).then(() => {
+                          setCopiedData(true)
+                          window.setTimeout(() => setCopiedData(false), 2000)
+                        }).catch(() => {})
+                      }}
+                    >
+                      <IconCopy size={11} />
+                      {copiedData ? t('users.copied') : t('users.copy')}
+                    </button>
+                  )}
+                </dd>
+              </div>
+            )
+          })}
         </dl>
       </Module>
     </div>

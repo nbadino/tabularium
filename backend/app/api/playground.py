@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
+from typing import Callable, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from typing import Literal
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from PIL import Image as PILImage, ImageOps, UnidentifiedImageError
 
 from pydantic import BaseModel
 
@@ -24,6 +26,7 @@ router = APIRouter(
 )
 
 _TEXT_LABELS = {l.name for l in labeling.DEFAULT_LABELS if l.prompt_kind == "text"}
+_MAX_UPLOAD_BYTES = 40 * 1024 * 1024
 
 
 class ParseRequest(BaseModel):
@@ -54,15 +57,75 @@ def playground_parse(
         raise HTTPException(status_code=404, detail="immagine sorgente non disponibile")
     if payload.server_url is not None or payload.model is not None:
         raise HTTPException(status_code=400, detail="usa il profilo di inferenza approvato dall'amministratore")
+    w, h = page["width"], page["height"]
     if payload.engine == "ocr":
-        return _parse_with_ocr(page, image, request)
-    client = infmod.get_vllm_client()
+        return _parse_with_ocr_image(image, w, h, request)
     try:
         project_settings = json.loads(project["settings_json"] or "{}")
     except (TypeError, ValueError):
         project_settings = {}
     table_hint = table_hint_svc.get_table_hint(project_settings)
+    return _parse_with_model_image(
+        image,
+        w,
+        h,
+        request,
+        table_hint=table_hint,
+        crop_jpeg=lambda bbox_px: pagesvc.crop_block_jpeg(page, bbox_px),
+    )
 
+
+@router.post("/api/playground/parse-upload")
+def playground_parse_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    engine: Literal["model", "ocr"] = Form("model"),
+    _user: dict = Depends(authsvc.get_current_user),
+) -> dict:
+    """Analyze a standalone uploaded image without registering it in a project."""
+    raw = file.file.read(_MAX_UPLOAD_BYTES + 1)
+    if not raw:
+        raise HTTPException(status_code=422, detail="file immagine vuoto")
+    if len(raw) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="immagine troppo grande")
+    try:
+        with PILImage.open(BytesIO(raw)) as opened:
+            image = ImageOps.exif_transpose(opened).convert("RGB")
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="formato immagine non valido o danneggiato") from exc
+
+    w, h = image.size
+    if engine == "ocr":
+        return _parse_with_ocr_image(image, w, h, request)
+
+    def _crop_upload(bbox_px: list[int]) -> bytes | None:
+        x0, y0, x1, y1 = bbox_px
+        if x1 <= x0 or y1 <= y0:
+            return None
+        buf = BytesIO()
+        image.crop((x0, y0, x1, y1)).save(buf, format="JPEG", quality=92)
+        return buf.getvalue()
+
+    return _parse_with_model_image(
+        image,
+        w,
+        h,
+        request,
+        table_hint="",
+        crop_jpeg=_crop_upload,
+    )
+
+
+def _parse_with_model_image(
+    image,
+    w: int,
+    h: int,
+    request: Request,
+    *,
+    table_hint: str,
+    crop_jpeg: Callable[[list[int]], bytes | None],
+) -> dict:
+    client = infmod.get_vllm_client()
     # Il playground disegna il layout: non tutti i modelli lo sanno fare. Tre
     # percorsi possibili, in ordine di specificità:
     # 1. il percorso nativo «official» (PaddleOCR-VL: pipeline Paddle con
@@ -88,7 +151,6 @@ def playground_parse(
             detail=msg("playground_needs_layout", lang, model=client.model or client.adapter.adapter_id),
         )
 
-    w, h = page["width"], page["height"]
     try:
         if use_official:
             # `parse_page` restituisce i bbox in pixel dell'immagine: qui si
@@ -132,12 +194,8 @@ def playground_parse(
             # crop e una seconda chiamata al modello sarebbe lavoro doppio per
             # lo stesso testo.
             try:
-                crop = pagesvc.crop_block_jpeg(page, bbox_px)
+                crop = crop_jpeg(bbox_px)
                 if crop:
-                    from io import BytesIO
-
-                    from PIL import Image as PILImage
-
                     extra = {"hint": table_hint} if (label == "Table" and table_hint) else {}
                     content = client.recognize(PILImage.open(BytesIO(crop)), label, **extra)
             except Exception:  # noqa: BLE001
@@ -157,7 +215,7 @@ def playground_parse(
     }
 
 
-def _parse_with_ocr(page, image, request: Request) -> dict:
+def _parse_with_ocr_image(image, w: int, h: int, request: Request) -> dict:
     """La stessa risposta del percorso modello, fatta dall'OCR locale.
 
     L'OCR non conosce il layout: ogni riga è un blocco `Text`. È meno di
@@ -170,7 +228,6 @@ def _parse_with_ocr(page, image, request: Request) -> dict:
     if not engine.available:
         lang = parse_lang(request.headers.get("accept-language"))
         raise HTTPException(status_code=409, detail=msg("playground_ocr_unavailable", lang))
-    w, h = page["width"], page["height"]
     sx = w / image.width if image.width else 1.0
     sy = h / image.height if image.height else 1.0
     items = []

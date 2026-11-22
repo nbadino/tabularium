@@ -110,12 +110,25 @@ export async function register(
   set({ user })
 }
 
+function clearScopedSessionCache(): void {
+  if (typeof window === 'undefined') return
+  try {
+    for (let i = window.sessionStorage.length - 1; i >= 0; i--) {
+      const k = window.sessionStorage.key(i)
+      if (k && k.startsWith('tabularium.scanReport.')) window.sessionStorage.removeItem(k)
+    }
+  } catch {
+    // Storage unavailable: ignore cleanup failure.
+  }
+}
+
 export async function logout(): Promise<void> {
   try {
     await apiPost('/auth/logout')
   } catch {
     // Il backend pulisce comunque il cookie all'avvio; qui conta azzerare lo stato.
   }
+  clearScopedSessionCache()
   set({ user: null })
 }
 
@@ -145,6 +158,7 @@ export async function updateProfile(email: string | null): Promise<void> {
 // risposto 401 a una richiesta qualsiasi → torna al login.
 if (typeof window !== 'undefined') {
   window.addEventListener('tabularium:unauthorized', () => {
+    clearScopedSessionCache()
     set({ user: null, needsSetup: false })
   })
 }

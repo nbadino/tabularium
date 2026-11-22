@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { MutableRefObject } from 'react'
+import { Link, useInRouterContext } from 'react-router'
 import type { HeaderTemplate, KnownTableHeader, KnownTableHeadersOut, TableCell, TableGrid, TableGridOut, TableCheck, TableChecksOut } from '../../lib/types'
 import { applyHeaderTemplate, setVerified, deleteTrack, emptyGrid, extractHeaderTemplate, fillDown, insertTrack, joinColumns, mergeKeepsEveryText, mergeRange, normalizeColumn, fractionsColumn, splitCell, transformColumnCase } from '../../lib/grid'
 import type { CellChoice, ColumnOp, SheetSelection, TrackOp, UniverController } from './UniverSheet'
@@ -146,6 +147,7 @@ export function TableWorkspacePanel({
   flushRef?: MutableRefObject<(() => Promise<void>) | null>
 }) {
   const { t, tn } = useI18n()
+  const inRouter = useInRouterContext()
   const confirm = useConfirm()
   const [grid, setGrid] = useState<TableGrid | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -759,6 +761,10 @@ export function TableWorkspacePanel({
     )
   }
   const verified = verifiedCount(grid)
+  const activePos = active ?? { r: selection.startRow, c: selection.startColumn }
+  const activeCellObj = grid.cells.find((cell) => cell.r === activePos.r && cell.c === activePos.c)
+  const activeHasText = Boolean((activeCellObj?.text ?? '').trim())
+  const activeVerified = Boolean(activeHasText && activeCellObj?.verified)
   const isDirty = dirty()
   const saveLabel = saving ? t('table.saving') : isDirty ? t('table.saveGrid') : t('table.saved')
   return (
@@ -780,6 +786,27 @@ export function TableWorkspacePanel({
           <span className="mono text-[color:var(--color-ink)]">{verified.n}/{verified.total}</span>
           <span className="sr-only">{t('table.verifiedShort')}</span>
         </span>
+        {activeHasText && (
+          <button
+            type="button"
+            aria-pressed={activeVerified}
+            onClick={() => commitModelChange(setVerified(grid, selection, !activeVerified))}
+            title={activeVerified ? t('table.unverifyCell') : t('table.verifyCell')}
+            className={`btn btn-sm !px-1.5 !py-0.5 text-[11px] ${activeVerified ? '!border-[color:var(--color-ok)] !bg-[color:var(--color-ok)]/10 !text-[color:var(--color-ok)]' : ''}`}
+          >
+            ✓ {activeVerified ? t('table.cellVerifiedChip') : t('table.cellVerifyChip')}
+          </button>
+        )}
+        {verified.total > 0 && verified.n < verified.total && (
+          <button
+            type="button"
+            onClick={() => commitModelChange(setVerified(grid, { startRow: 0, startColumn: 0, endRow: grid.rows - 1, endColumn: grid.cols - 1 }, true))}
+            title={t('table.verifyAllHint')}
+            className="btn btn-sm !px-1.5 !py-0.5 text-[11px]"
+          >
+            {t('table.verifyAll')}
+          </button>
+        )}
         {checks && checks.failed > 0 && (
           <span
             className="inline-flex items-center gap-1 px-1 font-semibold text-[color:var(--color-warn)]"
@@ -789,6 +816,32 @@ export function TableWorkspacePanel({
             }
           >
             Σ <span className="mono">{checks.passed}/{checks.checks.length}</span>
+          </span>
+        )}
+        {checks && checks.failed === 0 && checks.checks.length > 0 && (
+          <span
+            className="inline-flex items-center gap-1 px-1 text-[color:var(--color-ok)]"
+            title={t('table.checksBalanced', { n: checks.checks.length })}
+          >
+            Σ ✓ <span className="mono">{checks.passed}/{checks.checks.length}</span>
+          </span>
+        )}
+        {checks && checks.checks.length === 0 && (
+          <span
+            className="inline-flex items-center gap-1 px-1 text-[color:var(--color-ink-3)]"
+            title={t('table.checksNoneTitle')}
+          >
+            Σ 0 · {projectId != null ? (
+              inRouter ? (
+                <Link to={`/progetti/${projectId}/avanzate`} className="underline underline-offset-2 hover:text-[color:var(--color-ink)]">
+                  {t('table.checksNoneLink')}
+                </Link>
+              ) : (
+                <a href={`/progetti/${projectId}/avanzate`} className="underline underline-offset-2 hover:text-[color:var(--color-ink)]">
+                  {t('table.checksNoneLink')}
+                </a>
+              )
+            ) : t('table.checksNone')}
           </span>
         )}
         <StructureRepairsMenu repairs={grid.structure_repairs} />
@@ -826,6 +879,13 @@ export function TableWorkspacePanel({
               </>
             )}
             <hr className="menu-sep" />
+            <button type="button" className="menu-item" onClick={() => runColumnOp('merge', selection)}>
+              {t('table.modeMerge')}
+            </button>
+            <button type="button" className="menu-item" onClick={() => runColumnOp('unmerge', selection)}>
+              {t('table.splitCell')}
+            </button>
+            <hr className="menu-sep" />
             <button type="button" className="menu-item" onClick={() => runColumnOp('split', selection)}>
               {t('table.splitTitle')}
             </button>
@@ -840,9 +900,9 @@ export function TableWorkspacePanel({
                   if (event.target.value) runColumnOp(event.target.value as ColumnOp, selection)
                 }}
               >
-                <option value="" disabled>{t('table.quickActions')}</option>
-                {(['normalize', 'fill', 'join', 'upper', 'lower', 'fractions', 'merge', 'unmerge'] as const).map((op) => (
-                  <option key={op} value={op}>{op === 'fractions' ? t('table.toFractionsShort') : op === 'merge' ? t('table.modeMerge') : op === 'unmerge' ? t('table.splitCell') : t(`table.${op}Short` as const)}</option>
+                <option value="" disabled>{t('table.quickActionsPlaceholder')}</option>
+                {(['normalize', 'fill', 'join', 'upper', 'lower', 'fractions'] as const).map((op) => (
+                  <option key={op} value={op}>{op === 'fractions' ? t('table.toFractionsShort') : t(`table.${op}Short` as const)}</option>
                 ))}
               </select>
             </label>
@@ -971,8 +1031,11 @@ export function TableWorkspacePanel({
       )}
 
 
-      <div ref={workspace} className="flex min-h-0 flex-1 gap-2">
-        <div className="flex min-h-0 min-w-0 flex-col" style={{ flex: `0 0 ${imageWidth}%` }}>
+      <div ref={workspace} className="flex min-h-0 flex-1 flex-col gap-2 md:flex-row">
+        <div
+          className="flex h-56 min-w-0 shrink-0 flex-col md:h-auto md:min-h-0 md:shrink md:flex-[0_0_var(--img-w)]"
+          style={{ ['--img-w' as string]: `${imageWidth}%` }}
+        >
           <TablePageImage
             key={showPage ? 'page' : 'crop'}
             src={showPage && pageImageUrl ? pageImageUrl : `${API_BASE}/blocks/${serverId}/crop`}
@@ -983,7 +1046,9 @@ export function TableWorkspacePanel({
             focus={imageFocus}
           />
         </div>
-        <Splitter value={workspaceWidth * imageWidth / 100} min={workspaceWidth * 0.25} max={workspaceWidth * 0.65} side="left" label={t('table.imageWidth')} onChange={(width) => setImageWidth(width / workspaceWidth * 100)} onReset={() => setImageWidth(45)} />
+        <div className="hidden md:flex">
+          <Splitter value={workspaceWidth * imageWidth / 100} min={workspaceWidth * 0.25} max={workspaceWidth * 0.65} side="left" label={t('table.imageWidth')} onChange={(width) => setImageWidth(width / workspaceWidth * 100)} onReset={() => setImageWidth(45)} />
+        </div>
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           <Suspense fallback={<LoadingGrid label={t('content.tableLoading')} rows={10} />}>
               <UniverSheet

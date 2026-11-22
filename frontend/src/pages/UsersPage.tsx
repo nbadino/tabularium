@@ -9,7 +9,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { apiDelete, apiGet, apiPatch, apiPost } from '../lib/api'
 import type { User, UserCreated } from '../lib/types'
-import { Collapsible, ErrorNotice, Field, Modal, Module, PageHeader } from '../app/ui'
+import { Collapsible, ErrorNotice, Field, Modal, Module, PageHeader, PasswordInput } from '../app/ui'
 import { IconCopy } from '../app/icons'
 import { useAuth } from '../app/auth'
 import { useI18n } from '../i18n'
@@ -32,6 +32,7 @@ export default function UsersPage() {
   const [active, setActive] = useState(true)
   // Invito via link: l'utente sceglie la password da sé, l'admin non la conosce.
   const [inviteMode, setInviteMode] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
 
   // modali
   const [resetTarget, setResetTarget] = useState<User | null>(null)
@@ -52,11 +53,21 @@ export default function UsersPage() {
 
   const create = async (e: FormEvent) => {
     e.preventDefault()
+    const cleanUser = username.trim()
+    if (!cleanUser) {
+      setFormError(t('users.usernameRequired'))
+      return
+    }
+    if (!inviteMode && password.length < 8) {
+      setFormError(t('account.tooShort'))
+      return
+    }
+    setFormError(null)
     setBusy(true)
     setError(null)
     try {
       const created = await apiPost<UserCreated>('/users', {
-        username: username.trim(),
+        username: cleanUser,
         // Con l'invito la password la sceglie l'utente: non ne mandiamo una.
         password: inviteMode ? undefined : password,
         email: email.trim() || undefined,
@@ -155,12 +166,20 @@ export default function UsersPage() {
 
       <div className="mb-3">
         <Collapsible tab={t('users.newUser')}>
-          <form onSubmit={create}>
+          <form onSubmit={create} noValidate>
+            {formError && (
+              <p role="alert" className="mb-2 text-[12px] font-medium text-[color:var(--color-danger)]">
+                {formError}
+              </p>
+            )}
             <div className="grid gap-3 sm:grid-cols-3">
               <Field label={t('auth.username')}>
                 <input
                   value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  onChange={(e) => {
+                    setUsername(e.target.value)
+                    if (formError) setFormError(null)
+                  }}
                   required
                   autoComplete="off"
                   className="fld"
@@ -177,13 +196,14 @@ export default function UsersPage() {
                   label={t('auth.password')}
                   hint={t('users.tempPasswordHint')}
                 >
-                  <input
-                    type="password"
+                  <PasswordInput
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      setPassword(e.target.value)
+                      if (formError) setFormError(null)
+                    }}
                     required={!inviteMode}
                     autoComplete="new-password"
-                    className="fld"
                   />
                 </Field>
               )}
@@ -197,8 +217,8 @@ export default function UsersPage() {
                 />
               </Field>
             </div>
-            <div className="mt-3 flex flex-wrap items-center gap-4">
-              <Field label={t('users.role')}>
+            <div className="mt-3 flex flex-wrap items-start gap-4">
+              <Field label={t('users.role')} hint={t(`users.roleHelp.${role}`)}>
                 <select
                   value={role}
                   onChange={(e) => setRole(e.target.value as User['role'])}
@@ -211,7 +231,7 @@ export default function UsersPage() {
                   ))}
                 </select>
               </Field>
-              <label className="mt-4 flex items-center gap-2 text-[13px]">
+              <label className="mt-6 flex items-center gap-2 text-[13px]">
                 <input
                   type="checkbox"
                   checked={active}
@@ -220,16 +240,19 @@ export default function UsersPage() {
                 />
                 {t('users.active')}
               </label>
-              <label className="mt-4 flex items-center gap-2 text-[13px]">
+              <label className="mt-6 flex items-center gap-2 text-[13px]">
                 <input
                   type="checkbox"
                   checked={inviteMode}
-                  onChange={(e) => setInviteMode(e.target.checked)}
+                  onChange={(e) => {
+                    setInviteMode(e.target.checked)
+                    if (formError) setFormError(null)
+                  }}
                   className="h-4 w-4 accent-[color:var(--color-sig)]"
                 />
                 {t('users.inviteByLink')}
               </label>
-              <button type="submit" disabled={busy} className="btn btn-primary mt-4">
+              <button type="submit" disabled={busy} className="btn btn-primary mt-5">
                 {busy ? t('common.loading') : t('users.create')}
               </button>
             </div>
@@ -239,107 +262,118 @@ export default function UsersPage() {
 
       <Module tab={t('users.list')} quiet flush aux={<span>{users.length}</span>}>
         {users.length > 0 ? (
-          <div>
-            {/* intestazione colonne */}
-            <div className="grid grid-cols-[1.4fr_1fr_0.7fr_1fr_auto] gap-x-3 border-b border-[color:var(--color-rule)] px-3 py-1.5">
-              {[t('users.username'), t('users.role'), t('users.active'), t('users.createdAt'), ''].map(
-                (h, i) => (
-                  <span key={i} className="lbl !mb-0">
-                    {h}
-                  </span>
-                ),
-              )}
-            </div>
-            <ul className="ruled">
-              {users.map((u) => {
-                const isMe = me?.id === u.id
-                const isLastAdmin = u.role === 'admin' && users.filter((x) => x.role === 'admin').length === 1
-                return (
-                  <li
-                    key={u.id}
-                    className="grid grid-cols-[1.4fr_1fr_0.7fr_1fr_auto] items-center gap-x-3 px-3 py-1.5"
-                  >
-                    <span className="flex min-w-0 items-baseline gap-2">
-                      <span className="truncate text-[13px] font-semibold">{u.username}</span>
-                      {isMe && (
-                        <span className="badge text-[color:var(--color-sig-text)] bg-[color:var(--color-sig-wash)]">
-                          {t('users.me')}
-                        </span>
-                      )}
-                      {u.must_change_password && (
-                        <span className="badge text-[color:var(--color-warn)]">
-                          {t('users.mustChange')}
-                        </span>
-                      )}
-                    </span>
-                    <select
-                      value={u.role}
-                      onChange={(e) =>
-                        void patch(u.id, { role: e.target.value as User['role'] })
-                      }
-                      disabled={isMe || isLastAdmin}
-                      title={
-                        isLastAdmin && u.role === 'admin'
-                          ? t('users.lastAdminTitle')
-                          : undefined
-                      }
-                      className="fld !w-auto"
-                    >
-                      {ROLES.map((r) => (
-                        <option key={r} value={r}>
-                          {t(`users.role${r.charAt(0).toUpperCase()}${r.slice(1)}`)}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="checkbox"
-                      checked={u.active}
-                      onChange={(e) => void patch(u.id, { active: e.target.checked })}
-                      disabled={isMe}
-                      aria-label={t('users.active')}
-                      className="h-4 w-4 accent-[color:var(--color-sig)]"
-                    />
-                    <span className="mono text-[11px] text-[color:var(--color-ink-3)]">
-                      {u.created_at.slice(0, 10)}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => void regenerateInvite(u)}
-                        disabled={busy || isMe || !u.active}
-                        className="btn btn-sm"
-                      >
-                        {t('users.invite')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setResetTarget(u)
-                          setResetPassword('')
-                        }}
-                        disabled={isMe}
-                        className="btn btn-sm"
-                      >
-                        {t('users.resetPassword')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteTarget(u)}
-                        disabled={isMe || isLastAdmin}
-                        title={
-                          isLastAdmin && u.role === 'admin'
-                            ? t('users.lastAdminTitle')
-                            : undefined
-                        }
-                        className="btn btn-sm btn-danger"
-                      >
-                        {t('users.delete')}
-                      </button>
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-[13px]">
+              <thead className="border-b border-[color:var(--color-rule)] bg-[color:var(--color-fill)] text-left">
+                <tr>
+                  <th className="px-3 py-2"><span className="lbl !mb-0">{t('users.username')}</span></th>
+                  <th className="px-3 py-2"><span className="lbl !mb-0">{t('users.role')}</span></th>
+                  <th className="px-3 py-2 text-center"><span className="lbl !mb-0">{t('users.active')}</span></th>
+                  <th className="px-3 py-2"><span className="lbl !mb-0">{t('users.createdAt')}</span></th>
+                  <th className="px-3 py-2"><span className="sr-only">{t('users.actionsHeader')}</span></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[color:var(--color-rule)]">
+                {users.map((u) => {
+                  const isMe = me?.id === u.id
+                  const isLastAdmin = u.role === 'admin' && users.filter((x) => x.role === 'admin').length === 1
+                  return (
+                    <tr key={u.id}>
+                      <td className="px-3 py-2">
+                        <div className="min-w-0">
+                          <span className="font-semibold">{u.username}</span>
+                          {(isMe || u.must_change_password) && (
+                            <div className="mt-0.5 flex flex-wrap gap-1">
+                              {isMe && (
+                                <span className="badge text-[color:var(--color-sig-text)] bg-[color:var(--color-sig-wash)]">
+                                  {t('users.me')}
+                                </span>
+                              )}
+                              {u.must_change_password && (
+                                <span className="badge text-[color:var(--color-warn)]">
+                                  {t('users.mustChange')}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <select
+                          aria-label={t('users.role')}
+                          value={u.role}
+                          onChange={(e) =>
+                            void patch(u.id, { role: e.target.value as User['role'] })
+                          }
+                          disabled={isMe || isLastAdmin}
+                          title={
+                            isLastAdmin && u.role === 'admin'
+                              ? t('users.lastAdminTitle')
+                              : t(`users.roleHelp.${u.role}`)
+                          }
+                          className="fld !w-auto"
+                        >
+                          {ROLES.map((r) => (
+                            <option key={r} value={r}>
+                              {t(`users.role${r.charAt(0).toUpperCase()}${r.slice(1)}`)}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={u.active}
+                          onChange={(e) => void patch(u.id, { active: e.target.checked })}
+                          disabled={isMe}
+                          aria-label={t('users.active')}
+                          className="h-4 w-4 accent-[color:var(--color-sig)]"
+                        />
+                      </td>
+                      <td className="mono whitespace-nowrap px-3 py-2 text-[11px] text-[color:var(--color-ink-3)]">
+                        {u.created_at.slice(0, 10)}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => void regenerateInvite(u)}
+                            disabled={busy || isMe || !u.active}
+                            className="btn btn-sm"
+                          >
+                            {t('users.invite')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setResetTarget(u)
+                              setResetPassword('')
+                            }}
+                            disabled={isMe}
+                            className="btn btn-sm"
+                          >
+                            {t('users.resetPassword')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteTarget(u)}
+                            disabled={isMe || isLastAdmin}
+                            title={
+                              isLastAdmin && u.role === 'admin'
+                                ? t('users.lastAdminTitle')
+                                : undefined
+                            }
+                            className="btn btn-sm btn-danger"
+                          >
+                            {t('users.delete')}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         ) : (
           <p className="p-6 text-[13px] text-[color:var(--color-ink-2)]">
@@ -355,7 +389,7 @@ export default function UsersPage() {
           onClose={() => setResetTarget(null)}
           footer={
             <>
-              <button type="button" className="btn" onClick={() => setResetTarget(null)}>
+              <button type="button" className="btn" data-autofocus onClick={() => setResetTarget(null)}>
                 {t('common.cancel')}
               </button>
               <button
@@ -374,12 +408,10 @@ export default function UsersPage() {
               {t('users.resetPasswordHint')}
             </p>
             <Field label={t('auth.password')} hint={t('auth.passwordHint')}>
-              <input
-                type="password"
+              <PasswordInput
                 value={resetPassword}
                 onChange={(e) => setResetPassword(e.target.value)}
                 autoFocus
-                className="fld"
               />
             </Field>
           </div>
@@ -393,7 +425,7 @@ export default function UsersPage() {
           onClose={() => setDeleteTarget(null)}
           footer={
             <>
-              <button type="button" className="btn" onClick={() => setDeleteTarget(null)}>
+              <button type="button" className="btn" data-autofocus onClick={() => setDeleteTarget(null)}>
                 {t('common.cancel')}
               </button>
               <button
@@ -438,7 +470,7 @@ export default function UsersPage() {
                 className="fld mono !text-[12px]"
                 aria-label={t('users.inviteLinkLabel')}
               />
-              <button type="button" className="btn btn-sm shrink-0" onClick={() => void copyInvite()}>
+              <button type="button" data-autofocus className="btn btn-sm shrink-0" onClick={() => void copyInvite()}>
                 <IconCopy size={12} />
                 {copied ? t('users.copied') : t('users.copy')}
               </button>

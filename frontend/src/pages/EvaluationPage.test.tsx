@@ -90,4 +90,10 @@ describe('EvaluationPage', () => {
     expect(within(tableRow).getByText('0/1')).toBeInTheDocument()
     expect(within(tableRow).getByText('2')).toBeInTheDocument()
   })
+
+  it('mostra un link a Confronta modelli nella testata', async () => {
+    render(<MemoryRouter><EvaluationPage /></MemoryRouter>)
+    const compare = await screen.findByRole('link', { name: 'Confronta modelli' })
+    expect(compare).toHaveAttribute('href', '/progetti/1/fine-tuning/confronta')
+  })
 })

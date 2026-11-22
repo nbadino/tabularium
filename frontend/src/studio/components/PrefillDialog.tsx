@@ -52,7 +52,7 @@ export default function PrefillDialog({ summary, busy, onRun, onClose, engineCon
   return (
     <Modal title={t('annotate.prefillDialogTitle')} onClose={onClose} footer={
       <>
-        <button type="button" className="btn btn-sm" onClick={onClose}>
+        <button type="button" data-autofocus className="btn btn-sm" onClick={onClose}>
           {t('common.cancel')}
         </button>
         <button

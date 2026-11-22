@@ -73,6 +73,27 @@ export async function apiDelete<T>(path: string): Promise<T> {
   return api<T>('DELETE', path)
 }
 
+export async function apiPostForm<T>(path: string, form: FormData): Promise<T> {
+  const url = joinPath(path)
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Accept-Language': getLocale() },
+      body: form,
+    })
+  } catch (e) {
+    throw new ApiError('POST', path, null, e instanceof Error ? e.message : String(e))
+  }
+  if (!res.ok) {
+    if (res.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('tabularium:unauthorized'))
+    }
+    throw new ApiError('POST', path, res.status, await res.text())
+  }
+  return res.json() as Promise<T>
+}
+
 /** The file name a `Content-Disposition` header gives, UTF-8 form first. */
 export function attachmentFilename(header: string | null): string | null {
   if (!header) return null

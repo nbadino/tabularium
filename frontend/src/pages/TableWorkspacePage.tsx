@@ -1,15 +1,17 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
-import { apiPatch, apiPut } from '../lib/api'
-import type { BlockOut, TableGrid, TableSaveOut } from '../lib/types'
+import { apiGet, apiPatch, apiPut } from '../lib/api'
+import type { BlockOut, PageItem, TableGrid, TableSaveOut } from '../lib/types'
 import { ErrorNotice } from '../app/ui'
 import { IconPrev, IconTable } from '../app/icons'
 import { VerifiedToggle } from '../studio/components/ContentPane'
 import { TableWorkspacePanel } from '../studio/components/TableWorkspacePanel'
 import { useI18n } from '../i18n'
 import { API_BASE } from '../lib/endpoints'
+import { projectPath } from '../app/projectPaths'
+import { cleanRelPath } from '../lib/pageLabel'
 
-export default function TableWorkspacePage({ block }: { block?: BlockOut }) {
+export default function TableWorkspacePage({ block, page: initialPage }: { block?: BlockOut; page?: PageItem | null }) {
   const { blockId = '' } = useParams()
   const [params] = useSearchParams()
   const { t } = useI18n()
@@ -17,6 +19,22 @@ export default function TableWorkspacePage({ block }: { block?: BlockOut }) {
   const revision = useRef(block?.annotation_revision ?? 0)
   const [error, setError] = useState<unknown>(null)
   const pageId = block?.page_id ?? (Number(params.get('page')) || null)
+  const projectForPage = block?.project_id ?? (Number(params.get('project')) || null)
+  const [loadedPage, setLoadedPage] = useState<PageItem | null>(initialPage ?? null)
+  useEffect(() => {
+    if (initialPage) { setLoadedPage(initialPage); return }
+    if (!pageId || !projectForPage) return
+    let alive = true
+    void apiGet<{ items: PageItem[] }>(`/projects/${projectForPage}/pages`)
+      .then((res) => {
+        if (!alive) return
+        const found = res.items.find((item) => item.id === pageId) ?? null
+        setLoadedPage(found)
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [initialPage, pageId, projectForPage])
+  const page = initialPage ?? loadedPage
   const width = Number(params.get('width')) || 0
   const height = Number(params.get('height')) || 0
   const imageSize = width > 0 && height > 0 ? { w: width, h: height } : null
@@ -24,11 +42,14 @@ export default function TableWorkspacePage({ block }: { block?: BlockOut }) {
   const navigate = useNavigate()
   const flushRef = useRef<(() => Promise<void>) | null>(null)
   const [confirmed, setConfirmed] = useState(block ? Boolean(block.confirmed) : params.get('confirmed') === '1')
-  // Aperta dallo Studio («Apri su un altro schermo») questa finestra ne ha una
-  // d'origine: tornare vuol dire chiudersi e lasciare il posto a quella, non
-  // aprire una seconda annotazione qui dentro.
+  // Opened from Studio as a secondary window: returning closes/focuses the Studio tab instead of duplicating it.
   const fromStudio = Boolean(window.opener && !window.opener.closed)
-  const studioUrl = `/annotazione?${block?.project_id ? `project=${block.project_id}&` : ''}${pageId ? `page=${pageId}` : ''}`
+  const studioUrl = projectForPage
+    ? projectPath(projectForPage, 'studio', pageId ? { page: pageId } : undefined)
+    : '/progetti'
+  const queryTitle = params.get('title')?.trim() || null
+  const pageTitle = page ? cleanRelPath(page.rel_path) : queryTitle
+  const pageNum = page ? (page.pdf_page != null ? ` · p. ${page.pdf_page}` : page.page_no ? ` · p. ${page.page_no}` : '') : ''
   const closeAndReturn = async () => {
     try {
       await flushRef.current?.()
@@ -80,12 +101,13 @@ export default function TableWorkspacePage({ block }: { block?: BlockOut }) {
           title={fromStudio ? t('table.closeAndReturnHint') : t('table.backToAnnotation')}
         >
           <IconPrev size={13} />
-          {t('table.backToStudio')}
+          {fromStudio ? t('table.closeWindow') : t('table.backToStudio')}
         </button>
         <span aria-hidden="true" className="h-5 w-px bg-[color:var(--color-rule)]" />
         <IconTable size={14} />
         <h1 className="min-w-0 truncate text-[13px] font-semibold">
-          {t('table.workspaceTitle')} <span className="mono font-normal text-[color:var(--color-ink-3)]">#{serverId}</span>
+          {t('table.workspaceTitle')}
+          {pageTitle && <span className="font-normal text-[color:var(--color-ink-2)]"> · {pageTitle}{pageNum}</span>}
         </h1>
         <div className="ml-auto shrink-0">
           <VerifiedToggle checked={confirmed} onChange={(v) => void setVerified(v)} compact />

@@ -82,28 +82,33 @@ describe('univerToGrid', () => {
     expect(cellAt(back, 1, 1)?.verified).toBe(false)
   })
 
-  it('il testo riscritto è una correzione umana da verificare', () => {
+  it('manual non-empty edit marks the cell verified and clearing un-verifies it', () => {
     const grid = g4()
     const data = gridToUniver(grid)
     data.sheets![UNIVER_SHEET_ID]!.cellData![1]![1]!.v = 'corretto'
     const back = univerToGrid(data, grid)
     expect(cellAt(back, 1, 1)?.text).toBe('corretto')
     expect(cellAt(back, 1, 1)?.source).toBe('manual')
-    expect(cellAt(back, 1, 1)?.verified).toBe(false)
-    // Il resto resta com'era.
+    expect(cellAt(back, 1, 1)?.verified).toBe(true)
+    // Untouched cells stay unchanged.
     expect(cellAt(back, 1, 2)?.source).toBe('ocr')
+    expect(cellAt(back, 1, 2)?.verified).toBe(false)
   })
 
-  it('una cella verificata che cambia torna da verificare', () => {
+  it('clearing a verified cell or editing to empty marks it unverified', () => {
     const grid = g4()
     const verified = {
       ...grid,
       cells: grid.cells.map((c) => (c.r === 2 && c.c === 2 ? { ...c, verified: true } : c)),
     }
-    const data = gridToUniver(verified)
-    data.sheets![UNIVER_SHEET_ID]!.cellData![2]![2]!.v = 'riscritto'
-    expect(cellAt(univerToGrid(data, verified), 2, 2)?.verified).toBe(false)
-    // Non toccata, resta verificata.
+    const cleared = gridToUniver(verified)
+    cleared.sheets![UNIVER_SHEET_ID]!.cellData![2]![2]!.v = ''
+    expect(cellAt(univerToGrid(cleared, verified), 2, 2)?.verified).toBe(false)
+    // Editing to new non-empty value keeps it manually verified.
+    const rewritten = gridToUniver(verified)
+    rewritten.sheets![UNIVER_SHEET_ID]!.cellData![2]![2]!.v = 'riscritto'
+    expect(cellAt(univerToGrid(rewritten, verified), 2, 2)?.verified).toBe(true)
+    // Untouched verified cell stays verified.
     expect(cellAt(univerToGrid(gridToUniver(verified), verified), 2, 2)?.verified).toBe(true)
   })
 

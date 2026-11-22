@@ -281,3 +281,41 @@ def test_benchmark_report_never_stores_the_api_key(tmp_path, monkeypatch):
     assert calls, "the key must still reach the client"
     assert "sk-secret-123" not in Path(report["bench_dir"], "report.json").read_text(encoding="utf-8")
     assert "sk-secret-123" not in Path(report["bench_dir"], "report.html").read_text(encoding="utf-8")
+
+
+def test_unreachable_target_marked_failed_and_excluded_from_leaderboard(tmp_path, monkeypatch):
+    class _DeadClient:
+        def __init__(self, url="", model="", api_key="", **kw):
+            self.url = url or "http://127.0.0.1:8888/v1"
+            self.model = model or "offline-model"
+            self.api_key = api_key
+
+        def ping(self):
+            return False
+
+        def layout(self, *a, **kw):
+            raise ConnectionError("connection refused")
+
+        def predict(self, *a, **kw):
+            raise ConnectionError("connection refused")
+
+    monkeypatch.setattr(infmod, "VllmClient", _DeadClient)
+    monkeypatch.setattr(
+        "app.services.evaluate.pagesvc.load_source_image",
+        lambda page: Image.new("RGB", (900, 1300)),
+    )
+    with TestClient(app) as client:
+        pid = _gold_project(client, tmp_path)
+        report = benchmod.run_benchmark(
+            pid,
+            [{"adapter_id": "lightonocr-3", "model": "offline-model", "url": "http://127.0.0.1:8888/v1"}],
+            limit=1,
+            with_text=False,
+        )
+    assert report["leaderboard"] == []
+    assert len(report["targets"]) == 1
+    entry = report["targets"][0]
+    assert entry["failed"] is True
+    assert entry["pages_evaluated"] == 0
+    assert entry.get("error")
+

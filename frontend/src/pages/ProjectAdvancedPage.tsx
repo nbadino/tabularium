@@ -5,10 +5,11 @@
  * on the Pages tab; here they are one click away instead of in the way.
  */
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router'
+import { Link, useParams } from 'react-router'
 import { apiGet, apiPost, apiPut } from '../lib/api'
 import type { LabelDef, PageItem, Project } from '../lib/types'
 import { ErrorNotice, Field, Loading, Module, PageHeader } from '../app/ui'
+import { projectPath } from '../app/projectPaths'
 import { ActivityFeed, type ProjectActivity } from '../app/ActivityFeed'
 import { useAuth } from '../app/auth'
 import { projectAccess } from '../app/projectAccess'
@@ -88,7 +89,14 @@ export default function ProjectAdvancedPage() {
 
   return (
     <div className="p-3">
-      <PageHeader title={t('project.advancedTitle')} />
+      <PageHeader
+        title={t('project.advancedTitle')}
+        aux={
+          <Link to={projectPath(projectId)} className="btn btn-sm no-underline">
+            ← {t('nav.pages')}
+          </Link>
+        }
+      />
       {error != null && <div className="mb-3"><ErrorNotice error={error} onDismiss={() => setError(null)} /></div>}
 
       <div className="space-y-6">
@@ -125,23 +133,25 @@ export default function ProjectAdvancedPage() {
                 <Field label={t('project.from')}><input type="date" value={protocol.time_start ?? ''} onChange={(e) => setProtocol((p) => p ? { ...p, time_start: e.target.value || null } : p)} className="fld" /></Field>
                 <Field label={t('project.to')}><input type="date" value={protocol.time_end ?? ''} onChange={(e) => setProtocol((p) => p ? { ...p, time_end: e.target.value || null } : p)} className="fld" /></Field>
               </div>
-              <Field label={t('project.domainProfile')}>
-                <div className="flex gap-2">
-                  <select value={protocol.domain_profile} onChange={(e) => setProtocol((p) => p ? { ...p, domain_profile: e.target.value } : p)} className="fld">
+              <div className="grid items-start gap-2 sm:col-span-2 sm:grid-cols-2">
+                <Field label={t('project.domainProfile')}>
+                  <select value={protocol.domain_profile} onChange={(e) => setProtocol((p) => p ? { ...p, domain_profile: e.target.value } : p)} className="fld truncate">
                     {(domainProfiles.some((d) => d.id === protocol.domain_profile) || !protocol.domain_profile
                       ? domainProfiles
                       : [{ id: protocol.domain_profile, name: protocol.domain_profile }, ...domainProfiles]
                     ).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                   </select>
-                  <select value={protocol.model_adapter} onChange={(e) => setProtocol((p) => p ? { ...p, model_adapter: e.target.value } : p)} className="fld">
+                </Field>
+                <Field label={t('project.modelAdapterLabel')}>
+                  <select value={protocol.model_adapter} onChange={(e) => setProtocol((p) => p ? { ...p, model_adapter: e.target.value } : p)} className="fld truncate">
                     {(modelAdapters.some((a) => a.adapter_id === protocol.model_adapter) || !protocol.model_adapter
                       ? modelAdapters
                       : [{ adapter_id: protocol.model_adapter, display_name: protocol.model_adapter }, ...modelAdapters]
                     ).map((a) => <option key={a.adapter_id} value={a.adapter_id}>{a.display_name}</option>)}
                   </select>
-                </div>
-              </Field>
-              <div className="flex items-end justify-end">
+                </Field>
+              </div>
+              <div className="flex items-end sm:col-span-2">
                 <button type="button" onClick={() => void saveProtocol()} disabled={protocolBusy} className="btn btn-sm btn-primary">{t('project.saveProtocol')}</button>
               </div>
             </fieldset>
@@ -150,7 +160,12 @@ export default function ProjectAdvancedPage() {
 
         <Module tab={t('project.pilotTab')} quiet aux={<span>{t('project.pilotRange')}</span>}>
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" disabled={!canEdit} onClick={() => void generatePilot()} className="btn btn-sm">{t('project.generateSample')}</button>
+            <button type="button" disabled={!canEdit || pages.length < 30} onClick={() => void generatePilot()} className="btn btn-sm">{t('project.generateSample')}</button>
+            {pages.length < 30 && (
+              <span className="text-[12px] text-[color:var(--color-ink-3)]">
+                {t('project.pilotMinPages', { count: pages.length })}
+              </span>
+            )}
             {pilot && <><span className="mono text-[12px]">{tn('project.pilotSelected', pilot.pages.length)}</span><button type="button" disabled={!canEdit} onClick={() => void savePilot()} className="btn btn-sm btn-primary">{t('project.saveToProtocol')}</button></>}
           </div>
           {pilot && <p className="mono mt-2 truncate text-[11px] text-[color:var(--color-ink-3)]">{pilot.pages.slice(0, 5).map((p) => p.rel_path).join(' · ')}{pilot.pages.length > 5 ? ' …' : ''}</p>}

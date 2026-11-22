@@ -265,19 +265,21 @@ export default function BenchmarkPage() {
               )}
               {!pagesLoading && pages.some((page) => !page.ready) && <label className="mt-2 flex items-center gap-2 text-[12px] text-[color:var(--color-ink-2)]"><input type="checkbox" checked={showUnready} onChange={(e) => setShowUnready(e.target.checked)} />{t('benchmark.showUnready', { n: pages.length - readyPages.length })}</label>}
               {!pagesLoading && pages.length > 0 && readyPages.length === 0 && <Notice>{t('benchmark.noPages')}{' '}<Link to={projectPath(Number(projectId), 'studio')}>{t('dataset.material.openStudio')}</Link></Notice>}
-              <div className="mt-3 flex flex-wrap items-end gap-3">
-                <Field label={t('benchmark.pages')} hint={t('benchmark.limitHint')}>
+              <div className="mt-3 flex flex-wrap items-end gap-x-4 gap-y-2 border-t border-[color:var(--color-rule)] pt-3">
+                <Field label={t('benchmark.limitLabel')} hint={t('benchmark.limitHint')}>
                   <input type="number" min={1} max={200} className="fld !w-24" value={limit} onChange={(e) => setLimit(Math.max(1, Math.min(200, Number(e.target.value) || 1)))} />
                 </Field>
-                <label className="flex items-center gap-2 text-[12px]">
-                  <input type="checkbox" checked={withText} onChange={(e) => setWithText(e.target.checked)} />
-                  {t('benchmark.withText')}
-                </label>
-                <label className="flex items-center gap-2 text-[12px]" title={t('benchmark.tableOnlyHint')}>
-                  <input type="checkbox" checked={tableOnly} onChange={(e) => setTableOnly(e.target.checked)} />
-                  {t('benchmark.tableOnly')}
-                </label>
-                <button type="button" className="btn btn-primary btn-sm" onClick={() => void run()} disabled={running || pagesLoading || readyPages.length === 0 || !targets.some((target) => target.adapter_id)}>
+                <div className="flex flex-wrap items-center gap-4 pb-1.5">
+                  <label className="flex cursor-pointer items-center gap-2 text-[12px]">
+                    <input type="checkbox" checked={withText} onChange={(e) => setWithText(e.target.checked)} />
+                    {t('benchmark.withText')}
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 text-[12px]" title={t('benchmark.tableOnlyHint')}>
+                    <input type="checkbox" checked={tableOnly} onChange={(e) => setTableOnly(e.target.checked)} />
+                    {t('benchmark.tableOnly')}
+                  </label>
+                </div>
+                <button type="button" className="btn btn-primary btn-sm mb-0.5 ml-auto" onClick={() => void run()} disabled={running || pagesLoading || readyPages.length === 0 || !targets.some((target) => target.adapter_id)}>
                   {running ? t('benchmark.running') : t('benchmark.run')}
                 </button>
               </div>
@@ -305,9 +307,13 @@ export default function BenchmarkPage() {
           </div>
 
           {(() => {
-            const rows = report?.leaderboard ?? status?.results ?? []
-            if (rows.length === 0) return null
+            const ranked = report?.leaderboard ?? (status?.results ?? []).filter((entry) => !entry.failed && !entry.error)
+            const failedRows = (report?.targets ?? status?.results ?? []).filter((entry) => entry.failed || Boolean(entry.error))
+            if (ranked.length === 0 && failedRows.length === 0) return null
             const gold = report?.gold_pages ?? status?.gold_pages
+            const tip = (label: string, title: string) => (
+              <span className="cursor-help underline decoration-dotted underline-offset-2" title={title}>{label}</span>
+            )
             return (
             <Module tab={t('benchmark.results')} aux={<span className="text-[11px]">{gold != null ? tn('benchmark.goldCount', gold) : ''}</span>}>
               <div className="overflow-x-auto">
@@ -316,30 +322,50 @@ export default function BenchmarkPage() {
                     <tr className="border-b border-[color:var(--color-rule)] text-left">
                       <th className="py-1 pr-3">#</th>
                       <th className="py-1 pr-3">{t('benchmark.model')}</th>
-                      <th className="py-1 pr-3">F1@0.75</th>
-                      <th className="py-1 pr-3">F1@0.5</th>
-                      <th className="py-1 pr-3">{t('benchmark.order')}</th>
+                      <th className="py-1 pr-3">{tip('F1@0.75', t('benchmark.tip.f1Strict'))}</th>
+                      <th className="py-1 pr-3">{tip('F1@0.5', t('benchmark.tip.f1Loose'))}</th>
+                      <th className="py-1 pr-3">{tip(t('benchmark.order'), t('benchmark.tip.order'))}</th>
                       <th className="py-1 pr-3">{t('benchmark.tables')}</th>
-                      <th className="py-1 pr-3">TEDS</th>
-                      <th className="py-1 pr-3">CER</th>
+                      <th className="py-1 pr-3">{tip('TEDS', t('benchmark.tip.teds'))}</th>
+                      <th className="py-1 pr-3">{tip('CER', t('benchmark.tip.cer'))}</th>
                       <th className="py-1">{t('benchmark.seconds')}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((entry, i) => (
-                      <tr key={`${entry.adapter_id}-${entry.model}`} className="border-b border-[color:var(--color-rule)]">
+                    {ranked.map((entry, i) => (
+                      <tr key={`ok-${entry.adapter_id}-${entry.model}`} className="border-b border-[color:var(--color-rule)]">
                         <td className="mono py-1 pr-3">{i + 1}</td>
                         <td className="py-1 pr-3">
                           <span className="font-semibold">{nameOf(entry.adapter_id) ?? entry.adapter_id}</span>
                           <span className="mono block text-[10px] text-[color:var(--color-ink-3)]">{entry.model}</span>
                         </td>
-                        <td className="mono py-1 pr-3">{num(entry.aggregates.layout_strict?.f1)}</td>
-                        <td className="mono py-1 pr-3">{num(entry.aggregates.layout.f1)}</td>
-                        <td className="mono py-1 pr-3">{num(entry.aggregates.order.mean_levenshtein_norm)}</td>
-                        <td className="mono py-1 pr-3">{pct(entry.aggregates.tables.structure_ok_pct)}</td>
-                        <td className="mono py-1 pr-3">{num(entry.aggregates.tables.mean_teds)}</td>
-                        <td className="mono py-1 pr-3">{num(entry.aggregates.text.mean_cer)}</td>
+                        <td className="mono py-1 pr-3">{num(entry.aggregates?.layout_strict?.f1)}</td>
+                        <td className="mono py-1 pr-3">{num(entry.aggregates?.layout?.f1)}</td>
+                        <td className="mono py-1 pr-3">{num(entry.aggregates?.order?.mean_levenshtein_norm)}</td>
+                        <td className="mono py-1 pr-3">{pct(entry.aggregates?.tables?.structure_ok_pct)}</td>
+                        <td className="mono py-1 pr-3">{num(entry.aggregates?.tables?.mean_teds)}</td>
+                        <td className="mono py-1 pr-3">{num(entry.aggregates?.text?.mean_cer)}</td>
                         <td className="mono py-1">{entry.seconds}</td>
+                      </tr>
+                    ))}
+                    {failedRows.map((entry) => (
+                      <tr key={`err-${entry.adapter_id}-${entry.model}-${entry.url}`} className="border-b border-[color:var(--color-rule)] bg-[color:var(--color-fill)]/50">
+                        <td className="mono py-1.5 pr-3 text-[color:var(--color-ink-3)]">—</td>
+                        <td className="py-1.5 pr-3">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="font-semibold">{nameOf(entry.adapter_id) ?? entry.adapter_id}</span>
+                            <Badge tone="warn">{t('benchmark.unreachableBadge')}</Badge>
+                          </div>
+                          <span className="mono block text-[10px] text-[color:var(--color-ink-3)]">{entry.model || entry.url}</span>
+                          {entry.error && <span className="block text-[11px] text-[color:var(--color-warn)]">{entry.error}</span>}
+                        </td>
+                        <td className="mono py-1.5 pr-3 text-[color:var(--color-ink-3)]">—</td>
+                        <td className="mono py-1.5 pr-3 text-[color:var(--color-ink-3)]">—</td>
+                        <td className="mono py-1.5 pr-3 text-[color:var(--color-ink-3)]">—</td>
+                        <td className="mono py-1.5 pr-3 text-[color:var(--color-ink-3)]">—</td>
+                        <td className="mono py-1.5 pr-3 text-[color:var(--color-ink-3)]">—</td>
+                        <td className="mono py-1.5 pr-3 text-[color:var(--color-ink-3)]">—</td>
+                        <td className="mono py-1.5 text-[color:var(--color-ink-3)]">{entry.seconds}</td>
                       </tr>
                     ))}
                   </tbody>

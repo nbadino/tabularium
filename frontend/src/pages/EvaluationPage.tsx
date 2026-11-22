@@ -221,7 +221,14 @@ export default function EvaluationPage() {
 
   return (
     <div className="p-3">
-      <PageHeader title={t('evaluate.title')} />
+      <PageHeader
+        title={t('evaluate.title')}
+        aux={projectId !== '' ? (
+          <Link to={projectPath(Number(projectId), 'fine-tuning/confronta')} className="btn btn-sm no-underline">
+            {t('benchmark.title')}
+          </Link>
+        ) : undefined}
+      />
 
       {error != null && (
         <div className="mb-3">
@@ -284,7 +291,7 @@ export default function EvaluationPage() {
           {projectId !== '' && workflow && !goldReady && (
             <Notice tone="warn">
               <span>{t('evaluate.needsGold')}</span>{' '}
-              <Link to={workflow.next_page ? `/annotazione?project=${projectId}&page=${workflow.next_page.id}` : '/annotazione'} className="font-semibold underline underline-offset-2">
+              <Link to={workflow.next_page ? projectPath(Number(projectId), 'studio', { page: workflow.next_page.id }) : projectPath(Number(projectId), 'studio')} className="font-semibold underline underline-offset-2">
                 {t('dataset.material.openStudio')}
               </Link>
             </Notice>
@@ -307,9 +314,6 @@ export default function EvaluationPage() {
                 <button type="button" className="btn btn-sm" onClick={() => void refreshModel()} disabled={checkingModel}>
                   {t('evaluate.recheckModel')}
                 </button>
-                <Link to="/modelli" className="font-semibold no-underline">
-                  {t('recognition.changeModel')}
-                </Link>
               </div>
             </WarnNotice>
           )}

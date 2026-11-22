@@ -487,10 +487,12 @@ export default function StudioCanvas({
         )}
       </Stage>
 
-      <p className="pointer-events-none absolute bottom-2 left-2 hidden max-w-[calc(100%-260px)] rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] px-2 py-1 text-[11px] text-[color:var(--color-ink-2)] sm:block">
-        {overlay ? t('consensus.canvasHint') : interactionHint}
-        {tool === 'polygon' && polyVerts.length >= 3 && ` — ${tn('canvas.vertices', polyVerts.length)}`}
-      </p>
+      {containerSize.w >= 540 && (
+        <p className="pointer-events-none absolute bottom-2 left-2 hidden max-w-[calc(100%-300px)] rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] px-2 py-1 text-[11px] text-[color:var(--color-ink-2)] sm:block">
+          {overlay ? t('consensus.canvasHint') : interactionHint}
+          {tool === 'polygon' && polyVerts.length >= 3 && ` — ${tn('canvas.vertices', polyVerts.length)}`}
+        </p>
+      )}
 
       {/* Il livello di zoom è un'informazione, non un mistero. */}
       <div className="float-layer absolute bottom-2 right-2 flex items-stretch overflow-hidden">
@@ -511,6 +513,14 @@ export default function StudioCanvas({
         >
           <IconFit size={11} />
           {t('canvas.fit')} · {Math.round(viewport.k * 100)}%
+        </button>
+        <button
+          type="button"
+          onClick={vp.zoomTo100}
+          className="btn btn-sm mono rounded-none border-y-0 border-l-0"
+          title={t('canvas.zoom100Title')}
+        >
+          100%
         </button>
         <button
           type="button"

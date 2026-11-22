@@ -102,9 +102,22 @@ export default function FineTuningPage() {
         <section aria-label={t('ux.refineTools')} className="mt-6">
           <ol className="ruled">
             {[
-              { to: projectPath(Number(projectId), 'fine-tuning/dati'), title: 'workflow.dataset', status: dataReady ? t('ux.dataReady') : tn('ux.goldCount', gold) },
+              {
+                to: projectPath(Number(projectId), 'fine-tuning/dati'),
+                title: 'workflow.dataset',
+                status: dataReady ? t('ux.dataReady') : gold > 0 ? `${t('ux.dataNotBuilt')} · ${tn('ux.goldCount', gold)}` : tn('ux.goldCount', 0),
+              },
               { to: projectPath(Number(projectId), 'fine-tuning/addestra'), title: 'workflow.train', status: overview.training.run ? runStateLabel(overview.training.run.state) : t('ux.noTraining') },
-              { to: projectPath(Number(projectId), 'fine-tuning/valuta'), title: 'workflow.evaluate', status: gold > 0 ? tn('ux.goldCount', gold) : t('ux.needsGold') },
+              {
+                to: projectPath(Number(projectId), 'fine-tuning/valuta'),
+                title: 'workflow.evaluate',
+                status: gold > 0 ? `${t('ux.notEvaluated')} · ${tn('ux.goldCount', gold)}` : t('ux.needsGold'),
+              },
+              {
+                to: projectPath(Number(projectId), 'fine-tuning/confronta'),
+                title: 'benchmark.title',
+                status: gold > 0 ? tn('ux.goldCount', gold) : t('ux.needsGold'),
+              },
             ].map((step) => <li key={step.to}><Link to={step.to} className="flex flex-wrap items-center gap-x-5 gap-y-2 py-4 no-underline hover:bg-[color:var(--color-fill)]">
               <div className="min-w-0 flex-1 basis-64">
                 <h3 className="text-[15px] font-semibold">{t(step.title)}</h3>

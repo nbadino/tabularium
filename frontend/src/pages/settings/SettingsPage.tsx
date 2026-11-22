@@ -49,12 +49,13 @@ export default function SettingsPage() {
   }, [])
 
   const isAdmin = useCanAdminister()
+  const visibleSections = isAdmin ? SECTIONS : [SECTIONS[0]]
 
   // Compatibilità con i vecchi link: modello e provider ora hanno una sola
   // sede, l'hub Modelli, invece di essere duplicati nelle impostazioni.
   if (params.get('s') === 'calcolo' || params.get('s') === 'modelli') return <Navigate to="/modelli" replace />
 
-  const current = SECTIONS.find((s) => s.id === params.get('s')) ?? SECTIONS[0]
+  const current = visibleSections.find((s) => s.id === params.get('s')) ?? visibleSections[0]
   const Section = current.Section
 
   return (
@@ -71,11 +72,11 @@ export default function SettingsPage() {
         className="-mx-3 flex overflow-x-auto border-b border-[color:var(--color-rule)]"
       >
         <span className="w-px shrink-0 bg-[color:var(--color-rule)]" />
-        {SECTIONS.map((section) => (
+        {visibleSections.map((section) => (
           <button
             key={section.id}
             type="button"
-            onClick={() => setParams(section.id === SECTIONS[0].id ? {} : { s: section.id })}
+            onClick={() => setParams(section.id === visibleSections[0].id ? {} : { s: section.id })}
             aria-current={section.id === current.id ? 'page' : undefined}
             className="shrink-0"
           >

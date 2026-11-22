@@ -68,7 +68,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           onClose={() => settle(false)}
           footer={
             <div className="flex items-center justify-end gap-2 border-t border-[color:var(--color-rule)] bg-[color:var(--color-panel)] px-4 py-2.5">
-              <button type="button" className="btn" onClick={() => settle(false)}>
+              <button type="button" data-autofocus className="btn" onClick={() => settle(false)}>
                 {request.cancelLabel ?? t('common.cancel')}
               </button>
               <button type="button" className="btn btn-danger" onClick={() => settle(true)}>

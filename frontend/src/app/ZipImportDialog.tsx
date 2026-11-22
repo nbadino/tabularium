@@ -49,6 +49,7 @@ export default function ZipImportDialog({
   const { t } = useI18n()
   const [step, setStep] = useState<Step>({ kind: 'uploading', sent: 0, size: file.size })
   const [layout, setLayout] = useState<ZipLayout>('collections')
+  const [selectedFolders, setSelectedFolders] = useState<Set<string> | null>(null)
   const [destination, setDestination] = useState<ZipDestination>(
     collectionId != null ? { kind: 'existing', id: collectionId } : { kind: 'new', name: '' },
   )
@@ -59,13 +60,24 @@ export default function ZipImportDialog({
 
   const fail = (e: unknown) => setStep({ kind: 'failed', message: describeError(e).messaggio })
 
-  const runImport = async (id: string, chosen: ZipLayout) => {
+  const runImport = async (id: string, chosen: ZipLayout, plan?: ZipPlan) => {
     setStep({ kind: 'importing', job: null })
     try {
-      const report = await importZip(projectId, id, chosen, destination, (job) => {
-        setStep({ kind: 'importing', job })
-        onProgress?.(job)
-      })
+      const allCount = plan?.folders.length ?? 0
+      const includeFolders =
+        selectedFolders && selectedFolders.size < allCount ? [...selectedFolders] : undefined
+      const report = await importZip(
+        projectId,
+        id,
+        chosen,
+        destination,
+        (job) => {
+          setStep({ kind: 'importing', job })
+          onProgress?.(job)
+        },
+        500,
+        includeFolders,
+      )
       setStep({ kind: 'done', report })
       onImported()
     } catch (e) {
@@ -85,6 +97,7 @@ export default function ZipImportDialog({
         setStep({ kind: 'inspecting' })
         const plan = await inspectZip(projectId, id)
         setLayout(plan.needs_choice ? 'collections' : 'flat')
+        setSelectedFolders(plan.needs_choice ? new Set(plan.folders.map((f) => f.name)) : null)
         setDestination((cur) => (cur.kind === 'new' && !cur.name ? { kind: 'new', name: defaultCollectionName(plan, file.name) } : cur))
         setStep({ kind: 'choosing', plan })
       } catch (e) {
@@ -102,14 +115,24 @@ export default function ZipImportDialog({
     onClose()
   }
 
+  const noFolderSelected =
+    step.kind === 'choosing' &&
+    step.plan.needs_choice &&
+    selectedFolders != null &&
+    selectedFolders.size === 0 &&
+    step.plan.loose_files === 0
+
   const footer = step.kind === 'choosing' ? (
     <>
       <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
       <button
         type="button"
         className="btn btn-primary"
-        disabled={layout === 'flat' && destination.kind === 'new' && !destination.name.trim()}
-        onClick={() => uploadId.current && void runImport(uploadId.current, layout)}
+        disabled={
+          noFolderSelected ||
+          (layout === 'flat' && destination.kind === 'new' && !destination.name.trim())
+        }
+        onClick={() => uploadId.current && void runImport(uploadId.current, layout, step.plan)}
       >
         {t('zip.import')}
       </button>
@@ -149,12 +172,31 @@ export default function ZipImportDialog({
             <fieldset className="space-y-3">
               <legend className="mb-2 text-[13px]">{tn('zip.foldersFound', step.plan.folders.length)}</legend>
               <ul className="max-h-40 overflow-auto border border-[color:var(--color-rule)] text-[12px]">
-                {step.plan.folders.map((folder) => (
-                  <li key={folder.name} className="flex justify-between gap-3 border-b border-[color:var(--color-rule)] px-2 py-1 last:border-b-0">
-                    <span className="truncate">{folder.name}</span>
-                    <span className="mono text-[color:var(--color-ink-2)]">{tn('zip.files', folder.files)}</span>
-                  </li>
-                ))}
+                {step.plan.folders.map((folder) => {
+                  const checked = selectedFolders ? selectedFolders.has(folder.name) : true
+                  return (
+                    <li key={folder.name} className="border-b border-[color:var(--color-rule)] last:border-b-0">
+                      <label className="flex cursor-pointer items-center justify-between gap-3 px-2 py-1 hover:bg-[color:var(--color-fill)]">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              setSelectedFolders((cur) => {
+                                const next = new Set(cur ?? step.plan.folders.map((f) => f.name))
+                                if (e.target.checked) next.add(folder.name)
+                                else next.delete(folder.name)
+                                return next
+                              })
+                            }}
+                          />
+                          <span className="truncate">{folder.name}</span>
+                        </span>
+                        <span className="mono shrink-0 text-[color:var(--color-ink-2)]">{tn('zip.files', folder.files)}</span>
+                      </label>
+                    </li>
+                  )
+                })}
               </ul>
               <label className="flex items-start gap-2 text-[13px]">
                 <input type="radio" name="zip-layout" checked={layout === 'collections'} onChange={() => setLayout('collections')} />

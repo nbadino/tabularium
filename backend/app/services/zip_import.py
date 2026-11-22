@@ -335,6 +335,7 @@ def run_import(
     layout: str,
     collection_id: int | None,
     collection_name: str | None = None,
+    include_folders: list[str] | None = None,
     lang: str = "it",
     on_progress=None,
 ) -> dict:
@@ -355,10 +356,15 @@ def run_import(
         _save_state(project_id, upload_id, state)
     with zf:
         plan = plan_archive(zf)
+        allowed_folders = set(include_folders) if include_folders is not None else None
+        selected_entries = [
+            entry for entry in plan.entries
+            if allowed_folders is None or entry.folder is None or entry.folder in allowed_folders
+        ]
         budget = [config.ZIP_MAX_TOTAL_BYTES]
         extracted: list[tuple[Entry, Path]] = []
-        total = len(plan.entries)
-        for index, entry in enumerate(plan.entries, 1):
+        total = len(selected_entries)
+        for index, entry in enumerate(selected_entries, 1):
             target = (files_dir.joinpath(*entry.parts)).resolve()
             try:
                 target.relative_to(base)

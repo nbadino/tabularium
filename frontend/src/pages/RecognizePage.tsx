@@ -53,7 +53,7 @@ interface ModelRuntimeInfo {
   local?: { runnable: boolean }
 }
 
-function RunSummary({ run, onChange, onError }: { run: RecognitionRun; onChange: (run: RecognitionRun) => void; onError: (e: unknown) => void }) {
+function RunSummary({ run, canEdit, onChange, onError }: { run: RecognitionRun; canEdit: boolean; onChange: (run: RecognitionRun) => void; onError: (e: unknown) => void }) {
   const { t } = useI18n()
   const nameOf = useModelNames()
   const active = run.state === 'queued' || run.state === 'running'
@@ -63,7 +63,7 @@ function RunSummary({ run, onChange, onError }: { run: RecognitionRun; onChange:
     ? `recognition.provider.${provider}`
     : null
   return (
-    <Module tab={active ? t('recognition.current') : t('recognition.recent')} aux={<Badge tone={runTone(run)}>{runLabel(run, t)}</Badge>}>
+    <Module tab={active ? t('recognition.current') : t('recognition.latestRun')} aux={<Badge tone={runTone(run)}>{runLabel(run, t)}</Badge>}>
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
         <strong className="text-[16px]">{runTitle(run, nameOf)}</strong>
         <span className="mono text-[11px] text-[color:var(--color-ink-3)]">
@@ -82,7 +82,7 @@ function RunSummary({ run, onChange, onError }: { run: RecognitionRun; onChange:
         {run.items?.[0] && (
           <Link
             to={projectPath(run.project_id, 'studio', { page: run.items[0].page_id, run: run.id })}
-            className="btn btn-primary no-underline"
+            className="btn no-underline"
           >
             {t('recognition.openStudio')}
           </Link>
@@ -90,7 +90,7 @@ function RunSummary({ run, onChange, onError }: { run: RecognitionRun; onChange:
         <Link to={projectPath(run.project_id, `riconoscimenti/${run.id}`)} className="btn btn-primary no-underline">
           {t('recognition.openResults')}
         </Link>
-        <RecognitionRunControls run={run} onChange={onChange} onError={onError} />
+        {canEdit && <RecognitionRunControls run={run} onChange={onChange} onError={onError} />}
       </div>
     </Module>
   )
@@ -214,6 +214,8 @@ export default function RecognizePage() {
   const routeProjectId = useRouteProjectId()
 
   const projects = useProjects((pid) => void onProject(Number(params.get('project')) || pid), setError)
+  const currentProject = projects.find((p) => p.id === projectId) ?? null
+  const canEdit = currentProject?.access ? currentProject.access.can_edit : true
 
   useEffect(() => {
     if (!current || (current.state !== 'queued' && current.state !== 'running')) return
@@ -354,12 +356,23 @@ export default function RecognizePage() {
 
   return (
     <div className="p-3">
-      <PageHeader title={t('recognition.title')} />
-      <div className="mb-3 flex flex-wrap gap-2">
-        {routeProjectId == null && <Link to="/progetti?nuovo=1" className="btn btn-sm no-underline">{t('projects.new')}</Link>}
-        {projectId !== '' && <Link to={`/progetti/${projectId}`} className="btn btn-sm no-underline">{t('workflow.addPages')}</Link>}
-      </div>
+      <PageHeader
+        title={t('recognition.title')}
+        aux={
+          (routeProjectId == null || (canEdit && projectId !== '')) ? (
+            <>
+              {routeProjectId == null && <Link to="/progetti?nuovo=1" className="btn btn-sm no-underline">{t('projects.new')}</Link>}
+              {canEdit && projectId !== '' && <Link to={`/progetti/${projectId}`} className="btn btn-sm no-underline">{t('workflow.addPages')}</Link>}
+            </>
+          ) : undefined
+        }
+      />
 
+      {!canEdit && (
+        <div className="mb-3">
+          <Notice tone="neutral">{t('recognition.readOnlyNotice')}</Notice>
+        </div>
+      )}
       {error != null && <div className="mb-3"><ErrorNotice error={error} onDismiss={() => setError(null)} /></div>}
       {backendRestartRequired && (
         <div className="mb-3">
@@ -371,7 +384,7 @@ export default function RecognizePage() {
           </Notice>
         </div>
       )}
-      {current && <div className="mb-3"><RunSummary run={current} onChange={(next) => setCurrent((before) => (before ? { ...before, ...next, items: before.items } : next))} onError={setError} /></div>}
+      {current && <div className="mb-3"><RunSummary run={current} canEdit={canEdit} onChange={(next) => setCurrent((before) => (before ? { ...before, ...next, items: before.items } : next))} onError={setError} /></div>}
 
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
         <Module tab={t('recognition.pages')} flush aux={<span>{t('recognition.selected', { n: selected.size })} <span className="text-[color:var(--color-ink-3)]">· {t('recognition.rangeHint')}</span></span>}>
@@ -526,6 +539,12 @@ export default function RecognizePage() {
             <p className="mt-1 text-[11px] text-[color:var(--color-ink-2)]">
               {t(savedModelId != null ? 'recognition.savedModelHint' : engine === 'model' ? 'recognition.servedModelHint' : 'recognition.localOcrHint')}
             </p>
+            {savedModelId == null && (!inference.enabled || !modelAvailable) && (
+              <p className="mt-1 text-[11px] text-[color:var(--color-ink-2)]">
+                {t('recognition.activeModelUnavailableHint')}{' '}
+                <Link to="/modelli" className="font-semibold underline underline-offset-2">{t('recognition.configureInModels')}</Link>
+              </p>
+            )}
             {savedModelNoKey && <Notice tone="warn">{t('recognition.savedModelNoKey')}</Notice>}
             {engine === 'model' && !inference.isCloud && runtimeWarning?.vram_warning && (
               <Notice tone="warn">{runtimeWarning.vram_warning}</Notice>
@@ -602,7 +621,7 @@ export default function RecognizePage() {
                 <span><b className="font-semibold">{t('recognition.stopAfter')}</b><span className="mt-0.5 block text-[11px] text-[color:var(--color-ink-3)]">{t('recognition.stopAfterHint')}</span></span>
               </label>
             )}
-            <button type="button" onClick={onStartClick} disabled={backendRestartRequired || busy || projectId === '' || selected.size === 0 || !modelReady} className="btn btn-primary mt-4 w-full">
+            <button type="button" onClick={onStartClick} disabled={!canEdit || backendRestartRequired || busy || projectId === '' || selected.size === 0 || !modelReady} className="btn btn-primary mt-4">
               <IconPlayground size={13} />{busy ? t('recognition.starting') : t('recognition.start')}
             </button>
           </Module>
@@ -612,6 +631,7 @@ export default function RecognizePage() {
             projectId={projectId}
             pageIds={[...selected]}
             canManage={canManageInference}
+            canEdit={canEdit}
             currentModel={nameOf(inference.adapterId) ?? inference.model ?? ''}
           />
           </div>
@@ -641,7 +661,7 @@ export default function RecognizePage() {
             onClose={() => setAskReplace(null)}
             footer={
               <div className="flex flex-wrap justify-end gap-2">
-                <button type="button" className="btn" onClick={() => setAskReplace(null)}>{t('common.cancel')}</button>
+                <button type="button" data-autofocus className="btn" onClick={() => setAskReplace(null)}>{t('common.cancel')}</button>
                 <button type="button" className="btn" onClick={() => void start('merge')}>{t('recognition.replace.merge')}</button>
                 {askReplace.drafts > 0 && (
                   <button type="button" className="btn btn-primary" onClick={() => void start('replace_drafts')}>{t('recognition.replace.replace')}</button>

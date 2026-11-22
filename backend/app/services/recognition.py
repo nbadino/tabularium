@@ -840,9 +840,9 @@ def export_document(
     exported = export_run(run_id, scope, collection)
     filename = f"{run_documents.download_stem(exported)}.{_EXTENSIONS[fmt]}"
     if fmt == "text":
-        return _run_text(exported), filename
+        return _run_text(exported, _table_grids(exported)), filename
     if fmt == "csv":
-        return _run_csv(exported), filename
+        return _run_csv(exported, _table_grids(exported)), filename
     if fmt == "markdown":
         return run_documents.run_markdown(exported, _table_grids(exported)), filename
     if fmt == "pdf":
@@ -850,14 +850,39 @@ def export_document(
     return exported, filename
 
 
-def _run_text(exported: dict[str, Any]) -> str:
+def _block_table_text(block: dict[str, Any], grids: dict[int, dict] | None) -> str:
+    """Plain tab-separated table text from a saved grid or HTML table, or ''."""
+    if block.get("label") != run_documents.TABLE:
+        return ""
+    bid = block.get("id")
+    grid = grids.get(int(bid)) if (grids and bid is not None) else None
+    table = run_documents.block_table(block, grid)
+    if table is None:
+        return ""
+    return "\n".join("\t".join(str(cell) for cell in row) for row in table.rows).strip()
+
+
+def _block_text(block: dict[str, Any], grids: dict[int, dict] | None) -> str:
+    """Text for a single block, falling back to saved table grid cells."""
+    raw = str(block.get("content") or "").strip()
+    if block.get("label") == run_documents.TABLE:
+        bid = block.get("id")
+        grid = grids.get(int(bid)) if (grids and bid is not None) else None
+        if grid is not None or not raw:
+            table_txt = _block_table_text(block, grids)
+            if table_txt:
+                return table_txt
+    return raw
+
+
+def _run_text(exported: dict[str, Any], grids: dict[int, dict] | None = None) -> str:
     """The readable export, by page and block."""
     sections: list[str] = []
     for page in exported["pages"]:
         content = [
-            str(block.get("content") or "").strip()
+            txt
             for block in page["blocks"]
-            if str(block.get("content") or "").strip()
+            if (txt := _block_text(block, grids))
         ]
         sections.append(f"=== {page['rel_path']} ===\n" + "\n\n".join(content))
     return "\n\n".join(sections).rstrip() + "\n"
@@ -903,7 +928,7 @@ def _run_pdf(exported: dict[str, Any]):
     return searchable_pdf.write_pdf(page_inputs(), title=run_documents.download_stem(exported))
 
 
-def _run_csv(exported: dict[str, Any]) -> str:
+def _run_csv(exported: dict[str, Any], grids: dict[int, dict] | None = None) -> str:
     """UTF-8 CSV, one row per block, ready for a spreadsheet."""
     output = io.StringIO(newline="")
     writer = csv.writer(output)
@@ -917,7 +942,7 @@ def _run_csv(exported: dict[str, Any]) -> str:
             writer.writerow((
                 exported["run"]["id"], page["page_id"], page["rel_path"], page["state"],
                 block.get("id", ""), block.get("label", ""), block.get("kind", ""),
-                block.get("content", ""), block.get("order_idx", ""),
+                _block_text(block, grids) if block else "", block.get("order_idx", ""),
                 block.get("confirmed", ""), block.get("prefill_source", ""),
                 json.dumps(block.get("points", []), ensure_ascii=False),
             ))

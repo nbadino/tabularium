@@ -6,7 +6,7 @@ import { useAuth } from '../../app/auth'
 import { Field, Select } from '../../app/ui'
 import { IconCheck, IconNext, IconPrev, IconWarn } from '../../app/icons'
 import { t as translate, useI18n, tn } from '../../i18n'
-import { pageLabel } from '../../lib/pageLabel'
+import { cleanRelPath, pageLabel } from '../../lib/pageLabel'
 import { API_BASE } from '../../lib/endpoints'
 
 interface PageSidebarProps {
@@ -28,7 +28,6 @@ interface PageSidebarProps {
 }
 
 const INITIAL_PAGE_LIMIT = 100
-const SEARCH_FROM = 20
 
 /** L'etichetta dice **di che somme** si parla: una tavola per paese ha somme
  *  lungo le righe (Merchandise + Treasure = Total) e lungo le colonne (le voci
@@ -45,7 +44,7 @@ const STATUS_TEXT: Record<string, string> = {
 function pageTitle(p: PageItem): string {
   if (p.pdf_page != null) return translate('recognition.pageN', { n: p.pdf_page + 1 })
   if (p.page_no) return translate('recognition.pageN', { n: p.page_no })
-  return p.rel_path
+  return cleanRelPath(p.rel_path)
 }
 
 function sumsLabel({ failed, rows, cols }: { failed: number; rows: number; cols: number }) {
@@ -69,6 +68,7 @@ export default function PageSidebar({
   const { t } = useI18n()
   const { user } = useAuth()
   const [scope, setScope] = useState<'all' | 'mine' | 'review'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'drafts' | 'approved'>('all')
   const [pageQuery, setPageQuery] = useState('')
   const [pageLimit, setPageLimit] = useState(INITIAL_PAGE_LIMIT)
   const hasAssignments = pages.some((p) => p.work?.assignee_id || p.work?.reviewer_id)
@@ -76,6 +76,10 @@ export default function PageSidebar({
   const needle = pageQuery.trim().toLocaleLowerCase()
   const visiblePages = pages.filter((page) =>
     (!needle || pageLabel(page).toLocaleLowerCase().includes(needle)) &&
+    (statusFilter === 'all' ||
+      (statusFilter === 'drafts'
+        ? (page.drafts ?? 0) > 0 && page.status === 'new'
+        : page.status === 'approved' || page.status === 'exported')) &&
     (activeScope === 'all' || (activeScope === 'mine'
       ? page.work?.assignee_id === user?.id && ['annotation', 'changes_requested'].includes(page.work?.state ?? '')
       : page.work?.reviewer_id === user?.id && page.work?.state === 'pending')))
@@ -95,6 +99,7 @@ export default function PageSidebar({
 
   useEffect(() => {
     setScope('all')
+    setStatusFilter('all')
     setPageQuery('')
     setPageLimit(INITIAL_PAGE_LIMIT)
   }, [projectId])
@@ -113,7 +118,11 @@ export default function PageSidebar({
 
   return (
     <aside
-      className="flex shrink-0 flex-col bg-[color:var(--color-sheet)]"
+      className={
+        width !== undefined
+          ? 'flex shrink-0 flex-col bg-[color:var(--color-sheet)]'
+          : 'flex max-h-60 w-full shrink-0 flex-col overflow-y-auto border-b border-[color:var(--color-rule)] bg-[color:var(--color-sheet)]'
+      }
       style={width !== undefined ? { width } : undefined}
     >
       <div className="border-b border-[color:var(--color-rule)] p-2">
@@ -146,20 +155,33 @@ export default function PageSidebar({
           ]}
         />
         </>}
-        {/* Su poche pagine la lista si scorre a occhio: la ricerca serve
-            quando l'archivio cresce. */}
-        {pages.length > SEARCH_FROM && (
-          <Field label={t('sidebar.pageSearch')}>
-            <input
-              value={pageQuery}
-              onChange={(event) => {
-                setPageQuery(event.target.value)
-                setPageLimit(INITIAL_PAGE_LIMIT)
-              }}
-              placeholder={t('sidebar.pageSearchPlaceholder')}
-              className="fld"
-            />
-          </Field>
+        {pages.length > 1 && (
+          <div className="space-y-1.5">
+            <Field label={t('sidebar.pageSearch')}>
+              <input
+                value={pageQuery}
+                onChange={(event) => {
+                  setPageQuery(event.target.value)
+                  setPageLimit(INITIAL_PAGE_LIMIT)
+                }}
+                placeholder={t('sidebar.pageSearchPlaceholder')}
+                className="fld"
+              />
+            </Field>
+            <div className="flex flex-wrap gap-1" role="group" aria-label={t('recognition.filterLabel')}>
+              {(['all', 'drafts', 'approved'] as const).map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={statusFilter === key}
+                  onClick={() => { setStatusFilter(key); setPageLimit(INITIAL_PAGE_LIMIT) }}
+                  className={`btn btn-sm !px-1.5 !py-0.5 text-[10.5px] ${statusFilter === key ? '!bg-[color:var(--color-ink)] !text-white' : ''}`}
+                >
+                  {t(`sidebar.filter.${key}`)}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
       </div>
 
@@ -253,8 +275,8 @@ export default function PageSidebar({
                   <span className="text-[14px] font-semibold leading-tight tracking-[-0.01em]" title={pageLabel(p)}>
                     {pageTitle(p)}
                   </span>
-                  {pageTitle(p) !== p.rel_path && (
-                    <span className="mono w-full truncate text-[10.5px] text-[color:var(--color-ink-3)]">{p.rel_path}</span>
+                  {pageTitle(p) !== cleanRelPath(p.rel_path) && (
+                    <span className="mono w-full truncate text-[10.5px] text-[color:var(--color-ink-3)]">{cleanRelPath(p.rel_path)}</span>
                   )}
                   <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
                     {p.status === 'new' && (p.drafts ?? 0) > 0 ? (

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { apiGet, apiPut } from '../../lib/api'
 import type { TableHintOut } from '../../lib/types'
 import { ErrorNotice, SkeletonLines } from '../../app/ui'
+import { useInference } from '../../app/inference'
 import { useI18n } from '../../i18n'
 
 /**
@@ -14,6 +15,7 @@ import { useI18n } from '../../i18n'
  */
 export default function TableHintEditor({ projectId }: { projectId: number }) {
   const { t } = useI18n()
+  const inference = useInference()
   const [state, setState] = useState<TableHintOut | null>(null)
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<unknown>(null)
@@ -75,7 +77,7 @@ export default function TableHintEditor({ projectId }: { projectId: number }) {
             )}
           </div>
           <p className="mt-3 text-[11px] text-[color:var(--color-ink-3)]">
-            {state.active_model == null
+            {state.active_model == null || !inference.enabled || (inference.configured && !inference.available)
               ? t('tableHint.noModel')
               : state.accepts_hint
                 ? t('tableHint.accepts', { model: state.active_model })

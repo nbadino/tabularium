@@ -6,7 +6,7 @@
  * corrente, come deve. La sessione corrente resta valida, le altre decadono.
  */
 import { useState } from 'react'
-import { Modal } from './ui'
+import { Modal, PasswordInput } from './ui'
 import { apiPost } from '../lib/api'
 import { useI18n } from '../i18n'
 
@@ -79,22 +79,20 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
           </p>
           <label className="block">
             <span className="lbl">{t('account.currentPassword')}</span>
-            <input
-              type="password"
+            <PasswordInput
               value={current}
               onChange={(e) => setCurrent(e.target.value)}
               autoComplete="current-password"
-              className="fld w-full"
+              className="w-full"
             />
           </label>
           <label className="block">
             <span className="lbl">{t('account.newPassword')}</span>
-            <input
-              type="password"
+            <PasswordInput
               value={next}
               onChange={(e) => setNext(e.target.value)}
               autoComplete="new-password"
-              className="fld w-full"
+              className="w-full"
               aria-invalid={tooShort}
             />
             {tooShort && (
@@ -105,12 +103,11 @@ export default function ChangePasswordModal({ onClose }: { onClose: () => void }
           </label>
           <label className="block">
             <span className="lbl">{t('account.confirmPassword')}</span>
-            <input
-              type="password"
+            <PasswordInput
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
               autoComplete="new-password"
-              className="fld w-full"
+              className="w-full"
               aria-invalid={mismatch}
             />
             {mismatch && (

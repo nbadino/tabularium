@@ -81,6 +81,11 @@ def test_the_script_runs_the_vendor_modes_and_keeps_both_evaluations(tmp_path):
     assert 'WEIGHTS="${PADDLE_PDX_CACHE_HOME:-$HOME/.paddlex}/official_pretrained_model/' in script
     assert 'Evaluate.weight_path="$WEIGHTS"' in script and 'Train.pretrain_weight_path="$WEIGHTS"' in script
     assert "Train.epochs_iters=100" in script and "Train.learning_rate=0.0001" in script
+    # One 632 MB snapshot per evaluation: every 5 epochs, not every epoch.
+    assert "Train.eval_interval=5" in script
+    # Every mode runs through the patched Engine: best_model chosen on bbox AP, not mask AP.
+    assert 'self._dict["target_metrics"] = "bbox"' in script
+    assert script.count("Engine().run()") == 1 and "python main.py" not in script
     assert f"DATA={run / 'dataset'}" in script
     assert "is_compiled_with_cuda" in script  # GPU when available, else the registered CPU
     remote = trainer_script.generate_script(
@@ -122,3 +127,21 @@ def test_a_layout_run_has_nothing_to_prepare(tmp_path):
     with pytest.raises(ValueError, match="Xiaomi-OCR-0"):
         checkpoint_prepare.prepare_plan(993, "run_1")
     assert trainer.checkpoint_info(run_dir) is None  # not exported yet
+
+
+def test_the_remote_gpu_check_uses_paddle_for_the_layout_recipe(monkeypatch, tmp_path):
+    import subprocess
+
+    _snapshot(994, tmp_path)
+    seen: list[str] = []
+
+    def run(argv, **_kwargs):
+        seen.append(argv[-1])
+        return subprocess.CompletedProcess(argv, 0, "READY\nTrue\n", "")
+
+    monkeypatch.setattr(trainer.subprocess, "run", run)
+    cfg = {**CFG, "executor": "ssh", "ssh_host": "h", "ssh_train_repo": "/opt/tabularium/PaddleX",
+           "ssh_python": "/opt/tabularium/venv/bin/python"}
+    check = trainer.preflight(994, cfg, lang="en")
+    assert check["ready"], check["errors"]
+    assert seen and "import paddle" in seen[0] and "torch" not in seen[0]

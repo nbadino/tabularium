@@ -14,11 +14,11 @@ import { primaryAction } from '../lib/primaryAction'
 import ShareDialog from '../app/ShareDialog'
 import { useConfirm } from '../app/confirm'
 import { useAuth, useCanAdminister } from '../app/auth'
-import { IconCheck, IconScan, IconTrash, IconUsers } from '../app/icons'
+import { IconCheck, IconEnv, IconScan, IconTrash, IconUsers } from '../app/icons'
 import { useI18n, tn } from '../i18n'
 import { writeActiveProject } from '../app/activeProject'
 import { accessLabel, projectAccess } from '../app/projectAccess'
-import { pageLabel } from '../lib/pageLabel'
+import { cleanRelPath, pageLabel } from '../lib/pageLabel'
 import { API_BASE } from '../lib/endpoints'
 import ZipImportDialog, { Bar as ProgressBar } from '../app/ZipImportDialog'
 import type { ZipJob } from '../lib/zipImport'
@@ -31,16 +31,22 @@ import type { CollectionItem } from '../lib/types'
 import { describeError } from '../lib/errors'
 import { batchFiles, mergeReports } from '../lib/uploadBatches'
 
-/** Il referto di scansione sopravvive alla navigazione: è un risultato, non un lampo. */
-const reportKey = (id: number) => `tabularium.scanReport.${id}`
+/** Scoped per authenticated user and project so another account never inherits a previous scan report. */
+const reportKey = (userId: string | number, id: number) => `tabularium.scanReport.${userId}.${id}`
 
-function loadReport(id: number): ScanReport | null {
+function loadReport(userId: string | number, id: number): ScanReport | null {
   try {
-    const raw = sessionStorage.getItem(reportKey(id))
+    const raw = sessionStorage.getItem(reportKey(userId, id))
     return raw ? (JSON.parse(raw) as ScanReport) : null
   } catch {
     return null
   }
+}
+
+function cleanErrorPath(entry: string): string {
+  const sep = entry.indexOf(': ')
+  if (sep > 0) return `${cleanRelPath(entry.slice(0, sep))}${entry.slice(sep)}`
+  return cleanRelPath(entry)
 }
 
 export default function ProjectDetailPage() {
@@ -56,8 +62,10 @@ export default function ProjectDetailPage() {
   const [pagesLoading, setPagesLoading] = useState(true)
   const [pageQuery, setPageQuery] = useState('')
   const [pageLimit, setPageLimit] = useState(50)
+  const auth = useAuth()
+  const reportUserId = auth.user?.id ?? 'local'
   const [scanProgress, setScanProgress] = useState<{ current: number; total: number; file?: string }>({ current: 0, total: 0 })
-  const [report, setReport] = useState<ScanReport | null>(() => loadReport(projectId))
+  const [report, setReport] = useState<ScanReport | null>(() => loadReport(reportUserId, projectId))
   const [error, setError] = useState<unknown>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [typedName, setTypedName] = useState('')
@@ -96,10 +104,13 @@ export default function ProjectDetailPage() {
   const [zipQueue, setZipQueue] = useState<File[]>([])
   const inference = useInference()
   const canAdminister = useCanAdminister()
-  const auth = useAuth()
   const access = project ? projectAccess(project, auth) : null
   const canManage = access?.can_manage === true
   const canEdit = access?.can_edit === true
+
+  useEffect(() => {
+    setReport(loadReport(reportUserId, projectId))
+  }, [projectId, reportUserId])
 
   useEffect(() => {
     setProject(null)
@@ -107,7 +118,6 @@ export default function ProjectDetailPage() {
     setPagesLoading(true)
     setPageQuery('')
     setPageLimit(50)
-    setReport(loadReport(projectId))
     setSelected(new Set())
     apiGet<Project>(`/projects/${projectId}`).then((p) => { setProject(p); writeActiveProject(p.id) }).catch(setError)
     apiGet<{ items: PageItem[] }>(`/projects/${projectId}/pages`)
@@ -120,6 +130,8 @@ export default function ProjectDetailPage() {
   const scan = async () => {
     setBusy(true)
     setError(null)
+    sessionStorage.removeItem(reportKey(reportUserId, projectId))
+    setReport(null)
     try {
       const started = await apiPost<{ job_id: string }>(`/projects/${projectId}/scan/start`)
       let job: { status: string; report?: ScanReport; error?: string; current?: number; total?: number; current_file?: string } = { status: 'running' }
@@ -141,7 +153,7 @@ export default function ProjectDetailPage() {
         }
       }
       setReport(rep)
-      sessionStorage.setItem(reportKey(projectId), JSON.stringify(rep))
+      sessionStorage.setItem(reportKey(reportUserId, projectId), JSON.stringify(rep))
       const r = await apiGet<{ items: PageItem[] }>(`/projects/${projectId}/pages`)
       setPages(r.items)
       setProject(await apiGet<Project>(`/projects/${projectId}`))
@@ -165,6 +177,8 @@ export default function ProjectDetailPage() {
     }
     setUploading(true)
     setError(null)
+    sessionStorage.removeItem(reportKey(reportUserId, projectId))
+    setReport(null)
     try {
       const into = typeof collectionFilter === 'number' ? `?collection_id=${collectionFilter}` : ''
       let rep: ScanReport | null = null
@@ -179,7 +193,7 @@ export default function ProjectDetailPage() {
         setReport(rep)
       }
       if (!rep) return
-      sessionStorage.setItem(reportKey(projectId), JSON.stringify(rep))
+      sessionStorage.setItem(reportKey(reportUserId, projectId), JSON.stringify(rep))
       setPages((await apiGet<{ items: PageItem[] }>(`/projects/${projectId}/pages`)).items)
       void refreshCollections()
     } catch (e) { setError(e) } finally {
@@ -226,6 +240,31 @@ export default function ProjectDetailPage() {
     try {
       await apiPost(`/pages/${pageId}/approve`)
       setPages((cur) => cur.map((p) => (p.id === pageId ? { ...p, status: 'approved' } : p)))
+    } catch (e) {
+      setError(e)
+    }
+  }
+
+  const removePages = async (pageIds: number[]) => {
+    if (pageIds.length === 0) return
+    const ok = await confirm({
+      title: tn('project.deletePages', pageIds.length),
+      message: tn('project.deletePagesConfirm', pageIds.length),
+      acceptLabel: t('common.delete'),
+    })
+    if (!ok) return
+    setError(null)
+    try {
+      await apiPost(`/projects/${projectId}/pages/delete`, { page_ids: pageIds })
+      const removed = new Set(pageIds)
+      setPages((cur) => cur.filter((p) => !removed.has(p.id)))
+      setSelected((cur) => {
+        const next = new Set(cur)
+        for (const pid of removed) next.delete(pid)
+        return next
+      })
+      void refreshCollections()
+      apiGet<Project>(`/projects/${projectId}`).then(setProject).catch(() => undefined)
     } catch (e) {
       setError(e)
     }
@@ -296,7 +335,7 @@ export default function ProjectDetailPage() {
     setDeleting(true)
     try {
       await apiDelete(`/projects/${projectId}?confirm=true`)
-      sessionStorage.removeItem(reportKey(projectId))
+      sessionStorage.removeItem(reportKey(reportUserId, projectId))
       navigate('/progetti')
     } catch (e) {
       setError(e)
@@ -462,18 +501,24 @@ export default function ProjectDetailPage() {
               <IconUsers size={13} />
               {t(canManage ? 'share.button' : 'team.peopleAccess')}
             </button>
-            <Link to={projectPath(projectId, 'avanzate')} className="menu-item no-underline">{t('project.advanced')}</Link>
+            <Link to={projectPath(projectId, 'avanzate')} className="menu-item no-underline">
+              <IconEnv size={13} />
+              {t('project.advanced')}
+            </Link>
             {canManage && (
-              <button
-                onClick={() => {
-                  setTypedName('')
-                  setConfirmingDelete(true)
-                }}
-                className="menu-item text-[color:var(--color-sig-text)]"
-              >
-                <IconTrash size={13} />
-                {t('project.delete')}
-              </button>
+              <>
+                <hr className="menu-sep" />
+                <button
+                  onClick={() => {
+                    setTypedName('')
+                    setConfirmingDelete(true)
+                  }}
+                  className="menu-item text-[color:var(--color-sig-text)]"
+                >
+                  <IconTrash size={13} />
+                  {t('project.delete')}
+                </button>
+              </>
             )}
           </Menu>
         </div>
@@ -497,12 +542,21 @@ export default function ProjectDetailPage() {
           >
             <p className="text-[16px] font-semibold">{t('project.dropTitle')}</p>
             <p className="max-w-[60ch] text-[12px] text-[color:var(--color-ink-2)]">{t('project.dropHint')}</p>
+            {project?.archive_dir && (
+              <p className="mono max-w-[70ch] break-all text-[12px] text-[color:var(--color-ink-2)]">
+                {t('project.sourceDirLabel', { path: project.archive_dir })}
+              </p>
+            )}
             <div className="mt-2 flex flex-wrap justify-center gap-2">
-              <button type="button" className="btn btn-primary" disabled={uploading} onClick={() => filesInputRef.current?.click()}>
+              {project?.archive_dir && (
+                <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void scan()}>
+                  {busy ? t('project.scanBusy') : t('project.scan')}
+                </button>
+              )}
+              <button type="button" className={project?.archive_dir ? 'btn' : 'btn btn-primary'} disabled={uploading} onClick={() => filesInputRef.current?.click()}>
                 {uploading ? t('project.uploading') : t('project.chooseFiles')}
               </button>
               <button type="button" className="btn" disabled={uploading} onClick={() => folderInputRef.current?.click()}>{t('project.chooseFolder')}</button>
-              {project?.archive_dir && <button type="button" className="btn" disabled={busy} onClick={() => void scan()}>{busy ? t('project.scanBusy') : t('project.scan')}</button>}
             </div>
           </div>
         )
@@ -522,9 +576,10 @@ export default function ProjectDetailPage() {
           <Link to={projectPath(projectId, 'studio', { page: action.firstPageId })} className="btn btn-primary no-underline">{tn('project.reviewN', action.count)}</Link>,
           t('project.reviewHint'),
         )
+        const allApproved = pages.length > 0 && pages.every((p) => p.status === 'approved' || p.status === 'exported')
         return bar(
           <Link to={projectPath(projectId, 'riconoscimenti')} className="btn btn-primary no-underline">{t('project.exportResults')}</Link>,
-          t('project.exportHint'),
+          t(allApproved ? 'project.exportHint' : 'project.inProgressHint'),
         )
       })()}
 
@@ -557,7 +612,7 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
-      {report && !busy && (
+      {project && error == null && report && !busy && (
         <div className="mb-3 grid gap-3 sm:grid-cols-2">
           <Module
             tab={t('project.report')}
@@ -567,11 +622,11 @@ export default function ProjectDetailPage() {
                 type="button"
                 className="btn btn-sm"
                 onClick={() => {
-                  sessionStorage.removeItem(reportKey(projectId))
+                  sessionStorage.removeItem(reportKey(reportUserId, projectId))
                   setReport(null)
                 }}
               >
-                {t('project.archive')}
+                {t('common.close')}
               </button>
             }
           >
@@ -603,13 +658,13 @@ export default function ProjectDetailPage() {
               <ul className="mono max-h-32 list-inside list-disc space-y-0.5 overflow-auto text-[11px]">
                 {report.errors.map((e, i) => (
                   <li key={i} className="break-all">
-                    {e}
+                    {cleanErrorPath(e)}
                   </li>
                 ))}
               </ul>
               <p className="mt-1.5 text-[12px]">
                 <b className="font-semibold">{t('errors.whatToDo')}</b>
-                {t('project.skippedBody')}
+                {t(project?.archive_dir ? 'project.skippedBody' : 'project.skippedUploadBody')}
               </p>
             </WarnNotice>
           ) : (
@@ -686,15 +741,21 @@ export default function ProjectDetailPage() {
               <button key={c.id} type="button" className="menu-item" onClick={() => void movePages([...selected], c.id)}>{c.name}</button>
             ))}
             <button type="button" className="menu-item italic" onClick={() => void movePages([...selected], null)}>{t('collections.none')}</button>
-            <button type="button" className="menu-item text-[color:var(--color-sig-text)]" onClick={() => setNameDialog({ collection: null })}>+ {t('collections.createWithSelection')}</button>
+            <button type="button" className="menu-item text-[color:var(--color-sig-text)]" onClick={() => setNameDialog({ collection: null })}>+ {tn('collections.createWithSelection', selected.size)}</button>
           </Menu>
           {coverCandidate && coverCollection && coverCollection.cover_page_id !== coverCandidate.id && (
             <button type="button" className="btn btn-sm" onClick={() => void setCover(coverCollection.id, coverCandidate.id)}>
               {t('collections.useAsCover', { name: coverCollection.name })}
             </button>
           )}
-          {hasCollections && view === 'thumbs' && <span className="text-[12px] text-[color:var(--color-ink-2)]">{t('collections.dragHint')}</span>}
-          <button type="button" className="btn btn-sm ml-auto" onClick={() => setSelected(new Set())}>{t('project.deselect')}</button>
+          {hasCollections && view === 'thumbs' && <span className="text-[12px] text-[color:var(--color-ink-2)]">{tn('collections.dragHint', selected.size)}</span>}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <button type="button" className="btn btn-sm text-[color:var(--color-sig-text)]" onClick={() => void removePages([...selected])}>
+              <IconTrash size={12} />
+              {tn('project.deletePages', selected.size)}
+            </button>
+            <button type="button" className="btn btn-sm" onClick={() => setSelected(new Set())}>{t('project.deselect')}</button>
+          </div>
         </div>
       )}
       {moveNotice && selected.size === 0 && <p role="status" className="mb-3 text-[12px] text-[color:var(--color-ok)]">{moveNotice}</p>}
@@ -815,16 +876,18 @@ export default function ProjectDetailPage() {
                   </th>
                   <th className={`${th} w-12`}>{t('project.colPage')}</th>
                   <th className={th}>{t('project.colFile')}</th>
-                  <th className={`${th} w-32`}>{t('project.colDate')}</th>
-                  <th className={`${th} w-28`}>{t('project.colIssue')}</th>
-                  <th className={`${th} w-16`}>{t('project.colNumber')}</th>
+                  <th className={`${th} hidden w-32 xl:table-cell`}>{t('project.colDate')}</th>
+                  <th className={`${th} hidden w-28 xl:table-cell`}>{t('project.colIssue')}</th>
+                  <th className={`${th} hidden w-16 xl:table-cell`}>{t('project.colNumber')}</th>
                   <th className={`${th} w-36`}>{t('project.colType')}</th>
                   <th className={`${th} w-32`}>{t('project.colStatus')}</th>
-                  <th className={`${th} w-24`}>{t('project.colAction')}</th>
+                  <th className={`${th} w-32`}>{t('project.colAction')}</th>
                 </tr>
               </thead>
               <tbody className="ruled">
-                {filteredPages.slice(0, pageLimit).map((p) => (
+                {filteredPages.slice(0, pageLimit).map((p) => {
+                  const label = pageLabel(p)
+                  return (
                   <tr
                     key={p.id}
                     className={
@@ -838,49 +901,55 @@ export default function ProjectDetailPage() {
                         type="checkbox"
                         checked={selected.has(p.id)}
                         onChange={() => toggleOne(p.id)}
-                        aria-label={t('project.selectPage', { path: pageLabel(p) })}
+                        aria-label={t('project.selectPage', { path: label })}
                       />
                     </td>
                     <td className={td}>
-                      <img data-fade
-                        src={`${API_BASE}/pages/${p.id}/thumbnail`}
-                        alt={t('project.thumbnailAlt', { path: pageLabel(p) })}
-                        loading="lazy"
-                        className="h-10 w-8 border border-[color:var(--color-rule)] bg-white object-cover object-top"
-                      />
+                      <Link to={projectPath(projectId, 'studio', { page: p.id })} tabIndex={-1} aria-hidden="true" className="block w-8">
+                        <img data-fade
+                          src={`${API_BASE}/pages/${p.id}/thumbnail`}
+                          alt={t('project.thumbnailAlt', { path: label })}
+                          loading="lazy"
+                          className="h-10 w-8 border border-[color:var(--color-rule)] bg-white object-cover object-top"
+                        />
+                      </Link>
                     </td>
                     <td className={`${td} min-w-0`}>
-                      <span className="mono block max-w-[24rem] truncate" title={pageLabel(p)}>
-                        {pageLabel(p)}
-                      </span>
+                      <Link
+                        to={projectPath(projectId, 'studio', { page: p.id })}
+                        className="mono block max-w-[24rem] truncate underline-offset-2 hover:underline"
+                        title={label}
+                      >
+                        {label}
+                      </Link>
                       <span className="mono text-[11px] text-[color:var(--color-ink-3)]">
                         {p.width}×{p.height}
                       </span>
                     </td>
-                    <td className={td}>
+                    <td className={`${td} hidden xl:table-cell`}>
                       <input
                         type="date"
                         value={p.issue_date ?? ''}
                         onChange={(e) => void updateField(p.id, 'issue_date', e.target.value)}
-                        aria-label={t('project.dateOf', { path: p.rel_path })}
+                        aria-label={t('project.dateOf', { path: label })}
                         className="fld !py-0.5 !text-[12px]"
                       />
                     </td>
-                    <td className={td}>
+                    <td className={`${td} hidden xl:table-cell`}>
                       <input
                         value={p.issue_no ?? ''}
                         onChange={(e) => void updateField(p.id, 'issue_no', e.target.value)}
                         placeholder={t('project.issueNoPlaceholder')}
-                        aria-label={t('project.issueOf', { path: p.rel_path })}
+                        aria-label={t('project.issueOf', { path: label })}
                         className="fld !py-0.5 !text-[12px]"
                       />
                     </td>
-                    <td className={td}>
+                    <td className={`${td} hidden xl:table-cell`}>
                       <input
                         value={p.page_no ?? ''}
                         onChange={(e) => void updateField(p.id, 'page_no', e.target.value)}
                         placeholder="1"
-                        aria-label={t('project.pageNumOf', { path: p.rel_path })}
+                        aria-label={t('project.pageNumOf', { path: label })}
                         className="fld !py-0.5 !text-[12px]"
                       />
                     </td>
@@ -888,7 +957,7 @@ export default function ProjectDetailPage() {
                       <select
                         value={p.page_type ?? ''}
                         onChange={(e) => void updateField(p.id, 'page_type', e.target.value)}
-                        aria-label={t('project.typeOf', { path: p.rel_path })}
+                        aria-label={t('project.typeOf', { path: label })}
                         className="fld !py-0.5 !text-[12px]"
                       >
                         <option value="">—</option>
@@ -903,7 +972,7 @@ export default function ProjectDetailPage() {
                       <select
                         value={p.status}
                         onChange={(e) => void updateField(p.id, 'status', e.target.value)}
-                        aria-label={t('project.statusOf', { path: p.rel_path })}
+                        aria-label={t('project.statusOf', { path: label })}
                         className="fld !py-0.5 !text-[12px]"
                       >
                         {PAGE_STATUSES.map((s) => (
@@ -914,21 +983,35 @@ export default function ProjectDetailPage() {
                       </select>
                     </td>
                     <td className={td}>
-                      {p.status !== 'approved' && p.status !== 'exported' ? (
-                        <button
-                          onClick={() => void approvePage(p.id)}
-                          className="btn btn-sm"
-                          title={t('project.approveTitle')}
-                        >
-                          <IconCheck size={11} />
-                          {t('project.approve')}
-                        </button>
-                      ) : (
-                        <Badge tone={STATUS_TONE[p.status] ?? 'ok'}>{statusLabel(p.status)}</Badge>
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        {p.status !== 'approved' && p.status !== 'exported' ? (
+                          <button
+                            onClick={() => void approvePage(p.id)}
+                            className="btn btn-sm"
+                            title={t('project.approveTitle')}
+                          >
+                            <IconCheck size={11} />
+                            {t('project.approve')}
+                          </button>
+                        ) : (
+                          <Badge tone={STATUS_TONE[p.status] ?? 'ok'}>{statusLabel(p.status)}</Badge>
+                        )}
+                        {canEdit && (
+                          <button
+                            type="button"
+                            onClick={() => void removePages([p.id])}
+                            className="btn btn-sm text-[color:var(--color-sig-text)]"
+                            aria-label={t('project.deletePageLabel', { path: label })}
+                            title={t('common.delete')}
+                          >
+                            <IconTrash size={11} />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>

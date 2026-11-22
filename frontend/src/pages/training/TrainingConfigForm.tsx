@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react'
 import type { AutoTrainingJob, Project, TrainConfigBody, TrainRecipeInfo, TrainingPreflight } from '../../lib/types'
 import { Link } from 'react-router'
 import { apiGet, apiPost } from '../../lib/api'
-import { trainTypeLabel } from '../../lib/vocab'
+import { familyLabel, trainTypeLabel } from '../../lib/vocab'
+import { projectPath } from '../../app/projectPaths'
 import { Badge, Collapsible, ErrorNotice, Field, Module, Notice, SkeletonLines } from '../../app/ui'
 import { IconPlayground } from '../../app/icons'
 import { BASE_CFG, MONKEYOCR_8GB, recipeDefaults } from './presets'
@@ -182,10 +183,14 @@ export default function TrainingConfigForm({
   const { t } = useI18n()
   const set = onConfigChange
   const [recipes, setRecipes] = useState<TrainRecipeInfo[]>([])
+  const [vastKeyOk, setVastKeyOk] = useState<boolean | null>(null)
   useEffect(() => {
     apiGet<{ items: TrainRecipeInfo[] }>('/system/train-recipes')
       .then((o) => setRecipes(o.items))
       .catch(() => {})
+    apiGet<{ configured: boolean }>('/system/secrets/vast_api_key')
+      .then((s) => setVastKeyOk(s.configured))
+      .catch(() => setVastKeyOk(null))
   }, [])
   const recipe =
     recipes.find((r) => r.adapter_id === cfg.adapter_id) ??
@@ -318,11 +323,17 @@ export default function TrainingConfigForm({
               {recipeItems.map((r) => (
                 <option key={r.adapter_id} value={r.adapter_id} disabled={!r.trainable}>
                   {r.display_name}
+                  {r.families.length > 0 ? ` (${r.families.map(familyLabel).join(', ')})` : ''}
                   {!r.trainable ? ` · ${t('training.recipeNotTrainable')}` : ''}
                 </option>
               ))}
             </select>
           </Field>
+          {recipe && recipe.families.length > 0 && (
+            <div className="flex items-end pb-1.5 text-[12px] text-[color:var(--color-ink-2)]">
+              <span>{t('training.datasetFamilies', { families: recipe.families.map(familyLabel).join(' · '), view: recipe.data_view })}</span>
+            </div>
+          )}
         </div>
 
         {recipe && <details className="mt-2">
@@ -503,23 +514,29 @@ export default function TrainingConfigForm({
         {/* Il percorso per chi non è sviluppatore: una GPU, l'ambiente giusto,
             il training e il checkpoint, senza host/SSH/python da compilare. */}
         <div className="mb-4 rounded-lg border border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-3">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0 flex-1">
+          <div className="space-y-3">
+            <div>
               <span className="lbl">{t('training.auto.title')}</span>
-              <p className="mt-1 max-w-[72ch] text-[12px] text-[color:var(--color-ink-2)]">
+              <p className="mt-1 max-w-[80ch] text-[12px] text-[color:var(--color-ink-2)]">
                 {recipeReady ? t('training.auto.body', { model: recipe?.display_name ?? '' }) : t('training.recipeNotReady', { toolchain: recipe?.toolchain ?? '—' })}
               </p>
               <p className="mt-1 text-[11px] text-[color:var(--color-ink-3)]">
                 {t('training.auto.cost', { dph: autoDph || '1' })}
               </p>
+              {vastKeyOk === false && (
+                <p className="mt-1.5 text-[12px] text-[color:var(--color-warn)]">
+                  {t('training.where.vastNoKey')}{' '}
+                  <Link to="/modelli" className="font-semibold underline underline-offset-2">{t('training.where.openModels')}</Link>
+                </p>
+              )}
             </div>
-            <div className="flex flex-wrap items-end gap-2">
+            <div className="flex flex-wrap items-end gap-3">
               <Field label={t('training.auto.budget')}>
                 <input
                   type="number"
                   min="0.1"
                   step="0.05"
-                  className="fld !w-24"
+                  className="fld fld-mono !w-24"
                   value={autoDph}
                   onChange={(e) => {
                     setAutoDph(e.target.value)
@@ -574,7 +591,7 @@ export default function TrainingConfigForm({
               </label>
               {autoGold && <Field label={t('training.auto.goldEvalMinutes')}>
                 <input
-                  className="input w-20"
+                  className="fld fld-mono !w-20"
                   type="number"
                   min={5}
                   max={240}
@@ -602,7 +619,7 @@ export default function TrainingConfigForm({
           {!datasetReady && (
             <p className="mt-2 text-[12px] text-[color:var(--color-ink-2)]">
               {t('training.auto.needsDataset')}{' '}
-              <Link to="/dataset" className="font-semibold underline underline-offset-2">
+              <Link to={projectId !== '' ? projectPath(Number(projectId), 'fine-tuning/dati') : '/progetti'} className="font-semibold underline underline-offset-2">
                 {t('pipeline.steps.datasetAction')}
               </Link>
             </p>
@@ -777,7 +794,7 @@ export default function TrainingConfigForm({
         {projectId !== '' && !datasetReady && (
           <Notice tone="warn">
             <span>{t('pipeline.steps.trainNeeds')}</span>{' '}
-            <Link to="/dataset" className="font-semibold underline underline-offset-2">
+            <Link to={projectPath(Number(projectId), 'fine-tuning/dati')} className="font-semibold underline underline-offset-2">
               {t('pipeline.steps.datasetAction')}
             </Link>
           </Notice>

@@ -29,7 +29,7 @@
     `pp-doclayoutv3`, registered next to the adapters' recipes since it reads no text). View
     `paddlex-layout` (§7); the script runs `check_dataset`, evaluates the official weights on the
     val split (`eval_base.json`), trains, evaluates `best_model` (`eval_trained.json`), with
-    `Train.num_classes=25` and `Global.device` GPU when paddle has CUDA, else CPU (without a GPU the
+    `Train.num_classes=25`, `best_model` chosen on bbox AP, a snapshot every 5 epochs, and `Global.device` GPU when paddle has CUDA, else CPU (without a GPU the
     preflight warns, and refuses on Apple Silicon, where training diverged at the first step). `TABULARIUM_PADDLEX_DIR` is a PaddleX `release/3.7`
     checkout with `paddlex --install PaddleDetection` (its `.venv/bin` goes on `PATH` when present);
     one-click uses `ghcr.io/nbadino/tabularium-train-layout:layout-v1` (`docker/train-layout`).
@@ -153,7 +153,7 @@
 - **One-click training is the non-developer path.** `POST /training/auto` takes the current
   config plus an hourly budget, rents the best Vast.ai offer within that ceiling (VRAM, then compute
   capability, reliability and price; with `datacenter_only` only Vast datacenter hosts, filter
-  `datacenter` plus a local `hosting_type == 1` check, and an explicit error when none fits; with `verified_only` the `verified` filter), skips for 24 h the `machine_id` of every host that failed or was cancelled before training (`failed_hosts`, `offer.machine_id`), and replaces, up to `MAX_HOST_ATTEMPTS` = 3 hosts, an instance whose `status_msg` contains "Error" or that stays `created`/`offline` for `VAST_STUCK_LIMIT_S` (10 min) (rule of vast-cli `wait_for_instance`), boots the profile's versioned GHCR image (MonkeyOCRv2,
+  `datacenter` plus a local `hosting_type == 1` check, and an explicit error when none fits; with `verified_only` the `verified` filter), skips for 24 h the `machine_id` of every host that failed or was cancelled before training (`failed_hosts`, `offer.machine_id`), and replaces, up to `MAX_HOST_ATTEMPTS` = 3 hosts, an instance whose `status_msg` contains "Error" or that stays `created`/`offline` for `VAST_STUCK_LIMIT_S` (10 min) (rule of vast-cli `wait_for_instance`) or still pulls its image (`loading`) after `VAST_LOADING_LIMIT_S` (20 min), boots the profile's versioned GHCR image (MonkeyOCRv2,
   Qwen, legacy, GLM, Paddle; dots.ocr still provisions with `scripts/cloud/setup_train_env.sh`),
   waits for `/opt/tabularium/ready.json`, then calls `start_run`. The job is persisted under
   `<data>/auto-training/`, shows phases/log in the UI and destroys the instance if rental,

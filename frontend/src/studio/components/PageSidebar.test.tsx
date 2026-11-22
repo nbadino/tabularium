@@ -37,4 +37,44 @@ describe('PageSidebar', () => {
     expect(screen.getByLabelText('Row and column sums ok')).toHaveTextContent('✓')
     expect(screen.getAllByText(/≠|✓/)).toHaveLength(2) // la terza pagina non ha tabelle
   })
+
+  it('mostra ricerca e filtri stato anche con meno di 20 pagine', () => {
+    const pages: PageItem[] = [
+      { ...page(1, 1), drafts: 2 },
+      { ...page(2, 2), status: 'approved' },
+    ]
+    render(
+      <MemoryRouter>
+        <PageSidebar
+          projects={[]}
+          projectId={1}
+          pages={pages}
+          currentPage={pages[0]}
+          onProjectChange={vi.fn()}
+          onPageSelect={vi.fn()}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByPlaceholderText('Nome, numero o file…')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Con bozze' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Approvate' })).toBeInTheDocument()
+  })
+
+  it('usa larghezza piena in modalità impilata quando width non è specificata', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <PageSidebar
+          projects={[]}
+          projectId={1}
+          pages={[page(1, 1)]}
+          currentPage={null}
+          onProjectChange={vi.fn()}
+          onPageSelect={vi.fn()}
+        />
+      </MemoryRouter>,
+    )
+    const aside = container.querySelector('aside')
+    expect(aside).toHaveClass('w-full')
+    expect(aside?.getAttribute('style')).toBeNull()
+  })
 })

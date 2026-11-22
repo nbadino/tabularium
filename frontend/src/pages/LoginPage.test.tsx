@@ -51,4 +51,11 @@ describe('LoginPage — identity provider', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/dominio ammesso/i)
     expect(screen.getByRole('alert')).not.toHaveTextContent('oidc_domain')
   })
+
+  it('keeps sign-in button enabled and shows password toggle and recovery help', () => {
+    render(<LoginPage />)
+    expect(screen.getByRole('button', { name: 'Accedi' })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Mostra password' })).toBeInTheDocument()
+    expect(screen.getByText(/reset-password/i)).toBeInTheDocument()
+  })
 })

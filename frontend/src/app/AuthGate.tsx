@@ -32,12 +32,14 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  const loadingFallback = (
+    <div className="flex h-screen items-center justify-center text-sm text-[color:var(--color-ink-2)]">
+      {t('auth.loading')}
+    </div>
+  )
+
   if (!booted || phase === 'loading') {
-    return (
-      <div className="flex h-screen items-center justify-center text-sm text-[color:var(--color-ink-2)]">
-        {t('auth.loading')}
-      </div>
-    )
+    return loadingFallback
   }
 
   if (!enabled) return <>{children}</>
@@ -47,7 +49,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   // password, non finire nell'app con l'account sbagliato.
   if (typeof window !== 'undefined' && window.location.pathname === '/invito') {
     return (
-      <Suspense fallback={null}>
+      <Suspense fallback={loadingFallback}>
         <AcceptInvitePage />
       </Suspense>
     )
@@ -55,14 +57,14 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (needsSetup) {
     return (
-      <Suspense fallback={null}>
+      <Suspense fallback={loadingFallback}>
         <SetupPage />
       </Suspense>
     )
   }
   if (!user) {
     return (
-      <Suspense fallback={null}>
+      <Suspense fallback={loadingFallback}>
         <LoginPage />
       </Suspense>
     )
@@ -71,7 +73,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   // l'utente ne sceglie una propria.
   if (user.must_change_password) {
     return (
-      <Suspense fallback={null}>
+      <Suspense fallback={loadingFallback}>
         <SetPasswordPage />
       </Suspense>
     )

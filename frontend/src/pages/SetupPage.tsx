@@ -9,7 +9,8 @@
  * (creati in modalità locale) vengono assegnati a questo account.
  */
 import { useState } from 'react'
-import { Field } from '../app/ui'
+import { Field, PasswordInput } from '../app/ui'
+import { LocaleSwitch } from '../app/LocaleSwitch'
 import { bootstrap, useAuth } from '../app/auth'
 import { ApiError } from '../lib/api'
 import { describeError } from '../lib/errors'
@@ -18,6 +19,9 @@ import { useI18n } from '../i18n'
 export default function SetupPage() {
   const { t } = useI18n()
   const { setup } = useAuth()
+  const [hadUrlToken] = useState(
+    () => Boolean(new URLSearchParams(window.location.search).get('setup_token')),
+  )
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -30,8 +34,18 @@ export default function SetupPage() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!username.trim() || !password || !setupToken.trim()) {
-      setError(t('auth.fillRequired'))
+    if (!setupToken.trim() || !username.trim() || !password) {
+      setError(
+        !setupToken.trim() && (!username.trim() || !password)
+          ? t('auth.fillSetupRequired')
+          : !setupToken.trim()
+            ? t('auth.setupTokenRequired')
+            : t('auth.fillRequired'),
+      )
+      return
+    }
+    if (password.length < 8) {
+      setError(t('account.tooShort'))
       return
     }
     if (password !== confirm) {
@@ -61,6 +75,9 @@ export default function SetupPage() {
       <div className="mod w-full max-w-sm rounded-lg p-6">
         <div className="mod-head border-b-[color:var(--color-rule-strong)]">
           <span className="mod-tab">{t('auth.setupTitle')}</span>
+          <div className="mod-head-aux">
+            <LocaleSwitch />
+          </div>
         </div>
         <div className="mod-body">
           <h1 className="text-[22px] font-bold leading-tight tracking-[-0.03em]">
@@ -78,6 +95,7 @@ export default function SetupPage() {
                 onChange={(e) => setSetupToken(e.target.value)}
                 autoComplete="off"
                 spellCheck={false}
+                autoFocus={!hadUrlToken}
                 className="fld font-mono"
               />
             </Field>
@@ -87,26 +105,22 @@ export default function SetupPage() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 autoComplete="username"
-                autoFocus
+                autoFocus={hadUrlToken}
                 className="fld"
               />
             </Field>
             <Field label={t('auth.password')} hint={t('auth.passwordHint')}>
-              <input
-                type="password"
+              <PasswordInput
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="new-password"
-                className="fld"
               />
             </Field>
             <Field label={t('auth.confirmPassword')}>
-              <input
-                type="password"
+              <PasswordInput
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
                 autoComplete="new-password"
-                className="fld"
               />
             </Field>
             <Field label={t('auth.email')} hint={t('auth.emailHint')}>

@@ -74,7 +74,7 @@ describe('Collections on the Pages tab', () => {
   it('lists collections with counts by state and filters the wall', async () => {
     renderPage()
     const column = await screen.findByRole('navigation', { name: 'Collezioni' })
-    expect(within(column).getByText('1 nuova · 1 verificata')).toBeInTheDocument()
+    expect(within(column).getByText('1 nuova · 1 approvata')).toBeInTheDocument()
     expect(screen.getAllByRole('link', { name: /p\d\.png/ })).toHaveLength(4)
     fireEvent.click(within(column).getByRole('button', { name: /Lettere/ }))
     await waitFor(() => expect(screen.getByTestId('search')).toHaveTextContent('collezione=2'))
@@ -100,10 +100,10 @@ describe('Collections on the Pages tab', () => {
     renderPage()
     fireEvent.click(await screen.findByLabelText('Seleziona p4.png'))
     const menu = screen.getByText('Sposta in…').closest('details') as HTMLElement
-    fireEvent.click(within(menu).getByRole('button', { name: '+ Nuova collezione con queste pagine' }))
+    fireEvent.click(within(menu).getByRole('button', { name: '+ Nuova collezione con questa pagina' }))
     const dialog = await screen.findByRole('dialog')
     fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'Liste' } })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Nuova collezione' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Crea collezione' }))
     await waitFor(() => expect(state.posted).toContainEqual({ path: '/projects/5/pages/collection', body: { page_ids: [4], collection_id: 9 } }))
     expect(await screen.findByText('1 pagina spostata in «Liste».')).toBeInTheDocument()
   })

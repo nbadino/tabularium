@@ -107,15 +107,19 @@ describe('SettingsPage', () => {
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('s=dati'))
   })
 
-  it('a chi non è admin i comandi mancano, ma il motivo è scritto', async () => {
+  it('hides admin-only tabs from non-admin users even when requested in URL', async () => {
     role.current = 'editor'
-    const user = userEvent.setup()
-    renderPage()
-    await user.click(screen.getByRole('button', { name: 'Istanza' }))
+    render(
+      <MemoryRouter initialEntries={['/impostazioni?s=istanza']}>
+        <SettingsPage />
+        <LocationProbe />
+      </MemoryRouter>,
+    )
 
-    expect(await screen.findByText(/solo un amministratore può cambiarla/i)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Salva impostazioni' })).toBeNull()
-    // Il nome dell'istanza resta leggibile, solo non modificabile.
-    expect(screen.getByDisplayValue('Archivio')).toBeDisabled()
+    expect(await screen.findByRole('region', { name: 'Il mio account' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Istanza' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Dati e backup' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Ambiente' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Identità e accesso' })).toBeNull()
   })
 })

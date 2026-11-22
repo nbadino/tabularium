@@ -47,6 +47,7 @@ function TableBlockEditor({
   serverId,
   projectId,
   pageId,
+  pageTitle,
   pageImageUrl,
   pageImageSize,
   onSaveTable,
@@ -57,6 +58,7 @@ function TableBlockEditor({
   serverId: number | null
   projectId?: number | null
   pageId?: number | null
+  pageTitle?: string
   pageImageUrl?: string | null
   pageImageSize?: { w: number; h: number } | null
   onSaveTable: (serverId: number, grid: TableGrid) => Promise<string>
@@ -97,7 +99,9 @@ function TableBlockEditor({
           <button
             type="button"
             onClick={() => {
-              const url = `/tabella/${serverId}?page=${pageId}&width=${pageImageSize?.w ?? ''}&height=${pageImageSize?.h ?? ''}&confirmed=${confirmed ? 1 : 0}`
+              const titleParam = pageTitle ? `&title=${encodeURIComponent(pageTitle)}` : ''
+              const projectParam = projectId != null ? `&project=${projectId}` : ''
+              const url = `/tabella/${serverId}?page=${pageId}${projectParam}${titleParam}&width=${pageImageSize?.w ?? ''}&height=${pageImageSize?.h ?? ''}&confirmed=${confirmed ? 1 : 0}`
               const w = Math.round(window.screen.availWidth * 0.85)
               const h = Math.round(window.screen.availHeight * 0.85)
               window.open(url, `tabularium-table-${serverId}`, `popup,width=${w},height=${h}`)?.focus()
@@ -114,7 +118,7 @@ function TableBlockEditor({
       </div>
       {open && (
         <Modal
-          title={t('table.workspaceTitle')}
+          title={`${t('table.workspaceTitle')}${pageTitle ? ` · ${pageTitle}` : ''}`}
           extraWide
           closeOnBackdrop={false}
           closeOnEscape={false}
@@ -159,11 +163,11 @@ export function VerifiedToggle({
     <div className={className}>
     <label
       className="flex w-fit cursor-pointer items-center gap-1.5 text-[12px] text-[color:var(--color-ink-2)]"
-      title={compact ? t('table.blockVerifiedHint') : undefined}
+      title={t('table.blockVerifiedHint')}
       aria-describedby={compact ? hintId : undefined}
     >
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-[color:var(--color-sig)]" />
-      {t('table.blockVerified')}
+      {t('content.confirmDraft')}
     </label>
     {compact
       ? <span id={hintId} className="sr-only">{t('table.blockVerifiedHint')}</span>
@@ -330,10 +334,16 @@ function RowShell({
         }}
       >
         {orderButton}
-        <span className="shrink-0 text-[12px] font-semibold">{label}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-[color:var(--color-ink-2)]">
-          {preview}
-        </span>
+        <button
+          type="button"
+          onClick={onSelect}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        >
+          <span className="shrink-0 text-[12px] font-semibold">{labelName(label)}</span>{' '}
+          <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-[color:var(--color-ink-2)]">
+            {preview}
+          </span>
+        </button>
         {chip}
         <span className="shrink-0 text-[11px] text-[color:var(--color-ok)]" title={t('content.confirmDraft')}>
           ✓ {t('content.confirmDraft')}
@@ -366,7 +376,7 @@ function RowShell({
           />
         ) : (
           <span className="mono text-[11px] uppercase tracking-[0.04em] text-[color:var(--color-ink-3)]">
-            {label}
+            {labelName(label)}
           </span>
         )}
 
@@ -378,14 +388,17 @@ function RowShell({
 
         {chip}
 
-        <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-[color:var(--color-ink-2)]">
+        <label
+          className="flex cursor-pointer items-center gap-1.5 text-[11px] text-[color:var(--color-ink-2)]"
+          title={label === 'Table' ? t('table.blockVerifiedHint') : undefined}
+        >
           <input
             type="checkbox"
             checked={confirmed}
             onChange={(e) => onConfirmed(e.target.checked)}
             className="accent-[color:var(--color-sig)]"
           />
-          {t(label === 'Table' ? 'table.blockVerified' : 'content.confirmDraft')}
+          {t('content.confirmDraft')}
         </label>
 
         <span className="ml-auto flex shrink-0 items-center gap-1">
@@ -395,7 +408,7 @@ function RowShell({
                 type="button"
                 onClick={() => onMove(-1)}
                 disabled={!canMoveUp}
-                aria-label={t('layers.moveUp', { label })}
+                aria-label={t('layers.moveUp', { label: labelName(label) })}
                 className="p-1 text-[color:var(--color-ink-2)] hover:text-[color:var(--color-ink)] disabled:opacity-30"
               >
                 <IconUp size={11} />
@@ -404,7 +417,7 @@ function RowShell({
                 type="button"
                 onClick={() => onMove(1)}
                 disabled={!canMoveDown}
-                aria-label={t('layers.moveDown', { label })}
+                aria-label={t('layers.moveDown', { label: labelName(label) })}
                 className="p-1 text-[color:var(--color-ink-2)] hover:text-[color:var(--color-ink)] disabled:opacity-30"
               >
                 <IconDown size={11} />
@@ -470,6 +483,7 @@ interface ContentPaneProps {
   onDelete: (id: string) => void
   onSaveTable: (serverId: number, grid: TableGrid) => Promise<string>
   pageId?: number | null
+  pageTitle?: string
   pageImageUrl?: string | null
   pageImageSize?: { w: number; h: number } | null
   /** Versione del ritaglio per blocco: cresce quando la regione cambia, e
@@ -524,6 +538,7 @@ export default function ContentPane({
   onDelete,
   onSaveTable,
   pageId,
+  pageTitle,
   pageImageUrl,
   pageImageSize,
   tableVersions,
@@ -553,6 +568,7 @@ export default function ContentPane({
   const listRef = useRef<HTMLUListElement>(null)
   useFlipList(listRef)
   const [rulesOpen, setRulesOpen] = useState(false)
+  const [rulesInlineOpen, setRulesInlineOpen] = useState(false)
   const [labelsOpen, setLabelsOpen] = useState(false)
   const [hintOpen, setHintOpen] = useState(false)
 
@@ -585,6 +601,17 @@ export default function ContentPane({
           <span className="mono text-[11px] text-[color:var(--color-ink-3)]" title={onMove ? t('layers.keys') : undefined}>
             {tn('content.blocksCount', total)}
           </span>
+          {projectId != null && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              aria-expanded={rulesInlineOpen}
+              aria-label={t('content.rulesInlineToggle')}
+              onClick={() => setRulesInlineOpen((v) => !v)}
+            >
+              {t('content.rulesInline')}
+            </button>
+          )}
           <Menu label={t('work.contentOptions')}>
           {onReorderReset && !empty && (
             <button
@@ -618,6 +645,12 @@ export default function ContentPane({
     >
       {consensus?.summary}
 
+      {rulesInlineOpen && projectId != null && (
+        <div className="border-b border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-2.5">
+          <ConventionsChecklist projectId={projectId} embedded />
+        </div>
+      )}
+
       {(working || stream?.text) && (
         <LiveStream
           working={working}
@@ -639,7 +672,7 @@ export default function ContentPane({
                 <RowShell
                   key={block.id}
                   id={block.id}
-                  order={block.orderIdx ?? i}
+                  order={i + 1}
                   label={block.label}
                   color={colorFor?.(block.label)}
                   labels={labels}
@@ -662,9 +695,9 @@ export default function ContentPane({
                   onMove={onMove ? (dir) => onMove(block.id, dir) : undefined}
                   canMoveUp={i > 0}
                   canMoveDown={i < sortedBlocks.length - 1}
-                  rowAria={t('layers.blockAria', { n: i + 1, label: block.label })}
+                  rowAria={t('layers.blockAria', { n: i + 1, label: labelName(block.label) })}
                   cropUrl={block.serverId ? cropUrlFor(block.serverId, tableVersions?.[block.serverId] ?? 0) : null}
-                  cropAlt={t('content.cropAlt', { label: block.label })}
+                  cropAlt={t('content.cropAlt', { label: labelName(block.label) })}
                   cropUnsavedHint={t('content.cropUnsaved')}
                   wide={isTable}
                 >
@@ -683,6 +716,7 @@ export default function ContentPane({
                         projectId={projectId}
                         tableVersion={block.serverId ? tableVersions?.[block.serverId] ?? 0 : 0}
                         pageId={pageId ?? null}
+                        pageTitle={pageTitle}
                         pageImageUrl={pageImageUrl ?? null}
                         pageImageSize={pageImageSize ?? null}
                         onSaveTable={onSaveTable}
@@ -699,7 +733,7 @@ export default function ContentPane({
                       onFocus={() => onSelect(block.id)}
                       rows={Math.min(10, Math.max(3, block.content.split('\n').length + 1))}
                       placeholder={t('inspector.transcriptionPlaceholder')}
-                      aria-label={t('content.blockAria', { label: block.label })}
+                      aria-label={t('content.blockAria', { label: labelName(block.label) })}
                       className="fld resize-y font-mono text-[12px] leading-relaxed"
                     />
                   )}
@@ -727,9 +761,9 @@ export default function ContentPane({
                   selected={Boolean(verdict?.detail)}
                   chip={verdict?.chip}
                   detail={verdict?.detail}
-                  rowAria={t('content.draftAria', { label: draft.label })}
+                  rowAria={t('content.draftAria', { label: labelName(draft.label) })}
                   cropUrl={cropUrlFor(draft.serverId)}
-                  cropAlt={t('content.cropAlt', { label: draft.label })}
+                  cropAlt={t('content.cropAlt', { label: labelName(draft.label) })}
                   cropUnsavedHint={t('content.cropUnsaved')}
                   wide={isTable}
                 >
@@ -738,6 +772,7 @@ export default function ContentPane({
                       serverId={draft.serverId}
                       projectId={projectId}
                       pageId={pageId ?? null}
+                      pageTitle={pageTitle}
                       pageImageUrl={pageImageUrl ?? null}
                       pageImageSize={pageImageSize ?? null}
                       onSaveTable={(serverId, grid) => {
@@ -754,7 +789,7 @@ export default function ContentPane({
                       value={draft.content}
                       onChange={(e) => onDraftContent(draft.serverId, e.target.value)}
                       rows={Math.min(10, Math.max(3, draft.content.split('\n').length + 1))}
-                      aria-label={t('content.draftAria', { label: draft.label })}
+                      aria-label={t('content.draftAria', { label: labelName(draft.label) })}
                       className="fld resize-y font-mono text-[12px] leading-relaxed"
                     />
                   )}
@@ -770,7 +805,7 @@ export default function ContentPane({
       {rulesOpen && projectId != null && (
         <Modal title={t('conventions.tab')} onClose={() => setRulesOpen(false)}>
           <div className="p-3">
-            <ConventionsChecklist projectId={projectId} />
+            <ConventionsChecklist projectId={projectId} embedded />
           </div>
         </Modal>
       )}

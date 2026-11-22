@@ -1015,6 +1015,8 @@ export interface BenchmarkEntry {
   model: string
   url: string
   reachable: boolean
+  failed?: boolean
+  error?: string | null
   pages_evaluated: number
   seconds: number
   aggregates: EvalReport['aggregates']
@@ -1026,6 +1028,7 @@ export interface BenchmarkReport {
   scope: string
   config: { with_text: boolean; limit: number; use_cache: boolean }
   leaderboard: BenchmarkEntry[]
+  targets?: BenchmarkEntry[]
   bench_dir?: string
   available?: boolean
 }
@@ -1109,6 +1112,7 @@ export interface RecognitionRunItem {
   rel_path: string
   pdf_page?: number | null
   page_status: string
+  collection_id?: number | null
   state: RecognitionItemState
   detected: number
   inserted: number

@@ -149,15 +149,17 @@ export async function importZip(
   destination: ZipDestination,
   onProgress: (job: ZipJob) => void,
   pollMs = 500,
+  includeFolders?: string[],
 ): Promise<ZipReport> {
   const target = layout === 'collections'
     ? {}
     : destination.kind === 'new'
       ? { collection_name: destination.name }
       : { collection_id: destination.kind === 'existing' ? destination.id : null }
+  const folderScope = includeFolders ? { include_folders: includeFolders } : {}
   const { job_id } = await apiPost<{ job_id: string }>(
     `/projects/${projectId}/zip-uploads/${uploadId}/import`,
-    { layout, ...target },
+    { layout, ...target, ...folderScope },
   )
   for (;;) {
     const job = await apiGet<ZipJob>(`/projects/${projectId}/zip-jobs/${job_id}`)

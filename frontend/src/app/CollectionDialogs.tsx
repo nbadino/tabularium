@@ -28,14 +28,14 @@ export function CollectionNameDialog({
         <>
           <button type="button" className="btn" onClick={onClose}>{t('common.cancel')}</button>
           <button type="submit" form="collection-name" className="btn btn-primary" disabled={busy || !trimmed || trimmed === collection?.name}>
-            {collection ? t('collections.rename') : t('collections.create')}
+            {collection ? t('collections.rename') : t('collections.createSubmit')}
           </button>
         </>
       }
     >
       <form id="collection-name" className="p-3" onSubmit={(e) => { e.preventDefault(); if (trimmed) onSubmit(trimmed) }}>
         <Field label={t('collections.name')} hint={collection ? undefined : t('collections.nameHint')}>
-          <input className="fld" autoFocus maxLength={120} value={name} onChange={(e) => setName(e.target.value)} placeholder={t('collections.namePlaceholder')} />
+          <input data-autofocus className="fld" autoFocus maxLength={120} value={name} onChange={(e) => setName(e.target.value)} placeholder={t('collections.namePlaceholder')} />
         </Field>
         {error && <p role="alert" className="mt-2 text-[12px] text-[color:var(--color-sig-text)]">{error}</p>}
       </form>

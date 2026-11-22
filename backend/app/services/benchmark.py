@@ -292,7 +292,16 @@ def _evaluate_target(
         try:
             client = _target_client(target)
         except ValueError as exc:
-            return {"target": target, "error": str(exc), "pages": []}
+            return {
+                "target": target,
+                "adapter_id": target.get("adapter_id", ""),
+                "reachable": False,
+                "failed": True,
+                "error": str(exc),
+                "pages_evaluated": 0,
+                "seconds": 0.0,
+                "pages": [],
+            }
         if local and local.get("native_url"):
             client.native_url = local["native_url"]
 
@@ -340,17 +349,23 @@ def _evaluate_target(
                     pass
 
         ok = [p for p in pages_result if "error" not in p]
+        failed = len(ok) == 0 and (not reachable or bool(pages_result))
+        error_msg = None
+        if failed:
+            page_err = next((str(p.get("error") or "") for p in pages_result if p.get("error")), "")
+            error_msg = warnings[0] if warnings else (page_err or msg("vllm_ping", lang, url=client.url))
         texts = [t for p in ok for t in p["text"]]
         tables = [t for p in ok for t in p["tables"]]
         layout = evmod._agg_layout(ok)  # noqa: SLF001
         layout_strict = evmod._agg_layout(ok, key="layout_strict")  # noqa: SLF001
         order = evmod._agg_order(ok)  # noqa: SLF001
-        return {
+        out = {
             "target": target,
             "adapter_id": target["adapter_id"],
             "model": client.model,
             "url": client.url,
             "reachable": reachable,
+            "failed": failed,
             "pages_evaluated": len(ok),
             "seconds": round(seconds, 1),
             "aggregates": {
@@ -375,6 +390,9 @@ def _evaluate_target(
             "pages": pages_result,
             "warnings": warnings,
         }
+        if error_msg is not None:
+            out["error"] = error_msg
+        return out
     finally:
         if local is not None:
             _stop_local(local)
@@ -471,7 +489,7 @@ def run_benchmark(
         if on_target is not None:
             on_target(entry)
     leaderboard = sorted(
-        [e for e in entries if "error" not in e], key=_score, reverse=True
+        [e for e in entries if not e.get("failed") and "error" not in e], key=_score, reverse=True
     )
     for entry in entries:
         if entry.get("adapter_id") in _PRICES:
@@ -614,13 +632,12 @@ def start_benchmark(
             results: list[dict] = []
 
             def record(entry: dict) -> None:
-                if "error" in entry:
-                    return
                 results.append({
                     key: entry.get(key)
                     for key in (
                         "adapter_id", "model", "url", "reachable",
                         "pages_evaluated", "seconds", "aggregates",
+                        "failed", "error",
                     )
                 })
                 _write_state(project_id, results=results)

@@ -10,6 +10,7 @@
  * è la fonte di verità, qui si disabilita solo ciò che finirebbe in un 403.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
 import type { ProjectMember } from '../lib/types'
 import { avatarColor, initialsOf } from '../lib/avatar'
@@ -17,6 +18,7 @@ import { Badge, ErrorNotice, Field, Loading, Modal, Notice } from './ui'
 import { ActivityFeed, type ProjectActivity } from './ActivityFeed'
 import { IconPlus, IconTrash } from './icons'
 import { useConfirm } from './confirm'
+import { useCanAdminister } from './auth'
 import { useI18n } from '../i18n'
 
 type Role = 'owner' | 'editor' | 'viewer'
@@ -47,6 +49,7 @@ export default function ShareDialog({
   onAccessChanged?: () => void
 }) {
   const { t } = useI18n()
+  const isAdmin = useCanAdminister()
   const confirm = useConfirm()
   const [members, setMembers] = useState<ProjectMember[]>([])
   const [candidates, setCandidates] = useState<ProjectMember[]>([])
@@ -265,7 +268,18 @@ export default function ShareDialog({
                   </div>
                   <button type="button" className="btn btn-primary" disabled={!selected || busy || loading} onClick={() => void addMember()}>{t('team.addToProject')}</button>
                 </div>
-                {!loading && !candidates.length && <p className="mt-2 text-[13px] text-[color:var(--color-ink-2)]">{t('team.newAccountHint')}</p>}
+                {!loading && !candidates.length && (
+                  <p className="mt-2 text-[13px] text-[color:var(--color-ink-2)]">
+                    {members.length <= 1 ? t('share.noOtherUsers') : t('share.noCandidates')}{' '}
+                    {isAdmin ? (
+                      <Link to="/utenti" onClick={onClose} className="font-semibold underline underline-offset-2">
+                        {t('share.manageUsersLink')}
+                      </Link>
+                    ) : (
+                      t('team.newAccountHint')
+                    )}
+                  </p>
+                )}
               </div>
             )}
 
@@ -284,7 +298,7 @@ export default function ShareDialog({
                   </div>
                   <div className="ml-auto flex items-center gap-2">
                     {member.role === 'owner' || !canManage ? (
-                      <span className="mono text-[12px] text-[color:var(--color-ink-2)]">
+                      <span className="text-[12px] font-medium text-[color:var(--color-ink-2)]">
                         {t(member.role === 'owner' ? 'share.roleOwner' : member.role === 'editor' ? 'share.roleEditor' : 'share.roleViewer')}
                       </span>
                     ) : (
@@ -299,15 +313,17 @@ export default function ShareDialog({
                           <option value="editor">{t('share.roleEditor')}</option>
                           <option value="viewer">{t('share.roleViewer')}</option>
                         </select>
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          disabled={busy}
-                          onClick={() => void transferOwner(member)}
-                          title={t('project.transferOwner')}
-                        >
-                          {t('share.makeOwner')}
-                        </button>
+                        {member.role === 'editor' && (
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            disabled={busy}
+                            onClick={() => void transferOwner(member)}
+                            title={t('project.transferOwner')}
+                          >
+                            {t('share.makeOwner')}
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="btn btn-sm"

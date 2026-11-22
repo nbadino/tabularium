@@ -6,7 +6,8 @@
  * si può anche creare un account dal link in fondo alla scheda.
  */
 import { useState } from 'react'
-import { Field } from '../app/ui'
+import { Field, PasswordInput } from '../app/ui'
+import { LocaleSwitch } from '../app/LocaleSwitch'
 import { useAuth } from '../app/auth'
 import { describeError } from '../lib/errors'
 import { API_BASE } from '../lib/endpoints'
@@ -44,6 +45,10 @@ export default function LoginPage() {
       setError(t('auth.fillRequired'))
       return
     }
+    if (mode === 'register' && password.length < 8) {
+      setError(t('account.tooShort'))
+      return
+    }
     setBusy(true)
     setError(null)
     try {
@@ -72,6 +77,9 @@ export default function LoginPage() {
           <span className="mod-tab">
             {mode === 'login' ? t('auth.loginTitle') : t('auth.registerTitle')}
           </span>
+          <div className="mod-head-aux">
+            <LocaleSwitch />
+          </div>
         </div>
         <div className="mod-body">
           <h1 className="text-[22px] font-bold leading-tight tracking-[-0.03em]">
@@ -113,13 +121,11 @@ export default function LoginPage() {
               />
             </Field>
             <Field label={t('auth.password')} hint={mode === 'register' ? t('auth.passwordHint') : undefined}>
-              <input
-                type="password"
+              <PasswordInput
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 minLength={mode === 'register' ? 8 : undefined}
-                className="fld"
               />
             </Field>
             {mode === 'register' && (
@@ -140,7 +146,7 @@ export default function LoginPage() {
             )}
             <button
               type="submit"
-              disabled={busy || !username.trim() || !password || (mode === 'register' && password.length < 8)}
+              disabled={busy}
               className="btn btn-primary w-full justify-center"
             >
               {busy
@@ -150,6 +156,12 @@ export default function LoginPage() {
                   : t('auth.register')}
             </button>
           </form>
+
+          {mode === 'login' && (
+            <p className="mt-3 text-[11px] text-[color:var(--color-ink-3)]">
+              {t('auth.loginHelp')}
+            </p>
+          )}
 
           {allowRegistration && (
             <div className="mt-4 border-t border-[color:var(--color-rule)] pt-3">

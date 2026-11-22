@@ -6,12 +6,13 @@ import { syncInferenceFromBackend } from './inference'
 import type { HealthResponse, Project, UpdateStatus } from '../lib/types'
 import { projectIdOf, projectPath, switchProjectPath } from './projectPaths'
 import { writeActiveProject } from './activeProject'
-import { LOCALES, LOCALE_LABELS, useI18n } from '../i18n'
+import { useI18n } from '../i18n'
 import { useAuth } from './auth'
 import { CommandPalette } from './CommandPalette'
+import { LocaleSwitch } from './LocaleSwitch'
 import { ActiveRunsIndicator } from './RunControls'
 import { Menu, PageSkeleton } from './ui'
-import { IconArchive, IconModels } from './icons'
+import { IconArchive, IconExternal, IconModels } from './icons'
 
 interface NavItem {
   to: string
@@ -25,33 +26,6 @@ const NAV: NavItem[] = [
   { to: '/progetti', labelKey: 'nav.projects', Icon: IconArchive },
   { to: '/modelli', labelKey: 'nav.models', Icon: IconModels },
 ]
-
-/** IT · EN · FR in una riga: la lingua corrente in grassetto, il nome intero nel titolo. */
-function LocaleSwitch() {
-  const { t, locale, setLocale } = useI18n()
-  return (
-    <div className="flex items-center px-1 py-0.5" role="group" aria-label={t('layout.language')}>
-      {LOCALES.map((l, i) => [
-        i > 0 && (
-          <span key={`sep-${l}`} aria-hidden="true" className="px-0.5 text-[color:var(--color-ink-3)]">
-            ·
-          </span>
-        ),
-        <button
-          key={l}
-          type="button"
-          onClick={() => setLocale(l)}
-          aria-pressed={l === locale}
-          aria-label={LOCALE_LABELS[l]}
-          title={LOCALE_LABELS[l]}
-          className="menu-choice"
-        >
-          {l.toUpperCase()}
-        </button>,
-      ])}
-    </div>
-  )
-}
 
 /**
  * Chi è connesso e i comandi dell'istanza in un menu solo: Utenti e
@@ -114,8 +88,15 @@ function AccountMenu() {
         <NavLink to="/impostazioni" className="menu-item">
           {t('nav.settings')}
         </NavLink>
-        <a href={HELP_URL} target="_blank" rel="noreferrer" className="menu-item no-underline">
-          {t('nav.help')}
+        <a
+          href={HELP_URL}
+          target="_blank"
+          rel="noreferrer"
+          title={t('nav.helpExternal')}
+          className="menu-item no-underline"
+        >
+          <span>{t('nav.help')}</span>
+          <IconExternal size={11} className="ml-auto text-[color:var(--color-ink-3)]" />
         </a>
         <LocaleSwitch />
         {user && (
@@ -298,9 +279,12 @@ export default function Layout() {
       <header className="app-header relative z-40 shrink-0 border-b border-[color:var(--color-rule-strong)]" data-scrolled={scrolled || undefined}>
         {/* riga 1 — identità e stato globale */}
         <div className="flex min-w-0 flex-wrap items-center gap-3 border-b border-[color:var(--color-rule)] bg-[color:var(--color-fill)] py-1.5 pl-4 pr-3">
-          <span className="text-[13px] font-bold tracking-[-0.02em]">
+          <Link
+            to="/progetti"
+            className="text-[13px] font-bold tracking-[-0.02em] text-[color:var(--color-ink)] no-underline hover:opacity-80"
+          >
             Tabularium
-          </span>
+          </Link>
           <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2">
             <ActiveRunsIndicator />
             <CommandPalette />
