@@ -17,18 +17,34 @@ def get(page_id: int) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
+_LIST_COLUMNS = ", ".join(
+    f"pages.{c}" for c in (
+        "id", "project_id", "rel_path", "source_kind", "pdf_page", "width", "height",
+        "issue_date", "issue_no", "page_no", "page_type", "status",
+        "annotation_revision", "created_at", "collection_id",
+    )
+)
+
+
 def list_for_project(
     project_id: int,
     *,
     page_type: str | None = None,
     status: str | None = None,
     collection: int | str | None = None,
-    limit: int = 10000,
+    limit: int | None = None,
+    after_id: int | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """A project's pages with their block/draft counts, and the total before the limit.
 
     `collection` is a collection id, `"none"` for the pages without one, or `None`
-    for every page.
+    for every page. `after_id` keeps only the pages created after that id (the
+    list polled during an import asks only for the new ones); `total` still
+    counts every matching page.
+
+    Only the columns the list shows: `SELECT pages.*` also dragged `meta_json`
+    and two absolute paths through the sort, and on a 15,000-page project that
+    tripled the query time.
     """
     where = "project_id=?"
     params: list = [project_id]
@@ -51,16 +67,27 @@ def list_for_project(
         total = conn.execute(
             f"SELECT COUNT(*) FROM pages WHERE {where}", params
         ).fetchone()[0]
-        rows = conn.execute(
-            "SELECT pages.*, COALESCE(b.blocks, 0) AS blocks, "
+        newer = ""
+        newer_params: list = []
+        if after_id is not None:
+            newer = " AND pages.id > ?"
+            newer_params.append(after_id)
+        # Plain tuples, zipped once with the column names: building a
+        # `sqlite3.Row` and then a dict per page cost more than the query itself.
+        cur = conn.cursor()
+        cur.row_factory = None
+        cur.execute(
+            f"SELECT {_LIST_COLUMNS}, COALESCE(b.blocks, 0) AS blocks, "
             "COALESCE(b.drafts, 0) AS drafts FROM pages "
             "LEFT JOIN (SELECT page_id, COUNT(*) AS blocks, "
             "SUM(CASE WHEN confirmed=0 AND prefill_source IS NOT NULL THEN 1 ELSE 0 END) "
             "AS drafts FROM blocks GROUP BY page_id) b ON b.page_id = pages.id "
-            f"WHERE pages.{where} ORDER BY rel_path, pdf_page LIMIT ?",
-            (*params, limit),
-        ).fetchall()
-    return [dict(row) for row in rows], int(total)
+            f"WHERE pages.{where}{newer} ORDER BY rel_path, pdf_page LIMIT ?",
+            (*params, *newer_params, -1 if limit is None else limit),
+        )
+        names = [d[0] for d in cur.description]
+        rows = [dict(zip(names, row)) for row in cur.fetchall()]
+    return rows, int(total)
 
 
 def sum_failures_inputs(project_id: int) -> list[tuple]:

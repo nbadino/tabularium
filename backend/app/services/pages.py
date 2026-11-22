@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+from collections import OrderedDict
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -354,17 +356,96 @@ def crop_block_image(page: sqlite3.Row, bbox: tuple[int, int, int, int]) -> Imag
     Sorgente identica a quella servita al canvas: chi analizza il ritaglio
     (rilevatore di griglia, OCR) lavora sugli stessi pixel che l'utente vede.
     """
-    img = _load_source_image(page)
+    img = _decoded_source(page)
     if img is None:
         raise source_missing(page)
     x1, y1, x2, y2 = bbox
-    img = img.convert("RGB")
     crop = img.crop(
         (max(0, x1), max(0, y1), min(img.width, x2), min(img.height, y2))
     )
     if crop.width <= 0 or crop.height <= 0:
         raise HTTPException(status_code=400, detail="crop vuoto")
-    return crop
+    # Convert after cropping: the conversion is per pixel, so the result is the
+    # same as converting the whole page, on a few thousand pixels instead of 11 million.
+    return crop.convert("RGB")
+
+
+# Decoded source pages, for crops. The Studio asks for one crop per block of
+# the open page (hundreds, all at once): without a cache each one decoded the
+# whole TIFF again (~12 MB LZW, ~0.25 s), and a single page kept every CPU busy
+# for tens of seconds, slowing down every other request. The key is the file
+# actually read plus its mtime and size: a new deskew or a new source changes
+# the key by itself. Few entries: a greyscale page is ~11 MB, a colour one ~33 MB.
+_DECODED_MAX = 4
+_decoded: OrderedDict[tuple, Image.Image] = OrderedDict()
+_decoded_lock = threading.Lock()
+_decoding: dict[tuple, threading.Lock] = {}
+
+
+def _source_file(page: sqlite3.Row) -> Path | None:
+    """The file `_load_source_image` would open, when it is already on disk.
+
+    `None` when the source must be produced first (a PDF page never
+    materialised) or is missing: then `_load_source_image` runs, uncached.
+    """
+    active = _active_transform_path(page["id"])
+    if active is not None and not _has_invalid_transform(page):
+        return active
+    src = Path(page["abs_path"])
+    if page["source_kind"] != "pdf":
+        return src if src.exists() else None
+    cached = pdf_image_path(int(page["id"]))
+    return cached if cached.exists() else None
+
+
+def _decoded_source(page: sqlite3.Row) -> Image.Image | None:
+    """The decoded source image, shared by the crops of the same page.
+
+    The returned image is shared: callers only read it (`crop` makes a copy),
+    never modify it in place.
+    """
+    path = _source_file(page)
+    if path is None:
+        img = _load_source_image(page)
+        if img is not None:
+            img.load()
+        return img
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    key = (int(page["id"]), str(path), st.st_mtime_ns, st.st_size)
+    with _decoded_lock:
+        hit = _decoded.get(key)
+        if hit is not None:
+            _decoded.move_to_end(key)
+            return hit
+        gate = _decoding.setdefault(key, threading.Lock())
+    # One decode per page: requests that arrive together wait for this one
+    # instead of each decoding the same file.
+    with gate:
+        with _decoded_lock:
+            hit = _decoded.get(key)
+            if hit is not None:
+                _decoded.move_to_end(key)
+                return hit
+        try:
+            with Image.open(path) as opened:
+                opened.load()
+                img = opened.copy()
+        except BaseException:
+            with _decoded_lock:
+                _decoding.pop(key, None)
+            raise
+        with _decoded_lock:
+            # Older versions of the same page are no longer needed.
+            for old in [k for k in _decoded if k[0] == key[0]]:
+                del _decoded[old]
+            _decoded[key] = img
+            while len(_decoded) > _DECODED_MAX:
+                _decoded.popitem(last=False)
+            _decoding.pop(key, None)
+        return img
 
 
 def crop_block_jpeg(page: sqlite3.Row, bbox: tuple[int, int, int, int]) -> bytes:

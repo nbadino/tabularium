@@ -183,7 +183,8 @@ export interface PageItem {
   id: number
   project_id: number
   rel_path: string
-  abs_path: string
+  /** Not in the project list (`GET /projects/{id}/pages`), which leaves it out. */
+  abs_path?: string
   source_kind: 'image' | 'pdf'
   pdf_page: number | null
   width: number

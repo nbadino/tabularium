@@ -69,7 +69,9 @@ def test_delete_page_single_and_bulk_permissions_and_external_files(client, tmp_
 
     # Editor can delete a single page; owned upload file is unlinked.
     _login(client, "editor_u")
-    owned_path = pages1[0]["abs_path"]
+    # The project list leaves the server path out: read it where it is stored.
+    with connect() as conn:
+        owned_path = conn.execute("SELECT abs_path FROM pages WHERE id=?", (pages1[0]["id"],)).fetchone()[0]
     r = client.delete(f"/api/pages/{pages1[0]['id']}")
     assert r.status_code == 200
     assert r.json()["deleted"] == 1

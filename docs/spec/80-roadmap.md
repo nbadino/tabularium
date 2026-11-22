@@ -11,9 +11,13 @@
   page registry with metadata (issue_date/issue_no/page_no/page_type/status), on-demand
   thumbnails/previews, Projects + Project detail pages (page grid, inline metadata edit).
   - **The page list never truncates silently.** `GET /api/projects/{id}/pages` returns `total`
-    besides `items`, with a default and maximum `limit` of 10000 (the cap of a recognition session).
-    The old default was 200: a 361-page corpus showed 200 on every screen, and the rest could be
-    neither seen nor selected.
+    besides `items`, and has no cap unless the caller passes `limit`. The old default was 200 (a
+    361-page corpus showed 200 on every screen), then 10000, which hid 4,759 pages of a
+    14,759-page project the same way.
+  - **The page list is light.** Items leave out `abs_path` (no screen uses it), the query reads only
+    the listed columns, the response carries an `ETag` (an unchanged list revalidates as an empty
+    304), and `after_id` returns only the pages created after an id, which the project page polls
+    during an import instead of the whole list.
   - **Every page carries `blocks` and `drafts`** (generated, unconfirmed). `status` only says what
     a person did with it: a recognized page never reviewed stays `new`, and without `drafts` no list
     could tell where the drafts to verify are. Archive, Studio and Recognize show "N drafts" instead

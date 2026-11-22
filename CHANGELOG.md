@@ -20,6 +20,21 @@ Notable changes to Tabularium. The format follows
   training code, and there is no Modal template.
 
 ### Fixed
+- **Projects larger than 10,000 pages are listed in full.** The page list had a hidden cap of
+  10,000: on a 14,759-page project the Studio showed "1 of 10000" and the other pages could not
+  be reached. The list now has no cap unless the caller asks for one.
+- **Opening a page in the Studio no longer stalls the server.** Each block crop decoded the whole
+  page image again (a 12 MB TIFF, ~0.25 s), and a page has hundreds of blocks; the decoded page is
+  now kept for the last few pages and shared by its crops. 40 crops at once: 3.9 s → 0.9 s, and
+  other requests meanwhile 1.3 s → 0.2 s.
+- **Faster page list.** Items no longer carry `abs_path`, the query reads only the listed columns,
+  the JSON is written without per-item validation, and an `ETag` turns an unchanged list into a
+  304. During an import the project page fetches only the new pages (`after_id`) instead of the
+  whole list every 3 seconds.
+- **Sum checks survive a restart.** The per-table results of `sum-failures` are saved under
+  `<root>/cache/`, so the first Studio opening after a restart or deploy no longer recomputes every
+  table (~6–9 s of CPU during which other requests waited); concurrent requests compute once.
+- The Studio requests a page's blocks together with its preview image instead of after it.
 - **A register cut into side-by-side halves is read as one table.** On curved pages of bound
   volumes PP-DocLayoutV3 split one borderless register into a left half (often in stacked pieces
   too narrow for the stacked-table repair) and a right half, so Xiaomi-OCR-0 read fragments that
