@@ -33,8 +33,10 @@ INDRA_PACKAGE = "indra-ocr==1.1.2"
 # drop 3.10, 1.27+ need a CUDA 13 driver). The `cuda`/`cudnn` extras bring the CUDA
 # runtime and cuDNN 9 as pip packages, so the host needs only the NVIDIA driver.
 ONNXRUNTIME_GPU_PACKAGE = "onnxruntime-gpu[cuda,cudnn]==1.23.2"
-# What the gateway needs besides Indra itself.
-GATEWAY_PACKAGES = ("fastapi>=0.110", "uvicorn>=0.29")
+# What the gateway imports besides Indra itself. Pillow decodes the page: `indra-ocr`
+# reads images with OpenCV and does not depend on it (2026-11-22, prod: the gateway
+# died on `import PIL` in a runtime built from `indra-ocr` alone).
+GATEWAY_PACKAGES = ("fastapi>=0.110", "uvicorn>=0.29", "pillow>=10")
 GATEWAY_SCRIPT = "indra_native_gateway.py"
 SERVED_MODEL_NAME = "indra-ocr"
 

@@ -409,3 +409,52 @@ def test_gateway_reports_a_failed_load_instead_of_hanging(monkeypatch):
     health = client.get("/health").json()
     assert health["status"] == "failed" and "onnxruntime-gpu" in health["error"]
     assert client.get("/v1/models").status_code == 503
+
+
+# --- regression: the gateway's imports must be installed (prod, 2026-11-22) ----
+
+
+# Import name -> the distribution that provides it, for what the gateway imports.
+_PROVIDED_BY = {
+    "fastapi": "fastapi", "uvicorn": "uvicorn", "PIL": "pillow", "indra_ocr": "indra-ocr",
+    # Dependencies of indra-ocr itself (its pyproject: numpy, onnxruntime, ...).
+    "numpy": "indra-ocr", "onnxruntime": "indra-ocr",
+}
+
+
+def test_every_module_the_gateway_imports_is_installed_by_the_runtime():
+    import ast
+
+    from app.models.indra_ocr import GATEWAY_PACKAGES, INDRA_PACKAGE
+
+    declared = {
+        package.split("[")[0].split("=")[0].split(">")[0].split("<")[0]
+        for package in (INDRA_PACKAGE, *GATEWAY_PACKAGES)
+    }
+    imported = set()
+    for node in ast.walk(ast.parse(GATEWAY.read_text())):
+        if isinstance(node, ast.Import):
+            imported |= {alias.name.split(".")[0] for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            imported.add(node.module.split(".")[0])
+    third_party = {name for name in imported if name not in sys.stdlib_module_names}
+    assert third_party <= set(_PROVIDED_BY), third_party - set(_PROVIDED_BY)
+    assert {_PROVIDED_BY[name] for name in third_party} <= declared
+
+
+def test_a_runtime_built_from_an_older_package_list_is_rebuilt(monkeypatch, tmp_path):
+    import json
+
+    from app.services import indra_runtime
+
+    monkeypatch.setattr(indra_runtime, "_dir", lambda: tmp_path)
+    monkeypatch.setattr(indra_runtime, "wants_gpu", lambda **_kw: False)
+    indra_runtime.python_bin().parent.mkdir(parents=True)
+    indra_runtime.python_bin().touch()
+    # What the first release wrote: ready, CPU, and no package list (no Pillow).
+    (tmp_path / ".install_state.json").write_text(json.dumps({"state": "ready", "gpu": False}))
+    assert indra_runtime.is_ready() is False
+    (tmp_path / ".install_state.json").write_text(json.dumps(
+        {"state": "ready", "gpu": False, "packages": indra_runtime.packages(gpu=False)}
+    ))
+    assert indra_runtime.is_ready() is True
