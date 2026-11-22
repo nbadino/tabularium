@@ -62,6 +62,10 @@ PUBLIC_SCORES: dict[str, PublicScore | NotApplicable] = {
     ),
     "lightonocr-3": NotApplicable("LightOn reports olmOCR-Bench, not OmniDocBench"),
     "surya-ocr-2.5": NotApplicable("Datalab reports its own OmniParseBench, not OmniDocBench"),
+    "indra-ocr": NotApplicable(
+        "Datalab reports OmniParseBench and an OmniDocBench v1.5 OCR-only run (text edit distance), "
+        "no v1.6 Overall"
+    ),
     "gemini-argon": NotApplicable(
         "hosted model without OCR benchmarks in its card; the leaderboard lists only Gemini 3"
     ),

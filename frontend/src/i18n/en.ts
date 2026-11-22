@@ -787,6 +787,7 @@ export const en: Dict = {
       localBody: 'Free, and the pages never leave this computer.',
       localNeedsMlx: 'nothing to install: {repo} downloads on first start.',
       localNeedsVllm: 'room for the weights ({size}) and an NVIDIA GPU with enough VRAM.',
+      localNeedsOnnx: 'no GPU needed: an ONNX Runtime environment ({size} of models) installs on first start; it uses the NVIDIA GPU when there is one.',
       modalBody: 'You pay only for the seconds the model works; it switches itself off.',
       modalNeeds: 'a Modal account.',
       vastBody: 'Rent a GPU by the hour: Tabularium sets it up and switches it off when you are done.',
@@ -998,6 +999,7 @@ export const en: Dict = {
     memoryUnknown: 'memory not detected',
     runtimeVllm: 'vLLM (CUDA)',
     runtimeMlx: 'MLX (Apple Silicon)',
+    runtimeOnnx: 'ONNX Runtime (CPU or CUDA)',
     reason: {
       cuda_required:
         'Serving this model locally requires CUDA: macOS has none, on Windows it is used through WSL2.',
@@ -3235,6 +3237,12 @@ export const en: Dict = {
     xiaomiWorkflowIntro: 'Xiaomi-OCR-0’s official region mode: PP-DocLayoutV3 finds the blocks and each crop is read with its task prompt. The vendor recommends whole-page parsing for historical books and irregular layouts, but that mode returns no boxes.',
     xiaomiLayoutThreshold: 'Layout threshold (PP-DocLayoutV3)',
     xiaomiLayoutModel: 'Layout model (PP-DocLayoutV3)',
+    indraWorkflowIntro: 'Indra OCR is an ONNX pipeline (line detection, recognition, layout and reading order) that runs on the CPU; with an NVIDIA GPU it uses CUDA. Changes apply on the next server start.',
+    indraDevice: 'Device',
+    indraDeviceAutoHint: 'CUDA when available, otherwise CPU',
+    indraThreads: 'Threads per page',
+    indraWorkers: 'Pages in parallel',
+    indraMath: 'Math as LaTeX (slower)',
     layoutModelOfficial: 'Official weights',
     layoutModelRun: 'Trained: project {project}, {run}',
     xiaomiRetryRepetitive: 'Retry regions that loop',

@@ -49,9 +49,10 @@ SERVE_BACKENDS: frozenset[str] = frozenset({
     "opencode-gateway",
     "llamaindex-api",
     "sglang-openai",
+    "indra-native",
 })
 SERVE_RUNTIMES: frozenset[str] = frozenset({
-    "vllm", "docker", "monkeyocr", "teleocr-native", "mineru-native", "sglang",
+    "vllm", "docker", "monkeyocr", "teleocr-native", "mineru-native", "sglang", "indra-native",
 })
 CHAT_PROTOCOLS: frozenset[str] = frozenset({"openai", "google-generatecontent"})
 NATIVE_PREFILL_MODES: frozenset[str] = frozenset({"two_stage", "end2end", "official"})
@@ -60,7 +61,7 @@ NATIVE_PREFILL_MODES: frozenset[str] = frozenset({"two_stage", "end2end", "offic
 # is behaviour, so it is declared on the adapter (next to `native_prefill_mode`), and the
 # prefill dispatches on it instead of comparing adapter ids.
 NATIVE_RUNNERS: frozenset[str] = frozenset(
-    {"teleocr", "glmocr", "mineru", "llamaindex", "qwen", "paddle", "xiaomi"}
+    {"teleocr", "glmocr", "mineru", "llamaindex", "qwen", "paddle", "xiaomi", "indra"}
 )
 
 
