@@ -28,7 +28,7 @@ def client():
 
 def _project(client, tmp_path, n: int = 3) -> tuple[int, list[int]]:
     for i in range(n):
-        Image.new("RGB", (40, 60), "white").save(tmp_path / f"p{i}.png")
+        Image.new("RGB", (40, 60), (255, 255, 255 - i)).save(tmp_path / f"p{i}.png")
     files = [("files", (f"p{i}.png", (tmp_path / f"p{i}.png").read_bytes(), "image/png")) for i in range(n)]
     pid = client.post("/api/projects", json={"name": f"Lloyds {tmp_path.name}"}).json()["id"]
     r = client.post(f"/api/projects/{pid}/import-upload", files=files)
@@ -224,12 +224,12 @@ def test_permissions(monkeypatch):
 def test_upload_into_a_collection(client, tmp_path):
     pid, _ = _project(client, tmp_path, 1)
     cid = client.post(f"/api/projects/{pid}/collections", json={"name": "Nuove"}).json()["id"]
-    Image.new("RGB", (40, 60), "white").save(tmp_path / "x.png")
+    Image.new("RGB", (40, 60), (0, 0, 0)).save(tmp_path / "x.png")
     files = [("files", ("x.png", (tmp_path / "x.png").read_bytes(), "image/png"))]
     r = client.post(f"/api/projects/{pid}/import-upload", params={"collection_id": cid}, files=files)
     assert r.status_code == 200 and r.json()["registered"] == 1
     inside = client.get(f"/api/projects/{pid}/pages", params={"collection": cid}).json()["items"]
-    assert [p["rel_path"] for p in inside] == ["000000_x.png"]
+    assert [p["rel_path"] for p in inside] == ["x.png"]
     r = client.post(f"/api/projects/{pid}/import-upload", params={"collection_id": 99999}, files=files)
     assert r.status_code == 404
 

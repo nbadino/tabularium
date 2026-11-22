@@ -14,7 +14,8 @@ def _project(tmp_path: Path, n: int) -> tuple[int, TestClient]:
     archive = tmp_path / "archive"
     archive.mkdir(parents=True)
     for i in range(n):
-        Image.new("RGB", (60, 80), "white").save(archive / f"p{i:03d}.png")
+        # Distinct pixels: identical files would be one page (content dedup).
+        Image.new("RGB", (60, 80), (255, i % 256, i // 256)).save(archive / f"p{i:03d}.png")
     client = TestClient(app)
     pid = client.post("/api/projects", json={"name": "L", "archive_dir": str(archive)}).json()["id"]
     client.post(f"/api/projects/{pid}/scan")

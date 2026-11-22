@@ -19,6 +19,8 @@ os.environ["TABULARIUM_ROOT"] = str(_TMP_ROOT)
 # I test della suite storica sono single-user: la modalità auth va disattivata
 # PRIMA dell'import dei moduli app (config.AUTH_MODE viene letto a import).
 os.environ["TABULARIUM_AUTH"] = "off"
+# No background hashing thread racing the fixtures (test_upload_dedup calls backfill).
+os.environ["TABULARIUM_CONTENT_HASH_BACKFILL"] = "0"
 
 
 if sys.version_info >= (3, 12):

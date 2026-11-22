@@ -200,6 +200,8 @@ def insert_image_page(
     page_type: str | None,
     meta_json: str,
     collection_id: int | None = None,
+    content_sha256: str | None = None,
+    file_size: int | None = None,
 ) -> int | None:
     """Insert an image page; `None` when the path is already there.
 
@@ -210,9 +212,10 @@ def insert_image_page(
     cursor = conn.execute(
         "INSERT OR IGNORE INTO pages "
         "(project_id, rel_path, abs_path, source_kind, width, height, "
-        "issue_no, page_no, page_type, meta_json, collection_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "issue_no, page_no, page_type, meta_json, collection_id, content_sha256, file_size) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (project_id, rel_path, abs_path, "image", width, height, issue_no, page_no, page_type, meta_json,
-         collection_id),
+         collection_id, content_sha256, file_size),
     )
     if cursor.rowcount == 0:
         conn.execute(
@@ -237,13 +240,16 @@ def insert_pdf_page(
     page_type: str | None,
     meta_json: str,
     collection_id: int | None = None,
+    content_sha256: str | None = None,
+    file_size: int | None = None,
 ) -> int | None:
     cursor = conn.execute(
         "INSERT OR IGNORE INTO pages "
         "(project_id, rel_path, abs_path, source_kind, pdf_page, width, height, "
-        "issue_no, page_no, page_type, meta_json, collection_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        "issue_no, page_no, page_type, meta_json, collection_id, content_sha256, file_size) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (project_id, rel_path, abs_path, "pdf", pdf_page, width, height, issue_no, page_no, page_type, meta_json,
-         collection_id),
+         collection_id, content_sha256, file_size),
     )
     if cursor.rowcount == 0:
         conn.execute(
@@ -253,6 +259,41 @@ def insert_pdf_page(
         )
         return None
     return int(cursor.lastrowid or 0)
+
+
+def content_rows(conn, project_id: int) -> list[Any]:
+    """Source files of a project's available pages, with their hash and size (content dedup)."""
+    return conn.execute(
+        "SELECT DISTINCT abs_path, rel_path, content_sha256, file_size FROM pages "
+        "WHERE project_id=? AND status != 'missing'",
+        (project_id,),
+    ).fetchall()
+
+
+def set_content(conn, project_id: int, abs_path: str, sha: str, size: int) -> None:
+    """Record the hash and size of a source file on every page that comes from it."""
+    conn.execute(
+        "UPDATE pages SET content_sha256=?, file_size=? WHERE project_id=? AND abs_path=?",
+        (sha, size, project_id, abs_path),
+    )
+
+
+def next_unhashed(conn, skip: set[str]) -> Any | None:
+    """One page source with no content hash yet, other than the paths in `skip`."""
+    marks = ",".join("?" * len(skip))
+    return conn.execute(
+        "SELECT project_id, abs_path FROM pages WHERE content_sha256 IS NULL "
+        + (f"AND abs_path NOT IN ({marks}) " if skip else "")
+        + "LIMIT 1",
+        tuple(skip),
+    ).fetchone()
+
+
+def path_registered(conn, project_id: int, abs_path: str) -> bool:
+    """True when a page of the project already comes from this source path."""
+    return conn.execute(
+        "SELECT 1 FROM pages WHERE project_id=? AND abs_path=? LIMIT 1", (project_id, abs_path)
+    ).fetchone() is not None
 
 
 def registered_pdf_pages(conn, project_id: int, abs_path: str) -> set[int]:

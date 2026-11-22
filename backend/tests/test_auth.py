@@ -753,3 +753,22 @@ def test_deactivating_a_user_ends_their_sessions():
     assert admin_client.patch(f"/api/users/{bob['id']}", json={"active": True}).status_code == 200
     assert bob_client.get("/api/auth/me").status_code == 401
     assert admin["id"] != bob["id"]
+
+
+def test_upload_check_needs_write_access_and_hides_other_projects():
+    owner = _mkuser("owner", role="admin")
+    pid = _mkproject(owner_id=owner["id"])
+    viewer = _mkuser("vista", role="viewer")
+    _mkuser("estraneo", role="editor")
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO project_members (project_id, user_id, role) VALUES (?,?,?)",
+            (pid, viewer["id"], "viewer"),
+        )
+    body = {"files": [{"name": "a.tif", "size": 1}]}
+    with _client() as client:
+        _login(client, "vista")
+        assert client.post(f"/api/projects/{pid}/import-upload/check", json=body).status_code == 403
+    with _client() as client:
+        _login(client, "estraneo")
+        assert client.post(f"/api/projects/{pid}/import-upload/check", json=body).status_code == 404

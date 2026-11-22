@@ -33,7 +33,7 @@ def _project(client, tmp_path: Path) -> tuple[int, dict[str, int], list[int]]:
     archive = tmp_path / f"arch{time.time_ns()}"
     archive.mkdir(parents=True)
     for i in range(6):
-        Image.new("RGB", (800, 1000), (215, 215, 215)).save(archive / f"{i:02}.png")
+        Image.new("RGB", (800, 1000), (215, 215, 215 - i)).save(archive / f"{i:02}.png")
     pid = client.post("/api/projects", json={"name": f"S{time.time_ns()}", "archive_dir": str(archive)}).json()["id"]
     client.post(f"/api/projects/{pid}/scan")
     ids = [p["id"] for p in client.get(f"/api/projects/{pid}/pages").json()["items"]]

@@ -19,8 +19,8 @@ from app.services import inference as infmod
 def _gold_project(client: TestClient, root: Path) -> int:
     archive = root / "archive"
     archive.mkdir(parents=True)
-    for name in ("p.png", "q.png"):
-        Image.new("RGB", (900, 1300), (215, 215, 215)).save(archive / name)
+    for i, name in enumerate(("p.png", "q.png")):
+        Image.new("RGB", (900, 1300), (215, 215, 215 - i)).save(archive / name)
     pid = client.post("/api/projects", json={"name": "Bench", "archive_dir": str(archive)}).json()["id"]
     client.post(f"/api/projects/{pid}/scan")
     pages = client.get(f"/api/projects/{pid}/pages").json()["items"]

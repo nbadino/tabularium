@@ -191,7 +191,7 @@ def test_a_document_run_saves_every_page_through_the_page_pipeline(tmp_path, mon
     archive = tmp_path / "archive"
     archive.mkdir()
     for i in range(3):
-        Image.new("RGB", (100, 140), "white").save(archive / f"p{i}.png")
+        Image.new("RGB", (100, 140), (255, 255, 255 - i)).save(archive / f"p{i}.png")
     with TestClient(app) as http:
         project_id = http.post("/api/projects", json={"name": "Book", "archive_dir": str(archive)}).json()["id"]
         http.post(f"/api/projects/{project_id}/scan")

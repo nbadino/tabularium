@@ -26,7 +26,7 @@ def _project(client: TestClient, root: Path) -> tuple[int, list[int]]:
     archive = root / "archive"
     archive.mkdir(parents=True)
     for index in range(2):
-        Image.new("RGB", (200, 300), "white").save(archive / f"p{index}.png")
+        Image.new("RGB", (200, 300), (255, 255, 255 - index)).save(archive / f"p{index}.png")
     project_id = client.post(
         "/api/projects", json={"name": "Bulk", "archive_dir": str(archive)}
     ).json()["id"]
@@ -673,7 +673,7 @@ def test_bulk_model_run_processes_pages_concurrently_when_adapter_declares_concu
     archive = tmp_path / "archive4"
     archive.mkdir(parents=True)
     for idx in range(4):
-        Image.new("RGB", (200, 300), "white").save(archive / f"p{idx}.png")
+        Image.new("RGB", (200, 300), (255, 255, 255 - idx)).save(archive / f"p{idx}.png")
 
     barrier = threading.Barrier(4, timeout=3.0)
 

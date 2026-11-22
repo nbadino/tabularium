@@ -13,8 +13,8 @@ from app.services import scan
 def test_each_registered_file_is_committed_before_the_next(tmp_path):
     archive = tmp_path / "archive"
     archive.mkdir()
-    for name in ("a.png", "b.png", "c.png"):
-        Image.new("RGB", (300, 400), "white").save(archive / name)
+    for i, name in enumerate(("a.png", "b.png", "c.png")):
+        Image.new("RGB", (300, 400), (255, 255, 255 - i)).save(archive / name)
     with TestClient(app) as client:
         pid = client.post("/api/projects", json={"name": "C", "archive_dir": str(archive)}).json()["id"]
     visible: list[int] = []

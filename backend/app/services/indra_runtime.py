@@ -20,7 +20,7 @@ from pathlib import Path
 from .. import config
 from ..models import indra_ocr as spec
 
-READY_CHECK = "import indra_ocr, fastapi, uvicorn, onnxruntime"
+READY_CHECK = "import indra_ocr, fastapi, uvicorn, onnxruntime, PIL, numpy"
 
 
 def _dir() -> Path:
@@ -103,7 +103,14 @@ def is_ready() -> bool:
     if not python_bin().exists():
         return False
     state = _read_state()
-    return state.get("state") == "ready" and state.get("gpu") == wants_gpu()
+    gpu = wants_gpu()
+    # A runtime built from an older package list (one without Pillow, say) is not
+    # ready: it is rebuilt instead of failing at the gateway's first import.
+    return (
+        state.get("state") == "ready"
+        and state.get("gpu") == gpu
+        and state.get("packages") == packages(gpu=gpu)
+    )
 
 
 def install_state() -> dict:
@@ -158,4 +165,4 @@ def ensure_ready() -> None:
             raise RuntimeError(
                 f"installazione dell'ambiente Indra OCR fallita (v. log in {_log_file()}): {exc}"
             ) from exc
-    _write_state(state="ready", error=None, gpu=gpu)
+    _write_state(state="ready", error=None, gpu=gpu, packages=packages(gpu=gpu))

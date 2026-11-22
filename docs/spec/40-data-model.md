@@ -13,10 +13,17 @@
   compute profile / model settings, and the split ratio is a request parameter (see §7).
   `owner_id` = who created the project (see permissions below).
 - `pages(id, project_id, rel_path, abs_path, width, height, issue_date, issue_no, page_no,
-  page_type, status, meta_json, annotation_revision, collection_id, consensus_cleared_through)`
-  (`consensus_cleared_through`, migration 27, additive, backfilled from `recognition_runs` with
-  `mode='replace_all'`: highest consensus `run_id` superseded by a full-page overwrite so Studio and
-  the Table Editor ignore older comparisons while keeping explicit `?run_id=` history intact).
+  page_type, status, meta_json, content_sha256, file_size, consensus_cleared_through)`.
+  `content_sha256`/`file_size` (v27)
+  describe the source file (the whole PDF for PDF pages): an upload, zip import or scan skips a
+  file whose content is already an available page of the project and names it in the report's
+  `already_present` (`services/content_identity.py`). Pages older than v27 are hashed by a
+  background backfill at start-up (`TABULARIUM_CONTENT_HASH_BACKFILL=0` turns it off); until
+  then a same-name, same-size page is hashed on the spot. Uploads keep their own file name as
+  `rel_path`; only a second file of the same name in one request gets the `000000_` counter.
+  `consensus_cleared_through` (v28, additive, backfilled from `recognition_runs` with
+  `mode='replace_all'`): highest consensus `run_id` superseded by a full-page overwrite so Studio and
+  the Table Editor ignore older comparisons while keeping explicit `?run_id=` history intact.
 - `blocks(id, page_id, label, bbox_px_json [x1,y1,x2,y2 pixels], content, order_idx, kind
   ['text','table','formula','picture','custom'], prefill_source, confirmed, updated_at)`.
 - `tables(id, block_id, grid_json)` — `grid_json`: `{rows: n, cols: m, cells:[{r,c,rowspan,colspan,
@@ -87,7 +94,7 @@
   database last ran from; when it differs from `config.ROOT_DIR`, paths under the old root are
   rewritten after a `pre-relocation` backup. Paths outside the root (server folders) are left
   alone, and so are paths inside `jobs.command_json`.
-  Current `SCHEMA_VERSION`: **26**. Upgrade tests in `tests/test_db_migrations.py`. The historical
+  Current `SCHEMA_VERSION`: **27**. Upgrade tests in `tests/test_db_migrations.py`. The historical
   test suite runs with `TABULARIUM_AUTH=off`; `test_auth.py` turns it `on` with a fixture.
 
 ---

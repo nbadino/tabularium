@@ -15,7 +15,7 @@ def _make_archive(tmp_path: Path, n: int = 2) -> Path:
     archive = tmp_path / "archive"
     archive.mkdir(parents=True)
     for i in range(n):
-        Image.new("RGB", (1000, 1400), (210, 210, 210)).save(archive / f"{i:03}.png")
+        Image.new("RGB", (1000, 1400), (210, 210, 210 - i)).save(archive / f"{i:03}.png")
     return archive
 
 

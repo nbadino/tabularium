@@ -1101,6 +1101,19 @@ export const fr: Dict = {
     chooseFolder: 'Importer un dossier',
     importHint: 'Numériser lit le dossier source enregistré. Importer un dossier charge de nouvelles images ou de nouveaux PDF depuis le navigateur.',
     importFailed: 'Échec de l’import ({status}) : {detail}',
+    checkFolder: 'Vérifier un dossier',
+    uploadProgress: 'Envoi des fichiers : {sent} sur {total}',
+    checkAllPresent: 'Les {total} fichiers de « {folder} » sont déjà dans le projet.',
+    checkMissing: {
+      one: '{count} des {total} fichiers de « {folder} » n’est pas encore dans le projet :',
+      other: '{count} des {total} fichiers de « {folder} » ne sont pas encore dans le projet :',
+    },
+    uploadMissing: { one: 'Importer le fichier manquant', other: 'Importer les {count} fichiers manquants' },
+    failedCount: { one: '{count} fichier n’a pas été importé', other: '{count} fichiers n’ont pas été importés' },
+    failedBody:
+      'la connexion a échoué malgré plusieurs tentatives. Importez à nouveau le même dossier : les fichiers déjà dans le projet sont ignorés et seul ce qui manque est envoyé.',
+    alreadyPresentCount: { one: '{count} fichier déjà dans le projet, ignoré', other: '{count} fichiers déjà dans le projet, ignorés' },
+    alreadyPresentBody: 'Même contenu qu’une page déjà importée : afficher les noms',
     delete: 'Supprimer le projet',
     protocolTab: 'Protocole d’étude · v{version}',
     protocolSaving: 'enregistrement…',
@@ -1124,7 +1137,7 @@ export const fr: Dict = {
     archive: 'Archiver',
     foundFiles: 'Fichiers trouvés',
     registered: 'Enregistrés',
-    duplicates: 'Doublons',
+    duplicates: 'Déjà présents',
     unsupported: 'Non pris en charge',
     skipCount: {
       one: '{count} fichier écarté',

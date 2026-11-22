@@ -18,6 +18,25 @@ Notable changes to Tabularium. The format follows
   pinned to the `v1.1.0` tag) and a server started by hand (manual endpoint). Settings: device,
   threads per page, pages in parallel, math as LaTeX. Inference only: the vendor publishes no
   training code, and there is no Modal template.
+- **Sending a folder again only adds what is missing.** Every page now stores the SHA-256 and
+  size of its source file (migration 27). An upload, a zip import or an archive scan skips a file
+  whose content is already a page of the project, deletes the redundant uploaded copy and lists
+  it in the report ("N files already in the project, skipped"). Existing pages are hashed by a
+  background backfill at start-up; until it reaches a page, a same-name, same-size page is
+  hashed on the spot, so the check is exact from the first upload.
+- **Check folder** (project page, *Add pages*): compares a folder with the project by name and
+  size without sending anything, lists the files still missing and uploads just those
+  (`POST /api/projects/{id}/import-upload/check`). A folder import does the same check first.
+
+### Changed
+- **Large folder uploads survive a failed batch.** A batch that hits a network error, a
+  Cloudflare 52x, a timeout or a busy database is sent again (four retries over about a minute);
+  one that still fails is named in the report and the rest of the folder goes on. Retrying is
+  safe because the server skips what it already has. The page shows how many files were sent.
+- **Pages are listed in file-name order** (natural: `_9` before `_10`) on the project page,
+  ignoring the old `000000_` upload counter, and folders are uploaded in that order. New uploads
+  keep their own file name on disk instead of the counter prefix.
+- Uploaded files are copied to disk in 1 MB chunks instead of being read whole into memory.
 
 ### Fixed
 - **Projects larger than 10,000 pages are listed in full.** The page list had a hidden cap of

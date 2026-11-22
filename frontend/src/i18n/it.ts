@@ -1100,6 +1100,19 @@ export const it = {
     chooseFolder: 'Importa cartella',
     importHint: 'Scansiona legge la cartella già registrata. Importa cartella carica nuove immagini o PDF dal browser.',
     importFailed: 'Import fallito ({status}): {detail}',
+    checkFolder: 'Controlla cartella',
+    uploadProgress: 'Invio dei file: {sent} di {total}',
+    checkAllPresent: 'Tutti i {total} file di «{folder}» sono già nel progetto.',
+    checkMissing: {
+      one: '{count} dei {total} file di «{folder}» non è ancora nel progetto:',
+      other: '{count} dei {total} file di «{folder}» non sono ancora nel progetto:',
+    },
+    uploadMissing: { one: 'Carica il file mancante', other: 'Carica i {count} file mancanti' },
+    failedCount: { one: '{count} file non è stato caricato', other: '{count} file non sono stati caricati' },
+    failedBody:
+      'la connessione si è interrotta anche dopo alcuni tentativi. Importa di nuovo la stessa cartella: i file già nel progetto vengono saltati e parte solo ciò che manca.',
+    alreadyPresentCount: { one: '{count} file già nel progetto, saltato', other: '{count} file già nel progetto, saltati' },
+    alreadyPresentBody: 'Stesso contenuto di una pagina già importata: mostra i nomi',
     delete: 'Elimina progetto',
     protocolTab: 'Protocollo studio · v{version}',
     protocolSaving: 'salvataggio…',
@@ -1123,7 +1136,7 @@ export const it = {
     archive: 'Archivia',
     foundFiles: 'File trovati',
     registered: 'Registrati',
-    duplicates: 'Duplicati',
+    duplicates: 'Già presenti',
     unsupported: 'Non supportati',
     skipCount: {
       one: '{count} file scartato',

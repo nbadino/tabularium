@@ -76,6 +76,9 @@ async def lifespan(_app: FastAPI):
     cloud_manager.reconcile_cloud_resources()
     from .services import auto_training
     auto_training.reconcile_jobs()
+    if config.CONTENT_HASH_BACKFILL:
+        from .services import content_identity
+        content_identity.start_backfill_thread()
     yield
 
 
