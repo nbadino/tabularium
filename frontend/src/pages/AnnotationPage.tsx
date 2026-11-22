@@ -550,8 +550,9 @@ export default function AnnotationPage() {
   }, [ann.syncRevision])
 
   // --- carica blocchi dal server e li applica allo stato -----------------------
-  const applyBlocks = async (p: PageItem, r: number) => {
-    const rep = await apiGet<{ items: BlockOut[]; annotation_revision?: number }>(`/pages/${p.id}/annotations`)
+  type BlockList = { items: BlockOut[]; annotation_revision?: number }
+  const applyBlocks = async (p: PageItem, r: number, pending?: Promise<BlockList>) => {
+    const rep = await (pending ?? apiGet<BlockList>(`/pages/${p.id}/annotations`))
     // Le bozze del prefill non verificate restano fuori dal canvas: sull'immagine
     // non deve comparire nulla di generato. Vivono nel pannello contenuti
     // (ContentPane → `drafts`) finché l'utente non le verifica.
@@ -1105,11 +1106,16 @@ export default function AnnotationPage() {
     setPrefillDrafts([])
     const url = `${API_BASE}/pages/${pid}/preview`
     setPreviewUrl(url)
+    // The blocks are requested together with the image, not after it: its size
+    // is only needed to apply them, and waiting for the preview (hundreds of KB)
+    // before asking for them made every page open noticeably slower.
+    const blocks = apiGet<BlockList>(`/pages/${pid}/annotations`)
+    blocks.catch(() => undefined) // the await below reports the error
     try {
       const size = await loadImageSize(url)
       setPreviewSize(size)
       const r = size.w > 0 ? scaleRatio(size, { w: p.width, h: p.height }) : 1
-      await applyBlocks(p, r)
+      await applyBlocks(p, r, blocks)
     } catch (e) {
       setError(e)
     } finally {

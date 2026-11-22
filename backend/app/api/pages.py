@@ -1,8 +1,13 @@
 """API pagine: listing, aggiornamento metadati, thumbnail e preview."""
 from __future__ import annotations
 
+import hashlib
+import threading
+import zlib
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from .. import config
 from ..adapters import annotations as annotationstore
@@ -52,51 +57,98 @@ def list_pages(
     status: str | None = None,
     # A collection id, or `none` for the pages without a collection.
     collection: str | None = None,
-    # Il default era 200 e troncava in silenzio: un corpus di 361 pagine ne
-    # mostrava 200 ovunque, e le altre non si potevano né vedere né
-    # selezionare. Il tetto è lo stesso di una sessione di riconoscimento.
-    limit: int = Query(default=10000, ge=1, le=10000),
+    # No default cap: a fixed one (200, then 10,000) silently truncated large
+    # corpora, and the pages beyond it could not be seen anywhere. Callers
+    # that want fewer pages ask for them.
+    limit: int | None = Query(default=None, ge=1),
+    # Only the pages created after this id: the poll during an import fetches
+    # the new ones, not the whole project again every 3 seconds.
+    after_id: int | None = Query(default=None, ge=0),
     _auth: dict = Depends(require_resource(write=False)),
-) -> PageList:
+) -> Response:
     if collection is not None and collection != "none" and not collection.isdigit():
         lang = parse_lang(request.headers.get("accept-language"))
         raise HTTPException(status_code=400, detail=msg("collection_filter_invalid", lang))
     rows, total = pagestore.list_for_project(
-        project_id, page_type=page_type, status=status, collection=collection, limit=limit
+        project_id, page_type=page_type, status=status, collection=collection,
+        limit=limit, after_id=after_id,
     )
     with connect() as conn:
         work_items = worksvc.project_work(conn, project_id, _auth)
-        items = [
-            PageOut(
-                id=r["id"],
-                project_id=r["project_id"],
-                rel_path=r["rel_path"],
-                abs_path=r["abs_path"],
-                source_kind=r["source_kind"],
-                pdf_page=r["pdf_page"],
-                width=r["width"],
-                height=r["height"],
-                issue_date=r["issue_date"],
-                issue_no=r["issue_no"],
-                page_no=r["page_no"],
-                page_type=r["page_type"],
-                status=r["status"],
-                annotation_revision=r["annotation_revision"],
-                created_at=r["created_at"],
-                collection_id=r["collection_id"],
-                blocks=r["blocks"],
-                drafts=r["drafts"],
-                work=work_items.get(r["id"]),
-            )
-            for r in rows
-        ]
-        return PageList(items=items, total=total)
+    for row in rows:
+        row["work"] = work_items.get(row["id"])
+    # JSON written directly: the rows already have the shape of `PageListItem`
+    # (the query picks the columns), and validating them one by one with
+    # pydantic was half the request time on a 15,000-page project.
+    body = json.dumps(
+        {"items": rows, "total": total}, ensure_ascii=False, separators=(",", ":")
+    ).encode()
+    # Reopening an unchanged project does not download the list again: the
+    # browser revalidates with the ETag and gets an empty 304.
+    tag = hashlib.blake2b(body, digest_size=16).hexdigest()
+    headers = {"ETag": f'"{tag}"', "Cache-Control": "private, no-cache"}
+    if tag in _etag_values(request.headers.get("if-none-match")):
+        return Response(status_code=304, headers=headers)
+    return Response(content=body, media_type="application/json", headers=headers)
 
 
-# Esito per tabella, per impronta del contenuto: si ricalcola solo ciò che è
-# cambiato. ponytail: cresce di una voce per tabella salvata, mai svuotato;
-# un LRU se i volumi arrivano a centinaia di migliaia di tabelle.
-_SUMS_CACHE: dict[int, tuple[int, PageSums]] = {}
+def _etag_values(header: str | None) -> set[str]:
+    """The tags of `If-None-Match`, without `W/`, quotes or the encoding suffix
+    proxies and CDNs add when they compress (`"abc-zstd"`, `W/"abc"`)."""
+    out = set()
+    for part in (header or "").split(","):
+        value = part.strip().removeprefix("W/").strip('"')
+        if value:
+            out.add(value.split("-", 1)[0])
+    return out
+
+
+# Result per table, keyed by a fingerprint of its content: only what changed
+# is recomputed. ponytail: grows by one entry per saved table, never emptied;
+# an LRU if volumes reach hundreds of thousands of tables.
+#
+# Also saved to disk, with a stable fingerprint (Python's `hash()` changes at
+# every start): kept in memory only, after every restart or deploy the first
+# Studio opening recomputed every table of the project (~6 s of CPU for 468
+# tables), and meanwhile the server answered almost no other request.
+_SUMS_CACHE: dict[int, tuple[str, PageSums]] = {}
+_SUMS_STATE = {"loaded": False}
+_SUMS_LOCK = threading.Lock()
+_SUMS_COMPUTE = threading.Lock()
+
+
+def _sums_file() -> Path:
+    return config.ROOT_DIR / "cache" / "table_sums.json"
+
+
+def _load_sums() -> None:
+    with _SUMS_LOCK:
+        if _SUMS_STATE["loaded"]:
+            return
+        _SUMS_STATE["loaded"] = True
+        try:
+            data = json.loads(_sums_file().read_text(encoding="utf-8"))
+            for block_id, (key, checks, failed, rows, cols) in data.items():
+                _SUMS_CACHE.setdefault(int(block_id), (str(key), PageSums(
+                    checks=checks, failed=failed, rows=rows, cols=cols)))
+        except (OSError, TypeError, ValueError):
+            pass  # No file, or an unreadable one: recompute, as the first time.
+
+
+def _save_sums() -> None:
+    with _SUMS_LOCK:
+        data = {
+            str(block_id): [key, v.checks, v.failed, v.rows, v.cols]
+            for block_id, (key, v) in _SUMS_CACHE.items()
+        }
+        path = _sums_file()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(f".{threading.get_ident()}.tmp")
+            tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+            tmp.replace(path)
+        except OSError:
+            pass  # Only a cache: without it, the next start recomputes.
 
 
 @router.get("/api/projects/{project_id}/sum-failures", response_model=ProjectSumsOut)
@@ -104,13 +156,26 @@ def project_sum_failures(
     project_id: int,
     _auth: dict = Depends(require_resource(write=False)),
 ) -> ProjectSumsOut:
-    """Quante somme non tornano, pagina per pagina: la lista delle pagine lo
-    mostra accanto allo stato, così si sa dove guardare senza aprire ogni
-    tabella. A parte dalla lista perché costa ~8 ms per tabella la prima volta."""
+    """How many sums do not add up, page by page: the page list shows it next
+    to the status, so one knows where to look without opening every table.
+    Separate from the list because it costs ~8 ms per table the first time."""
+    _load_sums()
+    # One computation at a time: the Studio asks for the sums twice in a row
+    # when it opens, and two full recomputations in parallel doubled the CPU
+    # exactly when the server is busiest. The second waits and finds the cache.
+    with _SUMS_COMPUTE:
+        return _project_sums(project_id)
+
+
+def _project_sums(project_id: int) -> ProjectSumsOut:
     rows = pagestore.sum_failures_inputs(project_id)
     pages: dict[int, PageSums] = {}
+    changed = False
     for page_id, block_id, grid_json in rows:
-        key = hash(grid_json)
+        # Stable across restarts and cheap: it is computed over every table of
+        # the project on each call (tens of MB).
+        raw = (grid_json or "").encode()
+        key = f"{len(raw)}:{zlib.crc32(raw):08x}"
         cached = _SUMS_CACHE.get(block_id)
         if cached is None or cached[0] != key:
             try:
@@ -123,6 +188,7 @@ def project_sum_failures(
                 rows=sum(c["kind"] == "row" for c in out["checks"]),
                 cols=sum(c["kind"] == "col" for c in out["checks"]),
             ))
+            changed = True
         table = cached[1]
         if table.checks:
             prev = pages.get(page_id) or PageSums(checks=0, failed=0)
@@ -130,6 +196,8 @@ def project_sum_failures(
                 checks=prev.checks + table.checks, failed=prev.failed + table.failed,
                 rows=prev.rows + table.rows, cols=prev.cols + table.cols,
             )
+    if changed:
+        _save_sums()
     return ProjectSumsOut(pages=pages)
 
 

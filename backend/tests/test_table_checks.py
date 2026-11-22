@@ -173,3 +173,38 @@ def test_a_cell_holding_only_a_fraction_is_a_number():
     assert table_checks.number("⁹⁄₂₀") == Fraction(9, 20)
     assert table_checks.number("9/20") == Fraction(9, 20)
     assert table_checks.number("9/0") is None
+
+
+def test_sum_results_survive_a_restart_without_recomputing(tmp_path, monkeypatch):
+    """After a restart the results are read back from disk: recomputing them
+    all kept the server busy for seconds on the first Studio opening."""
+    from PIL import Image
+
+    from app.api import pages as pages_api
+
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    Image.new("RGB", (800, 1000), (200, 200, 200)).save(archive / "p01.png")
+    rows = [r[:] for r in COUNTRIES]
+    rows[2][3] = "258,493"
+    with TestClient(app) as client:
+        pid = client.post("/api/projects", json={"name": "R", "archive_dir": str(archive)}).json()["id"]
+        client.post(f"/api/projects/{pid}/scan")
+        page = client.get(f"/api/projects/{pid}/pages").json()["items"][0]["id"]
+        client.put(f"/api/pages/{page}/annotations", json={"items": [
+            {"label": "Table", "kind": "rect", "points": [[10, 10], [700, 900]], "content": "", "order_idx": 1}]})
+        block = client.get(f"/api/pages/{page}/annotations").json()["items"][0]["id"]
+        client.put(f"/api/blocks/{block}/table", json={**_grid(rows), "phantom_cols": []})
+        first = client.get(f"/api/projects/{pid}/sum-failures").json()["pages"]
+        assert first[str(page)]["failed"] == 2
+        assert pages_api._sums_file().exists()
+
+        # "Restart": empty memory, and no recomputation allowed.
+        monkeypatch.setattr(pages_api, "_SUMS_CACHE", {})
+        monkeypatch.setitem(pages_api._SUMS_STATE, "loaded", False)
+
+        def no_recompute(_grid):
+            raise AssertionError("recomputed instead of read back from disk")
+
+        monkeypatch.setattr(pages_api.table_checks, "check_grid", no_recompute)
+        assert client.get(f"/api/projects/{pid}/sum-failures").json()["pages"] == first
