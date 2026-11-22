@@ -274,8 +274,14 @@ class PageUpdate(BaseModel):
     status: str | None = None
 
 
+class PageListItem(PageOut):
+    """A page as the project list shows it: no absolute server path, which no
+    screen uses and which was a third of a large project's list."""
+    abs_path: str | None = Field(default=None, exclude=True)
+
+
 class PageList(BaseModel):
-    items: list[PageOut]
+    items: list[PageListItem]
     # Pagine che corrispondono ai filtri, anche oltre `limit`: una lista
     # troncata deve poterlo dire.
     total: int = 0

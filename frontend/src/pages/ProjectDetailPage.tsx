@@ -30,6 +30,7 @@ import type { CollectionFilter } from '../app/collections'
 import type { CollectionItem } from '../lib/types'
 import { describeError } from '../lib/errors'
 import { batchFiles, mergeReports } from '../lib/uploadBatches'
+import { lastPageId, mergeNewPages } from '../lib/pageList'
 
 /** Scoped per authenticated user and project so another account never inherits a previous scan report. */
 const reportKey = (userId: string | number, id: number) => `tabularium.scanReport.${userId}.${id}`
@@ -278,11 +279,18 @@ export default function ProjectDetailPage() {
   // Pages are committed in blocks during an import: refresh the list while one runs,
   // so they appear as they are created.
   const importing = uploading || zipJob?.job.phase === 'registering'
-  const refreshPagesRef = useRef(refreshPages)
-  refreshPagesRef.current = refreshPages
+  // Only the pages created since the last poll travel, not the whole list again.
+  const pollNewPages = async () => {
+    const r = await apiGet<{ items: PageItem[] }>(`/projects/${projectId}/pages?after_id=${lastPageId(pagesRef.current)}`)
+    setPages((cur) => mergeNewPages(cur, r.items))
+  }
+  const pagesRef = useRef(pages)
+  pagesRef.current = pages
+  const pollNewPagesRef = useRef(pollNewPages)
+  pollNewPagesRef.current = pollNewPages
   useEffect(() => {
     if (!importing) return
-    const timer = window.setInterval(() => { void refreshPagesRef.current().catch(() => undefined) }, 3000)
+    const timer = window.setInterval(() => { void pollNewPagesRef.current().catch(() => undefined) }, 3000)
     return () => window.clearInterval(timer)
   }, [importing])
 
