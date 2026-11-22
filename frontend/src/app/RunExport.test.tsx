@@ -105,3 +105,18 @@ it('reads the UTF-8 file name first', () => {
   expect(attachmentFilename('attachment; filename="plain.md"')).toBe('plain.md')
   expect(attachmentFilename(null)).toBeNull()
 })
+
+it('filters collections to those present in run items', () => {
+  collections = [{ id: 5, name: '1949' }, { id: 6, name: 'Unused' }]
+  const runWithItems = {
+    ...run,
+    items: [
+      { id: 1, run_id: 24, page_id: 1, rel_path: 'a.png', page_status: 'new', collection_id: 5, state: 'finished', detected: 1, inserted: 1, blocks: 1, drafts: 0, result: null, error: null, started_at: null, ended_at: null },
+      { id: 2, run_id: 24, page_id: 2, rel_path: 'b.png', page_status: 'new', collection_id: null, state: 'finished', detected: 1, inserted: 1, blocks: 1, drafts: 0, result: null, error: null, started_at: null, ended_at: null },
+    ],
+  } as RecognitionRun
+  render(<RunExport run={runWithItems} busyRun={false} primary onError={vi.fn()} />)
+  const select = screen.getByRole('combobox', { name: 'Pagine' })
+  expect(select).toContainHTML('1949')
+  expect(select).not.toContainHTML('Unused')
+})

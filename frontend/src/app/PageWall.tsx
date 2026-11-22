@@ -2,7 +2,7 @@
  * The pages of a project as thumbnails, tinted by state, each opening the Studio
  * on that page. Filters by state (and by "has drafts") and searches by name.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import type { PageItem } from '../lib/types'
 import { statusLabel, STATUS_RANK, STATUS_TONE } from '../lib/vocab'
@@ -15,7 +15,6 @@ import { projectPath } from './projectPaths'
 /** Not a state: the pages carrying model drafts nobody has checked yet. */
 const DRAFTS_FILTER = '__drafts'
 const BATCH = 80
-const SEARCH_FROM = 20
 
 /** The drag payload: the ids of the pages being moved to a collection. */
 export const PAGES_MIME = 'application/x-tabularium-pages'
@@ -33,7 +32,7 @@ function PageCell({ page, selection }: { page: PageItem; selection?: WallSelecti
   const checked = selection?.selected.has(page.id) ?? false
   return (
     <li
-      className="relative border-b border-r border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] data-[checked]:outline data-[checked]:outline-2 data-[checked]:-outline-offset-2 data-[checked]:outline-[color:var(--color-sig)]"
+      className="relative overflow-hidden rounded-[var(--radius-md)] border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)] data-[checked]:border-[color:var(--color-sig)] data-[checked]:ring-1 data-[checked]:ring-[color:var(--color-sig)]"
       data-checked={checked || undefined}
       draggable={selection ? true : undefined}
       onDragStart={selection ? (e) => {
@@ -44,7 +43,7 @@ function PageCell({ page, selection }: { page: PageItem; selection?: WallSelecti
       } : undefined}
     >
       {selection && (
-        <label className="absolute left-1 top-1 z-10 flex items-center rounded-[var(--radius-sm)] bg-[color:var(--color-sheet)] p-0.5">
+        <label className="absolute left-1.5 top-1.5 z-10 flex items-center rounded-[var(--radius-sm)] border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)]/95 p-0.5 shadow-xs">
           <input type="checkbox" checked={checked} onChange={() => selection.onToggle(page.id)} aria-label={t('collections.selectPage', { page: pageLabel(page) })} />
         </label>
       )}
@@ -57,16 +56,18 @@ function PageCell({ page, selection }: { page: PageItem; selection?: WallSelecti
             className="h-full w-full bg-white object-cover object-top"
           />
         </div>
-        <div className="flex items-center gap-1.5 border-t border-[color:var(--color-rule)] px-1.5 py-1">
-          <span className="mono min-w-0 flex-1 truncate text-[11px] text-[color:var(--color-ink-2)]" title={pageLabel(page)}>
+        <div className="flex flex-col gap-1 border-t border-[color:var(--color-rule)] px-2 py-1.5">
+          <span className="mono min-w-0 truncate text-[11px] text-[color:var(--color-ink-2)]" title={pageLabel(page)}>
             {pageShortLabel(page)}
           </span>
-          {/* Recognized but never touched by a person is not "new": it has drafts to check. */}
-          {page.status === 'new' && (page.drafts ?? 0) > 0 ? (
-            <Badge tone="warn">{t('home.draftsBadge', { n: page.drafts ?? 0 })}</Badge>
-          ) : (
-            <Badge tone={STATUS_TONE[page.status] ?? 'neutral'}>{statusLabel(page.status)}</Badge>
-          )}
+          <div className="flex items-center">
+            {/* Recognized but never touched by a person is not "new": it has drafts to check. */}
+            {page.status === 'new' && (page.drafts ?? 0) > 0 ? (
+              <Badge tone="warn">{t('home.draftsBadge', { n: page.drafts ?? 0 })}</Badge>
+            ) : (
+              <Badge tone={STATUS_TONE[page.status] ?? 'neutral'}>{statusLabel(page.status)}</Badge>
+            )}
+          </div>
         </div>
       </Link>
     </li>
@@ -80,16 +81,26 @@ export function PageWall({ pages, loading, selection }: { pages: PageItem[]; loa
   const [limit, setLimit] = useState(BATCH)
   useEffect(() => setLimit(BATCH), [filter, query])
 
-  const sorted = useMemo(
-    () => [...pages].sort((a, b) => (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) || a.rel_path.localeCompare(b.rel_path)),
-    [pages],
-  )
+  // Keep original page order consistent with the table view instead of jumping approved pages to the end.
+  const sorted = pages
+  const isDraftNew = (p: PageItem) => p.status === 'new' && (p.drafts ?? 0) > 0
   const withDrafts = pages.filter((p) => (p.drafts ?? 0) > 0).length
-  const counts = pages.reduce<Record<string, number>>((out, p) => ({ ...out, [p.status]: (out[p.status] ?? 0) + 1 }), {})
+  const counts = pages.reduce<Record<string, number>>((out, p) => {
+    if (isDraftNew(p)) return out
+    return { ...out, [p.status]: (out[p.status] ?? 0) + 1 }
+  }, {})
   const statuses = Object.keys(counts).sort((a, b) => (STATUS_RANK[a] ?? 9) - (STATUS_RANK[b] ?? 9))
   const q = query.trim().toLocaleLowerCase()
   const shown = sorted
-    .filter((p) => (filter === DRAFTS_FILTER ? (p.drafts ?? 0) > 0 : filter ? p.status === filter : true))
+    .filter((p) => (
+      filter === DRAFTS_FILTER
+        ? (p.drafts ?? 0) > 0
+        : filter === 'new'
+          ? p.status === 'new' && (p.drafts ?? 0) === 0
+          : filter
+            ? p.status === filter
+            : true
+    ))
     .filter((p) => !q || pageLabel(p).toLocaleLowerCase().includes(q))
 
   const shownIds = shown.map((p) => p.id)
@@ -128,7 +139,7 @@ export function PageWall({ pages, loading, selection }: { pages: PageItem[]; loa
             {allShownSelected ? t('collections.selectNone') : t('collections.selectAll', { n: shown.length })}
           </button>
         )}
-        {pages.length > SEARCH_FROM && (
+        {pages.length > 0 && (
           <div className="ml-auto w-full max-w-xs">
             <Field label={t('recognition.filterPages')}>
               <input type="search" className="fld" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('recognition.filterPagesHint')} />
@@ -137,7 +148,7 @@ export function PageWall({ pages, loading, selection }: { pages: PageItem[]; loa
         )}
       </div>
       {shown.length > 0 ? (
-        <ul className="cascade grid grid-cols-2 border-l border-t border-[color:var(--color-rule)] sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
+        <ul className="cascade grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {shown.slice(0, limit).map((p) => <PageCell key={p.id} page={p} selection={selection} />)}
         </ul>
       ) : (

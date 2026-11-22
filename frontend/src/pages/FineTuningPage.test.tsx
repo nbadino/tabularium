@@ -66,3 +66,16 @@ it('a registered checkpoint points to its own inference setup before evaluation'
   await screen.findByRole('heading', { name: 'Scegli dove eseguire il modello addestrato' })
   expect(screen.getByRole('link', { name: 'Servi il modello' })).toHaveAttribute('href', '/modelli?modello=custom-trained-42&passo=dove')
 })
+
+it('mostra il passo Confronta modelli e distingue lo stato di dataset e valutazione con pagine approvate', async () => {
+  vi.mocked(apiGet).mockImplementation(async (path) => {
+    if (path === '/projects') return { items: [{ id: 1, name: 'Registro', pages_count: 3 }] }
+    if (path.endsWith('/workflow')) return { total_pages: 3, approved_pages: 1, counts: { approved: 1 }, next_page: { id: 4 } }
+    if (path.endsWith('/datasets')) return { built: false, report: null }
+    return { active: false, run: null }
+  })
+  render(<MemoryRouter><FineTuningPage /></MemoryRouter>)
+  expect(await screen.findByRole('link', { name: /Confronta modelli/ })).toHaveAttribute('href', '/progetti/1/fine-tuning/confronta')
+  expect(screen.getByText('Dataset non costruito · 1 pagina approvata')).toBeInTheDocument()
+  expect(screen.getByText('Nessuna valutazione · 1 pagina approvata')).toBeInTheDocument()
+})

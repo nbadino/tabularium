@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import Literal
@@ -101,6 +102,20 @@ def get_dataset(
     except (TypeError, ValueError):
         return {"built": False, "report": None}
     return {"built": True, "report": report}
+
+
+@router.delete("/api/projects/{project_id}/datasets")
+def delete_dataset(
+    project_id: int,
+    _auth: dict = Depends(require_resource(write=True)),
+) -> dict:
+    """Remove generated dataset artifacts for a project without touching source pages."""
+    _require_project(project_id)
+    dataset_dir = builder._project_dir(project_id) / "dataset"  # noqa: SLF001
+    if not dataset_dir.exists():
+        return {"deleted": False}
+    shutil.rmtree(dataset_dir)
+    return {"deleted": True}
 
 
 @router.post("/api/projects/{project_id}/datasets/build-paddle")

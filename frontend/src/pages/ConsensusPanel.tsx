@@ -61,6 +61,7 @@ export default function ConsensusPanel({
   projectId,
   pageIds,
   canManage,
+  canEdit = true,
   currentModel,
   onProfilesChange,
 }: {
@@ -68,6 +69,8 @@ export default function ConsensusPanel({
   pageIds: number[]
   /** Saving or deleting a model touches keys: administrators only. */
   canManage: boolean
+  /** Read-only project viewers cannot launch comparison runs. */
+  canEdit?: boolean
   /** Display name of the model chosen in Models, proposed as the saved name. */
   currentModel: string
   /** The saved models after a load, a save or a delete (the Recognition engines). */
@@ -230,7 +233,7 @@ export default function ConsensusPanel({
   const targetId = target?.page_id ?? pageIds[0]
 
   const usableChosen = profiles.filter((p) => chosen.has(p.id) && canUseSavedModel(p)).length
-  const canStart = usableChosen >= 2 && pageIds.length > 0 && projectId !== '' && !busy && !(run && ACTIVE.has(run.state))
+  const canStart = canEdit && usableChosen >= 2 && pageIds.length > 0 && projectId !== '' && !busy && !(run && ACTIVE.has(run.state))
   const tone = run?.state === 'finished' ? 'ok' : run && (run.state === 'failed' || run.state === 'finished_with_errors') ? 'warn' : 'neutral'
 
   return (

@@ -56,6 +56,25 @@ describe('StudioHeader', () => {
     expect(props.onPrev).toHaveBeenCalledTimes(1)
     input.remove()
   })
+
+  it('switches view mode, triggers undo/redo, and opens the shortcuts modal', () => {
+    const onMode = vi.fn()
+    const onUndo = vi.fn()
+    const onRedo = vi.fn()
+    setup({
+      mode: 'all',
+      onMode,
+      undo: { canUndo: true, canRedo: true, onUndo, onRedo },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Solo trascrizione' }))
+    expect(onMode).toHaveBeenCalledWith('transcription')
+    fireEvent.click(screen.getByRole('button', { name: /Annulla/ }))
+    expect(onUndo).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: /Ripeti/ }))
+    expect(onRedo).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Scorciatoie da tastiera' }))
+    expect(screen.getByRole('dialog', { name: 'Scorciatoie da tastiera' })).toBeInTheDocument()
+  })
 })
 
 describe('isTeamWork', () => {

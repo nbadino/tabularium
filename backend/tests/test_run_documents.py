@@ -275,3 +275,50 @@ def test_pdf_page_size_follows_the_source_document(monkeypatch):
     # Unreadable source: the page still gets a size, from the image resolution.
     monkeypatch.setattr(searchable_pdf, "_pdf_page_widths", lambda path, mtime: 1 / 0)
     assert searchable_pdf.page_dpi(row, None) == searchable_pdf.DEFAULT_IMAGE_DPI
+
+
+def test_run_exports_text_and_csv_include_saved_table_grids(tmp_path, monkeypatch):
+    from app.db import connect
+    from app.services import recognition
+
+    monkeypatch.setattr(recognition.ocrmod, "OcrEngine", FakeOcr)
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    Image.new("RGB", (200, 300), "white").save(archive / "tabella.png")
+    with TestClient(app) as client:
+        project_id = client.post("/api/projects", json={"name": "Tables", "archive_dir": str(archive)}).json()["id"]
+        client.post(f"/api/projects/{project_id}/scan")
+        page_id = client.get(f"/api/projects/{project_id}/pages").json()["items"][0]["id"]
+        run_id = client.post(
+            f"/api/projects/{project_id}/recognition-runs",
+            json={"page_ids": [page_id], "engine": "ocr", "mode": "replace_drafts", "stop_policy": "none"},
+        ).json()["id"]
+        for _ in range(200):
+            state = client.get(f"/api/projects/{project_id}/recognition-runs/{run_id}").json()["state"]
+            if state not in {"queued", "running"}:
+                break
+            time.sleep(0.02)
+        with connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO blocks(page_id, recognition_run_id, label, kind, points, content, order_idx, confirmed) "
+                "VALUES (?, ?, 'Table', 'box', '[[10,10],[190,290]]', '', 2, 1)",
+                (page_id, run_id),
+            )
+            block_id = int(cur.lastrowid)
+            conn.execute(
+                "INSERT INTO tables(block_id, grid_json) VALUES (?, ?)",
+                (
+                    block_id,
+                    '{"rows": 2, "cols": 2, "header_rows": 1, '
+                    '"cells": [{"r":0,"c":0,"text":"Vessel"},{"r":0,"c":1,"text":"Port"},'
+                    '{"r":1,"c":0,"text":"Pamir"},{"r":1,"c":1,"text":"Falmouth"}]}',
+                ),
+            )
+        base = f"/api/projects/{project_id}/recognition-runs/{run_id}/export"
+        text = client.get(base, params={"scope": "reviewed", "format": "text"})
+        assert text.status_code == 200
+        assert "Vessel\tPort\nPamir\tFalmouth" in text.text
+
+        csv_resp = client.get(base, params={"scope": "reviewed", "format": "csv"})
+        assert csv_resp.status_code == 200
+        assert "Pamir\tFalmouth" in csv_resp.text

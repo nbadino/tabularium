@@ -41,7 +41,28 @@ const SECTIONS = [
   { to: '/impostazioni', key: 'nav.settings' },
 ] as const
 
+const PROJECT_SCOPED_PATHS = new Set<string>([
+  '/archivio',
+  '/riconosci',
+  '/risultati',
+  '/annotazione',
+  '/fine-tuning',
+  '/dataset',
+  '/valutazione',
+  '/benchmark',
+])
+
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    target.isContentEditable
+  )
+}
 
 /** Ogni parola della ricerca deve comparire nell'etichetta, in qualunque ordine. */
 export function matchesQuery(label: string, query: string): boolean {
@@ -69,9 +90,11 @@ export function CommandPalette() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Sul Mac solo ⌘K: Ctrl+K nei campi di testo cancella fino a fine riga,
-      // e trascrivendo serve. Altrove Ctrl+K, come nelle app del sistema.
-      if ((IS_MAC ? e.metaKey : e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'k') {
+      // Allow Cmd+K everywhere, and Ctrl+K outside text fields on Mac so Emacs Ctrl+K keeps working while typing.
+      if (e.altKey || e.key.toLowerCase() !== 'k') return
+      const isCmd = e.metaKey
+      const isCtrl = e.ctrlKey && (!IS_MAC || !isEditableTarget(e.target))
+      if (isCmd || isCtrl) {
         e.preventDefault()
         setOpen((v) => !v)
       }
@@ -109,7 +132,8 @@ export function CommandPalette() {
 
   const commands = useMemo<Command[]>(() => {
     const go = (to: string) => () => navigate(to)
-    const out: Command[] = SECTIONS.map((s) => ({
+    const hasProjects = projects.length > 0
+    const out: Command[] = SECTIONS.filter((s) => hasProjects || !PROJECT_SCOPED_PATHS.has(s.to)).map((s) => ({
       id: `go:${s.to}`,
       kind: t('commands.groupGo'),
       label: t(s.key),

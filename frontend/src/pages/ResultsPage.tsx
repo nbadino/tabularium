@@ -9,10 +9,11 @@ import { syncInferenceFromBackend, toggleInferenceEnabled, useInference } from '
 import { useI18n } from '../i18n'
 import { IconAlert, IconCheck, IconNext, IconWarn } from '../app/icons'
 import { useCanAdminister } from '../app/auth'
-import { pageLabel } from '../lib/pageLabel'
+import { pageLabel, cleanRelPath } from '../lib/pageLabel'
 import { runTitle, useModelNames } from '../app/models/names'
 import { formatShortDate } from '../lib/dates'
 import { statusLabel } from '../lib/vocab'
+import { labelName } from '../i18n/labelName'
 import { API_BASE } from '../lib/endpoints'
 import { RecognitionRunControls } from '../app/RunControls'
 import { RunExport } from '../app/RunExport'
@@ -49,14 +50,19 @@ export default function ResultsPage() {
   const [pageFilter, setPageFilter] = useState<PageFilter>('all')
   const [params, setParams] = useSearchParams()
   const { runId: routeRunId } = useParams()
+  const routeProjectId = useRouteProjectId()
   const navigate = useNavigate()
   const inference = useInference()
   const canManageInference = useCanAdminister()
   const [projectId, setProjectId] = useState<number | ''>(() => Number(params.get('project')) || '')
   const [runs, setRuns] = useState<RecognitionRun[]>([])
   const [run, setRun] = useState<RecognitionRun | null>(null)
+  const [loadingRuns, setLoadingRuns] = useState(() => routeProjectId != null || Boolean(params.get('project')))
   const [openingRun, setOpeningRun] = useState(false)
   const [requestedRunId, setRequestedRunId] = useState<number | null>(null)
+  const [expandedPages, setExpandedPages] = useState<Record<number, boolean>>({})
+  const [previewBlocks, setPreviewBlocks] = useState<Record<number, Array<{ id?: number; label?: string; content?: string }>>>({})
+  const [previewBusy, setPreviewBusy] = useState<Record<number, boolean>>({})
   const [error, setError] = useState<unknown>(null)
 
   // Inside a project the run is part of the path; the old query form stays for
@@ -86,7 +92,13 @@ export default function ResultsPage() {
     writeActiveProject(pid === '' ? null : pid)
     setRuns([])
     setRun(null)
-    if (pid === '') return
+    setExpandedPages({})
+    setPreviewBlocks({})
+    if (pid === '') {
+      setLoadingRuns(false)
+      return
+    }
+    setLoadingRuns(true)
     try {
       const out = await apiGet<{ items: RecognitionRun[] }>(`/recognition-runs?project_id=${pid}`)
       setRuns(out.items)
@@ -95,10 +107,10 @@ export default function ResultsPage() {
       if (first) await openRun(pid, first.id)
     } catch (e) {
       setError(e)
+    } finally {
+      setLoadingRuns(false)
     }
   }
-
-  const routeProjectId = useRouteProjectId()
 
   const projects = useProjects((fallback) => void onProject(projectId === '' ? fallback : projectId), setError)
 
@@ -142,6 +154,34 @@ export default function ResultsPage() {
     }
   }
 
+  const togglePreview = async (item: NonNullable<RecognitionRun['items']>[number]) => {
+    const pid = item.page_id
+    const nextOpen = !expandedPages[pid]
+    setExpandedPages((cur) => ({ ...cur, [pid]: nextOpen }))
+    if (!nextOpen || previewBlocks[pid] != null || previewBusy[pid] || !run) return
+    setPreviewBusy((cur) => ({ ...cur, [pid]: true }))
+    try {
+      const ann = await apiGet<{ blocks?: Array<{ id?: number; label?: string; content?: string }> }>(`/pages/${pid}/annotations`)
+      let list = Array.isArray(ann?.blocks) ? ann.blocks : []
+      if (list.length === 0) {
+        const detailed = await apiGet<RecognitionRun>(`/projects/${run.project_id}/recognition-runs/${run.id}?result_page=${pid}`)
+        const rawBlocks = detailed.items?.find((it) => it.page_id === pid)?.result?.blocks
+        if (Array.isArray(rawBlocks)) {
+          list = rawBlocks.map((b, idx) => ({
+            id: typeof b.id === 'number' ? b.id : idx,
+            label: typeof b.label === 'string' ? b.label : '',
+            content: typeof b.content === 'string' ? b.content : '',
+          }))
+        }
+      }
+      setPreviewBlocks((cur) => ({ ...cur, [pid]: list }))
+    } catch (e) {
+      setError(e)
+    } finally {
+      setPreviewBusy((cur) => ({ ...cur, [pid]: false }))
+    }
+  }
+
   const pct = run?.total_pages ? (run.completed_pages / run.total_pages) * 100 : 0
   const nextReview = run?.items?.find((item) => item.drafts > 0) ?? run?.items?.[0]
   const items = run?.items ?? []
@@ -180,8 +220,8 @@ export default function ResultsPage() {
           </Field>
           )}
           <Field label={t('recognition.recent')}>
-            <select className="fld" value={requestedRunId ?? run?.id ?? ''} disabled={runs.length === 0 || openingRun} onChange={(e) => { if (projectId !== '' && e.target.value) void openRun(projectId, Number(e.target.value)) }}>
-              {runs.length === 0 && <option value="">{t('recognition.noRuns')}</option>}
+            <select className="fld" value={requestedRunId ?? run?.id ?? ''} disabled={runs.length === 0 || openingRun || loadingRuns} onChange={(e) => { if (projectId !== '' && e.target.value) void openRun(projectId, Number(e.target.value)) }}>
+              {runs.length === 0 && <option value="">{loadingRuns ? t('common.loading') : t('recognition.noRuns')}</option>}
               {runs.map((item) => <option key={item.id} value={item.id}>
                 #{item.id} · {runTitle(item, nameOf)} · {formatShortDate(item.created_at, locale)} · {t(stateKey(item.state))} · {t('recognition.runPagesCount', { done: item.completed_pages, total: item.total_pages })} · {providerLabel(item.provider, item.engine, t)}
               </option>)}
@@ -189,8 +229,9 @@ export default function ResultsPage() {
           </Field>
         </div>
 
-        {openingRun && <Loading label={t('common.loading')} />}
-        {!run ? (
+        {(openingRun || loadingRuns) && !run ? (
+          <Loading label={t('common.loading')} />
+        ) : !run ? (
           <Module tab={t('recognition.resultsTitle')} quiet><p className="text-[12px] text-[color:var(--color-ink-2)]">{t('recognition.pickRun')}</p></Module>
         ) : (
           // Resta in vista mentre si scorre l'elenco delle esecuzioni; se è
@@ -204,7 +245,10 @@ export default function ResultsPage() {
               <Progress value={pct} label={t('recognition.progress', { done: run.completed_pages, total: run.total_pages })} />
               <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px]">
                 <span>{t('recognition.progress', { done: run.completed_pages, total: run.total_pages })}</span>
-                <span className="mono text-[11px] text-[color:var(--color-ink-3)]">{providerLabel(run.provider, run.engine, t)} · {run.adapter_id}</span>
+                <span className="text-[11px] text-[color:var(--color-ink-3)]">
+                  {providerLabel(run.provider, run.engine, t)}
+                  {nameOf(run.adapter_id) && nameOf(run.adapter_id) !== runTitle(run, nameOf) ? ` · ${nameOf(run.adapter_id)}` : ''}
+                </span>
                 {run.model_mode === 'document' && <Badge tone="ok">{t('recognition.asDocumentBadge')}</Badge>}
                 <span className="ml-auto flex flex-wrap gap-2">
                   <RecognitionRunControls
@@ -272,31 +316,84 @@ export default function ResultsPage() {
                   const empty = isEmptyResult(item)
                   const tone = empty ? 'text-[color:var(--color-warn)]' : item.state === 'finished' ? 'text-[color:var(--color-ok)]' : item.state === 'failed' ? 'text-[color:var(--color-sig-text)]' : 'text-[color:var(--color-ink-2)]'
                   const StateIcon = empty ? IconWarn : item.state === 'finished' ? IconCheck : item.state === 'failed' ? IconAlert : null
+                  const cleanName = cleanRelPath(item.rel_path)
+                  const currentStatus =
+                    item.page_status === 'new' && item.drafts > 0
+                      ? t('recognition.statusWithDrafts')
+                      : statusLabel(item.page_status)
+                  const isOpen = Boolean(expandedPages[item.page_id])
+                  const previewList = previewBlocks[item.page_id]
+                  const canPreview = item.state === 'finished' && (item.detected > 0 || item.blocks > 0)
                   return (
                     <li key={item.id} className="grid grid-cols-[48px_minmax(0,1fr)] items-center gap-x-3.5 gap-y-2 px-3.5 py-3 sm:grid-cols-[48px_minmax(0,1fr)_auto]">
                       <img data-fade src={`${API_BASE}/pages/${item.page_id}/thumbnail`} loading="lazy" alt="" className="h-16 w-12 rounded-[4px] border border-[color:var(--color-rule)] bg-white object-cover object-top" />
                       <div className="min-w-0">
                         <div className="text-[18px] font-semibold leading-tight tracking-[-0.01em]">
-                          {item.pdf_page != null ? t('recognition.pageN', { n: item.pdf_page + 1 }) : item.rel_path}
+                          {item.pdf_page != null ? t('recognition.pageN', { n: item.pdf_page + 1 }) : cleanName}
                         </div>
                         {item.pdf_page != null && (
-                          <div className="mono truncate text-[12px] text-[color:var(--color-ink-2)]" title={pageLabel(item)}>{item.rel_path}</div>
+                          <div className="mono truncate text-[12px] text-[color:var(--color-ink-2)]" title={pageLabel(item)}>{cleanName}</div>
                         )}
                         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-[color:var(--color-ink-2)]">
                           <span className={`inline-flex items-center gap-1 font-semibold ${tone}`}>
                             {StateIcon && <StateIcon size={12} />}
                             {empty ? t('recognition.emptyResult') : t(stateKey(item.state))}
                           </span>
-                          {!empty && item.state !== 'failed' && <span>{t('recognition.detectedBlocks', { n: item.detected })}</span>}
-                          <span>{t('recognition.currentPageStatus', { state: statusLabel(item.page_status) })}</span>
+                          {!empty && item.state !== 'failed' && (
+                            <span>
+                              {item.inserted > 0 && item.inserted !== item.detected
+                                ? t('recognition.detectedMerged', { detected: item.detected, inserted: item.inserted })
+                                : t('recognition.detectedBlocks', { n: item.detected })}
+                            </span>
+                          )}
+                          <span>{t('recognition.currentPageStatus', { state: currentStatus })}</span>
                           {item.drafts > 0 && <span className="text-[color:var(--color-warn)]">{t('recognition.drafts', { n: item.drafts })}</span>}
                         </div>
                         {item.error && <p className="mt-1 text-[11px] text-[color:var(--color-sig-text)]">{item.error}</p>}
                       </div>
-                      <Link to={projectPath(run.project_id, 'studio', { page: item.page_id, run: run.id })} className="btn col-span-2 justify-center no-underline sm:col-span-1">
-                        {t('recognition.review')}
-                        <IconNext size={12} />
-                      </Link>
+                      <div className="col-span-2 flex flex-wrap items-center gap-2 sm:col-span-1">
+                        {canPreview && (
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            aria-expanded={isOpen}
+                            onClick={() => void togglePreview(item)}
+                          >
+                            {t(isOpen ? 'recognition.hidePreview' : 'recognition.showPreview')}
+                          </button>
+                        )}
+                        <Link to={projectPath(run.project_id, 'studio', { page: item.page_id, run: run.id })} className="btn justify-center no-underline">
+                          {t('recognition.review')}
+                          <IconNext size={12} />
+                        </Link>
+                      </div>
+                      {isOpen && (
+                        <div className="col-span-full border-t border-[color:var(--color-rule)] bg-[color:var(--color-fill)] px-3 py-2 text-[12px]">
+                          {previewBusy[item.page_id] ? (
+                            <Loading label={t('common.loading')} />
+                          ) : previewList && previewList.length > 0 ? (
+                            <ol className="space-y-1.5">
+                              {previewList.slice(0, 8).map((b, idx) => (
+                                <li key={b.id ?? idx} className="flex gap-2">
+                                  <span className="mono shrink-0 text-[11px] font-semibold text-[color:var(--color-ink-2)]">
+                                    {labelName(b.label || 'Text')}
+                                  </span>
+                                  <span className="min-w-0 truncate text-[color:var(--color-ink)]">
+                                    {(b.content ?? '').trim() || t('recognition.previewTableOrEmpty')}
+                                  </span>
+                                </li>
+                              ))}
+                              {previewList.length > 8 && (
+                                <li className="text-[11px] text-[color:var(--color-ink-3)]">
+                                  {t('recognition.previewMore', { n: previewList.length - 8 })}
+                                </li>
+                              )}
+                            </ol>
+                          ) : (
+                            <p className="text-[color:var(--color-ink-3)]">{t('recognition.emptyResult')}</p>
+                          )}
+                        </div>
+                      )}
                     </li>
                   )
                 })}

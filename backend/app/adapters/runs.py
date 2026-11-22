@@ -71,7 +71,7 @@ def list_runs(project_id: int | None, limit: int) -> list[dict[str, Any]]:
 def items_for_run(run_id: int) -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
-            """SELECT i.*, p.rel_path, p.pdf_page, p.status AS page_status,
+            """SELECT i.*, p.rel_path, p.pdf_page, p.status AS page_status, p.collection_id,
                       (SELECT COUNT(*) FROM blocks b
                         WHERE b.recognition_run_id=i.run_id AND b.page_id=i.page_id) AS blocks,
                       (SELECT COUNT(*) FROM blocks b

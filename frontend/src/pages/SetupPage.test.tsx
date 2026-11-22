@@ -59,4 +59,15 @@ describe('SetupPage', () => {
     expect(screen.queryByText(/notifiche/i)).not.toBeInTheDocument()
     expect(screen.getByText(/non invia email/)).toBeInTheDocument()
   })
+
+  it('validates short passwords client-side without calling the backend', async () => {
+    render(<SetupPage />)
+    fireEvent.change(screen.getByLabelText(/^Token di configurazione/), { target: { value: 'tok' } })
+    fireEvent.change(screen.getByLabelText(/^Nome utente/), { target: { value: 'admin' } })
+    fireEvent.change(screen.getByLabelText(/^Password/), { target: { value: '123' } })
+    fireEvent.change(screen.getByLabelText(/^Conferma password/), { target: { value: '123' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Crea amministratore' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/almeno 8 caratteri/i)
+    expect(auth.setup).not.toHaveBeenCalled()
+  })
 })

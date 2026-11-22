@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { projectPath } from '../app/projectPaths'
-import { apiGet, apiPost } from '../lib/api'
+import { apiDelete, apiGet, apiPost } from '../lib/api'
+import { useConfirm } from '../app/confirm'
 import type { DatasetReport, DatasetStatus, PageItem } from '../lib/types'
 import { formatDateTime } from '../lib/dates'
 import { Link } from 'react-router'
@@ -25,6 +26,7 @@ function fmtSize(n: number): string {
 
 export default function DatasetPage() {
   const { t, locale } = useI18n()
+  const confirm = useConfirm()
   const inference = useInference()
   const [projectId, setProjectId] = useState<number | ''>('')
   const [ratio, setRatio] = useState(0.9)
@@ -37,6 +39,7 @@ export default function DatasetPage() {
   const adapterTouched = useRef(false)
   const [adapters, setAdapters] = useState<Array<{ adapter_id: string; display_name: string; tasks: string[]; training_types: string[]; export_ready?: boolean }>>([])
   const [building, setBuilding] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [paddleBuilding, setPaddleBuilding] = useState(false)
   const [paddleManifest, setPaddleManifest] = useState<{ counts?: { layout?: Record<string, number>; rec?: Record<string, number> }; files?: Record<string, string>; warnings?: string[] } | null>(null)
   const [status, setStatus] = useState<DatasetStatus>({ built: false, report: null })
@@ -73,7 +76,6 @@ export default function DatasetPage() {
     setProjectId(pid)
     writeActiveProject(pid === '' ? null : pid)
     setStatus({ built: false, report: null })
-    resetBuildArm()
     if (pid === '') return
     try {
       setStatus(await apiGet<DatasetStatus>(`/projects/${pid}/datasets`))
@@ -82,30 +84,20 @@ export default function DatasetPage() {
     }
   }
 
-  // conferma a due passi quando un export esiste già: il rebuild lo sovrascrive
-  const [buildArmed, setBuildArmed] = useState(false)
-  const buildArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const resetBuildArm = () => {
-    setBuildArmed(false)
-    if (buildArmTimer.current) clearTimeout(buildArmTimer.current)
-  }
-
-  useEffect(() => () => resetBuildArm(), [])
-
   const routeProjectId = useRouteProjectId()
 
   const projects = useProjects((pid) => void onProject(pid), setError)
 
   const build = async () => {
     if (projectId === '') return
-    if (status.built && !buildArmed) {
-      setBuildArmed(true)
-      if (buildArmTimer.current) clearTimeout(buildArmTimer.current)
-      buildArmTimer.current = setTimeout(() => setBuildArmed(false), 5000)
-      return
+    if (status.built) {
+      const ok = await confirm({
+        title: t('dataset.overwriteTitle'),
+        message: t('dataset.overwriteConfirmMsg'),
+        acceptLabel: t('dataset.confirmOverwrite'),
+      })
+      if (!ok) return
     }
-    resetBuildArm()
     setBuilding(true)
     setError(null)
     try {
@@ -123,6 +115,26 @@ export default function DatasetPage() {
       setError(e)
     } finally {
       setBuilding(false)
+    }
+  }
+
+  const removeDataset = async () => {
+    if (projectId === '' || deleting) return
+    const ok = await confirm({
+      title: t('dataset.deleteTitle'),
+      message: t('dataset.deleteConfirmMsg'),
+      acceptLabel: t('dataset.deleteBtn'),
+    })
+    if (!ok) return
+    setDeleting(true)
+    setError(null)
+    try {
+      await apiDelete(`/projects/${projectId}/datasets`)
+      setStatus({ built: false, report: null })
+    } catch (e) {
+      setError(e)
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -159,7 +171,9 @@ export default function DatasetPage() {
   }, [projectId])
   const approvedPages = workflow?.approved_pages ?? 0
   const humanPages = (workflow?.counts.annotated ?? 0) + (workflow?.counts.review ?? 0) + (workflow?.counts.qa ?? 0)
-  const nextStudio = workflow?.next_page ? `/annotazione?project=${projectId}&page=${workflow.next_page.id}` : '/annotazione'
+  const nextStudio = projectId !== ''
+    ? (workflow?.next_page ? projectPath(Number(projectId), 'studio', { page: workflow.next_page.id }) : projectPath(Number(projectId), 'studio'))
+    : '/progetti'
   const stages = buildPipeline({ project, workflow, dataset: status, training })
 
   const report = status.report
@@ -188,7 +202,7 @@ export default function DatasetPage() {
         <div className="mb-3">
           <Module tab={t('dataset.material.title')} quiet>
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[12px]">
-              <span><b className="mono text-[18px]">{approvedPages}</b> {t('dataset.material.approved')}</span>
+              <span><b className="mono text-[18px]">{approvedPages}</b> {tn('dataset.material.approvedWord', approvedPages)}</span>
               <span><b className="mono text-[18px]">{humanPages}</b> {t('dataset.material.annotated')}</span>
               {draftOnlyPages != null && (
                 <span><b className="mono text-[18px]">{draftOnlyPages}</b> {t('dataset.material.drafts')}</span>
@@ -231,42 +245,53 @@ export default function DatasetPage() {
           </p>
           <div className="mt-3">
             <Collapsible tab={t('dataset.params')} quiet>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <Field
-              label={t('dataset.trainShare', { pct: (ratio * 100).toFixed(0) })}
-              hint={t('dataset.trainShareHint', { pct: (100 - ratio * 100).toFixed(0) })}
-            >
-              <input
-                type="range"
-                min={0.5}
-                max={0.95}
-                step={0.05}
-                value={ratio}
-                onChange={(e) => setRatio(Number(e.target.value))}
-                aria-label={t('dataset.trainShareLabel')}
-                className="mt-1.5 w-full"
-              />
-            </Field>
-            <Field
-              label={t('dataset.splitUnit')}
-              hint={t('dataset.splitUnitHint')}
-            >
-              <select
-                value={splitStrategy}
-                onChange={(e) => setSplitStrategy(e.target.value)}
-                className="fld"
-              >
-                {['page', 'issue', 'year', 'source', 'scanner', 'collection', 'page_type'].map((k) => (
-                  <option key={k} value={k}>
-                    {splitStrategyLabel(k)}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <label className="flex items-center gap-2 self-end pb-2 text-[12px]">
-              <input type="checkbox" checked={approvedOnly} onChange={(e) => setApprovedOnly(e.target.checked)} />
-              {t('dataset.approvedOnly')}
-            </label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field
+                  label={t('dataset.trainShare', { pct: (ratio * 100).toFixed(0) })}
+                  hint={t('dataset.trainShareHint', { pct: (100 - ratio * 100).toFixed(0) })}
+                >
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={0.95}
+                      step={0.05}
+                      value={ratio}
+                      onChange={(e) => setRatio(Number(e.target.value))}
+                      aria-label={t('dataset.trainShareLabel')}
+                      className="min-w-0 flex-1"
+                    />
+                    <div className="flex items-center gap-1">
+                      {[0.8, 0.7, 0.5].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setRatio(preset)}
+                          aria-pressed={Math.abs(ratio - preset) < 0.001}
+                          className={`btn btn-sm !px-1.5 !py-0.5 mono text-[11px] ${Math.abs(ratio - preset) < 0.001 ? '!bg-[color:var(--color-ink)] !text-white' : ''}`}
+                        >
+                          {Math.round(preset * 100)}/{Math.round((1 - preset) * 100)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </Field>
+                <Field
+                  label={t('dataset.splitUnit')}
+                  hint={t('dataset.splitUnitHint')}
+                >
+                  <select
+                    value={splitStrategy}
+                    onChange={(e) => setSplitStrategy(e.target.value)}
+                    className="fld"
+                  >
+                    {['page', 'issue', 'year', 'source', 'scanner', 'collection', 'page_type'].map((k) => (
+                      <option key={k} value={k}>
+                        {splitStrategyLabel(k)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
                 <Field label={t('dataset.seed')} hint={t('dataset.seedHint')}>
                   <input
                     type="number"
@@ -275,15 +300,21 @@ export default function DatasetPage() {
                     className="fld fld-mono"
                   />
                 </Field>
-                  <Field label={t('dataset.adapter')} hint={t('dataset.adapterHint')}>
+                <Field label={t('dataset.adapter')} hint={t('dataset.adapterHint')}>
                   <select value={adapterId} onChange={(e) => { adapterTouched.current = true; setAdapterId(e.target.value) }} className="fld">
                     {(adapters.length ? adapters : [{ adapter_id: DEFAULT_MODEL_ID, display_name: 'MonkeyOCRv2 Parsing', tasks: [], training_types: [] }]).map((a) => <option key={a.adapter_id} value={a.adapter_id}>{a.display_name}</option>)}
                   </select>
                 </Field>
-                <label className="flex items-center gap-2 self-end pb-2 text-[12px]">
-                  <input type="checkbox" checked={pilotOnly} onChange={(e) => setPilotOnly(e.target.checked)} />
-                  {t('dataset.pilotOnly')}
-                </label>
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2 pt-1 sm:col-span-2">
+                  <label className="flex cursor-pointer items-center gap-2 text-[12px]">
+                    <input type="checkbox" checked={approvedOnly} onChange={(e) => setApprovedOnly(e.target.checked)} />
+                    {t('dataset.approvedOnly')}
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 text-[12px]">
+                    <input type="checkbox" checked={pilotOnly} onChange={(e) => setPilotOnly(e.target.checked)} />
+                    {t('dataset.pilotOnly')}
+                  </label>
+                </div>
               </div>
             </Collapsible>
           </div>
@@ -300,13 +331,18 @@ export default function DatasetPage() {
               className="btn btn-primary"
             >
               <IconPlus size={13} />
-              {building
-                ? t('dataset.building')
-                : buildArmed
-                  ? t('dataset.confirmOverwrite')
-                  : t('dataset.buildBtn')}
+              {building ? t('dataset.building') : t('dataset.buildBtn')}
             </button>
-            {buildArmed && <span className="text-[11px] text-[color:var(--color-sig-text)]">{t('dataset.overwriteNote')}</span>}
+            {status.built && (
+              <button
+                type="button"
+                onClick={() => void removeDataset()}
+                disabled={building || deleting}
+                className="btn btn-danger"
+              >
+                {t('dataset.deleteBtn')}
+              </button>
+            )}
             {exportWouldBeEmpty && !building && (
               <span className="text-[11px] text-[color:var(--color-ink-2)]">{t('dataset.buildEmptyHint')}</span>
             )}

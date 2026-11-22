@@ -56,13 +56,14 @@ const EMPTY_CUSTOM_FORM: CustomModelForm = {
 interface ModelPickerProps {
   models: ModelItem[]
   loading: boolean
+  readOnly?: boolean
   selectedId: string | null
   onSelect: (model: ModelItem) => void
   /** Il registro va riletto dopo aver aggiunto o tolto un modello. */
   onChanged: () => Promise<void>
 }
 
-export function ModelPicker({ models, loading, selectedId, onSelect, onChanged }: ModelPickerProps) {
+export function ModelPicker({ models, loading, readOnly = false, selectedId, onSelect, onChanged }: ModelPickerProps) {
   const { t, locale } = useI18n()
   const inf = useInference()
   const [query, setQuery] = useState('')
@@ -290,8 +291,8 @@ export function ModelPicker({ models, loading, selectedId, onSelect, onChanged }
               <button
                 type="button"
                 className={`btn btn-sm w-[7.5rem] justify-center ${selected || !selectedId ? 'btn-primary' : ''}`}
-                disabled={!selectable}
-                title={!selectable ? (m.host_blocker ? t(`modelsHub.why.host.${m.host_blocker}`) : t('modelsHub.notUsableYetHint')) : undefined}
+                disabled={!selectable || readOnly}
+                title={readOnly ? t('modelsHub.viewerReadOnly') : !selectable ? (m.host_blocker ? t(`modelsHub.why.host.${m.host_blocker}`) : t('modelsHub.notUsableYetHint')) : undefined}
                 onClick={() => onSelect(m)}
               >
                 {selected ? t('modelsHub.continue') : t('modelsHub.choose')}
@@ -306,6 +307,7 @@ export function ModelPicker({ models, loading, selectedId, onSelect, onChanged }
         )}
       </ul>
 
+      {!readOnly && (
       <div className="border-t border-[color:var(--color-rule)] bg-[color:var(--color-fill)] p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-[12px] text-[color:var(--color-ink-2)]">{t('cloud.models.addCustomHint')}</p>
@@ -346,6 +348,7 @@ export function ModelPicker({ models, loading, selectedId, onSelect, onChanged }
           </div>
         )}
       </div>
+      )}
     </Module>
   )
 }

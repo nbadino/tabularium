@@ -64,13 +64,13 @@ describe('LabelsEditor', () => {
     render(<LabelsEditor projectId={7} labels={LABELS} onSaved={onSaved} />)
 
     await user.click(screen.getByRole('button', { name: 'Aggiungi classe' }))
-    await user.type(screen.getByPlaceholderText('Es. Vessel-name'), 'Port-of-call')
+    await user.type(screen.getByPlaceholderText('Es. Nome-nave'), 'Port-of-call')
     await user.type(screen.getByPlaceholderText('VSL'), 'PRT')
     await user.type(
-      screen.getByPlaceholderText('Es. Please output the text content from the image.'),
+      screen.getByPlaceholderText('Es. Trascrivi il testo contenuto nell’immagine.'),
       'text',
     )
-    await user.type(screen.getByPlaceholderText('table, Table_document, grid'), 'port_name')
+    await user.type(screen.getByPlaceholderText('tabella, Table_document, griglia'), 'port_name')
     await user.click(screen.getByRole('button', { name: 'Aggiungi classe' }))
 
     await user.click(screen.getByRole('button', { name: 'Salva classi' }))
@@ -90,10 +90,10 @@ describe('LabelsEditor', () => {
     render(<LabelsEditor projectId={7} labels={LABELS} onSaved={() => {}} />)
 
     await user.click(screen.getByRole('button', { name: 'Aggiungi classe' }))
-    await user.type(screen.getByPlaceholderText('Es. Vessel-name'), '1bad')
+    await user.type(screen.getByPlaceholderText('Es. Nome-nave'), '1bad')
     await user.type(screen.getByPlaceholderText('VSL'), 'BAD')
     await user.type(
-      screen.getByPlaceholderText('Es. Please output the text content from the image.'),
+      screen.getByPlaceholderText('Es. Trascrivi il testo contenuto nell’immagine.'),
       'text',
     )
     // Il pulsante di conferma della bozza resta spento finché il nome è invalido.

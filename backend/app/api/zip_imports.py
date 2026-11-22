@@ -37,6 +37,8 @@ class ZipImportIn(BaseModel):
     # A flat import into a new collection with this name (an existing one with
     # the same name, in any case, is reused). Exclusive with `collection_id`.
     collection_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)] | None = None
+    # Optional folder filter when `layout == 'collections'` (or flat partial import).
+    include_folders: list[str] | None = None
 
 
 def _lang(request: Request) -> str:
@@ -130,7 +132,8 @@ def _run_job(job_id: str, project_id: int, upload_id: str, payload: ZipImportIn,
     try:
         report = zip_import.run_import(
             project_id, upload_id, layout=payload.layout, collection_id=payload.collection_id,
-            collection_name=payload.collection_name, lang=lang, on_progress=progress,
+            collection_name=payload.collection_name, include_folders=payload.include_folders,
+            lang=lang, on_progress=progress,
         )
     except zip_import.UploadError as exc:
         with _jobs_lock:

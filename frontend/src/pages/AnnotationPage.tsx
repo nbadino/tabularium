@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { labelName } from '../i18n/labelName'
 import { useFitOneRow } from '../lib/fitRow'
 import { Link, useSearchParams } from 'react-router'
+import { cleanRelPath } from '../lib/pageLabel'
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../lib/api'
 import { bboxPoints, loadImageSize, PixelSize, scaleRatio } from '../lib/coords'
 import type { BlockOut, LabelDef, PageItem, PageSums, RecognitionRun } from '../lib/types'
@@ -61,17 +62,16 @@ import type { PrefillEngines, TableDetectOut, TableDetectRequest, TableGrid, Tab
 import { useI18n, tn } from '../i18n'
 import {
   IconCheck,
+  IconClose,
   IconFlow,
   IconHand,
   IconPrefill,
   IconPolygon,
   IconPlus,
   IconRectangle,
-  IconRedo,
   IconSave,
   IconSelect,
   IconTrash,
-  IconUndo,
 } from '../app/icons'
 
 import { useInference } from '../app/inference'
@@ -209,11 +209,51 @@ export default function AnnotationPage() {
   const [consensusDecisions, setConsensusDecisions] = useState<ConsensusDecision[]>([])
   const prefillAbortRef = useRef<AbortController | null>(null)
 
+  const draftUndoRef = useRef<Array<{ coalesceKey?: string; at: number; undo: () => Promise<void>; redo: () => Promise<void> }>>([])
+  const draftRedoRef = useRef<Array<{ coalesceKey?: string; at: number; undo: () => Promise<void>; redo: () => Promise<void> }>>([])
+  const undoSourceRef = useRef<Array<'ann' | 'draft'>>([])
+  const redoSourceRef = useRef<Array<'ann' | 'draft'>>([])
+  const [, setDraftUndoTick] = useState(0)
+  const bumpDraftUndo = () => setDraftUndoTick((v) => v + 1)
+
+  const pushDraftHistory = (
+    entry: { coalesceKey?: string; undo: () => Promise<void>; redo: () => Promise<void> },
+  ) => {
+    const now = Date.now()
+    const stack = draftUndoRef.current
+    const top = stack[stack.length - 1]
+    if (entry.coalesceKey && top?.coalesceKey === entry.coalesceKey && now - top.at < 1000) {
+      top.at = now
+      top.redo = entry.redo
+    } else {
+      stack.push({ ...entry, at: now })
+      if (stack.length > 50) stack.shift()
+      undoSourceRef.current.push('draft')
+    }
+    draftRedoRef.current = []
+    redoSourceRef.current = redoSourceRef.current.filter((s) => s !== 'draft')
+    bumpDraftUndo()
+  }
+
   /** Modifica al testo di una bozza: aggiorna il pannello subito e il
    *  database con debounce (le bozze non sono nel canvas). */
   const onDraftContent = (serverId: number, content: string) => {
+    const prev = prefillDrafts.find((x) => x.serverId === serverId)?.content ?? ''
     setPrefillDrafts((d) => d.map((x) => x.serverId === serverId ? { ...x, content } : x))
     draftEdits.schedule(serverId, content)
+    if (prev !== content) {
+      pushDraftHistory({
+        coalesceKey: `draft:${serverId}`,
+        undo: async () => {
+          setPrefillDrafts((d) => d.map((x) => (x.serverId === serverId ? { ...x, content: prev } : x)))
+          draftEdits.schedule(serverId, prev)
+        },
+        redo: async () => {
+          setPrefillDrafts((d) => d.map((x) => (x.serverId === serverId ? { ...x, content } : x)))
+          draftEdits.schedule(serverId, content)
+        },
+      })
+    }
   }
   /** Verifica una bozza: da questo momento il blocco esiste anche sul canvas
    *  (filtro in applyBlocks) — è il gesto che trasforma output in annotazione. */
@@ -224,6 +264,24 @@ export default function AnnotationPage() {
       const out = await ann.runExternal(() => apiPatch<BlockOut>(`/blocks/${serverId}?expected_revision=${ann.getRevision()}`, { confirmed }))
       ann.syncRevision(out.annotation_revision)
       if (page) await applyBlocks(page, ratio)
+      pushDraftHistory({
+        undo: async () => {
+          await draftEdits.flush()
+          const revertOut = await ann.runExternal(() =>
+            apiPatch<BlockOut>(`/blocks/${serverId}?expected_revision=${ann.getRevision()}`, { confirmed: !confirmed }),
+          )
+          ann.syncRevision(revertOut.annotation_revision)
+          if (page) await applyBlocks(page, ratio)
+        },
+        redo: async () => {
+          await draftEdits.flush()
+          const redoOut = await ann.runExternal(() =>
+            apiPatch<BlockOut>(`/blocks/${serverId}?expected_revision=${ann.getRevision()}`, { confirmed }),
+          )
+          ann.syncRevision(redoOut.annotation_revision)
+          if (page) await applyBlocks(page, ratio)
+        },
+      })
     } catch (e) {
       setError(e)
     }
@@ -279,12 +337,15 @@ export default function AnnotationPage() {
     window.addEventListener('resize', resize)
     return () => window.removeEventListener('resize', resize)
   }, [])
+  const isCompact = viewportWidth < 768
+  const minCanvasWidth = viewportWidth >= 1024 ? 420 : 320
   const sidebarWidth = Math.min(split.sidebar, Math.max(SIDEBAR_MIN, viewportWidth * 0.22))
-  const contentWidth = Math.min(split.content, Math.max(CONTENT_MIN, viewportWidth - sidebarWidth - 320))
+  const contentWidth = Math.min(split.content, Math.max(CONTENT_MIN, viewportWidth - sidebarWidth - minCanvasWidth))
   const [studioMode, setStudioMode] = useState<StudioMode>(loadStudioMode)
   // The page list is a convenience, not the work: closed by default on screens
   // narrower than 1440px, where the scan needs the width. The choice is kept.
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) return false
     try {
       const saved = localStorage.getItem(SIDEBAR_KEY)
       if (saved != null) return saved === '1'
@@ -321,7 +382,7 @@ export default function AnnotationPage() {
     })
   const resetSplitPane = (pane: 'sidebar' | 'content') => setSplitPane(pane, SPLIT_DEFAULT[pane])
   /** Il pannello contenuti non può mangiare più della metà della finestra. */
-  const contentMax = () => Math.max(CONTENT_MIN, Math.round(viewportWidth - sidebarWidth - 320))
+  const contentMax = () => Math.max(CONTENT_MIN, Math.round(viewportWidth - sidebarWidth - minCanvasWidth))
 
   const ratio =
     page && previewSize.w > 0
@@ -329,6 +390,25 @@ export default function AnnotationPage() {
       : 1
 
   const ann = useAnnotationState(page, ratio, labels, !navBusy && !prefillBusy)
+
+  useEffect(() => {
+    if (!prefillNotice) return
+    const timer = window.setTimeout(() => setPrefillNotice(null), 6000)
+    return () => window.clearTimeout(timer)
+  }, [prefillNotice])
+
+  const liveDraftCount = useMemo(
+    () => prefillDrafts.length + ann.blocks.filter((b) => Boolean(b.prefill) && !b.confirmed).length,
+    [prefillDrafts.length, ann.blocks],
+  )
+  useEffect(() => {
+    if (!page || navBusy) return
+    setPages((cur) => {
+      const match = cur.find((p) => p.id === page.id)
+      if (!match || match.drafts === liveDraftCount) return cur
+      return cur.map((p) => (p.id === page.id ? { ...p, drafts: liveDraftCount } : p))
+    })
+  }, [page?.id, navBusy, liveDraftCount])
 
   // The comparison is read even with the mode off: the content says the page has one.
   useEffect(() => {
@@ -997,6 +1077,12 @@ export default function AnnotationPage() {
       return
     }
     setPage(p)
+    setPrefillNotice(null)
+    draftUndoRef.current = []
+    draftRedoRef.current = []
+    undoSourceRef.current = []
+    redoSourceRef.current = []
+    bumpDraftUndo()
     setRemoteEdit(null)
     pageIdRef.current = p.id
     // Senza, un refresh riportava lo Studio vuoto e la pagina aperta si perdeva.
@@ -1150,7 +1236,7 @@ export default function AnnotationPage() {
     const b = ann.blocks.find((x) => x.id === id)
     ann.deleteBlock(id)
     if (toastTimer.current) clearTimeout(toastTimer.current)
-    setDeleteToast({ label: b?.label ?? t('layers.tab') })
+    setDeleteToast({ label: b ? labelName(b.label) : t('layers.tab') })
     toastTimer.current = setTimeout(() => setDeleteToast(null), 6000)
   }
 
@@ -1506,12 +1592,56 @@ export default function AnnotationPage() {
     }
     return () => { current = false }
   }, [page?.id, page?.status, page?.annotation_revision])
+  const formatReadinessReasons = (reasons: string[]): string[] => {
+    const sorted = [...ann.blocks].sort(
+      (a, b) => (a.orderIdx ?? Number.MAX_SAFE_INTEGER) - (b.orderIdx ?? Number.MAX_SAFE_INTEGER),
+    )
+    const byId = new Map<number, { order: number; label: string }>()
+    sorted.forEach((b, i) => {
+      if (b.serverId != null) byId.set(b.serverId, { order: i + 1, label: b.label })
+    })
+    return reasons.map((reason) =>
+      reason.replace(/(?:blocco|block|bloc)\s+(\d+)(?:\s*\(([^)]+)\))?/gi, (full, rawId, rawLabel) => {
+        const hit = byId.get(Number(rawId))
+        if (!hit && !rawLabel) return full
+        const label = labelName(hit?.label ?? rawLabel ?? '')
+        return hit
+          ? t('annotate.blockRefOrder', { n: hit.order, label })
+          : t('annotate.blockRefLabel', { label })
+      }),
+    )
+  }
+
   const approveCurrentPage = async (confirmDrafts = false): Promise<boolean> => {
     if (!page || projectId === '') return false
     setError(null)
     setApproving(true)
     try {
       await flushEdits()
+      if (!confirmDrafts) {
+        const readiness = await apiGet<{ ready: boolean; errors: string[] }>(`/pages/${page.id}/readiness`)
+        if (!readiness.ready) {
+          const rawErrors = readiness.errors ?? []
+          const formatted = formatReadinessReasons(rawErrors)
+          const hasUntouchedCells = rawErrors.some((msg) => /celle|cells|cellules/i.test(msg))
+          const detail = formatted.join(' · ')
+          const body = hasUntouchedCells
+            ? `${t('annotate.approveDraftsBody')} ${t('annotate.approveUntouchedTableWarn')}${detail ? ` (${detail})` : ''}`
+            : detail
+              ? `${t('annotate.approveDraftsBody')} ${detail}`
+              : t('annotate.approveDraftsBody')
+          const ok = await confirm({
+            title: t('annotate.approveDraftsTitle'),
+            message: body,
+            acceptLabel: t('annotate.approveDraftsConfirm'),
+          })
+          if (ok) {
+            setApproving(false)
+            return approveCurrentPage(true)
+          }
+          return false
+        }
+      }
       const accepted = await apiPost<{ annotation_revision?: number }>(`/pages/${page.id}/approve`, confirmDrafts ? { confirm_drafts: true } : undefined)
       if (accepted.annotation_revision != null) ann.syncRevision(accepted.annotation_revision)
       if (confirmDrafts) {
@@ -1525,12 +1655,11 @@ export default function AnnotationPage() {
       setNextTask(queue.items[0] ?? null)
       return true
     } catch (e) {
-      // 409: la pagina non è pronta (di solito bozze non verificate). Non è un
-      // vicolo cieco: si offre di confermarle e approvare, scelta esplicita.
+      // 409 fallback when readiness changes concurrently between check and approve.
       if (!confirmDrafts && e instanceof ApiError && e.status === 409) {
         let reasons: string[] = []
         try {
-          reasons = (JSON.parse(e.body)?.detail?.errors ?? []) as string[]
+          reasons = formatReadinessReasons((JSON.parse(e.body)?.detail?.errors ?? []) as string[])
         } catch {
           /* corpo non JSON: resta il messaggio generico */
         }
@@ -1584,6 +1713,43 @@ export default function AnnotationPage() {
   const peers = live.participants.filter((p) => p.connId !== live.selfId)
   const editingPeer = peers.find((p) => p.editing) ?? null
 
+  const handleStudioUndo = () => {
+    const last = undoSourceRef.current[undoSourceRef.current.length - 1]
+    if ((last === 'draft' || !ann.canUndo) && draftUndoRef.current.length > 0) {
+      const entry = draftUndoRef.current.pop()!
+      if (last === 'draft') undoSourceRef.current.pop()
+      draftRedoRef.current.push(entry)
+      redoSourceRef.current.push('draft')
+      bumpDraftUndo()
+      void entry.undo().catch(setError)
+      return
+    }
+    if (ann.canUndo) {
+      redoSourceRef.current.push('ann')
+      ann.undo()
+    }
+  }
+
+  const handleStudioRedo = () => {
+    const last = redoSourceRef.current[redoSourceRef.current.length - 1]
+    if ((last === 'draft' || !ann.canRedo) && draftRedoRef.current.length > 0) {
+      const entry = draftRedoRef.current.pop()!
+      if (last === 'draft') redoSourceRef.current.pop()
+      draftUndoRef.current.push(entry)
+      undoSourceRef.current.push('draft')
+      bumpDraftUndo()
+      void entry.redo().catch(setError)
+      return
+    }
+    if (ann.canRedo) {
+      undoSourceRef.current.push('ann')
+      ann.redo()
+    }
+  }
+
+  const studioCanUndo = ann.canUndo || draftUndoRef.current.length > 0
+  const studioCanRedo = ann.canRedo || draftRedoRef.current.length > 0
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <StudioHeader
@@ -1595,6 +1761,15 @@ export default function AnnotationPage() {
         onPrev={() => stepPage(-1)}
         onNext={() => stepPage(1)}
         sidebarOpen={sidebarOpen && studioMode === 'all'}
+        mode={studioMode}
+        onMode={setMode}
+        undo={{
+          canUndo: studioCanUndo,
+          canRedo: studioCanRedo,
+          onUndo: handleStudioUndo,
+          onRedo: handleStudioRedo,
+          disabled: navBusy || prefillBusy,
+        }}
         onToggleSidebar={() => {
           if (studioMode !== 'all') {
             setMode('all')
@@ -1622,7 +1797,7 @@ export default function AnnotationPage() {
           </Link>
         </div>
       )}
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className={isCompact ? 'flex min-h-0 flex-1 flex-col overflow-y-auto' : 'flex min-h-0 flex-1 overflow-hidden'}>
       {studioMode === 'all' && sidebarOpen && <PageSidebar
         projects={projects}
         projectFixed={routeProjectId != null}
@@ -1633,7 +1808,7 @@ export default function AnnotationPage() {
         onPageSelect={onPageSelect}
         sums={sums}
         loading={pagesLoading}
-        width={sidebarWidth}
+        width={isCompact ? undefined : sidebarWidth}
         reviewScope={reviewRun ? {
           label: t('annotate.reviewRun', { id: reviewRun.id, count: pages.length }),
           backTo: projectPath(reviewRun.project_id, `riconoscimenti/${reviewRun.id}`),
@@ -1641,7 +1816,7 @@ export default function AnnotationPage() {
         } : null}
       />}
 
-      {studioMode === 'all' && sidebarOpen && <Splitter
+      {!isCompact && studioMode === 'all' && sidebarOpen && <Splitter
         value={sidebarWidth}
         min={SIDEBAR_MIN}
         max={SIDEBAR_MAX}
@@ -1652,7 +1827,7 @@ export default function AnnotationPage() {
       />}
 
       {/* Centro: toolbar + canvas */}
-      <main className={studioMode === 'transcription' ? 'hidden' : 'flex min-w-0 flex-1 flex-col'}>
+      <section aria-label={t('annotate.canvasPaneAria')} className={studioMode === 'transcription' ? 'hidden' : isCompact && studioMode === 'all' ? 'flex h-[46vh] min-h-[260px] w-full shrink-0 flex-col border-b border-[color:var(--color-rule)]' : 'flex min-w-0 flex-1 flex-col'}>
         {/* Una riga sola: ciò che serve a ogni pagina sta in vista (strumenti,
             Annulla, stato del salvataggio, Prossimo compito); il resto — vista,
             flusso di lettura, prefill, salvataggio manuale, «riparti da zero» —
@@ -1699,7 +1874,7 @@ export default function AnnotationPage() {
               aria-label={t('inspector.class')}
               title={t('inspector.class')}
               // Only while drawing; invisible rather than removed so the bar does not shift.
-              className={`fld !w-auto ${ann.tool !== 'rect' && ann.tool !== 'polygon' ? 'invisible' : ''}`}
+              className={`fld mr-auto !w-auto ${ann.tool !== 'rect' && ann.tool !== 'polygon' ? 'invisible' : ''}`}
             >
               {labels.map((l) => (
                 <option key={l.name} value={l.name} title={l.name}>
@@ -1707,16 +1882,6 @@ export default function AnnotationPage() {
                 </option>
               ))}
             </select>
-            <button
-              type="button"
-              onClick={ann.undo}
-              disabled={!ann.canUndo || navBusy || prefillBusy}
-              title={t('annotate.undoTitle')}
-              className="btn mr-auto"
-            >
-              <IconUndo size={12} />
-              <span className="tb-undo-label">{t('annotate.undo')}</span>
-            </button>
           <div className="contents">
             {peers.length > 0 && (
               <div
@@ -1767,24 +1932,16 @@ export default function AnnotationPage() {
               {t('consensus.toggle')}
             </button>
             <Menu label={t('annotate.more')}>
-              <span className="lbl px-2 pt-1">{t('studio.viewMode')}</span>
-              {(['all', 'canvas', 'transcription'] as const).map((mode) => (
-                <button key={mode} type="button" className="menu-item" aria-pressed={studioMode === mode} onClick={() => setMode(mode)}>
-                  {t(`annotate.view${mode[0].toUpperCase()}${mode.slice(1)}`)}
-                  {studioMode === mode && <IconCheck size={12} className="ml-auto text-[color:var(--color-sig-text)]" />}
-                </button>
-              ))}
-              <hr className="menu-sep" />
-            <button
-              type="button"
-              onClick={() => setNewLabelOpen(true)}
-              title={t('labels.newTitle')}
-              aria-label={t('labels.newTitle')}
-              className="menu-item"
-            >
-              <IconPlus size={12} />
-              <span className="tb-label">{t('labels.new')}</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => setNewLabelOpen(true)}
+                title={t('labels.newTitle')}
+                aria-label={t('labels.newTitle')}
+                className="menu-item"
+              >
+                <IconPlus size={12} />
+                <span className="tb-label">{t('labels.new')}</span>
+              </button>
 
               <button
                 type="button"
@@ -1795,16 +1952,6 @@ export default function AnnotationPage() {
                 <IconFlow size={12} />
                 {showFlow ? t('annotate.showFlow') : t('annotate.viewFlow')}
                 {showFlow && <IconCheck size={12} className="ml-auto text-[color:var(--color-sig-text)]" />}
-              </button>
-              <button
-                type="button"
-                onClick={ann.redo}
-                disabled={!ann.canRedo}
-                title={t('annotate.redoTitle')}
-                className="menu-item"
-              >
-                <IconRedo size={12} />
-                {t('annotate.redo')}
               </button>
               <hr className="menu-sep" />
               <button
@@ -1880,12 +2027,20 @@ export default function AnnotationPage() {
           )}
 
           {prefillNotice && (
-            <div className="absolute left-3 top-16 z-10 max-w-md border border-[color:var(--color-ok)] bg-[color:var(--color-ok-wash)] p-3 text-xs text-[color:var(--color-ok)]">
-              {prefillNotice}
+            <div className="float-layer absolute left-3 top-3 z-20 flex max-w-md items-start gap-2 border border-[color:var(--color-ok)] bg-[color:var(--color-ok-wash)] p-2.5 text-xs text-[color:var(--color-ok)]" role="status">
+              <span className="min-w-0 flex-1">{prefillNotice}</span>
+              <button
+                type="button"
+                onClick={() => setPrefillNotice(null)}
+                aria-label={t('common.close')}
+                className="shrink-0 p-0.5 text-[color:var(--color-ok)] hover:opacity-75"
+              >
+                <IconClose size={12} />
+              </button>
             </div>
           )}
           {deleteToast && (
-            <div className="float-layer absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 px-3 py-2 text-xs text-[color:var(--color-ink)]">
+            <div className="float-layer absolute bottom-14 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 px-3 py-2 text-xs text-[color:var(--color-ink)]">
               <span>
                 {t('annotate.deleteToast', { label: deleteToast.label })}
               </span>
@@ -1897,7 +2052,7 @@ export default function AnnotationPage() {
           {labelToast && (
             <div
               role="status"
-              className="float-layer absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 border border-[color:var(--color-ok)] bg-[color:var(--color-ok-wash)] px-3 py-2 text-xs text-[color:var(--color-ok)]"
+              className="float-layer absolute bottom-14 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 border border-[color:var(--color-ok)] bg-[color:var(--color-ok-wash)] px-3 py-2 text-xs text-[color:var(--color-ok)]"
             >
               <IconCheck size={12} />
               <span>{labelToast}</span>
@@ -1966,14 +2121,14 @@ export default function AnnotationPage() {
             )
           )}
         </div>
-      </main>
+      </section>
 
       {/* Rail destro: una zona sola — il contenuto della pagina. L'output
           del modello arriva in diretta in cima, i blocchi si correggono
           riga per riga sotto (ritaglio a sinistra, testo o foglio a
           destra), l'ordine di lettura si governa dalle righe stesse.
           Larghezza governata dallo splitter. */}
-      {studioMode === 'all' && <Splitter
+      {!isCompact && studioMode === 'all' && <Splitter
         value={contentWidth}
         min={CONTENT_MIN}
         max={contentMax()}
@@ -1984,14 +2139,27 @@ export default function AnnotationPage() {
       />}
       <section
         aria-label={t('content.paneAria')}
-        className={`${studioMode === 'canvas' ? 'hidden' : 'flex'} min-w-0 flex-col overflow-y-auto bg-[color:var(--color-sheet)] p-3 ${studioMode === 'all' ? 'shrink-0' : 'flex-1'}`}
-        style={studioMode === 'all' ? { width: contentWidth } : undefined}
+        className={
+          studioMode === 'canvas'
+            ? 'hidden'
+            : isCompact && studioMode === 'all'
+              ? 'flex w-full min-w-0 flex-col bg-[color:var(--color-sheet)] p-3'
+              : `flex min-w-0 flex-col overflow-y-auto bg-[color:var(--color-sheet)] p-3 ${studioMode === 'all' ? 'shrink-0' : 'flex-1'}`
+        }
+        style={!isCompact && studioMode === 'all' ? { width: contentWidth } : undefined}
       >
         <fieldset disabled={prefillBusy || navBusy} className="min-w-0 border-0 p-0">
         <ContentPane
           blocks={ann.blocks}
           drafts={prefillDrafts}
           pageId={page?.id ?? null}
+          pageTitle={
+            page
+              ? `${cleanRelPath(page.rel_path)}${
+                  page.pdf_page != null ? ` · p. ${page.pdf_page}` : page.page_no ? ` · p. ${page.page_no}` : ''
+                }`
+              : undefined
+          }
           pageImageUrl={previewUrl}
           pageImageSize={page ? { w: page.width, h: page.height } : null}
           labels={labels}
@@ -2049,7 +2217,10 @@ export default function AnnotationPage() {
       {prefillOpen && page && projectId !== '' && (
         <PrefillDialog
           canRun={prefillEngine !== 'off' && (prefillEngine === 'ocr' ? engines?.ocr.available !== false : inf.enabled && engines?.model.available !== false)}
-          engineControl={<label className="block"><span className="lbl">{t('annotate.prefillEngine')}</span>              <select
+          engineControl={
+            <div>
+              <label className="block"><span className="lbl">{t('annotate.prefillEngine')}</span>
+              <select
                 value={prefillEngine}
                 onChange={(e) => setPrefillEngine(e.target.value as 'off' | 'ocr' | 'model-native')}
                 disabled={prefillBusy}
@@ -2058,10 +2229,6 @@ export default function AnnotationPage() {
               >
                 <option value="off">{t('annotate.prefillOff')}</option>
                 <option value="ocr">{t('annotate.prefillEngineOcr')} (CPU)</option>
-                {/* Un solo percorso modello: l'inferenza NATIVA — immagine
-                    com'è, prompt di default del modello, sampling suo. Il
-                    layout che chiedevamo noi al due-stadi è uscito: i
-                    risultati devono coincidere con l'uso diretto del modello. */}
                 <option
                   value="model-native"
                   disabled={
@@ -2077,7 +2244,15 @@ export default function AnnotationPage() {
                         ? `${t('annotate.prefillEngineModelNative')} — ${t('annotate.prefillModeUnsupported')}`
                         : `${t('annotate.prefillEngineModelNative')} — ${nameOf(engines?.model.adapter_id ?? inf.adapterId) ?? inf.model} (${(engines?.model.is_cloud ?? inf.isCloud) ? 'Cloud' : 'GPU'})`}
                 </option>
-              </select></label>}
+              </select></label>
+              {(!inf.enabled || (engines && !engines.model.available)) && (
+                <p className="mt-1 text-[11px] text-[color:var(--color-ink-2)]">
+                  {t('recognition.activeModelUnavailableHint')}{' '}
+                  <Link to="/modelli" className="font-semibold underline underline-offset-2">{t('recognition.configureInModels')}</Link>
+                </p>
+              )}
+            </div>
+          }
           summary={summarizePage(ann.blocks, prefillDrafts)}
           busy={prefillBusy}
           onRun={(mode) => void runPrelabel(mode)}

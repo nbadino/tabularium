@@ -10,6 +10,7 @@ import { setLocale } from '../i18n'
 // Lloyd's: the active model is off; Gemini 4 Argon and OCRia-1 are saved with their
 // own keys. The page opened on «Local OCR» and did not offer them.
 const posted: { path: string; body: unknown }[] = []
+let mockProjects = [{ id: 4, name: 'Lloyds', access: { role: 'owner', source: 'local', can_edit: true, can_manage: true } }]
 const withKeys = [
   { id: 1, name: 'Gemini 4 Argon', model_adapter_id: 'gemini-argon', served_model_name: 'gemini-4-argon', key_required: true, has_key: true },
   { id: 3, name: 'OCRia-1 (LlamaIndex)', model_adapter_id: 'llamaindex-ocria-1', served_model_name: 'ocria-1', key_required: true, has_key: true },
@@ -38,7 +39,7 @@ vi.mock('../app/activeProject', () => ({
   writeActiveProject: () => {},
   useProjects: (onPick: (pid: number) => void) => {
     useEffect(() => { onPick(4) }, []) // eslint-disable-line react-hooks/exhaustive-deps
-    return [{ id: 4, name: 'Lloyds' }]
+    return mockProjects
   },
 }))
 vi.mock('../app/inference', () => ({
@@ -123,6 +124,20 @@ describe('RecognizePage engines', () => {
       expect(screen.queryByText('Leggi come un documento unico')).toBeNull()
     } finally {
       savedModels = withKeys
+    }
+  })
+
+  it('blocks write actions for read-only viewers and uses distinct latest-run heading', async () => {
+    setLocale('it')
+    mockProjects = [{ id: 4, name: 'Lloyds', access: { role: 'viewer', source: 'member', can_edit: false, can_manage: false } }]
+    try {
+      render(<MemoryRouter initialEntries={['/progetti/4/riconoscimenti?project=4&pages=376']}><RecognizePage /></MemoryRouter>)
+      expect(await screen.findByText(/Accesso in sola lettura/)).toBeInTheDocument()
+      expect(screen.queryByRole('link', { name: 'Aggiungi pagine' })).toBeNull()
+      expect(screen.getByRole('button', { name: /Avvia riconoscimento/ })).toBeDisabled()
+      expect(screen.getByRole('link', { name: /Configuralo in Modelli/ })).toHaveAttribute('href', '/modelli')
+    } finally {
+      mockProjects = [{ id: 4, name: 'Lloyds', access: { role: 'owner', source: 'local', can_edit: true, can_manage: true } }]
     }
   })
 })

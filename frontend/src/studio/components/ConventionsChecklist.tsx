@@ -14,7 +14,7 @@ const KNOWN_IDS: Record<string, string> = {
   filetti: 'conventions.c_filetti',
 }
 
-export default function ConventionsChecklist({ projectId }: { projectId: number }) {
+export default function ConventionsChecklist({ projectId, embedded = false }: { projectId: number; embedded?: boolean }) {
   const { t } = useI18n()
   const [items, setItems] = useState<ConventionItem[] | null>(null)
   const [error, setError] = useState<unknown>(null)
@@ -44,12 +44,8 @@ export default function ConventionsChecklist({ projectId }: { projectId: number 
     return key ? t(key) : item.label
   }
 
-  return (
-    <Module
-      tab={t('conventions.tab')}
-      quiet
-      aux={items ? <span>{`${done}/${items.length}`}</span> : undefined}
-    >
+  const body = (
+    <>
       {error != null && (
         <div className="mb-2">
           <ErrorNotice error={error} onDismiss={() => setError(null)} />
@@ -87,6 +83,18 @@ export default function ConventionsChecklist({ projectId }: { projectId: number 
           </ul>
         </>
       )}
+    </>
+  )
+
+  if (embedded) return <div>{body}</div>
+
+  return (
+    <Module
+      tab={t('conventions.tab')}
+      quiet
+      aux={items ? <span>{`${done}/${items.length}`}</span> : undefined}
+    >
+      {body}
     </Module>
   )
 }

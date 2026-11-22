@@ -75,4 +75,14 @@ describe('CommandPalette', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/)
   })
+
+  it('hides project-scoped sections when zero projects exist', async () => {
+    const { apiGet } = await import('../lib/api')
+    vi.mocked(apiGet).mockResolvedValueOnce({ items: [] })
+    setup()
+    fireEvent.click(screen.getByRole('button', { name: /Cerca/ }))
+    await waitFor(() => expect(apiGet).toHaveBeenCalledWith('/projects'))
+    expect(screen.queryByRole('option', { name: /Riconosci/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /Progetti/ })).toBeInTheDocument()
+  })
 })

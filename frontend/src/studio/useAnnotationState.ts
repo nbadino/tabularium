@@ -243,20 +243,24 @@ export function useAnnotationState(
   const addBlock = useCallback(
     (input: { kind: 'rect' | 'polygon'; points: { x: number; y: number }[]; label: string }) => {
       markDirty()
-      const block: DisplayBlock = {
-        id: nextId(),
-        serverId: null,
-        label: input.label,
-        kind: input.kind,
-        points: input.points,
-        content: '',
-        orderIdx: null,
-        confirmed: false,
-      }
-      hist.set((prev) => [...prev, block])
-      setSelectedId(block.id)
+      const id = nextId()
+      hist.set((prev) => {
+        const nextOrder = prev.reduce((max, b) => Math.max(max, b.orderIdx ?? 0), 0) + 1
+        const block: DisplayBlock = {
+          id,
+          serverId: null,
+          label: input.label,
+          kind: input.kind,
+          points: input.points,
+          content: '',
+          orderIdx: nextOrder,
+          confirmed: false,
+        }
+        return [...prev, block]
+      })
+      setSelectedId(id)
     },
-    [hist],
+    [hist, markDirty],
   )
 
   const updateBlockPoints = useCallback(
@@ -364,11 +368,11 @@ export function useAnnotationState(
         const j = i + dir
         if (i < 0 || j < 0 || j >= sorted.length) return prev
         ;[sorted[i], sorted[j]] = [sorted[j], sorted[i]]
-        const posById = new Map(sorted.map((b, idx) => [b.id, idx]))
+        const posById = new Map(sorted.map((b, idx) => [b.id, idx + 1]))
         return prev.map((b) => ({ ...b, orderIdx: posById.get(b.id) ?? b.orderIdx }))
       })
     },
-    [hist],
+    [hist, markDirty],
   )
 
   const reorderReset = useCallback(() => {
@@ -377,10 +381,10 @@ export function useAnnotationState(
       const sorted = [...prev].sort(
         (a, b) => (a.orderIdx ?? Number.MAX_SAFE_INTEGER) - (b.orderIdx ?? Number.MAX_SAFE_INTEGER),
       )
-      const posById = new Map(sorted.map((b, idx) => [b.id, idx]))
+      const posById = new Map(sorted.map((b, idx) => [b.id, idx + 1]))
       return prev.map((b) => ({ ...b, orderIdx: posById.get(b.id) ?? b.orderIdx }))
     })
-  }, [hist])
+  }, [hist, markDirty])
 
   // --- salvataggio ----------------------------------------------------------
   /** Una singola andata al server. La serializzazione sta in `saveNow`. */

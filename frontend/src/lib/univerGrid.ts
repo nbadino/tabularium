@@ -159,10 +159,10 @@ export function univerToGrid(data: IWorkbookData, previous: TableGrid): TableGri
         rowspan: span?.rs ?? 1,
         colspan: span?.cs ?? 1,
         text,
-        // Il testo invariato conserva la sua storia; quello riscritto è una
-        // correzione umana da verificare.
+        // Untouched cells preserve provenance; manual non-empty edits auto-verify.
         source: unchanged ? old?.source : 'manual',
-        verified: unchanged ? old?.verified ?? false : false,
+        verified: unchanged ? old?.verified ?? false : text.trim() !== '',
+        verification_source: unchanged ? old?.verification_source ?? null : null,
       })
     }
   }

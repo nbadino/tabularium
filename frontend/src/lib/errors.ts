@@ -82,17 +82,21 @@ export function describeError(e: unknown): Explained {
       case 401:
         return {
           titolo: t('errors.unauthorizedTitle'),
-          messaggio: detail ?? t('errors.unauthorizedMsg'),
+          messaggio: e.path.includes('/auth/login')
+            ? t('auth.invalidCredentials')
+            : detail ?? t('errors.unauthorizedMsg'),
           suggerimento: t('errors.unauthorizedHint'),
           dettaglio,
         }
-      case 400:
+      case 400: {
+        const isVastKey = detail != null && /vast_api_key|Modelli → Cloud|Models → Cloud/i.test(detail)
         return {
           titolo: t('errors.badRequestTitle'),
           messaggio: detail ?? t('errors.badRequestMsg', { resource: risorsa }),
-          suggerimento: t('errors.badRequestHint'),
+          suggerimento: isVastKey ? t('errors.vastKeyHint') : t('errors.badRequestHint'),
           dettaglio,
         }
+      }
       case 404:
         return {
           titolo: t('errors.notFoundTitle'),
@@ -114,13 +118,16 @@ export function describeError(e: unknown): Explained {
           suggerimento: t('errors.tooLargeHint'),
           dettaglio,
         }
-      case 422:
+      case 422: {
+        const localizedDetail =
+          detail && /password too short/i.test(detail) ? t('account.tooShort') : detail
         return {
           titolo: t('errors.invalidTitle'),
-          messaggio: detail ?? t('errors.invalidMsg'),
+          messaggio: localizedDetail ?? t('errors.invalidMsg'),
           suggerimento: t('errors.invalidHint'),
           dettaglio,
         }
+      }
       case 500:
       case 502:
       case 503:

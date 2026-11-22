@@ -134,7 +134,7 @@ def iter_pdf_pages(pdf_path: str | Path, skip: frozenset[int] | set[int] = froze
     try:
         import pypdfium2 as pdfium
     except ImportError as exc:  # pragma: no cover
-        raise RuntimeError("PDF richiede pypdfium2 (pip install pypdfium2)") from exc
+        raise RuntimeError("Il formato PDF richiede il componente opzionale pypdfium2 sul server.") from exc
     pdf = pdfium.PdfDocument(str(pdf_path))
     try:
         for index in range(len(pdf)):
@@ -173,7 +173,7 @@ def render_pdf_page(
     try:
         import pypdfium2 as pdfium
     except ImportError as exc:
-        raise RuntimeError("PDF richiede pypdfium2 (pip install pypdfium2)") from exc
+        raise RuntimeError("Il formato PDF richiede il componente opzionale pypdfium2 sul server.") from exc
     pdf = pdfium.PdfDocument(str(pdf_path))
     try:
         if index < 0 or index >= len(pdf):
@@ -200,7 +200,7 @@ def pdf_page_count(pdf_path: str | Path) -> int:
     try:
         import pypdfium2 as pdfium
     except ImportError as exc:  # pragma: no cover
-        raise RuntimeError("PDF richiede pypdfium2 (pip install pypdfium2)") from exc
+        raise RuntimeError("Il formato PDF richiede il componente opzionale pypdfium2 sul server.") from exc
     pdf = pdfium.PdfDocument(str(pdf_path))
     try:
         return len(pdf)

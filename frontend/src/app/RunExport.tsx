@@ -69,7 +69,16 @@ export function RunExport({
   // null when idle; the bytes received so far while downloading.
   const [received, setReceived] = useState<number | null>(null)
   const ext = EXPORT_FORMATS.find((item) => item.key === format)?.ext ?? format
-  const collections = overview?.collections ?? []
+  const allCollections = overview?.collections ?? []
+  const runItems = run.items
+  const collections =
+    runItems && runItems.length > 0
+      ? allCollections.filter((c) => runItems.some((item) => item.collection_id === c.id))
+      : allCollections
+  const showUnassigned =
+    !runItems || runItems.length === 0 || runItems.some((item) => item.collection_id == null)
+  const hasCollectionPicker =
+    collections.length > 0 && (collections.length > 1 || showUnassigned)
 
   const pick = (next: ExportFormat) => {
     setFormat(next)
@@ -135,13 +144,13 @@ export function RunExport({
             </div>
           </fieldset>
 
-          {collections.length > 0 && (
+          {hasCollectionPicker && (
             <label className="block">
               <span className="lbl">{t('recognition.export.pages')}</span>
               <select className="fld" value={collection} disabled={busy} onChange={(e) => setCollection(e.target.value)}>
                 <option value="all">{t('scope.allCollections')}</option>
                 {collections.map((c) => <option key={c.id} value={String(c.id)}>{c.name}</option>)}
-                <option value={UNASSIGNED}>{t('collections.none')}</option>
+                {showUnassigned && <option value={UNASSIGNED}>{t('collections.none')}</option>}
               </select>
             </label>
           )}

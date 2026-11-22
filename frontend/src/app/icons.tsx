@@ -323,3 +323,29 @@ export const IconUsers = (p: IconProps) => (
     <path d="M11.4 10.2c1.7.4 3.1 1.5 3.1 3.3" />
   </Icon>
 )
+
+/** External link indicator. */
+export const IconExternal = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M9.5 2.5h4v4" />
+    <path d="M13.5 2.5L7.5 8.5" />
+    <path d="M7.5 3.5h-4v9h9v-4" />
+  </Icon>
+)
+
+/** Show password/secret. */
+export const IconEye = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M1.5 8s2.5-4.2 6.5-4.2S14.5 8 14.5 8s-2.5 4.2-6.5 4.2S1.5 8 1.5 8z" />
+    <circle cx="8" cy="8" r="1.8" />
+  </Icon>
+)
+
+/** Hide password/secret. */
+export const IconEyeOff = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M1.5 8s2.5-4.2 6.5-4.2S14.5 8 14.5 8s-2.5 4.2-6.5 4.2S1.5 8 1.5 8z" />
+    <circle cx="8" cy="8" r="1.8" />
+    <path d="M2.5 13.5l11-11" />
+  </Icon>
+)

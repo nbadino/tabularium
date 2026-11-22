@@ -357,8 +357,9 @@
     border-color: var(--color-ink);
   }
   .btn:disabled {
-    color: var(--color-ink-3);
-    background: var(--color-fill);
+    color: var(--color-ink-2);
+    background: var(--color-fill-2);
+    border-color: var(--color-rule-strong);
     cursor: not-allowed;
   }
 
@@ -372,9 +373,9 @@
     border-color: var(--color-sig-hover);
   }
   .btn-primary:disabled {
-    background: var(--color-rule);
-    border-color: var(--color-rule);
-    color: var(--color-sheet);
+    background: var(--color-fill-2);
+    border-color: var(--color-rule-strong);
+    color: var(--color-ink-2);
   }
 
   .btn-danger {
@@ -498,7 +499,7 @@
     display: none;
   }
   .studio-bar[data-fit~='3'] .tb-undo-label,
-  .studio-bar[data-fit~='4'] [role='toolbar'] .btn:not([aria-pressed='true']) .tb-label,
+  .studio-bar[data-fit~='4'] [role='toolbar'] .btn .tb-label,
   .studio-bar[data-fit~='5'] [role='toolbar'] .tb-label {
     position: absolute;
     width: 1px;

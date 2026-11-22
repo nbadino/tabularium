@@ -508,7 +508,7 @@ describe('ContentPane', () => {
     expect(screen.getAllByRole('region')).toHaveLength(1)
     expect(screen.queryByRole('region', { name: 'Livelli' })).toBeNull()
 
-    await user.click(screen.getByLabelText('Sposta Text prima nell’ordine di lettura'))
+    await user.click(screen.getByLabelText('Sposta Testo prima nell’ordine di lettura'))
     expect(onMove).toHaveBeenCalledWith('b2', -1)
   })
 
@@ -528,7 +528,7 @@ describe('ContentPane', () => {
         onDelete={onDelete}
       />,
     )
-    const handle = screen.getByRole('button', { name: 'Blocco 1: Title' })
+    const handle = screen.getByRole('button', { name: 'Blocco 1: Titolo' })
     handle.focus()
     await user.keyboard('{Alt>}{ArrowDown}{/Alt}')
     expect(onMove).toHaveBeenCalledWith('b1', 1)
@@ -718,5 +718,35 @@ describe('ContentPane source badge', () => {
     )
     expect(screen.getByText('OCRia-1 (LlamaIndex)')).toBeInTheDocument()
     expect(screen.getByText('OCR')).toBeInTheDocument()
+  })
+
+  it('cliccare la riga chiusa di un blocco verificato lo seleziona e apre le regole inline senza aggiungere regioni', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ conventions: [{ id: 'soft_hyphen', label: 'x', checked: true }] }),
+      }),
+    )
+    const user = userEvent.setup()
+    const onSelect = vi.fn()
+    render(
+      <ContentPane
+        blocks={[makeBlock({ id: 'b1', confirmed: true, content: 'Prima riga' })]}
+        drafts={[]}
+        labels={[]}
+        selectedId={null}
+        working={null}
+        projectId={3}
+        {...noop}
+        onSelect={onSelect}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: /Testo Prima riga/ }))
+    expect(onSelect).toHaveBeenCalledWith('b1')
+
+    await user.click(screen.getByRole('button', { name: 'Mostra o nascondi le regole del progetto' }))
+    expect(await screen.findByText(/Ricomporre le parole spezzate/)).toBeTruthy()
+    expect(screen.getAllByRole('region')).toHaveLength(1)
   })
 })

@@ -9,6 +9,7 @@ from ..adapters import annotations as annotationstore
 from ..adapters import pages as pagestore
 from ..db import connect  # noqa: F401  (approvals, reviews, deskew: P7.1)
 from ..schemas import PageList, PageOut, PageSums, PageUpdate, ProjectSumsOut
+from ..services import collections as collectionsvc
 from ..services import pages as pagesvc
 from ..services import images, table_checks
 from ..domain import otsl as otslmod
@@ -609,6 +610,46 @@ def reject_transform_candidate(
         _get_page_or_404(page_id)
     pagesvc.clear_candidate(page_id)
     return _transform_state(page_id) | {"rejected": True}
+
+
+class DeletePagesIn(BaseModel):
+    page_ids: list[int] = Field(..., min_length=1, max_length=10000)
+
+
+@router.delete("/api/pages/{page_id}")
+def delete_page(
+    page_id: int,
+    request: Request,
+    user: dict = Depends(require_resource(write=True)),
+) -> dict:
+    """Delete a single page from its project (never touches external source files)."""
+    row = _get_page_or_404(page_id)
+    lang = parse_lang(request.headers.get("accept-language"))
+    try:
+        deleted = collectionsvc.delete_pages_for_project(
+            int(row["project_id"]), [page_id], actor=user, action="page.deleted",
+        )
+    except collectionsvc.PagesBusy as exc:
+        raise HTTPException(status_code=409, detail=msg("collection_pages_busy", lang)) from exc
+    return {"deleted": len(deleted)}
+
+
+@router.post("/api/projects/{project_id}/pages/delete")
+def delete_project_pages(
+    project_id: int,
+    payload: DeletePagesIn,
+    request: Request,
+    user: dict = Depends(require_resource(write=True)),
+) -> dict:
+    """Delete selected pages from a project (never touches external source files)."""
+    lang = parse_lang(request.headers.get("accept-language"))
+    try:
+        deleted = collectionsvc.delete_pages_for_project(
+            project_id, payload.page_ids, actor=user, action="pages.deleted",
+        )
+    except collectionsvc.PagesBusy as exc:
+        raise HTTPException(status_code=409, detail=msg("collection_pages_busy", lang)) from exc
+    return {"deleted": len(deleted), "deleted_ids": [int(r["id"]) for r in deleted]}
 
 
 @router.get("/api/pages/{page_id}/tile/{level}/{x}/{y}")

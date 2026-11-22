@@ -116,7 +116,7 @@ export default function ProjectsPage() {
   return (
     <div className="p-3">
       <PageHeader title={t('projects.title')}
-        aux={canCreate && <button type="button" className="btn btn-primary" onClick={openCreate}><IconPlus size={13} />{t('projects.new')}</button>}
+        aux={canCreate && items.length > 0 && <button type="button" className="btn btn-primary" onClick={openCreate}><IconPlus size={13} />{t('projects.new')}</button>}
       />
 
       {error != null && !creating && (
@@ -205,11 +205,13 @@ export default function ProjectsPage() {
       {auth.enabled && items.some((p) => p.access?.source === 'member') && <div className="mb-3 flex flex-wrap gap-1" role="group" aria-label={t('team.projectFilters')}>
         {(['all', 'mine', 'shared'] as const).map((key) => <button key={key} type="button" className="btn btn-sm" aria-pressed={filter === key} onClick={() => setFilter(key)}>{t(`team.filter.${key}`)}</button>)}
       </div>}
-      <div className="mb-3 max-w-lg">
-        <Field label={t('ux.projectsSearch')}>
-          <input type="search" className="fld" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('ux.projectsSearchHint')} />
-        </Field>
-      </div>
+      {items.length > 0 && (
+        <div className="mb-3 max-w-lg">
+          <Field label={t('ux.projectsSearch')}>
+            <input type="search" className="fld" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('ux.projectsSearchHint')} />
+          </Field>
+        </div>
+      )}
       <Module
         tab={t('projects.list')}
         quiet
@@ -226,13 +228,14 @@ export default function ProjectsPage() {
                   {shared(p) && <span className="mt-1 block text-[12px] text-[color:var(--color-ink-2)]">{t('team.ownerLine', { name: p.owner_name ?? t('team.noOwner') })}</span>}
                 </Link>
                 {shared(p) && <Badge tone="neutral">{accessLabel(projectAccess(p, auth))}</Badge>}
+                <Badge tone="neutral">{p.archive_dir ? t('projects.sourceServer') : t('projects.sourceBrowser')}</Badge>
                 <span className="text-[12px] text-[color:var(--color-ink-2)]">{pages(p.pages_count)}</span>
                 {shared(p) && p.members_count != null && <span className="text-[12px] text-[color:var(--color-ink-2)]">{tn('team.peopleCount', p.members_count)}</span>}
               </li>
             ))}
           </ul>
         ) : (
-          <div className="flex flex-col items-start gap-2 p-6">
+          <div className={`flex flex-col gap-2 ${items.length === 0 && !loading ? 'items-center px-6 py-12 text-center' : 'items-start p-6'}`}>
             <IconProjects size={22} />
             <p className="text-[13px] font-semibold">
               {loading ? t('common.loading') : items.length > 0 ? t('ux.noProjectMatch') : t('projects.emptyTitle')}
@@ -242,7 +245,7 @@ export default function ProjectsPage() {
             </p>
             {!loading && (items.length > 0
               ? <button type="button" className="btn" onClick={() => { setQuery(''); setFilter('all') }}>{t('ux.clearSearch')}</button>
-              : canCreate && <button type="button" className="btn btn-primary" onClick={openCreate}>{t('projects.new')}</button>)}
+              : canCreate && <button type="button" className="btn btn-primary mt-1" onClick={openCreate}><IconPlus size={13} />{t('projects.new')}</button>)}
           </div>
         )}
       </Module>

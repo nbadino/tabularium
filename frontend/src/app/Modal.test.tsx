@@ -67,3 +67,12 @@ it('keeps compact status controls in the dialog title row', () => {
     screen.getByRole('checkbox', { name: 'Blocco' }),
   )
 })
+
+it('focuses the first content control instead of the header close button when no data-autofocus is set', () => {
+  render(
+    <Modal title="Collezione" onClose={() => {}}>
+      <button type="button">Azione</button>
+    </Modal>,
+  )
+  expect(screen.getByRole('button', { name: 'Azione' })).toHaveFocus()
+})

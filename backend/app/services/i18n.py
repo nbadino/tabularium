@@ -371,6 +371,9 @@ _IT: dict[str, str] = {
     "consensus_run_active": "il confronto è ancora in corso: attendi che finisca",
     "consensus_model_stopped": "fermato dopo {n} errori uguali di fila (crediti finiti o chiave non valida?): {error}",
     "consensus_nothing_to_retry": "in questo confronto non c'è niente da riprovare",
+    "playground_empty_image": "file immagine vuoto",
+    "playground_image_too_large": "immagine troppo grande",
+    "playground_invalid_image": "formato immagine non valido o danneggiato",
 }
 
 _EN: dict[str, str] = {
@@ -708,6 +711,9 @@ _EN: dict[str, str] = {
     "consensus_run_active": "the comparison is still running: wait for it to finish",
     "consensus_model_stopped": "stopped after {n} identical errors in a row (out of credits or invalid key?): {error}",
     "consensus_nothing_to_retry": "nothing in this comparison to try again",
+    "playground_empty_image": "empty image file",
+    "playground_image_too_large": "image is too large",
+    "playground_invalid_image": "invalid or corrupted image format",
 }
 
 _FR: dict[str, str] = {
@@ -1045,6 +1051,9 @@ _FR: dict[str, str] = {
     "consensus_run_active": "la comparaison est encore en cours : attendez qu’elle se termine",
     "consensus_model_stopped": "arrêté après {n} erreurs identiques d’affilée (crédits épuisés ou clé invalide ?) : {error}",
     "consensus_nothing_to_retry": "rien à relancer dans cette comparaison",
+    "playground_empty_image": "fichier image vide",
+    "playground_image_too_large": "image trop volumineuse",
+    "playground_invalid_image": "format d’image invalide ou endommagé",
 }
 
 CATALOG: dict[str, dict[str, str]] = {"it": _IT, "en": _EN, "fr": _FR}

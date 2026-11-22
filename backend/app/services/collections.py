@@ -43,31 +43,31 @@ def _owned_upload(project_id: int, abs_path: str) -> bool:
     return True
 
 
-def delete_collection(project_id: int, collection_id: int, *, pages: str, actor: dict | None) -> dict:
-    """Delete the collection; `pages` is `unassign` or `delete`."""
-    with connect() as conn:
-        ids = collectionstore.page_ids(project_id, collection_id, conn)
-    if pages == "delete" and pagestore.in_active_recognition(ids):
+def delete_pages_for_project(
+    project_id: int,
+    page_ids: list[int],
+    *,
+    actor: dict | None,
+    action: str = "pages.deleted",
+    audit_extra: dict | None = None,
+) -> list[dict]:
+    """Delete pages belonging to `project_id` and clean up owned upload/cache files.
+
+    Never deletes external source files in a server `archive_dir`.
+    """
+    unique_ids = sorted({int(pid) for pid in page_ids})
+    if not unique_ids:
+        return []
+    if pagestore.in_active_recognition(unique_ids):
         raise PagesBusy()
     deleted: list[dict] = []
-    unassigned = 0
     with connect() as conn:
-        collection = collectionstore.get(project_id, collection_id, conn)
-        if pages == "delete":
-            deleted = pagestore.delete_rows(conn, project_id, ids)
-            collectionstore.delete(conn, project_id, collection_id)
-        else:
-            unassigned = collectionstore.unassign_and_delete(conn, project_id, collection_id)
-        auditsvc.record(
-            conn, actor, "collection.deleted", resource_type="project", resource_id=project_id,
-            payload={
-                "collection_id": collection_id,
-                "name": collection["name"] if collection else None,
-                "pages": pages,
-                "page_ids": [row["id"] for row in deleted],
-                "unassigned": unassigned,
-            },
-        )
+        deleted = pagestore.delete_rows(conn, project_id, unique_ids)
+        if deleted:
+            auditsvc.record(
+                conn, actor, action, resource_type="project", resource_id=project_id,
+                payload={"page_ids": [row["id"] for row in deleted], **(audit_extra or {})},
+            )
         orphans = {
             row["abs_path"] for row in deleted
             if _owned_upload(project_id, row["abs_path"]) and not pagestore.path_in_use(conn, row["abs_path"])
@@ -76,7 +76,57 @@ def delete_collection(project_id: int, collection_id: int, *, pages: str, actor:
         _remove_page_files(int(row["id"]))
     for path in orphans:
         Path(path).unlink(missing_ok=True)
-    return {"deleted": True, "pages_unassigned": unassigned, "pages_deleted": len(deleted)}
+    return deleted
+
+
+def delete_collection(project_id: int, collection_id: int, *, pages: str, actor: dict | None) -> dict:
+    """Delete the collection; `pages` is `unassign` or `delete`."""
+    with connect() as conn:
+        ids = collectionstore.page_ids(project_id, collection_id, conn)
+        collection = collectionstore.get(project_id, collection_id, conn)
+    if pages == "delete":
+        if pagestore.in_active_recognition(ids):
+            raise PagesBusy()
+        deleted = delete_pages_for_project(
+            project_id,
+            ids,
+            actor=actor,
+            action="collection.deleted",
+            audit_extra={
+                "collection_id": collection_id,
+                "name": collection["name"] if collection else None,
+                "pages": pages,
+                "unassigned": 0,
+            },
+        )
+        with connect() as conn:
+            collectionstore.delete(conn, project_id, collection_id)
+            if not deleted:
+                auditsvc.record(
+                    conn, actor, "collection.deleted", resource_type="project", resource_id=project_id,
+                    payload={
+                        "collection_id": collection_id,
+                        "name": collection["name"] if collection else None,
+                        "pages": pages,
+                        "page_ids": [],
+                        "unassigned": 0,
+                    },
+                )
+        return {"deleted": True, "pages_unassigned": 0, "pages_deleted": len(deleted)}
+
+    with connect() as conn:
+        unassigned = collectionstore.unassign_and_delete(conn, project_id, collection_id)
+        auditsvc.record(
+            conn, actor, "collection.deleted", resource_type="project", resource_id=project_id,
+            payload={
+                "collection_id": collection_id,
+                "name": collection["name"] if collection else None,
+                "pages": pages,
+                "page_ids": [],
+                "unassigned": unassigned,
+            },
+        )
+    return {"deleted": True, "pages_unassigned": unassigned, "pages_deleted": 0}
 
 
 class ScopeError(Exception):

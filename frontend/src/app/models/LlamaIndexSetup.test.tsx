@@ -169,6 +169,16 @@ describe('LlamaIndexSetup', () => {
       expect.objectContaining({ workflow: expect.objectContaining({ tier: 'agentic_plus' }) }),
     ))
   })
+
+  it('shows inline validation on blank API key instead of an unexpected-error notice', async () => {
+    const user = userEvent.setup()
+    render(<LlamaIndexSetup model={model} onClose={vi.fn()} />)
+    await screen.findByRole('heading', { name: 'Configurazione OCRia-1' })
+    await user.click(screen.getAllByRole('button', { name: 'Salva e usa OCRia-1' })[0])
+    expect(screen.getByRole('alert')).toHaveTextContent(/Inserisci una API key LlamaIndex/)
+    expect(screen.queryByText(/Errore imprevisto/i)).toBeNull()
+    expect(saveInferenceToBackend).not.toHaveBeenCalled()
+  })
 })
 
 describe('ocriaBlockers', () => {

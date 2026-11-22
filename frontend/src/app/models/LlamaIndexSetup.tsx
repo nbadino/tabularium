@@ -154,6 +154,7 @@ export function LlamaIndexSetup({ model, onClose }: LlamaIndexSetupProps) {
   const [testing, setTesting] = useState(false)
   const [activating, setActivating] = useState(false)
   const [error, setError] = useState<unknown>(null)
+  const [apiKeyError, setApiKeyError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
   const load = async () => {
@@ -259,9 +260,10 @@ export function LlamaIndexSetup({ model, onClose }: LlamaIndexSetupProps) {
 
   const activate = async () => {
     if (!apiKey.trim() && !(useSavedKey && hasStoredLlamaKey)) {
-      setError(new Error(t('modelsHub.llamaIndex.apiKeyRequired')))
+      setApiKeyError(t('modelsHub.llamaIndex.apiKeyRequired'))
       return
     }
+    setApiKeyError(null)
     setActivating(true)
     setError(null)
     setNotice(null)
@@ -399,13 +401,23 @@ export function LlamaIndexSetup({ model, onClose }: LlamaIndexSetupProps) {
                       autoComplete="off"
                       value={apiKey}
                       placeholder={hasStoredLlamaKey ? '••••••••••••' : 'llx-…'}
-                      onChange={(event) => { setApiKey(event.target.value); setUseSavedKey(false) }}
+                      aria-invalid={Boolean(apiKeyError)}
+                      onChange={(event) => {
+                        setApiKey(event.target.value)
+                        setUseSavedKey(false)
+                        if (apiKeyError) setApiKeyError(null)
+                      }}
                       disabled={loading || activating}
                     />
                     <button type="button" className="btn !rounded-l-none" onClick={() => setRevealKey((value) => !value)}>
                       {revealKey ? t('modelsHub.llamaIndex.hideKey') : t('modelsHub.llamaIndex.showKey')}
                     </button>
                   </div>
+                  {apiKeyError && (
+                    <span role="alert" className="mt-1 block text-[12px] font-medium text-[color:var(--color-danger)]">
+                      {apiKeyError}
+                    </span>
+                  )}
                   <span className="mt-1 block text-[12px] text-[color:var(--color-ink-3)]">
                     {t('modelsHub.llamaIndex.apiKeyHint')}
                   </span>

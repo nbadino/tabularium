@@ -3,11 +3,12 @@
  * which page this is, and one way to finish it — "verify and go to the next",
  * also as Ctrl/Cmd+Enter. J and K move between pages when not typing.
  */
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { useI18n } from '../../i18n'
-import { IconCheck, IconNext, IconPrev } from '../../app/icons'
+import { IconCheck, IconNext, IconPrev, IconRedo, IconUndo } from '../../app/icons'
+import { Modal } from '../../app/ui'
 
 export type StudioFinish = {
   /** verify: approve then move on; next: already approved, only move on; last: approve, nothing after. */
@@ -41,6 +42,9 @@ export default function StudioHeader({
   onNext,
   sidebarOpen,
   onToggleSidebar,
+  mode,
+  onMode,
+  undo,
   children,
 }: {
   backTo: string
@@ -53,10 +57,20 @@ export default function StudioHeader({
   onNext: () => void
   sidebarOpen: boolean
   onToggleSidebar: () => void
+  mode?: 'all' | 'canvas' | 'transcription'
+  onMode?: (mode: 'all' | 'canvas' | 'transcription') => void
+  undo?: {
+    canUndo: boolean
+    canRedo: boolean
+    onUndo: () => void
+    onRedo: () => void
+    disabled?: boolean
+  }
   /** Team controls (assignment, review), rendered only for team work. */
   children?: ReactNode
 }) {
   const { t } = useI18n()
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const latest = useRef({ finish, onPrev, onNext })
   latest.current = { finish, onPrev, onNext }
 
@@ -73,6 +87,10 @@ export default function StudioHeader({
       if (e.ctrlKey || e.metaKey || e.altKey || typing(e.target)) return
       if (e.key === 'j') next()
       else if (e.key === 'k') prev()
+      else if (e.key === '?') {
+        e.preventDefault()
+        setShortcutsOpen((v) => !v)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -89,6 +107,27 @@ export default function StudioHeader({
       <button type="button" className="btn btn-sm" aria-pressed={sidebarOpen} onClick={onToggleSidebar}>
         {t('studio.pagesList')}
       </button>
+      {mode && onMode && (
+        <div
+          role="group"
+          aria-label={t('annotate.viewModeAria')}
+          className="inline-flex overflow-hidden rounded-md border border-[color:var(--color-rule)] bg-[color:var(--color-sheet)]"
+        >
+          {(['all', 'canvas', 'transcription'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              aria-pressed={mode === m}
+              onClick={() => onMode(m)}
+              className={`btn btn-sm whitespace-nowrap rounded-none border-0 border-r border-[color:var(--color-rule)] last:border-r-0 ${
+                mode === m ? 'bg-[color:var(--color-ink)] text-white' : ''
+              }`}
+            >
+              {t(`annotate.view${m[0].toUpperCase()}${m.slice(1)}`)}
+            </button>
+          ))}
+        </div>
+      )}
       {pageName && (
         <span className="flex min-w-0 items-baseline gap-2">
           <span className="mono max-w-[32ch] truncate text-[13px] font-semibold">{pageName}</span>
@@ -98,6 +137,39 @@ export default function StudioHeader({
         </span>
       )}
       <div className="ml-auto flex flex-wrap items-center gap-2">
+        {undo && (
+          <div className="inline-flex items-center gap-1">
+            <button
+              type="button"
+              onClick={undo.onUndo}
+              disabled={!undo.canUndo || undo.disabled}
+              title={t('annotate.undoTitle')}
+              className="btn btn-sm"
+            >
+              <IconUndo size={12} />
+              <span className="hidden sm:inline">{t('annotate.undo')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={undo.onRedo}
+              disabled={!undo.canRedo || undo.disabled}
+              title={t('annotate.redoTitle')}
+              className="btn btn-sm"
+            >
+              <IconRedo size={12} />
+              <span className="hidden sm:inline">{t('annotate.redo')}</span>
+            </button>
+          </div>
+        )}
+        <button
+          type="button"
+          className="btn btn-sm mono"
+          aria-label={t('studio.shortcutsTitle')}
+          title={t('studio.shortcutsTitle')}
+          onClick={() => setShortcutsOpen(true)}
+        >
+          ?
+        </button>
         {children}
         {finish && (
           <button
@@ -113,6 +185,25 @@ export default function StudioHeader({
           </button>
         )}
       </div>
+      {shortcutsOpen && (
+        <Modal title={t('studio.shortcutsTitle')} onClose={() => setShortcutsOpen(false)}>
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 p-3 text-[13px]">
+            {[
+              ['V / R / P / H', t('studio.shortcutTools')],
+              ['1 / 2 / 3', t('studio.shortcutViews')],
+              ['J / K', t('studio.shortcutPages')],
+              ['Space', t('studio.shortcutPan')],
+              ['Ctrl+Z / Ctrl+Shift+Z', t('studio.shortcutUndoRedo')],
+              ['Ctrl+Enter', t('studio.shortcutVerify')],
+            ].map(([keys, desc]) => (
+              <div key={keys} className="contents">
+                <dt className="mono font-semibold text-[color:var(--color-ink)]">{keys}</dt>
+                <dd className="text-[color:var(--color-ink-2)]">{desc}</dd>
+              </div>
+            ))}
+          </dl>
+        </Modal>
+      )}
     </div>
   )
 }

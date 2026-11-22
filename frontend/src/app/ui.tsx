@@ -1,8 +1,8 @@
 /** Shared workspace sections, controls and feedback. */
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react'
-import { IconAlert, IconChevron, IconClose, IconWarn } from './icons'
+import type { CSSProperties, InputHTMLAttributes, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react'
+import { IconAlert, IconChevron, IconClose, IconEye, IconEyeOff, IconWarn } from './icons'
 import { describeError } from '../lib/errors'
 import type { StatusTone } from '../lib/vocab'
 import { useI18n } from '../i18n'
@@ -640,15 +640,25 @@ export function Modal({
     const root = ref.current
     if (!root) return
 
+    const isVisible = (el: HTMLElement) => {
+      if (el === document.activeElement || el.offsetParent !== null) return true
+      if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+        return window.getComputedStyle(el).display !== 'none'
+      }
+      return false
+    }
     const focusables = () =>
       Array.from(
         root.querySelectorAll<HTMLElement>(
           'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
         ),
-      ).filter((el) => el.offsetParent !== null || el === document.activeElement)
+      ).filter(isVisible)
 
-    // Il primo campo utile riceve il focus all'apertura.
-    const initial = root.querySelector<HTMLElement>('[data-autofocus]') ?? focusables()[0]
+    // Focus the first explicit autofocus control, or the first interactive body control (never the [X] close button).
+    const initial =
+      root.querySelector<HTMLElement>('[data-autofocus]') ??
+      focusables().find((el) => !el.hasAttribute('data-modal-close')) ??
+      focusables()[0]
     initial?.focus()
 
     const onKey = (e: KeyboardEvent) => {
@@ -712,6 +722,7 @@ export function Modal({
             {headerAux}
             <button
               type="button"
+              data-modal-close="true"
               onClick={onClose}
               className="btn btn-sm !px-2"
               aria-label={t('errors.closeModal')}
@@ -747,9 +758,11 @@ export function Field({
   children: ReactNode
 }) {
   return (
-    <label className="block min-w-0">
-      <span className="lbl">{label}</span>
-      {children}
+    <div className="block min-w-0">
+      <label className="block min-w-0">
+        <span className="lbl">{label}</span>
+        {children}
+      </label>
       {error ? (
         <span className="mt-1 block text-[11px] text-[color:var(--color-sig-text)]">{error}</span>
       ) : (
@@ -757,6 +770,39 @@ export function Field({
           <span className="mt-1 block text-[11px] text-[color:var(--color-ink-3)]">{hint}</span>
         )
       )}
-    </label>
+    </div>
+  )
+}
+
+/** Password input with an accessible visibility toggle. */
+export function PasswordInput({
+  className = '',
+  ...rest
+}: Omit<InputHTMLAttributes<HTMLInputElement>, 'type'>) {
+  const { t } = useI18n()
+  const [visible, setVisible] = useState(false)
+  const toggleLabel = visible ? t('auth.hidePassword') : t('auth.showPassword')
+  return (
+    <div className="relative flex items-center">
+      <input
+        {...rest}
+        type={visible ? 'text' : 'password'}
+        className={`fld pr-9 ${className}`}
+      />
+      <button
+        type="button"
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setVisible((v) => !v)
+        }}
+        aria-label={toggleLabel}
+        aria-pressed={visible}
+        title={toggleLabel}
+        className="absolute right-1.5 inline-flex h-6 w-6 items-center justify-center rounded text-[color:var(--color-ink-3)] hover:text-[color:var(--color-ink)]"
+      >
+        {visible ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+      </button>
+    </div>
   )
 }

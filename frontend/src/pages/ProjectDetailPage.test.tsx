@@ -11,13 +11,17 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import ProjectDetailPage from './ProjectDetailPage'
 
 const state = vi.hoisted(() => ({
+  failProject: false,
   pages: [] as Array<Record<string, unknown>>,
   posted: [] as Array<{ path: string; body: unknown }>,
 }))
 
 vi.mock('../lib/api', () => ({
   apiGet: vi.fn(async (path: string) => {
-    if (path === '/projects/5') return { id: 5, name: 'Registri', archive_dir: null, pages_count: state.pages.length }
+    if (path === '/projects/5') {
+      if (state.failProject) throw new Error('Not found')
+      return { id: 5, name: 'Registri', archive_dir: null, pages_count: state.pages.length }
+    }
     if (path === '/projects/5/pages') return { items: state.pages }
     if (path === '/system/prefill-engines') return { recommended: 'ocr', ocr: { available: true }, model: { available: false } }
     if (path === '/projects/5/collections') return { collections: [], unassigned: { key: 'none', pages: 0, with_drafts: 0, by_status: {} }, total: { pages: 0, with_drafts: 0, by_status: {} } }
@@ -30,6 +34,7 @@ vi.mock('../lib/api', () => ({
   apiPatch: vi.fn(),
   apiPut: vi.fn(),
   apiDelete: vi.fn(),
+  ApiError: class ApiError extends Error {},
 }))
 vi.mock('../app/auth', () => ({ useAuth: () => ({ enabled: false, user: null }), useCanAdminister: () => true }))
 vi.mock('../app/inference', () => ({ useInference: () => ({ enabled: true, available: false }) }))
@@ -56,6 +61,7 @@ function renderPage() {
 
 afterEach(() => {
   cleanup()
+  state.failProject = false
   state.pages = []
   state.posted = []
 })
@@ -76,13 +82,29 @@ describe('ProjectDetailPage — Pages tab', () => {
     expect(state.posted[0].body).toMatchObject({ page_ids: [1, 2], engine: 'ocr' })
   })
 
-  it('shows thumbnails first and the register on request', async () => {
-    state.pages = [page(1, 'new', 3, 3)]
+  it('shows thumbnails first and the register on request with clickable links and delete', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    state.pages = [page(1, 'new', 3, 3), page(2, 'new')]
     renderPage()
     expect(await screen.findByRole('link', { name: /p1\.png/ })).toHaveAttribute('href', '/progetti/5/studio?page=1')
     expect(screen.queryByText('Registro pagine')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Tabella' }))
     expect(await screen.findByText('Registro pagine')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'p1.png' })).toHaveAttribute('href', '/progetti/5/studio?page=1')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Elimina p1.png' }))
+    await waitFor(() => expect(state.posted).toContainEqual({ path: '/projects/5/pages/delete', body: { page_ids: [1] } }))
+    await waitFor(() => expect(screen.queryByRole('link', { name: 'p1.png' })).not.toBeInTheDocument())
+    confirmSpy.mockRestore()
+  })
+
+  it('keeps scan report hidden when project loading fails', async () => {
+    sessionStorage.setItem('tabularium.scanReport.local.5', JSON.stringify({ found_files: 3, registered: 3, duplicates: 0, unsupported: 0, errors: [] }))
+    state.failProject = true
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Not found')).toBeInTheDocument())
+    expect(screen.queryByText('Referto di scansione')).not.toBeInTheDocument()
+    sessionStorage.removeItem('tabularium.scanReport.local.5')
   })
 
   it('keeps protocol, pilot and activity on the Advanced page', async () => {

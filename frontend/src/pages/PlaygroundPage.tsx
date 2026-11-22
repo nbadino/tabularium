@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
-import { apiGet, apiPost } from '../lib/api'
+import { apiGet, apiPost, apiPostForm } from '../lib/api'
 import type { PageItem, PlaygroundResult, PrefillEngines } from '../lib/types'
 import { blocks } from '../lib/vocab'
 import { ErrorNotice, Field, Loading, Module, Notice, PageHeader } from '../app/ui'
 import { useProjects, writeActiveProject } from '../app/activeProject'
 import { useInference } from '../app/inference'
+import { projectPath } from '../app/projectPaths'
 import { IconCopy, IconPlayground } from '../app/icons'
 import { useI18n, tn } from '../i18n'
+import { labelName } from '../i18n/labelName'
 import { pageLabel } from '../lib/pageLabel'
 import { useModelNames } from '../app/models/names'
 import { API_BASE } from '../lib/endpoints'
@@ -32,6 +34,9 @@ export default function PlaygroundPage() {
   const [img, setImg] = useState<{ w: number; h: number } | null>(null)
   const [copied, setCopied] = useState(false)
   const [hovered, setHovered] = useState<number | null>(null)
+  const [showCoords, setShowCoords] = useState(false)
+  const [uploaded, setUploaded] = useState<{ file: File; url: string } | null>(null)
+  const uploadInputRef = useRef<HTMLInputElement>(null)
   /** Motore della prova: il modello servito oppure l'OCR locale, che
    *  funziona anche quando nessun endpoint risponde. */
   const [engine, setEngine] = useState<'model' | 'ocr'>('model')
@@ -41,6 +46,30 @@ export default function PlaygroundPage() {
       .then((out) => setOcr(out.ocr))
       .catch(() => setOcr(null))
   }, [])
+  useEffect(() => {
+    return () => {
+      if (uploaded) URL.revokeObjectURL(uploaded.url)
+    }
+  }, [uploaded])
+
+  const pickUpload = (file: File | null) => {
+    if (!file) return
+    const nextUrl = URL.createObjectURL(file)
+    setUploaded({ file, url: nextUrl })
+    setPageId(null)
+    setResult(null)
+    setImg(null)
+    setError(null)
+  }
+
+  const clearTrial = () => {
+    setUploaded(null)
+    if (uploadInputRef.current) uploadInputRef.current.value = ''
+    setResult(null)
+    setImg(null)
+    setError(null)
+    setHovered(null)
+  }
 
   const onProject = async (pid: number | '') => {
     setProjectId(pid)
@@ -60,20 +89,31 @@ export default function PlaygroundPage() {
   const projects = useProjects((pid) => void onProject(pid), setError)
 
   const analyse = async () => {
-    if (!projectId || !pageId) return
+    if (!uploaded && (!projectId || !pageId)) return
     setBusy(true)
     setError(null)
     setImg(null)
     try {
-      const res = await apiPost<PlaygroundResult>('/playground/parse', {
-        project_id: projectId,
-        page_id: pageId,
-        engine: activeEngine,
-      })
+      let res: PlaygroundResult
+      let src: string
+      if (uploaded) {
+        const form = new FormData()
+        form.append('file', uploaded.file)
+        form.append('engine', activeEngine)
+        res = await apiPostForm<PlaygroundResult>('/playground/parse-upload', form)
+        src = uploaded.url
+      } else {
+        res = await apiPost<PlaygroundResult>('/playground/parse', {
+          project_id: projectId,
+          page_id: pageId,
+          engine: activeEngine,
+        })
+        src = `${API_BASE}/pages/${pageId}/preview`
+      }
       setResult(res)
       const im = new Image()
       im.onload = () => setImg({ w: im.naturalWidth, h: im.naturalHeight })
-      im.src = `${API_BASE}/pages/${pageId}/preview`
+      im.src = src
     } catch (e) {
       setError(e)
     } finally {
@@ -102,13 +142,19 @@ export default function PlaygroundPage() {
   // spenta per un modello irraggiungibile non dice nulla della pagina.
   const activeEngine: 'model' | 'ocr' = engine === 'model' && !inferenceReady && ocr?.available ? 'ocr' : engine
   const engineReady = activeEngine === 'ocr' ? Boolean(ocr?.available) : inferenceReady
+  const previewSrc = uploaded ? uploaded.url : pageId ? `${API_BASE}/pages/${pageId}/preview` : ''
 
   return (
     <div className="p-3">
       <PageHeader title={t('playground.title')} />
       <div className="mb-3 flex flex-wrap items-center gap-3 border border-[color:var(--color-rule)] p-3">
         <p className="max-w-[85ch] text-[13px] text-[color:var(--color-ink-2)]">{t('workflow.tryHint')}</p>
-        <Link to={projectId !== '' && pageId ? `/?project=${projectId}&pages=${pageId}` : '/'} className="btn no-underline">{t('workflow.saveRecognition')}</Link>
+        <Link
+          to={projectId !== '' ? projectPath(projectId, 'riconoscimenti', pageId ? { project: projectId, pages: pageId } : undefined) : '/riconosci'}
+          className="btn no-underline"
+        >
+          {t('workflow.saveRecognition')}
+        </Link>
         <Link to={projectId !== '' ? `/progetti/${projectId}` : '/progetti'} className="btn btn-sm no-underline">{t('workflow.addPages')}</Link>
       </div>
 
@@ -159,7 +205,16 @@ export default function PlaygroundPage() {
             <Field label={t('playground.page')}>
               <select
                 value={pageId ?? ''}
-                onChange={(e) => { setPageId(e.target.value === '' ? null : Number(e.target.value)); setResult(null); setImg(null) }}
+                onChange={(e) => {
+                  const next = e.target.value === '' ? null : Number(e.target.value)
+                  setPageId(next)
+                  if (next != null) {
+                    setUploaded(null)
+                    if (uploadInputRef.current) uploadInputRef.current.value = ''
+                  }
+                  setResult(null)
+                  setImg(null)
+                }}
                 disabled={busy || pages.length === 0}
                 className="fld"
               >
@@ -175,6 +230,28 @@ export default function PlaygroundPage() {
             </Field>
 
           </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[color:var(--color-rule)] pt-3">
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept=".jpg,.jpeg,.png,.bmp,.webp,.tif,.tiff"
+              className="hidden"
+              onChange={(e) => pickUpload(e.target.files?.[0] ?? null)}
+            />
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={busy}
+              onClick={() => uploadInputRef.current?.click()}
+            >
+              {t('playground.uploadImage')}
+            </button>
+            {uploaded ? (
+              <span className="mono text-[12px] text-[color:var(--color-ink-2)]">{uploaded.file.name}</span>
+            ) : (
+              <span className="text-[12px] text-[color:var(--color-ink-2)]">{t('playground.uploadHint')}</span>
+            )}
+          </div>
           <div className="mt-3 max-w-md">
             <Field label={t('playground.engine')} hint={activeEngine === 'ocr' ? t('playground.ocrNote') : undefined}>
               <select value={activeEngine} onChange={(e) => setEngine(e.target.value as 'model' | 'ocr')} className="fld">
@@ -187,11 +264,17 @@ export default function PlaygroundPage() {
                 </option>
               </select>
             </Field>
+            {!inferenceReady && (
+              <p className="mt-1 text-[11px] text-[color:var(--color-ink-2)]">
+                {t('recognition.activeModelUnavailableHint')}{' '}
+                <Link to="/modelli" className="font-semibold underline underline-offset-2">{t('recognition.configureInModels')}</Link>
+              </p>
+            )}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               onClick={() => void analyse()}
-              disabled={busy || !pageId || !engineReady}
+              disabled={busy || (!pageId && !uploaded) || !engineReady}
               className="btn btn-primary"
             >
               <IconPlayground size={13} />
@@ -203,6 +286,11 @@ export default function PlaygroundPage() {
                 {copied ? t('playground.copied') : t('playground.copyMd')}
               </button>
             )}
+            {(result || uploaded || error != null) && (
+              <button type="button" onClick={clearTrial} disabled={busy} className="btn">
+                {t('playground.clear')}
+              </button>
+            )}
             {result && (
               <span className="mono ml-auto text-[11px] text-[color:var(--color-ink-3)]">
                 {result.model} · {providerLabel(result.provider, t)}
@@ -212,35 +300,37 @@ export default function PlaygroundPage() {
         </Module>
       </div>
 
-      {result && pageId ? (
+      {result && previewSrc ? (
         <div className="grid gap-3 lg:grid-cols-2">
           <Module tab={t('playground.predLayout')} quiet>
             {img ? (
               <figure className="m-0">
-                <div className="lighttable relative overflow-hidden border border-[color:var(--color-rule)]">
-                  <img
-                    src={`${API_BASE}/pages/${pageId}/preview`}
-                    alt={t('playground.overlayAltPred')}
-                    className="block w-full"
-                  />
-                  <svg
-                    viewBox={`0 0 ${img.w} ${img.h}`}
-                    className="absolute inset-0 h-full w-full"
-                    aria-hidden="true"
-                  >
-                    {result.items.map((it, i) => (
-                      <rect
-                        key={i}
-                        x={kx(it.bbox_norm[0])}
-                        y={ky(it.bbox_norm[1])}
-                        width={kx(it.bbox_norm[2] - it.bbox_norm[0])}
-                        height={ky(it.bbox_norm[3] - it.bbox_norm[1])}
-                        fill={hovered === i ? 'rgb(230 0 18 / 0.24)' : 'rgb(230 0 18 / 0.09)'}
-                        stroke="#a3000e"
-                        strokeWidth={hovered === i ? 3 : 1.4}
-                      />
-                    ))}
-                  </svg>
+                <div className="lighttable flex justify-center overflow-hidden border border-[color:var(--color-rule)] p-1">
+                  <div className="relative inline-block max-w-full">
+                    <img
+                      src={previewSrc}
+                      alt={t('playground.overlayAltPred')}
+                      className="block max-h-[68vh] w-auto max-w-full"
+                    />
+                    <svg
+                      viewBox={`0 0 ${img.w} ${img.h}`}
+                      className="absolute inset-0 h-full w-full"
+                      aria-hidden="true"
+                    >
+                      {result.items.map((it, i) => (
+                        <rect
+                          key={i}
+                          x={kx(it.bbox_norm[0])}
+                          y={ky(it.bbox_norm[1])}
+                          width={kx(it.bbox_norm[2] - it.bbox_norm[0])}
+                          height={ky(it.bbox_norm[3] - it.bbox_norm[1])}
+                          fill={hovered === i ? 'rgb(230 0 18 / 0.24)' : 'rgb(230 0 18 / 0.09)'}
+                          stroke="#a3000e"
+                          strokeWidth={hovered === i ? 3 : 1.4}
+                        />
+                      ))}
+                    </svg>
+                  </div>
                 </div>
                 <figcaption className="mt-1.5 text-[11px] text-[color:var(--color-ink-2)]">
                   {tn('playground.legend', result.items.length)}
@@ -257,9 +347,21 @@ export default function PlaygroundPage() {
             tab={t('playground.blocks')}
             quiet
             flush
-            aux={<span>{blocks(result.items.length)}</span>}
+            aux={
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  aria-pressed={showCoords}
+                  onClick={() => setShowCoords((v) => !v)}
+                >
+                  {t('playground.toggleCoords')}
+                </button>
+                <span>{blocks(result.items.length)}</span>
+              </div>
+            }
           >
-            <ol className="ruled max-h-[70vh] overflow-y-auto">
+            <ol className="ruled max-h-[68vh] overflow-y-auto">
               {result.items.map((it, i) => (
                 <li
                   key={i}
@@ -271,10 +373,12 @@ export default function PlaygroundPage() {
                     <span className="mono w-6 shrink-0 text-[11px] text-[color:var(--color-ink-3)]">
                       {i + 1}
                     </span>
-                    <span className="text-[12px] font-semibold">{it.label}</span>
-                    <span className="mono ml-auto shrink-0 text-[11px] text-[color:var(--color-ink-3)]">
-                      [{it.bbox_px.join(', ')}]
-                    </span>
+                    <span className="text-[12px] font-semibold">{labelName(it.label)}</span>
+                    {showCoords && (
+                      <span className="mono ml-auto shrink-0 text-[11px] text-[color:var(--color-ink-3)]">
+                        [{it.bbox_px.join(', ')}]
+                      </span>
+                    )}
                   </div>
                   {it.content && (
                     <p className="mt-1 pl-8 text-[12px] leading-relaxed text-[color:var(--color-ink-2)]">

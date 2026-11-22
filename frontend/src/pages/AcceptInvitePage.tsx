@@ -9,7 +9,8 @@
 import { useEffect, useState } from 'react'
 import { apiGet } from '../lib/api'
 import type { InviteStatus } from '../lib/types'
-import { Field } from '../app/ui'
+import { Field, PasswordInput } from '../app/ui'
+import { LocaleSwitch } from '../app/LocaleSwitch'
 import { useAuth } from '../app/auth'
 import { useI18n } from '../i18n'
 
@@ -61,6 +62,9 @@ export default function AcceptInvitePage() {
       <div className="mod w-full max-w-sm rounded-lg p-6">
         <div className="mod-head border-b-[color:var(--color-rule-strong)]">
           <span className="mod-tab">{t('auth.inviteTitle')}</span>
+          <div className="mod-head-aux">
+            <LocaleSwitch />
+          </div>
         </div>
         <div className="mod-body">
           {loading ? (
@@ -77,23 +81,19 @@ export default function AcceptInvitePage() {
                 {t('auth.inviteFor', { name: status?.username ?? '' })}
               </p>
               <Field label={t('auth.newPassword')} hint={t('auth.passwordHint')}>
-                <input
-                  type="password"
+                <PasswordInput
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="new-password"
                   autoFocus
-                  className="fld"
                   aria-invalid={tooShort}
                 />
               </Field>
               <Field label={t('auth.confirmPassword')}>
-                <input
-                  type="password"
+                <PasswordInput
                   value={confirm}
                   onChange={(e) => setConfirm(e.target.value)}
                   autoComplete="new-password"
-                  className="fld"
                   aria-invalid={mismatch}
                 />
               </Field>

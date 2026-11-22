@@ -12,6 +12,7 @@ interface UseViewportReturn {
   stageRef: React.RefObject<Konva.Stage | null>
   isPanning: boolean
   fit: () => void
+  zoomTo100: () => void
   zoomBy: (factor: number) => void
   onWheel: (e: Konva.KonvaEventObject<WheelEvent>) => void
   startPan: (e: PanEvent) => void
@@ -44,11 +45,19 @@ export function useViewport(imageNatural: { w: number; h: number }, resetKey = '
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
-    const update = () => setContainerSize({ w: el.clientWidth, h: el.clientHeight })
-    update()
-    const observer = new ResizeObserver(update)
+    let raf = 0
+    const measure = () => setContainerSize({ w: el.clientWidth, h: el.clientHeight })
+    const schedule = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(measure)
+    }
+    measure()
+    const observer = new ResizeObserver(schedule)
     observer.observe(el)
-    return () => observer.disconnect()
+    return () => {
+      cancelAnimationFrame(raf)
+      observer.disconnect()
+    }
   }, [])
 
   const fit = useCallback(() => {
@@ -91,6 +100,20 @@ export function useViewport(imageNatural: { w: number; h: number }, resetKey = '
   }, [containerSize, imageNatural, setViewport])
 
   const zoomBy = useCallback((factor: number) => zoomAt(factor), [zoomAt])
+  const zoomTo100 = useCallback(() => {
+    if (imageNatural.w <= 0 || imageNatural.h <= 0) return
+    setViewport(
+      clampViewport(
+        {
+          k: 1,
+          x: (containerSize.w - imageNatural.w) / 2,
+          y: (containerSize.h - imageNatural.h) / 2,
+        },
+        containerSize,
+        imageNatural,
+      ),
+    )
+  }, [containerSize, imageNatural, setViewport])
 
   // Convenzione universale dei visualizzatori di documenti:
   // - rotella / due dita = PAN (lo scorrimento muove la pagina);
@@ -191,6 +214,7 @@ export function useViewport(imageNatural: { w: number; h: number }, resetKey = '
     stageRef,
     isPanning,
     fit,
+    zoomTo100,
     zoomBy,
     onWheel,
     startPan,

@@ -24,7 +24,7 @@ function withOidcDefaults(value: InstanceSettings): InstanceSettings {
     oidc_client_id: value.oidc_client_id ?? '',
     oidc_scopes: value.oidc_scopes ?? 'openid profile email',
     oidc_allowed_domains: value.oidc_allowed_domains ?? [],
-    oidc_button_label: value.oidc_button_label ?? 'SSO',
+    oidc_button_label: value.oidc_button_label ?? '',
     oidc_client_secret_set: value.oidc_client_secret_set ?? false,
   }
 }
@@ -267,6 +267,7 @@ export default function InstanceSection({ isAdmin }: SectionProps) {
                     <input
                       className="fld"
                       value={settings.oidc_button_label}
+                      placeholder="SSO"
                       maxLength={40}
                       disabled={!isAdmin}
                       onChange={(e) => {

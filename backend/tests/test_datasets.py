@@ -356,3 +356,21 @@ def test_approved_only_drops_tables_with_unverified_cells(tmp_path: Path):
         body = report.json()
         assert body["counts"]["table"]["train"] + body["counts"]["table"]["val"] == 0
         assert any("prefill non verificato" in warning or "unverified" in warning for warning in body["warnings"])
+
+
+def test_delete_dataset_removes_generated_folder(tmp_path: Path):
+    pid, (_p1, p2) = _setup(tmp_path / "del")
+    with TestClient(app) as client:
+        _annotate(
+            client,
+            p2,
+            [{"label": "Text", "kind": "rect", "points": [[10, 10], [400, 200]], "content": "ok", "order_idx": 1}],
+        )
+        res = client.post(f"/api/projects/{pid}/datasets/build", json={"split_ratio": 0.5, "approved_only": False})
+        assert res.status_code == 200
+        assert client.get(f"/api/projects/{pid}/datasets").json()["built"] is True
+        del_res = client.delete(f"/api/projects/{pid}/datasets")
+        assert del_res.status_code == 200
+        assert del_res.json() == {"deleted": True}
+        assert client.get(f"/api/projects/{pid}/datasets").json() == {"built": False, "report": None}
+

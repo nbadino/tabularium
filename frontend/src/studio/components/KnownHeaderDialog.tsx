@@ -43,7 +43,7 @@ export default function KnownHeaderDialog({
   onApply?: (header: KnownTableHeader) => string | null
   onClose: () => void
 }) {
-  const { t } = useI18n()
+  const { t, tn } = useI18n()
   const confirm = useConfirm()
   const [name, setName] = useState('')
   const [selectedId, setSelectedId] = useState(headers[0]?.id ?? '')
@@ -133,7 +133,10 @@ export default function KnownHeaderDialog({
               />
             </label>
             <p className="text-[11px] text-[color:var(--color-ink-3)]">
-              {t('knownHeader.selectionSize', { rows: template?.rows ?? 0, cols: template?.cols ?? 0 })}
+              {t('knownHeader.selectionSize', {
+                rowsPart: tn('knownHeader.rowsCount', template?.rows ?? 0),
+                colsPart: tn('knownHeader.colsCount', template?.cols ?? 0),
+              })}
             </p>
             {template && <HeaderPreview header={template} />}
           </>
