@@ -24,7 +24,12 @@ from typing import Iterable
 
 RUNTIME_VLLM = "vllm"
 RUNTIME_MLX = "mlx-vlm"
-LOCAL_RUNTIMES = (RUNTIME_VLLM, RUNTIME_MLX)
+# ONNX Runtime (Indra OCR): CPU everywhere it ships wheels, CUDA when there is a GPU.
+RUNTIME_ONNX = "onnxruntime"
+LOCAL_RUNTIMES = (RUNTIME_VLLM, RUNTIME_MLX, RUNTIME_ONNX)
+# The runtimes that need an accelerator: whether a machine has one of them decides
+# between "this machine cannot serve models" and "this model has no local path here".
+ACCELERATOR_RUNTIMES = (RUNTIME_VLLM, RUNTIME_MLX)
 
 # Codici stabili delle cause.
 REASON_CUDA_REQUIRED = "cuda_required"
@@ -102,7 +107,11 @@ def runtime_support() -> dict[str, dict]:
         "supported": is_apple_silicon(),
         "reason": None if is_apple_silicon() else REASON_APPLE_SILICON_REQUIRED,
     }
-    return {RUNTIME_VLLM: vllm, RUNTIME_MLX: mlx}
+    # Indra OCR's ONNX Runtime path: wheels for Linux (x86_64, aarch64) and macOS on
+    # Apple silicon, the platforms the vendor tests; Windows is not documented.
+    onnx_ok = system in ("Linux", "Darwin")
+    onnx = {"supported": onnx_ok, "reason": None if onnx_ok else REASON_MODEL_UNSUPPORTED}
+    return {RUNTIME_VLLM: vllm, RUNTIME_MLX: mlx, RUNTIME_ONNX: onnx}
 
 
 def summary() -> dict:
@@ -217,6 +226,9 @@ def pick_serve_runtime(capabilities, machine: dict | None = None) -> str:
     declares = tuple(getattr(capabilities, "local_runtimes", ()) or ())
     if machine["apple_silicon"] and RUNTIME_MLX in declares and mlx_repo:
         return RUNTIME_MLX
+    if declares == (RUNTIME_ONNX,):
+        # A model whose only local path is ONNX Runtime (Indra OCR): CPU or CUDA.
+        return RUNTIME_ONNX
     return RUNTIME_VLLM
 
 
@@ -244,7 +256,8 @@ def plan_local(
         # Nessun runtime del modello è ospitabile qui: se la macchina non ne
         # supporta nemmeno uno il problema è la macchina, altrimenti è il
         # modello a non avere un percorso locale su questa piattaforma.
-        if not machine["usable_runtimes"]:
+        accelerators = [name for name in machine["usable_runtimes"] if name in ACCELERATOR_RUNTIMES]
+        if not accelerators:
             return {"runnable": False, "runtime": None, "reason": REASON_NO_LOCAL_RUNTIME}
         return {"runnable": False, "runtime": None, "reason": REASON_MODEL_UNSUPPORTED}
     runtime = usable[0]

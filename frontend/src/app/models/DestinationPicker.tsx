@@ -85,6 +85,10 @@ export function DestinationPicker({ model, selected, caps, onSelect }: Destinati
                     <span className="lbl !mb-0 inline">{t('modelsHub.youWillNeed')}</span>{' '}
                     {dest === 'local' && model.local.runtime === 'mlx-vlm'
                       ? t('modelsHub.dest.localNeedsMlx', { repo: model.local.mlx_repo ?? model.hf_repo })
+                      : dest === 'local' && model.local.runtime === 'onnxruntime'
+                        ? t('modelsHub.dest.localNeedsOnnx', {
+                            size: model.approx_size_gb != null ? `~${model.approx_size_gb} GB` : '—',
+                          })
                       : dest === 'local'
                         ? t('modelsHub.dest.localNeedsVllm', {
                             size: model.approx_size_gb != null ? `~${model.approx_size_gb} GB` : '—',

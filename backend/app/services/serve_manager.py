@@ -39,7 +39,7 @@ from typing import Any
 from .. import config
 from ..adapters import jobs as jobstore
 from ..db import connect
-from . import hardware, local_runtime, mlx_runtime, process_probe, sglang_runtime, vendor_repos
+from . import hardware, indra_runtime, local_runtime, mlx_runtime, process_probe, sglang_runtime, vendor_repos
 from .model_adapters import get_adapter
 from .model_registry import (
     ensure_draft,
@@ -258,6 +258,13 @@ def _local_runner(adapter_id: str):
     return kinds.get(kind, kinds[""])
 
 
+def _recipe_runtime(adapter_id: str) -> str:
+    from . import serve_recipes
+
+    recipe = serve_recipes.RECIPES.get(adapter_id)
+    return recipe.runtime if recipe is not None else ""
+
+
 def get_status() -> ServeStatus:
     global _ACTIVE_PROC, _ACTIVE_INFO
     with _STARTING_LOCK:
@@ -265,6 +272,8 @@ def get_status() -> ServeStatus:
     if starting:
         adapter_id = starting.get("adapter_id") or ""
         runtime_log_tail = _local_runner(adapter_id)[0]
+        if _recipe_runtime(adapter_id) == "indra-native":
+            runtime_log_tail = indra_runtime.log_tail
         return ServeStatus(
             running=False,
             starting=starting.get("phase") != "failed",
@@ -481,7 +490,7 @@ def _is_our_serving_process(pid: str | int) -> bool:
         return False
     if str(config.MODELS_DIR) in cmdline:
         return True
-    markers = ("vllm serve", "serve.py", "vllm/vllm-openai", "mlx_vlm.server", "mineru_mlx_gateway.py", "unlimited_ocr_mlx_server.py")
+    markers = ("vllm serve", "serve.py", "vllm/vllm-openai", "mlx_vlm.server", "mineru_mlx_gateway.py", "unlimited_ocr_mlx_server.py", "indra_native_gateway.py")
     return any(marker in cmdline for marker in markers)
 
 
@@ -690,6 +699,12 @@ def start(
                 argv = serve_recipes.apply_workflow_overrides(
                     adapter_id, argv, saved_overrides.get("workflow", {})
                 )
+
+        if argv[0] == str(indra_runtime.python_bin()) and not indra_runtime.is_ready():
+            # Indra OCR's ONNX Runtime environment: a small venv of its own,
+            # installed the first time, as the vLLM one below.
+            _set_phase(adapter_id, "preparing_runtime")
+            indra_runtime.ensure_ready()
 
         if argv[0] == str(sglang_runtime.python_bin(adapter_id)):
             # Vendor-built SGLang (Unlimited-OCR-2): its own interpreter and pins, and

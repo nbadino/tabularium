@@ -21,7 +21,8 @@ class ServeRecipe:
     # "vllm": `vllm serve <weights> <args>` — "teleocr-native": the official
     # TeleOCRClient on vllm-async-engine — "monkeyocr": the official wrapper
     # `parsing/serve.py` — "docker": a dedicated image, not pip-installable —
-    # "sglang": `python -m sglang.launch_server` from the packages in `pip_extra`.
+    # "sglang": `python -m sglang.launch_server` from the packages in `pip_extra` —
+    # "indra-native": Tabularium's Indra OCR gateway on ONNX Runtime (no vLLM).
     runtime: str
     vllm_version: str = ""
     # Vast offer filters use Vast's documented `compute_cap` scale (e.g.
@@ -63,7 +64,7 @@ class ServeRecipe:
     @property
     def installs_vllm(self) -> bool:
         """False when vLLM is already inside the image, or the runtime is not vLLM."""
-        return self.runtime not in ("docker", "sglang")
+        return self.runtime not in ("docker", "sglang", "indra-native")
 
 
 # ---------------------------------------------------------------------------

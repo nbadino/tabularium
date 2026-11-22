@@ -125,7 +125,7 @@ export function warnings(n: number): string {
 }
 /**
  * Nome leggibile del runtime di serving locale. Il backend parla per codici
- * (`vllm`, `mlx-vlm`): qui diventano la parola che l'utente vede.
+ * (`vllm`, `mlx-vlm`, `onnxruntime`): qui diventano la parola che l'utente vede.
  */
 export function localRuntimeLabel(runtime: string | null | undefined): string {
   switch (runtime) {
@@ -133,6 +133,8 @@ export function localRuntimeLabel(runtime: string | null | undefined): string {
       return t('localCompute.runtimeVllm')
     case 'mlx-vlm':
       return t('localCompute.runtimeMlx')
+    case 'onnxruntime':
+      return t('localCompute.runtimeOnnx')
     default:
       return '—'
   }

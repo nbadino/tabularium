@@ -88,6 +88,12 @@ def serve_argv(
         # The producer's pipeline owns the full document workflow in its
         # sidecar and constructs AsyncLLM directly.
         return []
+    if recipe.runtime == "indra-native":
+        return indra_gateway_argv(
+            recipe, model_path=model_path, port=port, host=host, api_key=api_key,
+            lora_path=lora_path, draft_model_path=draft_model_path,
+            served_model_name=served_model_name, settings=settings,
+        )
     if recipe.runtime == "monkeyocr":
         argv = ["serve.py", "--model-path", model_path]
     elif recipe.runtime == "sglang":
@@ -116,6 +122,36 @@ def serve_argv(
     argv = apply_workflow_overrides(recipe.adapter_id, argv, workflow_overrides)
     if lora_path.strip():
         argv += ["--enable-lora", "--lora-modules", f"{lora_name.strip() or recipe.served_model_name}={lora_path.strip()}"]
+    argv += ["--served-model-name", served_model_name or recipe.served_model_name]
+    if api_key.strip():
+        argv += ["--api-key", api_key.strip()]
+    return argv
+
+
+def indra_gateway_argv(
+    recipe: ServeRecipe,
+    *,
+    model_path: str,
+    port: int,
+    host: str,
+    api_key: str = "",
+    lora_path: str = "",
+    draft_model_path: str = "",
+    served_model_name: str | None = None,
+    settings: dict | None = None,
+) -> list[str]:
+    """Indra OCR's gateway: the script name first, as `serve.py` is for MonkeyOCRv2.
+
+    Whoever launches it puts the interpreter and the script's path in front: the
+    local runtime (`IndraOcrAdapter.serve_command`) and the Vast setup script, which
+    writes the gateway into the instance's environment.
+    """
+    from ..models.indra_ocr import GATEWAY_SCRIPT
+
+    if lora_path.strip() or draft_model_path.strip():
+        raise ValueError(f"'{recipe.adapter_id}' non ha checkpoint LoRA né draft: è un pipeline ONNX")
+    argv = [GATEWAY_SCRIPT, "--model-dir", model_path, "--host", host, "--port", str(int(port))]
+    argv = apply_workflow_overrides(recipe.adapter_id, argv, (settings or {}).get("workflow") or {})
     argv += ["--served-model-name", served_model_name or recipe.served_model_name]
     if api_key.strip():
         argv += ["--api-key", api_key.strip()]
@@ -153,6 +189,20 @@ def apply_workflow_overrides(adapter_id: str, argv: list[str], workflow: dict) -
             argv[argv.index(flag) + 1] = value
         else:
             argv += [flag, value]
+    if adapter_id == "indra-ocr":
+        # The gateway's flags (`indra_native_gateway.py`); a value left to the default
+        # is not written, so the gateway's default (Indra's own) applies.
+        for key in ("device", "threads", "workers"):
+            if workflow.get(key) is None:
+                continue
+            flag, value = f"--{key}", str(workflow[key])
+            if flag in argv:
+                argv[argv.index(flag) + 1] = value
+            else:
+                argv += [flag, value]
+        if workflow.get("math") is not None:
+            argv = [arg for arg in argv if arg not in ("--math", "--no-math")]
+            argv.append("--math" if workflow["math"] else "--no-math")
     if adapter_id == "glm-ocr" and workflow.get("speculative_tokens") is not None:
         import json
 
