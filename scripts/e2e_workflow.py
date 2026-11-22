@@ -140,10 +140,12 @@ def main() -> int:
         wait_for(driver, EC.element_to_be_clickable((By.XPATH, "//li[@data-block][contains(., 'Riga di prova.')]"))).click()
         # Modifica controllata del contenuto: l'indicatore Salvato prova il
         # debounce autosave, non solo il salvataggio esplicito.
-        # `aria-label` e non il primo `textarea` della pagina: le celle della
-        # griglia sono textarea anch'esse e in DOM vengono prima. L'etichetta
-        # del blocco non è tradotta, quindi il selettore regge in ogni lingua.
-        content_box = (By.XPATH, "//textarea[contains(@aria-label, 'Text')]")
+        # Match `aria-label` rather than the first `<textarea>` (table cells come first
+        # in the DOM). Block labels are localized across it/en/fr.
+        content_box = (
+            By.XPATH,
+            "//textarea[contains(@aria-label, 'Testo') or contains(@aria-label, 'Text') or contains(@aria-label, 'Texte')]",
+        )
         textarea = wait_for(driver, EC.presence_of_element_located(content_box))
         # La riga si apre scorrendo (260 ms, `lib/motion.ts`) e finché cresce il
         # contenuto è ritagliato: cliccarci subito dà «element not interactable».
@@ -221,7 +223,12 @@ def main() -> int:
         # Training center e preflight.
         stage = "training UI"
         driver.get(f"{BASE}/progetti/{project_id}/fine-tuning/addestra")
-        wait_for(driver, EC.presence_of_element_located((By.XPATH, "//h1[contains(., 'Fine-tuning')]")))
+        wait_for(
+            driver,
+            EC.presence_of_element_located(
+                (By.XPATH, "//h1[contains(., 'Addestramento') or contains(., 'Training') or contains(., 'Entraînement')]")
+            ),
+        )
         preflight = requests.post(f"{BASE}/api/projects/{project_id}/training/preflight", json={}, timeout=10)
         assert preflight.status_code == 200, preflight.text
         print("e2e workflow OK: UI import/scan -> annotation -> dataset snapshot -> training preflight")
