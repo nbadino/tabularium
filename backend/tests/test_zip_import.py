@@ -7,6 +7,7 @@ reported; an archive over a global limit is refused whole.
 from __future__ import annotations
 
 import io
+import itertools
 import stat
 import time
 import zipfile
@@ -21,9 +22,16 @@ from app.main import app
 from app.services import zip_import
 
 
+_PNG_SERIAL = itertools.count()
+
+
 def _png(color: str = "white") -> bytes:
+    """A small PNG, different on every call: identical files would be one page."""
     buf = io.BytesIO()
-    Image.new("RGB", (30, 40), color).save(buf, format="PNG")
+    image = Image.new("RGB", (30, 40), color)
+    n = next(_PNG_SERIAL)
+    image.putpixel((0, 0), (n % 256, (n // 256) % 256, 7))
+    image.save(buf, format="PNG")
     return buf.getvalue()
 
 

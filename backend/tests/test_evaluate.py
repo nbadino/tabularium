@@ -220,7 +220,7 @@ def test_evaluate_project(tmp_path: Path, monkeypatch):
         archive = tmp_path / "archive2"
         archive.mkdir(parents=True)
         Image.new("RGB", (900, 1300), (215, 215, 215)).save(archive / "p.png")
-        Image.new("RGB", (900, 1300), (215, 215, 215)).save(archive / "q.png")
+        Image.new("RGB", (900, 1300), (215, 215, 214)).save(archive / "q.png")
         pid = client.post(
             "/api/projects", json={"name": "E2", "archive_dir": str(archive)}
         ).json()["id"]

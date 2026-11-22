@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ..adapters import pages as pagestore
 from ..db import connect
+from . import content_identity
 from . import images as imgmod
 
 SUPPORTED_IMAGE_EXTS = imgmod.SUPPORTED_IMAGE_EXTS
@@ -29,6 +30,9 @@ class ScanReport:
     unsupported: int = 0
     missing: int = 0
     errors: list[str] = field(default_factory=list)
+    # Files skipped because their content is already a page of the project (they are
+    # counted in `duplicates` too): a folder sent again names what it did not add.
+    already_present: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -38,6 +42,7 @@ class ScanReport:
             "unsupported": self.unsupported,
             "missing": self.missing,
             "errors": self.errors,
+            "already_present": self.already_present,
         }
 
 
@@ -226,6 +231,8 @@ def register_candidate(
     lang: str = "it",
     collection_id: int | None = None,
     on_page=None,
+    index: content_identity.ProjectIndex | None = None,
+    on_duplicate=None,
 ) -> None:
     """Registra un candidato (immagine o PDF) come pagine del progetto.
 
@@ -236,6 +243,11 @@ def register_candidate(
     Aggiorna il report con l'esito (registrato, duplicato, non supportato,
     errore). È la logica condivisa da scansione e import manuale: il router
     resta una porta HTTP.
+
+    A file not registered yet whose content is already a page of the project (see
+    `content_identity`) is skipped and named in `report.already_present`;
+    `on_duplicate(path)` lets an upload delete its redundant copy. Pass one `index`
+    for a whole batch: building it reads every page of the project.
     """
     import json  # noqa: PLC0415
 
@@ -245,6 +257,31 @@ def register_candidate(
 
     abs_path = str(cand.path.resolve())
     rel_path = rel_archive(cand.path, archive_dir)
+
+    # The content check runs only for a path not registered yet: a rescan of an archive
+    # finds its pages by path and never reads them again.
+    content_sha256: str | None = None
+    file_size: int | None = None
+    if not pagestore.path_registered(conn, project_id, abs_path):
+        try:
+            content_sha256, file_size = content_identity.hash_file(cand.path)
+        except OSError as exc:
+            report.errors.append(f"{cand.path.name}: {exc}")
+            return
+        if index is None:
+            index = content_identity.ProjectIndex(conn, project_id)
+        if index.contains(content_sha256, cand.path.name, file_size):
+            pages_in_file = 1
+            if cand.source_kind == "pdf":
+                try:
+                    pages_in_file = max(1, pdf_page_count(cand.path))
+                except Exception:  # noqa: BLE001 - the count is only for the report
+                    pages_in_file = 1
+            report.duplicates += pages_in_file
+            report.already_present.append(cand.path.name)
+            if on_duplicate is not None:
+                on_duplicate(cand.path)
+            return
 
     if cand.source_kind == "image":
         try:
@@ -271,6 +308,8 @@ def register_candidate(
             page_type=meta.page_type,
             meta_json=json.dumps(extra),
             collection_id=collection_id,
+            content_sha256=content_sha256,
+            file_size=file_size,
         )
         if page_id is None:
             report.duplicates += 1
@@ -279,6 +318,8 @@ def register_candidate(
         imgmod.make_thumbnail(cand.path, thumb)
         pagestore.set_thumb(conn, page_id, str(thumb))
         report.registered += 1
+        if index is not None and content_sha256:
+            index.add(content_sha256)
         return
 
     # -- PDF -----------------------------------------------------------------
@@ -348,6 +389,8 @@ def register_candidate(
                     page_type=meta.page_type,
                     meta_json=json.dumps(extra),
                     collection_id=collection_id,
+                    content_sha256=content_sha256,
+                    file_size=file_size,
                 )
                 if page_id is None:
                     duplicates += 1
@@ -383,6 +426,8 @@ def register_candidate(
     close_block()
     report.registered += registered
     report.duplicates += duplicates
+    if index is not None and content_sha256 and registered:
+        index.add(content_sha256)
 
 
 def run_scan(
@@ -409,8 +454,9 @@ def run_scan(
         report = ScanReport(found_files=len(candidates), missing=len(missing_ids))
         if confirm_missing:
             mark_missing_pages(conn, missing_ids)
+        contents = content_identity.ProjectIndex(conn, project_id)
         for index, candidate in enumerate(candidates, 1):
-            register_candidate(conn, project_id, candidate, root, report, lang=lang)
+            register_candidate(conn, project_id, candidate, root, report, lang=lang, index=contents)
             conn.commit()
             if on_progress is not None:
                 on_progress(index, candidate, report)
@@ -421,10 +467,18 @@ def register_uploads(
     project_id: int, session_dir: str | Path, report: ScanReport, *, lang: str = "it",
     collection_id: int | None = None,
 ) -> None:
-    """Register a folder of uploaded files, committing file by file (see `run_scan`)."""
+    """Register a folder of uploaded files, committing file by file (see `run_scan`).
+
+    An uploaded file whose content is already in the project is deleted again: the
+    upload folder keeps only the files that became pages.
+    """
     root = Path(session_dir)
     with connect() as conn:
+        contents = content_identity.ProjectIndex(conn, project_id)
         for candidate in scan_archive(root):
-            register_candidate(conn, project_id, candidate, root, report, lang=lang, collection_id=collection_id)
+            register_candidate(
+                conn, project_id, candidate, root, report, lang=lang, collection_id=collection_id,
+                index=contents, on_duplicate=lambda path: path.unlink(missing_ok=True),
+            )
             conn.commit()
 
