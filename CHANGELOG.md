@@ -39,6 +39,9 @@ Notable changes to Tabularium. The format follows
 - Uploaded files are copied to disk in 1 MB chunks instead of being read whole into memory.
 
 ### Fixed
+- **The model list opens on the whole catalogue.** With one model installed on the server the
+  picker opened on "Run on this computer (1)", so the remote and fine-tuned models looked
+  deleted. The filter is now applied only when chosen.
 - **Projects larger than 10,000 pages are listed in full.** The page list had a hidden cap of
   10,000: on a 14,759-page project the Studio showed "1 of 10000" and the other pages could not
   be reached. The list now has no cap unless the caller asks for one.

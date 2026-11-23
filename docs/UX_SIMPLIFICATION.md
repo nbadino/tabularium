@@ -267,8 +267,9 @@ their own selectors.
 
 - **In use now**: model name, where it runs, status, *Change*, *Try on a page* (replaces the Try
   model page).
-- **Choose a model** (step 1): search and tabs stay; the *Run on this computer* filter is on by
-  default when there is at least one. "Add a model from Hugging Face" becomes a link at the bottom
+- **Choose a model** (step 1): search and tabs stay; the list opens on the whole catalogue and
+  the *Run on this computer* filter is a choice (on by default it hid every remote and fine-tuned
+  model as soon as one local model was installed). "Add a model from Hugging Face" becomes a link at the bottom
   of the list, not an always-open form.
 - **Where to run it** (step 2): first the options possible on this machine, then the others. An
   impossible option (today *Local* is selected but "This machine cannot serve models locally") is
