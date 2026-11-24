@@ -81,6 +81,22 @@ pip install indra-ocr==1.1.2 fastapi uvicorn
 python scripts/cloud/indra_native_gateway.py --model-dir <snapshot of datalab-to/indra-ocr@v1.1.0> --host 0.0.0.0 --port 8889 --api-key SECRET
 ```
 
+**Indra · Lloyd's registers** (`indra-lloyds`) runs in the same gateway and the same
+environment (plus SciPy), but it is not the vendor's pipeline: a recognizer fine-tuned
+on whole table lines of the *Lloyd's Shipping Index*, with a module of its own that
+flattens the page, finds the lines, reads each one in one piece and assembles the
+table. It returns one table per page, as OTSL. Weights and module are one package
+folder (`rec.onnx`, `meta.json`, `lloyds_lines.py`) that is not on Hugging Face:
+install it on the server, then start it from Models as any local model.
+
+```bash
+tabularium models import /path/to/release-t7b --adapter indra-lloyds
+```
+
+The gateway executes `lloyds_lines.py` from the installed folder: import only a
+package you built or trust. It is served on this machine only; its accuracy was
+measured on the Lloyd's collections it was tuned on and nowhere else.
+
 **How the MLX column was decided.** A checkpoint or a declared backend is not
 enough: confirmation requires serving and recognizing real pages.
 `paddleocr-vl` (35 blocks) and `qwen3-vl-8b` (137) passed earlier tests with

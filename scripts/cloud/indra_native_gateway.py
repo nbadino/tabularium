@@ -14,6 +14,12 @@ served model name, so the readiness probes written for vLLM work unchanged) and
 `POST /parse` (raw image bytes; the reply is the page's blocks in pixels, the markdown,
 the lines and the image size).
 
+With `--line-reader FILE` the page is read by a line-reader package instead of the
+vendor pipeline: `FILE` is a module inside `--model-dir` (next to its fine-tuned
+`rec.onnx`) that exposes `load(model_dir, providers=..., threads=...)` and whose reader
+returns the page's table as OTSL from `read(gray)`. The reply keeps the same shape:
+one `Table` block whose text is the OTSL.
+
 It needs `indra-ocr`, `fastapi` and `uvicorn`; on a GPU, `onnxruntime-gpu` in place of
 `onnxruntime`. Nothing here is Tabularium code: the file runs in its own environment.
 """
@@ -21,11 +27,13 @@ It needs `indra-ocr`, `fastapi` and `uvicorn`; on a GPU, `onnxruntime-gpu` in pl
 # (`request: Request`) at runtime, and `Request` is imported inside `create_app`.
 import argparse
 import hmac
+import importlib.util
 import io
 import logging
 import os
 import queue
 import threading
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger("tabularium.indra")
@@ -75,6 +83,48 @@ def page_payload(page: Any, width: int, height: int) -> dict:
     }
 
 
+def load_line_reader(model_dir: str, filename: str):
+    """Import the line-reader module of an installed package folder."""
+    path = Path(model_dir) / filename
+    if not path.is_file():
+        raise FileNotFoundError(f"the model folder {model_dir} lacks {filename}")
+    spec = importlib.util.spec_from_file_location(f"tabularium_line_reader_{path.stem}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def lines_payload(out: dict, width: int, height: int) -> dict:
+    """A line reader's result in the gateway's reply shape: the table as one block.
+
+    The reader gives the table's horizontal extent and the centre of every line it
+    read (`ys_input`: in the image it received); the block spans them, half a line
+    pitch above the first and below the last, inside the page. A page where no line
+    was found has no block.
+    """
+    otsl = str(out.get("otsl") or "")
+    centres = [float(y) for y in (out.get("ys_input") or out.get("ys") or [])]
+    blocks = []
+    if otsl and centres:
+        half = float(out.get("pitch") or 0.0) / 2
+        bbox = [
+            max(0.0, float(out.get("x0") or 0.0)),
+            max(0.0, min(centres) - half),
+            min(float(width), float(out.get("x1") or width)),
+            min(float(height), max(centres) + half),
+        ]
+        blocks.append({"label": "Table", "bbox": bbox, "text": otsl})
+    return {
+        "width": int(width),
+        "height": int(height),
+        "blocks": blocks,
+        "markdown": "",
+        "lines": [{"text": str(line[0])} for line in (out.get("lines") or []) if line],
+        "source": "line-reader",
+        "timings": dict(out.get("seconds") or {}),
+    }
+
+
 class Pool:
     """`workers` converters, one page each at a time.
 
@@ -102,6 +152,7 @@ class Gateway:
         self.pool: Pool | None = None
         self.error = ""
         self.providers: list[str] = []
+        self.reader_module = None
 
     def load(self) -> None:
         try:
@@ -116,6 +167,20 @@ class Gateway:
                 except Exception as exc:  # noqa: BLE001 - CPU still works
                     log.warning("onnxruntime.preload_dlls failed: %s", exc)
             self.providers = pick_providers(self.args.device, list(ort.get_available_providers()))
+            if self.args.line_reader:
+                self.reader_module = load_line_reader(self.args.model_dir, self.args.line_reader)
+
+                def factory():
+                    return self.reader_module.load(
+                        self.args.model_dir, providers=self.providers, threads=self.args.threads,
+                    )
+
+                self.pool = Pool(factory, self.args.workers)
+                log.info(
+                    "Line reader %s ready: providers=%s workers=%d threads=%d",
+                    self.args.line_reader, self.providers, self.args.workers, self.args.threads,
+                )
+                return
             import indra_ocr
 
             def factory():
@@ -149,6 +214,8 @@ class Gateway:
         image.load()
         gray = np.ascontiguousarray(np.asarray(image.convert("L"), dtype=np.uint8))
         height, width = gray.shape[:2]
+        if self.args.line_reader:
+            return lines_payload(self.pool.run(lambda reader: reader.read(gray)), width, height)
         page = self.pool.run(lambda converter: converter.ocr(gray))
         return page_payload(page, width, height)
 
@@ -215,10 +282,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--math", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--served-model-name", default="indra-ocr")
+    # A module inside --model-dir that reads the page instead of the vendor pipeline.
+    parser.add_argument("--line-reader", default="")
     parser.add_argument("--api-key", default=os.environ.get("TABULARIUM_SERVER_API_KEY", ""))
     args = parser.parse_args(argv)
     if args.threads < 1 or args.workers < 1:
         parser.error("--threads and --workers must be at least 1")
+    if args.line_reader and (Path(args.line_reader).name != args.line_reader or not args.line_reader.endswith(".py")):
+        parser.error("--line-reader is the name of a .py file inside --model-dir, not a path")
+    if args.line_reader and args.math:
+        parser.error("--math belongs to the vendor pipeline, not to a line reader")
     return args
 
 

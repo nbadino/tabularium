@@ -50,6 +50,10 @@ class ServeRecipe:
     # MLX server, and the exceptions name themselves here instead of as an
     # `adapter_id ==` branch inside `serve_manager`.
     local_serve: str = ""
+    # True when the model is served only on the machine that runs Tabularium: its
+    # weights are installed from a local folder, so a rented GPU has nothing to
+    # download. The recipe still owns the launch command.
+    local_only: bool = False
 
     @property
     def needs_own_image(self) -> bool:

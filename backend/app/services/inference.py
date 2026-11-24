@@ -754,8 +754,8 @@ class VllmClient:
         them into the 0-1000 blocks the rest of the pipeline reads. Indra takes no
         sampling or prompt, so nothing but the page and the key travels.
         """
-        if self.adapter.adapter_id != "indra-ocr":
-            raise RuntimeError("il runner nativo Indra OCR richiede l'adapter Indra OCR")
+        if getattr(self.adapter, "native_runner", None) != "indra":
+            raise RuntimeError("il runner nativo Indra OCR richiede un adapter servito dal gateway Indra")
         if not self.native_url:
             raise RuntimeError(
                 "gateway Indra OCR non raggiungibile: avvialo in locale, su Vast.ai o "
@@ -2179,6 +2179,14 @@ def get_inference_config() -> dict:
     }
 
 
+def _served_by_indra_gateway(adapter_id: str) -> bool:
+    """True for the models whose pages go to the Indra gateway's `/parse`."""
+    try:
+        return getattr(get_adapter(adapter_id), "native_runner", None) == "indra"
+    except ValueError:
+        return False
+
+
 def _native_url(adapter_id: str, provider: str | None, url: str) -> str | None:
     """The sidecar URL of the adapters whose official pipeline is not on `/v1`."""
     if adapter_id in {"teleocr", "glm-ocr", "mineru2.5"} and provider == "vast":
@@ -2190,7 +2198,7 @@ def _native_url(adapter_id: str, provider: str | None, url: str) -> str | None:
         except Exception:  # noqa: BLE001 - legacy/non-Vast profiles have no sidecar
             return None
         return None
-    if adapter_id == "indra-ocr" and provider != "llamaindex":
+    if _served_by_indra_gateway(adapter_id) and provider != "llamaindex":
         # Indra's gateway answers `/v1/models` and `/parse` on the same port wherever
         # it runs (local, Vast tunnel, a server started by hand): the sidecar is the
         # endpoint itself, without its `/v1`.

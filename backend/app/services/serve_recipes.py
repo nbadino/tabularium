@@ -151,6 +151,7 @@ def indra_gateway_argv(
     if lora_path.strip() or draft_model_path.strip():
         raise ValueError(f"'{recipe.adapter_id}' non ha checkpoint LoRA né draft: è un pipeline ONNX")
     argv = [GATEWAY_SCRIPT, "--model-dir", model_path, "--host", host, "--port", str(int(port))]
+    argv += list(recipe.serve_args)
     argv = apply_workflow_overrides(recipe.adapter_id, argv, (settings or {}).get("workflow") or {})
     argv += ["--served-model-name", served_model_name or recipe.served_model_name]
     if api_key.strip():
@@ -179,6 +180,10 @@ def apply_serving_overrides(argv: list[str], serving: dict) -> list[str]:
     return argv
 
 
+# The models served by `indra_native_gateway.py`: their workflow fields are its flags.
+INDRA_GATEWAY_MODELS = (model_specs.indra_ocr.ADAPTER_ID, model_specs.indra_lloyds.ADAPTER_ID)
+
+
 def apply_workflow_overrides(adapter_id: str, argv: list[str], workflow: dict) -> list[str]:
     """Apply only model-specific performance controls to the vendor command."""
     argv = list(argv)
@@ -189,7 +194,7 @@ def apply_workflow_overrides(adapter_id: str, argv: list[str], workflow: dict) -
             argv[argv.index(flag) + 1] = value
         else:
             argv += [flag, value]
-    if adapter_id == "indra-ocr":
+    if adapter_id in INDRA_GATEWAY_MODELS:
         # The gateway's flags (`indra_native_gateway.py`); a value left to the default
         # is not written, so the gateway's default (Indra's own) applies.
         for key in ("device", "threads", "workers"):
@@ -231,4 +236,5 @@ def remote_models() -> list[dict[str, object]]:
             **resource_budget(recipe),
         }
         for recipe in RECIPES.values()
+        if not recipe.local_only
     ]

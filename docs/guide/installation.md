@@ -287,6 +287,10 @@ tabularium models import --help   # --force replaces an existing installation
 The copy is staged next to the destination and renamed at the end, so an interrupted
 import never looks like a complete checkpoint.
 
+A model that is not a Hugging Face checkpoint names its own files instead of
+`config.json` and weights: the Lloyd's line reader (`--adapter indra-lloyds`) is a folder
+with `rec.onnx`, `meta.json` and `lloyds_lines.py` (see [local inference](local-inference.md)).
+
 **Hugging Face behind a mirror.** `huggingface_hub` honours `HF_ENDPOINT`, so an internal
 mirror works without changing the application:
 

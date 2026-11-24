@@ -66,6 +66,9 @@ PUBLIC_SCORES: dict[str, PublicScore | NotApplicable] = {
         "Datalab reports OmniParseBench and an OmniDocBench v1.5 OCR-only run (text edit distance), "
         "no v1.6 Overall"
     ),
+    "indra-lloyds": NotApplicable(
+        "a reader for one corpus, measured on the project's own gold tables, not on OmniDocBench"
+    ),
     "gemini-argon": NotApplicable(
         "hosted model without OCR benchmarks in its card; the leaderboard lists only Gemini 3"
     ),

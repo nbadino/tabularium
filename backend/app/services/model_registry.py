@@ -45,7 +45,8 @@ def _vast_serve_ready(adapter_id: str) -> bool:
     """
     from . import serve_recipes
 
-    return adapter_id in serve_recipes.RECIPES
+    recipe = serve_recipes.RECIPES.get(adapter_id)
+    return recipe is not None and not recipe.local_only
 
 
 _DOWNLOAD_SCRIPT = (
@@ -218,6 +219,10 @@ def is_installed(adapter_id: str) -> bool:
             return False
         base_id = str(row.get('base_adapter_id') or '').strip()
         return bool(base_id) and is_installed(base_id)
+    install_files = get_adapter(adapter_id).capabilities.install_files
+    if install_files:
+        # A package that is not a Hugging Face checkpoint names its own files.
+        return all((d / name).is_file() for name in install_files)
     if not (d / "config.json").exists():
         return False
     return bool(list(d.glob("*.safetensors")) or list(d.glob("*.bin")))
@@ -541,7 +546,7 @@ def import_local(adapter_id: str, source: str | Path, *, force: bool = False) ->
     interrupted import can never look like a complete checkpoint (`is_installed`
     checks for `config.json` plus real weights).
     """
-    get_adapter(adapter_id)  # unknown id raises ValueError before touching the disk
+    adapter = get_adapter(adapter_id)  # unknown id raises ValueError before touching the disk
     if adapter_id.startswith("custom-"):
         raise ValueError(
             "a fine-tuned checkpoint is registered from its training run, not imported as a base model"
@@ -549,9 +554,14 @@ def import_local(adapter_id: str, source: str | Path, *, force: bool = False) ->
     src = Path(source).expanduser().resolve()
     if not src.is_dir():
         raise ValueError(f"not a directory: {src}")
-    if not (src / "config.json").is_file():
+    install_files = adapter.capabilities.install_files
+    if install_files:
+        missing = [name for name in install_files if not (src / name).is_file()]
+        if missing:
+            raise ValueError(f"{src} lacks {', '.join(missing)}: it is not a {adapter_id} package")
+    elif not (src / "config.json").is_file():
         raise ValueError(f"{src} has no config.json: it is not a model checkpoint")
-    if not (any(src.glob("*.safetensors")) or any(src.glob("*.bin"))):
+    elif not (any(src.glob("*.safetensors")) or any(src.glob("*.bin"))):
         raise ValueError(f"{src} has no weights (*.safetensors or *.bin)")
     dest = models_dir(adapter_id)
     if dest.exists() and any(dest.iterdir()) and not force:

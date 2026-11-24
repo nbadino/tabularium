@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .. import config
+from ..models import indra_lloyds as indra_lloyds_spec
 from ..models import indra_ocr as indra_spec
 from ..models import monkeyocrv2 as reference
 from ..models.indra_ocr import INDRA_LABELS
@@ -60,6 +61,10 @@ class ModelCapabilities:
     # --- ricetta di installazione/training (nuovo) --------------------------
     hf_repo: str = ""
     hf_revision: str | None = None
+    # The files that make the model's folder a complete installation, for a model
+    # that is not a Hugging Face checkpoint. Empty = the checkpoint rule
+    # (`config.json` plus weights), owned by `model_registry.is_installed`.
+    install_files: tuple[str, ...] = ()
     approx_size_gb: float | None = None
     license_note: str = ""
     # id logico di toolchain: "ms-swift" | "llama-factory" | "unsloth" |
@@ -2626,6 +2631,45 @@ class IndraOcrAdapter(_StubAdapter):
         return items
 
 
+class IndraLloydsAdapter(IndraOcrAdapter):
+    """Indra line reader for Lloyd's registers: a fine-tuned Indra recognizer with its
+    own pipeline, installed as a package folder (`models/indra_lloyds.py`).
+
+    It runs in the Indra gateway and answers in the same shape, so the client and the
+    block parsing are Indra's. What differs is declared here: the page comes back as
+    one table, written as OTSL, and the weights are imported, never downloaded.
+    """
+
+    adapter_id = indra_lloyds_spec.ADAPTER_ID
+    capabilities = ModelCapabilities(
+        adapter_id=adapter_id,
+        display_name="Indra · Lloyd's registers",
+        tasks=("table",),
+        coordinate_system="normalized-0-1000",
+        table_format="otsl",
+        training_types=(),
+        inference_modes=("onnxruntime",),
+        hardware=("cpu", "cuda", "apple-silicon"),
+        languages=("en",),
+        hf_repo="",
+        install_files=indra_lloyds_spec.INSTALL_FILES,
+        # A 16 MB recognizer and its metadata.
+        approx_size_gb=0.02,
+        license_note=(
+            "A fine-tune of the Indra recognizer: the weights stay under Datalab's modified "
+            "OpenRAIL-M licence. Measured only on the Lloyd's Shipping Index; installed with "
+            "`tabularium models import`."
+        ),
+        train_toolchain="none",
+        serve_backend="indra-native",
+        served_model_name=indra_lloyds_spec.SERVED_MODEL_NAME,
+        maturity="experimental",
+        local_runtimes=("onnxruntime",),
+    )
+
+    _LABEL_MAP = indra_lloyds_spec.LABELS
+
+
 class CustomVllmAdapter(_StubAdapter):
     """Un modello aggiunto liberamente dall'utente (repo Hugging Face
     qualsiasi), riga della tabella `custom_models` — stesso principio di LM
@@ -2759,6 +2803,7 @@ _ADAPTERS: dict[str, ModelAdapter] = {
         LightOnOcr3Adapter(),
         SuryaOcrAdapter(),
         IndraOcrAdapter(),
+        IndraLloydsAdapter(),
         XiaomiOcrAdapter(),
         GeminiArgonAdapter(),
     )

@@ -815,6 +815,7 @@ export const it = {
       weightsMlxBody:
         'Con MLX non c’è un download da fare prima: {repo} lo scarica il server al primo avvio, nella cache di Hugging Face.',
       weightsVllmBody: 'Scarica {repo} ({size}) nel registro locale. Si fa una volta sola.',
+      weightsImportBody: 'I pesi di questo modello non si scaricano: si installano sul server da una cartella, con «tabularium models import <cartella> --adapter {adapter}».',
       downloadCta: 'Scarica i pesi',
       deleteWeights: 'Elimina i pesi',
       serverTitle: 'Server locale',
@@ -3252,6 +3253,7 @@ export const it = {
     xiaomiLayoutThreshold: 'Soglia del layout (PP-DocLayoutV3)',
     xiaomiLayoutModel: 'Modello di layout (PP-DocLayoutV3)',
     indraWorkflowIntro: 'Indra OCR è un pipeline ONNX (rilevamento righe, riconoscimento, layout e ordine di lettura) che gira su CPU; con una GPU NVIDIA usa CUDA. Le modifiche valgono al prossimo avvio del server.',
+    indraLloydsWorkflowIntro: "Lettore di righe per i registri Lloyd's: un riconoscitore Indra adattato che legge ogni riga della tabella per intero e ricostruisce le colonne. Restituisce una tabella per pagina. Le modifiche valgono dal prossimo avvio del server.",
     indraDevice: 'Dispositivo',
     indraDeviceAutoHint: 'CUDA se disponibile, altrimenti CPU',
     indraThreads: 'Thread per pagina',

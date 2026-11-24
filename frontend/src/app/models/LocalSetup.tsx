@@ -419,11 +419,14 @@ export function LocalSetup({ model, onChanged }: LocalSetupProps) {
             </div>
           ) : (
             <div>
+              {/* A model without a repository is installed from a folder on the server. */}
               <p>
-                {t('modelsHub.local.weightsVllmBody', {
-                  repo: model.hf_repo,
-                  size: model.approx_size_gb != null ? `~${model.approx_size_gb} GB` : '—',
-                })}
+                {model.hf_repo
+                  ? t('modelsHub.local.weightsVllmBody', {
+                      repo: model.hf_repo,
+                      size: model.approx_size_gb != null ? `~${model.approx_size_gb} GB` : '—',
+                    })
+                  : t('modelsHub.local.weightsImportBody', { adapter: model.adapter_id })}
               </p>
               {model.checkpoint_detached && (
                 <p className="mt-1 text-[color:var(--color-warn)]">{t('cloud.models.checkpointDetached')}</p>
