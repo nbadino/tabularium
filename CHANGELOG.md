@@ -7,6 +7,14 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **Indra · Lloyd's registers (`indra-lloyds`)** joins the catalogue (experimental): a recognizer
+  fine-tuned on whole table lines of the *Lloyd's Shipping Index*, read by a pipeline of its own
+  (page flattening, line finding, one reading per line, table assembled from column marks). It
+  returns one table per page as OTSL and runs in the Indra gateway (`--line-reader`) on this
+  machine only. Its package folder (`rec.onnx`, `meta.json`, `lloyds_lines.py`) is not on Hugging
+  Face: `tabularium models import <folder> --adapter indra-lloyds` installs it, and the Models
+  page says so instead of offering a download. A serve recipe can now be `local_only`, which
+  keeps the model out of the rented-GPU lists.
 - **Indra OCR (Datalab, `datalab-to/indra-ocr`)** joins the catalogue (experimental): a 7.3M-parameter
   OCR pipeline on ONNX Runtime (line detection, recognition in 80+ languages, layout and reading
   order) that needs no GPU. Tabularium runs the vendor's `indra_ocr` package behind a small gateway

@@ -1922,6 +1922,11 @@ def build_provision_recipe(
     from .model_adapters import get_adapter
 
     recipe = serve_recipes.recipe_for(adapter_id)
+    if recipe.local_only:
+        raise ValueError(
+            f"'{adapter_id}' è servito solo su questa macchina: i suoi pesi si installano "
+            "da una cartella locale e una GPU a noleggio non può scaricarli"
+        )
     from . import model_settings
     settings_payload = model_settings.get_settings(adapter_id)
     user_settings = settings_payload["overrides"]

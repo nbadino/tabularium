@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import config
+from ..models import indra_lloyds as lloyds_spec
 from ..models import indra_ocr as spec
 
 READY_CHECK = "import indra_ocr, fastapi, uvicorn, onnxruntime, PIL, numpy"
@@ -92,7 +93,9 @@ def packages(*, gpu: bool) -> list[list[str]]:
     GPU build installs the same module: installing both in one step leaves one half
     overwritten by the other. So the CPU build goes first, is removed, and the GPU
     build takes its place."""
-    steps = [[spec.INDRA_PACKAGE, *spec.GATEWAY_PACKAGES]]
+    # One environment serves every model of the gateway: the line reader's own
+    # imports are installed with it.
+    steps = [[spec.INDRA_PACKAGE, *spec.GATEWAY_PACKAGES, *lloyds_spec.RUNTIME_PACKAGES]]
     if gpu:
         steps.append(["--uninstall", "onnxruntime"])
         steps.append([spec.ONNXRUNTIME_GPU_PACKAGE])
