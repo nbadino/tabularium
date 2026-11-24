@@ -85,8 +85,13 @@ python scripts/cloud/indra_native_gateway.py --model-dir <snapshot of datalab-to
 environment (plus SciPy), but it is not the vendor's pipeline: a recognizer fine-tuned
 on whole table lines of the *Lloyd's Shipping Index*, with a module of its own that
 flattens the page, finds the lines, reads each one in one piece and assembles the
-table. It returns one table per page, as OTSL. Weights and module are one package
-folder (`rec.onnx`, `meta.json`, `lloyds_lines.py`) that is not on Hugging Face:
+table, as OTSL. A table-only package returns that table; a whole-page package also
+reads what is outside it with the stock Indra models (Indra OCR must be installed)
+and returns the title, the issue date, the page number, the letter range, the section
+titles and the adverts as blocks with those labels. The header of a single page is
+read on that page alone: on a worn page the date or the number can be wrong. Weights
+and module are one package folder (`rec.onnx`, `meta.json`, `lloyds_lines.py`, and any
+package the module imports) that is not on Hugging Face:
 install it on the server, then start it from Models as any local model.
 
 ```bash

@@ -18,7 +18,8 @@ With `--line-reader FILE` the page is read by a line-reader package instead of t
 vendor pipeline: `FILE` is a module inside `--model-dir` (next to its fine-tuned
 `rec.onnx`) that exposes `load(model_dir, providers=..., threads=...)` and whose reader
 returns the page's table as OTSL from `read(gray)`. The reply keeps the same shape:
-one `Table` block whose text is the OTSL.
+one `Table` block whose text is the OTSL, or the reader's own `blocks` when it reads
+the whole page (it then gets the stock models through `--stock-model-dir`).
 
 It needs `indra-ocr`, `fastapi` and `uvicorn`; on a GPU, `onnxruntime-gpu` in place of
 `onnxruntime`. Nothing here is Tabularium code: the file runs in its own environment.
@@ -28,10 +29,12 @@ It needs `indra-ocr`, `fastapi` and `uvicorn`; on a GPU, `onnxruntime-gpu` in pl
 import argparse
 import hmac
 import importlib.util
+import inspect
 import io
 import logging
 import os
 import queue
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -88,6 +91,10 @@ def load_line_reader(model_dir: str, filename: str):
     path = Path(model_dir) / filename
     if not path.is_file():
         raise FileNotFoundError(f"the model folder {model_dir} lacks {filename}")
+    # A reader may be a package next to its entry module: the folder goes on the path.
+    folder = str(Path(model_dir).resolve())
+    if folder not in sys.path:
+        sys.path.insert(0, folder)
     spec = importlib.util.spec_from_file_location(f"tabularium_line_reader_{path.stem}", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -105,7 +112,19 @@ def lines_payload(out: dict, width: int, height: int) -> dict:
     otsl = str(out.get("otsl") or "")
     centres = [float(y) for y in (out.get("ys_input") or out.get("ys") or [])]
     blocks = []
-    if otsl and centres:
+    if isinstance(out.get("blocks"), list):
+        # A whole-page reader places every block itself (title, date, table, adverts...):
+        # they pass as they are; one without a usable box is dropped, never guessed.
+        for block in out["blocks"]:
+            box = block.get("bbox") if isinstance(block, dict) else None
+            if not isinstance(box, (list, tuple)) or len(box) != 4:
+                continue
+            blocks.append({
+                "label": str(block.get("label") or "Text"),
+                "bbox": [float(value) for value in box],
+                "text": str(block.get("text") or ""),
+            })
+    elif otsl and centres:
         half = float(out.get("pitch") or 0.0) / 2
         bbox = [
             max(0.0, float(out.get("x0") or 0.0)),
@@ -170,10 +189,16 @@ class Gateway:
             if self.args.line_reader:
                 self.reader_module = load_line_reader(self.args.model_dir, self.args.line_reader)
 
+                options = {"providers": self.providers, "threads": self.args.threads}
+                # The stock Indra models, for a reader that also reads outside the table.
+                # A table-only reader's `load` does not take them and is not given them.
+                if self.args.stock_model_dir and "stock_dir" in inspect.signature(
+                    self.reader_module.load
+                ).parameters:
+                    options["stock_dir"] = self.args.stock_model_dir
+
                 def factory():
-                    return self.reader_module.load(
-                        self.args.model_dir, providers=self.providers, threads=self.args.threads,
-                    )
+                    return self.reader_module.load(self.args.model_dir, **options)
 
                 self.pool = Pool(factory, self.args.workers)
                 log.info(
@@ -284,6 +309,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--served-model-name", default="indra-ocr")
     # A module inside --model-dir that reads the page instead of the vendor pipeline.
     parser.add_argument("--line-reader", default="")
+    # The stock Indra model folder, handed to a line reader that asks for it.
+    parser.add_argument("--stock-model-dir", default="")
     parser.add_argument("--api-key", default=os.environ.get("TABULARIUM_SERVER_API_KEY", ""))
     args = parser.parse_args(argv)
     if args.threads < 1 or args.workers < 1:

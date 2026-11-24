@@ -7,6 +7,11 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **The Lloyd's reader can return the whole page.** A whole-page package for `indra-lloyds` gives
+  the gateway its own blocks (title, issue date, page number, letter range, section titles,
+  adverts, text, table), which arrive in the project with those labels; it reads the text outside
+  the table with the stock Indra models, passed with `--stock-model-dir`. Table-only packages
+  keep working. The Indra runtime also installs rapidfuzz.
 - **Indra · Lloyd's registers (`indra-lloyds`)** joins the catalogue (experimental): a recognizer
   fine-tuned on whole table lines of the *Lloyd's Shipping Index*, read by a pipeline of its own
   (page flattening, line finding, one reading per line, table assembled from column marks). It

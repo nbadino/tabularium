@@ -32,9 +32,10 @@ def test_labels_have_origin_and_known_models(tmp_path: Path):
         # `Title` è pubblica: il modello base la conosce, quindi ha modelli noti.
         assert by_name["Title"]["origin"] == "public"
         assert by_name["Title"]["known_models"]
-        # `Issue-date` è custom: nessun modello base la emette già.
+        # `Issue-date` is custom: no general model emits it; the Lloyd's reader, built
+        # for this genre, does.
         assert by_name["Issue-date"]["origin"] == "custom"
-        assert by_name["Issue-date"]["known_models"] == []
+        assert by_name["Issue-date"]["known_models"] == ["indra-lloyds"]
         # Il numero del fascicolo è custom ma alcuni modelli lo emettono
         # nativamente (page_number / number → Issue-number).
         assert by_name["Issue-number"]["origin"] == "custom"

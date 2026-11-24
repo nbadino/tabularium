@@ -12,10 +12,16 @@ weights are one package, built outside Tabularium and installed from a folder:
 The package is `rec.onnx` (six outputs, as the stock file), `meta.json` (the stock
 Indra metadata) and `lloyds_lines.py`, whose contract is:
 
-    reader = lloyds_lines.load(model_dir, providers=[...], threads=4)
+    reader = lloyds_lines.load(model_dir, providers=[...], threads=4, stock_dir=...)
     out = reader.read(gray)        # uint8 [H, W]
     out["otsl"], out["lines"], out["x0"], out["x1"], out["ys"], out["ys_input"],
     out["pitch"], out["seconds"]
+    out["blocks"]                  # whole-page packages: [{"label", "bbox", "text"}]
+
+A table-only package (release `t7b`) returns the table; a whole-page package also takes
+`stock_dir`, the stock Indra model folder, reads the rest of the page with it and
+returns every block with one of the labels below, the table among them. The entry
+module may import a package that sits next to it in the folder.
 
 Tabularium runs it in the Indra gateway (`scripts/cloud/indra_native_gateway.py
 --line-reader lloyds_lines.py`) inside the Indra runtime, and reads the table as OTSL.
@@ -37,10 +43,21 @@ LINE_READER = "lloyds_lines.py"
 INSTALL_FILES = ("rec.onnx", "meta.json", LINE_READER)
 # What the package imports beyond the Indra runtime (`indra-ocr` brings numpy, OpenCV
 # and ONNX Runtime).
-RUNTIME_PACKAGES = ("scipy>=1.11",)
+RUNTIME_PACKAGES = ("scipy>=1.11", "rapidfuzz>=3.0")
 
-# The reader returns one block per page: the table.
-LABELS: dict[str, str] = {"Table": "Table"}
+# The reader labels its blocks with Tabularium's own names for the index genre
+# (`docs/spec/60-taxonomy.md`): nothing to translate, only a closed list. A table-only
+# package returns the `Table` alone.
+LABELS: dict[str, str] = {
+    "Title": "Title",
+    "Issue-date": "Issue-date",
+    "Issue-number": "Issue-number",
+    "Page-header": "Page-header",
+    "Section-header": "Section-header",
+    "Advertisement": "Advertisement",
+    "Text": "Text",
+    "Table": "Table",
+}
 
 # The gateway flags that apply to a line reader: no `math`, the package has no formulas.
 WORKFLOW = (
