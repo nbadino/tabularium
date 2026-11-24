@@ -2636,15 +2636,16 @@ class IndraLloydsAdapter(IndraOcrAdapter):
     own pipeline, installed as a package folder (`models/indra_lloyds.py`).
 
     It runs in the Indra gateway and answers in the same shape, so the client and the
-    block parsing are Indra's. What differs is declared here: the page comes back as
-    one table, written as OTSL, and the weights are imported, never downloaded.
+    block parsing are Indra's. What differs is declared here: the table is written as
+    OTSL, the blocks carry Tabularium's own labels, and the weights are imported,
+    never downloaded.
     """
 
     adapter_id = indra_lloyds_spec.ADAPTER_ID
     capabilities = ModelCapabilities(
         adapter_id=adapter_id,
         display_name="Indra · Lloyd's registers",
-        tasks=("table",),
+        tasks=("layout", "text", "table"),
         coordinate_system="normalized-0-1000",
         table_format="otsl",
         training_types=(),
@@ -2668,6 +2669,14 @@ class IndraLloydsAdapter(IndraOcrAdapter):
     )
 
     _LABEL_MAP = indra_lloyds_spec.LABELS
+
+    def serve_command(self, model_path: str, port: int) -> list[str] | None:
+        """Indra's gateway command, plus where the stock Indra models are: a whole-page
+        package reads the text outside the table with them."""
+        from .model_registry import models_dir
+
+        argv = super().serve_command(model_path, port)
+        return [*argv, "--stock-model-dir", str(models_dir(indra_spec.ADAPTER_ID))]
 
 
 class CustomVllmAdapter(_StubAdapter):
