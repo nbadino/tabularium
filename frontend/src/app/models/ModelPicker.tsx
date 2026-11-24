@@ -67,8 +67,9 @@ export function ModelPicker({ models, loading, readOnly = false, selectedId, onS
   const { t, locale } = useI18n()
   const inf = useInference()
   const [query, setQuery] = useState('')
-  // null = not chosen yet: then models that run here come first when there are any.
-  const [onlyHereChoice, setOnlyHere] = useState<boolean | null>(null)
+  // The whole catalogue by default: a filter nobody chose makes the remote and
+  // fine-tuned models look deleted as soon as one local model is installed.
+  const [onlyHere, setOnlyHere] = useState(false)
   const [showAddCustom, setShowAddCustom] = useState(false)
   const [customForm, setCustomForm] = useState<CustomModelForm>(EMPTY_CUSTOM_FORM)
   const [customBusy, setCustomBusy] = useState(false)
@@ -76,7 +77,6 @@ export function ModelPicker({ models, loading, readOnly = false, selectedId, onS
   const [notice, setNotice] = useState<string | null>(null)
 
   const runnableHere = models.filter((m) => m.local?.runnable).length
-  const onlyHere = onlyHereChoice ?? runnableHere > 0
   const needle = query.trim().toLocaleLowerCase()
   const visible = models
     .filter((m) => {
