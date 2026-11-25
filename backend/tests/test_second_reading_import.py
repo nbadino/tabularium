@@ -188,3 +188,61 @@ def test_a_doubt_is_placed_in_the_delivered_table_before_the_structure_guard(tmp
         second = _texts(page["outputs"][consensus.IMPORT_SECOND][1])
         assert (first[(3, 0)], first[(3, 1)]) == ("Valo (Rivö)", "Sw")
         assert (second[(3, 0)], second[(3, 1)]) == ("Valo (Rivo)", "Sw")
+
+
+MERGED = (
+    "<fcel>VESSEL<fcel>Tons<lcel><nl>"
+    "<ucel><fcel>Gross<fcel>Net<nl>"
+    "<fcel>Triona<fcel>4413<fcel>2000<nl>"
+    "<fcel>Trojan Star<fcel>9037<fcel>5000"
+)
+
+
+def _merged(doubts: list[dict]) -> dict:
+    result = _result(doubts=doubts)
+    result["otsl"] = result["blocks"][1]["text"] = MERGED
+    return result
+
+
+def test_a_doubt_under_a_merged_cell_or_past_the_last_column_opens_the_cell(tmp_path):
+    """The second recognizer read text where the first has a merge, or one column more.
+
+    The first reading has nothing of its own there (`text` is empty), so the second
+    reading gets the cell: the merge is split, or the table widened. The first
+    reading keeps its structure.
+    """
+    from app.services import consensus
+
+    doubts = [
+        {"row": 0, "col": 2, "text": "", "other": "Net"},      # under "Tons", two columns wide
+        {"row": 1, "col": 0, "text": "", "other": "Owner"},    # under "VESSEL", two rows high
+        {"row": 2, "col": 3, "text": "", "other": "London"},   # a fourth column
+        {"row": 2, "col": 1, "text": "4413", "other": "4418"},
+    ]
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        report = _import(project_id, _results(tmp_path / "pair", {page_ids[0]: _merged(doubts)}))
+        assert report["imported"] == 1 and report["failed"] == 0 and report["doubts"] == 4
+
+        page = client.get(f"/api/pages/{page_ids[0]}/consensus").json()
+        first = page["outputs"][consensus.IMPORT_FIRST][1]
+        second = page["outputs"][consensus.IMPORT_SECOND][1]
+        assert first["grid"]["cols"] == 3 and (0, 2) not in _texts(first) and (1, 0) not in _texts(first)
+        texts = _texts(second)
+        assert second["grid"]["cols"] == 4
+        assert (texts[(0, 1)], texts[(0, 2)]) == ("Tons", "Net")
+        assert (texts[(0, 0)], texts[(1, 0)]) == ("VESSEL", "Owner")
+        assert (texts[(2, 1)], texts[(2, 3)], texts[(3, 3)]) == ("4418", "London", "")
+        assert all(cell["rowspan"] == 1 and cell["colspan"] == 1 for cell in second["grid"]["cells"])
+        assert page["comparison"] is not None
+
+
+def test_a_doubt_that_gives_text_to_a_place_without_a_cell_still_fails_the_page(tmp_path):
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        pages = {
+            page_ids[0]: _merged([{"row": 0, "col": 2, "text": "Tons", "other": "Net"}]),
+            page_ids[1]: _merged([{"row": 9, "col": 3, "text": "", "other": "London"}]),
+        }
+        report = _import(project_id, _results(tmp_path / "pair", pages))
+        assert report["imported"] == 0 and report["failed"] == 2

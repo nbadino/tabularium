@@ -62,6 +62,9 @@ Notable changes to Tabularium. The format follows
 - Uploaded files are copied to disk in 1 MB chunks instead of being read whole into memory.
 
 ### Fixed
+- **Importing a second reading** no longer refuses a page whose second recognizer read text
+  where the first reading has a merged cell, or one column more: the second reading gets that
+  cell (the merge is split, the table widened) and the page gets its comparison.
 - **Importing results no longer re-guesses tables from the pixels.** `tabularium recognition import`
   ran the geometric "does this look like a table?" check on every imported Text block: about a
   second per block, which made 15,510 pages take hours, and it could have relabelled what the

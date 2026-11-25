@@ -57,9 +57,11 @@ recognizer read differently; `col: null` is a whole row the second reading lacks
 doubts gets two finished outputs in a run created `finished` (`runstore.create_finished`, never
 queued, so a restart resumes nothing): `imported-first`, the file through the read-only prefill,
 and `imported-second`, the same blocks with each doubted cell replaced by `other` (a missing row
-emptied; the structure never changes). Their models carry `profile_id: null`: no saved model
-stands behind them. A doubt whose `text` is not the cell's text fails the page and nothing is
-stored for it. Left out and counted: pages outside the chosen statuses (default `new`),
+emptied). The structure changes only where a doubt with an empty `text` names a place the first
+reading has no cell for: under a merged cell the merge is split in the second reading, past the
+last column the second reading is widened. Their models carry `profile_id: null`: no saved model
+stands behind them. A doubt whose `text` is not what the table has there fails the page and
+nothing is stored for it. Left out and counted: pages outside the chosen statuses (default `new`),
 straightened pages, pages without doubts, pages already imported (`--again` imports them once
 more) and pages with a finished output of other models, whose comparison a newer run would hide.
 A run holds at most `MAX_PAGES` pages. Pinned by `tests/test_second_reading_import.py`.
