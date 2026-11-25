@@ -152,6 +152,10 @@ def _recognition(argv: list[str]) -> int:
     importer.add_argument("--limit", type=int, help="import at most this many pages (lowest ids first)")
     importer.add_argument("--chunk", type=int, default=None, help="pages per recognition run")
     importer.add_argument("--dry-run", action="store_true", help="say what would be imported, write nothing")
+    importer.add_argument(
+        "--again", action="store_true",
+        help="also write the pages an earlier import of this model already wrote",
+    )
 
     args = parser.parse_args(argv)
     if args.data:
@@ -175,7 +179,7 @@ def _recognition(argv: list[str]) -> int:
         report = recognition.import_results(
             args.project, args.source, adapter_id=args.adapter,
             statuses=tuple(args.status or ("new",)), limit=args.limit,
-            chunk=args.chunk or recognition.IMPORT_CHUNK, dry_run=args.dry_run,
+            chunk=args.chunk or recognition.IMPORT_CHUNK, dry_run=args.dry_run, again=args.again,
             progress=progress,
         )
     except ValueError as exc:
@@ -187,6 +191,8 @@ def _recognition(argv: list[str]) -> int:
         print(f"  {skipped['not_in_project']} belong to no page of project {args.project}")
     for status, count in sorted(skipped["status"].items()):
         print(f"  {count} pages left alone: status {status}")
+    if skipped["already_imported"]:
+        print(f"  {skipped['already_imported']} pages left alone: already imported (--again writes them once more)")
     if skipped["transformed"]:
         print(f"  {skipped['transformed']} pages left alone: straightened, the boxes would not fit")
     if report["dry_run"]:

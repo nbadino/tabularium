@@ -365,6 +365,17 @@ def reconcile(active_ids: set[int], *, message: str, ended: str) -> None:
                 )
 
 
+def pages_imported(project_id: int, adapter_id: str) -> set[int]:
+    """Pages an import of this model's results has already written."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT i.page_id FROM recognition_run_items i JOIN recognition_runs r ON r.id = i.run_id "
+            "WHERE r.project_id=? AND r.provider='import' AND r.adapter_id=? AND i.state='finished'",
+            (project_id, adapter_id),
+        ).fetchall()
+    return {int(row["page_id"]) for row in rows}
+
+
 def reviewed_blocks(page_id: int) -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(

@@ -112,7 +112,8 @@ drafts are replaced, what a person drew or verified stays; a straightened page i
 alone (the boxes were read on the original scan) and a result whose boxes do not fit
 the page fails that page only. The work shows up as recognition runs with provider
 `import`. Run it while no model recognition is running, and do not restart the
-application until it ends.
+application until it ends. If it is interrupted, run the same command again: the pages
+already written are skipped (`--again` writes them once more).
 
 The gateway executes `lloyds_lines.py` from the installed folder: import only a
 package you built or trust. It is served on this machine only; its accuracy was

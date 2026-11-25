@@ -443,7 +443,8 @@ def model_prelabel_events(
                     kept.sort(key=lambda k: (k["bbox"][1], k["bbox"][0]))
             for k in kept:
                 if (
-                    adapter_id != "llamaindex-ocria-1"
+                    opts.table_promote
+                    and adapter_id != "llamaindex-ocria-1"
                     and k["label"] in ("Table", "Text")
                     and _looks_like_table(image, k["bbox"])
                 ):
