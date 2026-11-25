@@ -56,6 +56,12 @@ Notable changes to Tabularium. The format follows
 - Uploaded files are copied to disk in 1 MB chunks instead of being read whole into memory.
 
 ### Fixed
+- **Importing results no longer re-guesses tables from the pixels.** `tabularium recognition import`
+  ran the geometric "does this look like a table?" check on every imported Text block: about a
+  second per block, which made 15,510 pages take hours, and it could have relabelled what the
+  model had already labelled. The check now honours `table_promote` everywhere and an import turns
+  it off. Running an interrupted import again resumes it: pages it already wrote are skipped
+  (`--again` writes them once more).
 - **The model list opens on the whole catalogue.** With one model installed on the server the
   picker opened on "Run on this computer (1)", so the remote and fine-tuned models looked
   deleted. The filter is now applied only when chosen.

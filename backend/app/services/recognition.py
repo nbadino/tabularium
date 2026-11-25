@@ -688,6 +688,7 @@ def import_results(
     limit: int | None = None,
     chunk: int = IMPORT_CHUNK,
     dry_run: bool = False,
+    again: bool = False,
     progress=None,
 ) -> dict[str, Any]:
     """Store results a model produced elsewhere as recognition runs of this project.
@@ -700,8 +701,10 @@ def import_results(
 
     Left out, and counted in the report: files of no page of the project, pages whose
     status is not in `statuses`, and pages whose canvas is a straightened master (the
-    boxes were read on the original pixels). `dry_run` returns the plan and writes
-    nothing. Raises ValueError for a request that cannot be honoured at all.
+    boxes were read on the original pixels), and pages an earlier import of this model
+    already wrote, so an interrupted import is resumed by running it again (`again`
+    writes them once more). `dry_run` returns the plan and writes nothing. Raises
+    ValueError for a request that cannot be honoured at all.
     """
     from ..adapters import pages as pagestore
     from . import pages as pagesvc
@@ -726,13 +729,17 @@ def import_results(
         int(page["id"]): page for page in pagestore.all_for_project(project_id)
         if int(page["id"]) in files
     }
+    done = set() if again else runstore.pages_imported(project_id, adapter_id)
     skipped_status: dict[str, int] = {}
     transformed = 0
+    already = 0
     selected: list[int] = []
     for page_id in sorted(pages):
         page = pages[page_id]
         if page["status"] not in statuses:
             skipped_status[page["status"]] = skipped_status.get(page["status"], 0) + 1
+        elif page_id in done:
+            already += 1
         elif pagesvc.has_active_transform(page):
             transformed += 1
         else:
@@ -747,6 +754,7 @@ def import_results(
             "not_in_project": len(files) - len(pages),
             "status": skipped_status,
             "transformed": transformed,
+            "already_imported": already,
         },
         "runs": [],
         "imported": 0,
@@ -784,6 +792,9 @@ def _run_import(run_id: int, adapter, model: str, files: dict, pages: dict, prog
         opts = prefill.PrelabelOptions(
             mode=run["mode"], model_mode="native", recognition_run_id=run_id,
             keep_source_pixels=True,
+            # The labels are the model's: a block is not re-guessed from the pixels.
+            # (The geometric check also costs about a second per block.)
+            table_promote=False,
         )
         for item in runstore.items_for_run(run_id):
             page_id = int(item["page_id"])

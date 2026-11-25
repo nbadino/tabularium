@@ -228,3 +228,39 @@ def test_the_command_reports_the_plan_and_the_outcome(tmp_path, capsys):
         assert cli.main(base) == 0
         assert "imported 2" in capsys.readouterr().out
         assert len(_blocks(page_ids[0])) == 3
+
+
+def test_an_imported_block_is_not_re_guessed_from_the_pixels(tmp_path, monkeypatch):
+    # Production, 25 Nov: 15,510 pages at 1.7 s a page, almost all of it spent asking
+    # whether each Text block "looks like a table".
+    from app.services import prefill, recognition
+
+    def never(_image, _bbox):
+        raise AssertionError("the geometric table check ran on an imported result")
+
+    monkeypatch.setattr(prefill, "_looks_like_table", never)
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path, pages=1)
+        source = _results(tmp_path / "results", page_ids)
+        text = _result()
+        text["blocks"].append({"label": "Text", "bbox": [0.0, 272.0, 200.0, 298.0], "text": "a b c"})
+        (source / f"{page_ids[0]}.json").write_text(json.dumps(text), encoding="utf-8")
+        report = recognition.import_results(project_id, source, adapter_id=ADAPTER)
+        assert report["imported"] == 1 and report["failed"] == 0
+        assert [block["label"] for block in _blocks(page_ids[0])] == ["Title", "Issue-date", "Table", "Text"]
+
+
+def test_running_the_import_again_resumes_it(tmp_path):
+    from app.services import recognition
+
+    with TestClient(app) as client:
+        project_id, page_ids = _project(client, tmp_path)
+        source = _results(tmp_path / "results", page_ids)
+        first = recognition.import_results(project_id, source, adapter_id=ADAPTER, limit=1)
+        assert first["imported"] == 1
+        second = recognition.import_results(project_id, source, adapter_id=ADAPTER)
+        assert second["skipped"]["already_imported"] == 1 and second["imported"] == 2
+        third = recognition.import_results(project_id, source, adapter_id=ADAPTER, dry_run=True)
+        assert third["selected"] == 0 and third["skipped"]["already_imported"] == 3
+        redo = recognition.import_results(project_id, source, adapter_id=ADAPTER, again=True, dry_run=True)
+        assert redo["selected"] == 3
