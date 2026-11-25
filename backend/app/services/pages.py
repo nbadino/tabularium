@@ -107,6 +107,11 @@ def _active_transform_path(page_id: int) -> Path | None:
     return legacy if legacy.exists() else None
 
 
+def has_active_transform(page) -> bool:
+    """True when the canvas is a straightened master, not the pixels of the scan."""
+    return _active_transform_path(page["id"]) is not None and not _has_invalid_transform(page)
+
+
 def _has_invalid_transform(page: sqlite3.Row) -> bool:
     """Riconosce trasformazioni derivate da una tela diversa dall'originale."""
     transformed = _active_transform_path(page["id"])

@@ -14,6 +14,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
@@ -21,6 +22,7 @@ from fastapi import HTTPException
 from ..adapters import runs as runstore
 from . import inference, ocr as ocrmod, prefill, run_documents
 from .i18n import msg
+from .model_adapters import get_adapter
 
 log = logging.getLogger(__name__)
 
@@ -613,6 +615,199 @@ def _wait_while_paused(run_id: int, cancel: threading.Event) -> None:
                 return
         _refresh_counts(run_id)
         cancel.wait(PAUSE_POLL_S)
+
+
+# --- results read elsewhere -----------------------------------------------------
+# How far a box may reach past the page before the result is taken for another scan's.
+IMPORT_BOX_TOLERANCE = 0.02
+IMPORT_CHUNK = 5000
+
+
+class _ImportedPage:
+    """A client whose native page is a result the model produced before, read from a file.
+
+    It stands where `VllmClient` does in the prefill, so an imported page goes through
+    the same label resolution, table parsing and draft rules as a page read now. It has
+    no model behind it: anything but the native page (a table crop fallback, say) fails
+    and is reported on the block.
+    """
+
+    def __init__(self, adapter, model: str, payload: dict) -> None:
+        self.adapter = adapter
+        self.model = model
+        self.last_trace: dict[str, Any] = {}
+        self._payload = payload
+
+    def __getattr__(self, name: str):
+        if name.endswith("_native_page"):
+            return self._native_page
+        raise AttributeError(f"an imported result has no model to call: {name}")
+
+    def _native_page(self, image, **_kwargs) -> list[dict]:
+        return self.adapter.parse_native_result(self._payload)
+
+
+def _imported_payload(path: Path, page: dict[str, Any]) -> dict:
+    """The file as the gateway's reply for this page, or a ValueError saying why not."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"{path.name}: not a readable JSON file ({exc})") from exc
+    blocks = data.get("blocks") if isinstance(data, dict) else None
+    if not isinstance(blocks, list):
+        raise ValueError(f"{path.name}: no `blocks` list")
+    width, height = int(page["width"] or 0), int(page["height"] or 0)
+    if width <= 0 or height <= 0:
+        raise ValueError(f"page {page['id']} has no known size")
+    for block in blocks:
+        box = block.get("bbox") if isinstance(block, dict) else None
+        if not isinstance(box, (list, tuple)) or len(box) != 4:
+            raise ValueError(f"{path.name}: a block without a four-number box")
+        x0, y0, x1, y1 = (float(value) for value in box)
+        if (
+            min(x0, y0) < -IMPORT_BOX_TOLERANCE * max(width, height)
+            or x1 > width * (1 + IMPORT_BOX_TOLERANCE)
+            or y1 > height * (1 + IMPORT_BOX_TOLERANCE)
+        ):
+            raise ValueError(
+                f"{path.name}: a box ({x0:.0f},{y0:.0f},{x1:.0f},{y1:.0f}) does not fit the "
+                f"page ({width}x{height}): the result was read on another image"
+            )
+    # The reader's boxes are in the pixels of the scan; the page knows its size.
+    return {**data, "width": width, "height": height}
+
+
+def import_results(
+    project_id: int,
+    source: str | Path,
+    *,
+    adapter_id: str,
+    statuses: tuple[str, ...] = ("new",),
+    mode: str = "replace_drafts",
+    owner_id: int | None = None,
+    limit: int | None = None,
+    chunk: int = IMPORT_CHUNK,
+    dry_run: bool = False,
+    progress=None,
+) -> dict[str, Any]:
+    """Store results a model produced elsewhere as recognition runs of this project.
+
+    `source` holds one `<page id>.json` per page: what the Indra gateway's reader
+    returns for it (`blocks` with a label, a box in the scan's pixels and the text).
+    Every selected page is written by the prefill itself, in `mode` (by default the
+    unverified drafts are replaced and what a person drew or verified stays), and the
+    work is recorded as recognition runs with provider `import`, `chunk` pages each.
+
+    Left out, and counted in the report: files of no page of the project, pages whose
+    status is not in `statuses`, and pages whose canvas is a straightened master (the
+    boxes were read on the original pixels). `dry_run` returns the plan and writes
+    nothing. Raises ValueError for a request that cannot be honoured at all.
+    """
+    from ..adapters import pages as pagestore
+    from . import pages as pagesvc
+
+    folder = Path(source).expanduser()
+    if not folder.is_dir():
+        raise ValueError(f"not a directory: {folder}")
+    if mode not in {"merge", "replace_drafts"}:
+        raise ValueError("an import may merge or replace drafts, never replace verified work")
+    if chunk < 1:
+        raise ValueError("chunk must be at least 1")
+    adapter = get_adapter(adapter_id)
+    if getattr(adapter, "native_runner", None) != "indra":
+        raise ValueError(
+            f"'{adapter_id}': results can be imported for the models of the Indra gateway only"
+        )
+    files = {
+        int(path.stem): path for path in folder.iterdir()
+        if path.suffix == ".json" and path.stem.isdigit()
+    }
+    pages = {
+        int(page["id"]): page for page in pagestore.all_for_project(project_id)
+        if int(page["id"]) in files
+    }
+    skipped_status: dict[str, int] = {}
+    transformed = 0
+    selected: list[int] = []
+    for page_id in sorted(pages):
+        page = pages[page_id]
+        if page["status"] not in statuses:
+            skipped_status[page["status"]] = skipped_status.get(page["status"], 0) + 1
+        elif pagesvc.has_active_transform(page):
+            transformed += 1
+        else:
+            selected.append(page_id)
+    if limit is not None:
+        selected = selected[: max(0, int(limit))]
+    report: dict[str, Any] = {
+        "dry_run": dry_run,
+        "files": len(files),
+        "selected": len(selected),
+        "skipped": {
+            "not_in_project": len(files) - len(pages),
+            "status": skipped_status,
+            "transformed": transformed,
+        },
+        "runs": [],
+        "imported": 0,
+        "failed": 0,
+    }
+    if dry_run or not selected:
+        return report
+
+    model = str(adapter.capabilities.served_model_name or adapter_id)
+    for start in range(0, len(selected), chunk):
+        page_ids = selected[start:start + chunk]
+        try:
+            run_id = runstore.create(
+                project_id, page_ids, engine="model", mode=mode, model_mode="native",
+                stop_policy="none", owner_id=owner_id, model_name=model,
+                adapter_id=adapter_id, provider="import", endpoint=None,
+            )
+        except runstore.ModelBusy as exc:
+            raise ValueError(f"recognition #{exc.run_id} is running: import when it has ended") from exc
+        except runstore.PagesBusy as exc:
+            raise ValueError(f"some pages are in the running recognition #{exc.run_id}") from exc
+        report["runs"].append(run_id)
+        counts = _run_import(run_id, adapter, model, files, pages, progress)
+        report["imported"] += counts.get("finished", 0)
+        report["failed"] += counts.get("failed", 0)
+    return report
+
+
+def _run_import(run_id: int, adapter, model: str, files: dict, pages: dict, progress) -> dict[str, int]:
+    """One import run, in the caller's thread: a page per file, as `_worker` does."""
+    cancel = threading.Event()
+    run = None
+    try:
+        run = runstore.start(run_id, _now())
+        opts = prefill.PrelabelOptions(
+            mode=run["mode"], model_mode="native", recognition_run_id=run_id,
+            keep_source_pixels=True,
+        )
+        for item in runstore.items_for_run(run_id):
+            page_id = int(item["page_id"])
+            _mark_item(item["id"], "running", started_at=_now(), error=None)
+            try:
+                client = _ImportedPage(adapter, model, _imported_payload(files[page_id], pages[page_id]))
+            except ValueError as exc:
+                blocks, summary, failure = [], None, str(exc)
+            else:
+                blocks, summary, failure = _recognize_page(run, item, opts, client, None, cancel)
+            _finish_item(run_id, item, blocks, summary, failure, cancel)
+            if progress is not None:
+                progress(page_id, failure)
+        counts = runstore.count_items(run_id)
+        runstore.finish(
+            run_id, run["job_id"],
+            state="finished_with_errors" if counts.get("failed", 0) else "finished",
+            job_state="finished", ended=_now(),
+        )
+        return counts
+    except BaseException as exc:
+        # An interrupted import (Ctrl-C included) must not leave a run that looks alive.
+        runstore.fail(run_id, run["job_id"] if run else None, error=str(exc) or type(exc).__name__, ended=_now())
+        raise
 
 
 def cancel_run(run_id: int) -> dict[str, Any]:
