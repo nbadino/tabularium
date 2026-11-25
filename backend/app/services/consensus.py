@@ -639,6 +639,43 @@ def _cell_text(value: Any) -> str:
     return " ".join(str(value or "").split())
 
 
+def _open_cell(
+    grid: dict[str, Any], cells: dict[tuple[int, int], dict[str, Any]], row: int, column: int,
+) -> dict[str, Any] | None:
+    """An empty cell of its own at a place of the table that has none; None if there is no such place.
+
+    Under a merged cell, the merge is split into single cells and its text stays in
+    the first one. Past the last column, the table is widened with empty cells
+    (`otsl.grid_to_otsl` refuses a table grown too large). Both change `grid` and
+    `cells` in place.
+    """
+    rows, cols = int(grid["rows"]), int(grid["cols"])
+    if not (0 <= row < rows and column >= 0):
+        return None
+
+    def add(r: int, c: int) -> None:
+        cells[(r, c)] = {"r": r, "c": c, "rowspan": 1, "colspan": 1, "text": ""}
+        grid["cells"].append(cells[(r, c)])
+
+    if column >= cols:
+        for r in range(rows):
+            for c in range(cols, column + 1):
+                add(r, c)
+        grid["cols"] = column + 1
+        return cells[(row, column)]
+    for cover in list(grid["cells"]):
+        r0, c0 = int(cover["r"]), int(cover["c"])
+        height, width = int(cover.get("rowspan", 1)), int(cover.get("colspan", 1))
+        if r0 <= row < r0 + height and c0 <= column < c0 + width:
+            cover["rowspan"] = cover["colspan"] = 1
+            for r in range(r0, r0 + height):
+                for c in range(c0, c0 + width):
+                    if (r, c) != (r0, c0):
+                        add(r, c)
+            return cells[(row, column)]
+    return None
+
+
 def _second_reading(
     blocks: list[dict[str, Any]], doubts: list[dict[str, Any]], structure_guard, model: str,
 ) -> list[dict[str, Any]]:
@@ -649,8 +686,10 @@ def _second_reading(
     other reading; with no column it is a whole row the second reading does not
     have, which is emptied. So the cells are replaced in the delivered table, and
     that table then becomes a grid the way the prefill makes the first one. A doubt
-    that names no cell of the table, or whose text is not the cell's, was computed
-    on another table: ValueError, and nothing is stored for the page.
+    may name a place where the first reading has no cell of its own and so no text:
+    under a merged cell, or in a column past the last one. The second reading gets
+    that cell (`_open_cell`). A doubt whose text is not what the table has there
+    was computed on another table: ValueError, and nothing is stored for the page.
     """
     out = copy.deepcopy(blocks)
     tables = [block for block in out if (block.get("grid") or {}).get("rows")]
@@ -671,12 +710,15 @@ def _second_reading(
                     cell["text"] = ""
             continue
         cell = cells.get((row, int(column)))
+        if cell is None and not _cell_text(doubt.get("text")):
+            cell = _open_cell(grid, cells, row, int(column))
         if cell is None or _cell_text(cell.get("text")) != _cell_text(doubt.get("text")):
             raise ValueError(
                 f"the doubt at row {row}, column {column} does not match the table: "
                 "it was computed on another reading"
             )
         cell["text"] = str(doubt.get("other") or "")
+    grid["cells"].sort(key=lambda cell: (int(cell["r"]), int(cell["c"])))
     table["content"] = otsl.grid_to_otsl(grid)
     table["grid"] = prefill.finished_model_grid(grid, structure_guard, model)
     return out
