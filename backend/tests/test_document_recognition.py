@@ -282,3 +282,65 @@ def test_continuation_marks_survive_the_real_page_pipeline(tmp_path):
     assert [(b["label"], b.get("continuation")) for b in blocks] == [
         ("Text", "append"), ("Title", None), ("Text", "cross"),
     ]
+
+
+def test_model_prelabel_events_overlaps_official_multi_page_batch(tmp_path):
+    """Multi-page Xiaomi `official` prefill dispatches concurrent lookahead pages."""
+    import threading
+    import time
+
+    from fastapi.testclient import TestClient
+    from PIL import Image
+
+    from app.main import app
+    from app.services import prefill
+    from app.services.model_adapters import get_adapter
+
+    adapter = get_adapter("xiaomi-ocr-0")
+    active = 0
+    peak_active = 0
+    lock = threading.Lock()
+
+    class Model:
+        model = "Xiaomi-OCR-0"
+        provider = "local"
+
+        def __init__(self):
+            self.adapter = adapter
+
+        def ping(self):
+            return True
+
+        def xiaomi_native_page(self, image, **_kw):
+            nonlocal active, peak_active
+            with lock:
+                active += 1
+                peak_active = max(peak_active, active)
+            try:
+                time.sleep(0.05)
+                return [{"bbox": [100, 100, 900, 900], "label": "Text", "content": f"w={image.width}"}]
+            finally:
+                with lock:
+                    active -= 1
+
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    for idx in range(4):
+        Image.new("RGB", (600 + idx * 10, 800), (220, 220, 220)).save(archive / f"p{idx}.png")
+
+    with TestClient(app) as http:
+        pid = http.post("/api/projects", json={"name": "P", "archive_dir": str(archive)}).json()["id"]
+        http.post(f"/api/projects/{pid}/scan")
+        page_ids = [row["id"] for row in http.get(f"/api/projects/{pid}/pages").json()["items"]]
+        events = list(prefill.model_prelabel_events(
+            pid,
+            page_ids,
+            prefill.PrelabelOptions(mode="replace_all", model_mode="official"),
+            Model(),
+            "it",
+        ))
+
+    assert peak_active >= 2
+    done_pages = [e["page_id"] for e in events if e["type"] == "page_done"]
+    assert done_pages == page_ids
+

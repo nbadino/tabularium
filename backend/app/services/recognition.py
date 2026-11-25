@@ -7,6 +7,7 @@ la coda. Le bozze restano modificabili dallo Studio anche a inferenza spenta.
 """
 from __future__ import annotations
 
+import copy
 import json
 import csv
 import io
@@ -20,7 +21,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from ..adapters import runs as runstore
-from . import inference, ocr as ocrmod, prefill, run_documents
+from . import hardware, inference, ocr as ocrmod, prefill, run_documents
 from .i18n import msg
 from .model_adapters import get_adapter
 
@@ -341,13 +342,34 @@ def _start_worker(run_id: int) -> None:
     ).start()
 
 
-def _mark_item(item_id: int, state: str, **values: Any) -> None:
-    runstore.mark_item(item_id, state, **values)
+_DB_STATUS_LOCK = threading.Lock()
 
+
+def _mark_item(item_id: int, state: str, **values: Any) -> None:
+    with _DB_STATUS_LOCK:
+        runstore.mark_item(item_id, state, **values)
 
 
 def _refresh_counts(run_id: int) -> None:
-    runstore.refresh_counts(run_id)
+    with _DB_STATUS_LOCK:
+        runstore.refresh_counts(run_id)
+
+
+def _effective_page_workers(run, client) -> int:
+    """Concurrent pages in flight for adapters backed by continuous batching."""
+    if client is None:
+        return 1
+    declared = int(getattr(getattr(client, "adapter", None), "bulk_page_concurrency", 1) or 1)
+    if declared <= 1:
+        return 1
+    if str(run.get("provider") or "") == "local":
+        try:
+            mem_gb = float(hardware.summary().get("memory_gb") or 0)
+        except Exception:  # noqa: BLE001
+            mem_gb = 0.0
+        if 0 < mem_gb <= 16:
+            return min(declared, 2)
+    return declared
 
 
 
@@ -477,22 +499,68 @@ def _worker(run_id: int, cancel: threading.Event) -> None:
         )
         if as_document:
             _recognize_as_document(run_id, run, items, opts, client, cancel)
-        for item in () if as_document else items:
-            _wait_while_paused(run_id, cancel)
-            if cancel.is_set():
-                _mark_item(item["id"], "cancelled", ended_at=_now())
-                _refresh_counts(run_id)
-                continue
-            _mark_item(item["id"], "running", started_at=_now(), error=None)
-            blocks, summary, failure = _recognize_page(run, item, opts, client, engine, cancel)
-            # Un server locale morto a metà (su un Mac piccolo il GPU può andare
-            # in timeout e il server esce) non deve far fallire la pagina: lo si
-            # riavvia e la si riprova una volta. Solo se il tentativo fallito non
-            # ha scritto niente, così non si duplicano blocchi.
-            if failure and not blocks and not cancel.is_set() and _recover_local_server(run, cancel):
-                _mark_item(item["id"], "running", error=None)
+        page_workers = 1 if as_document else min(_effective_page_workers(run, client), max(1, len(items)))
+        if page_workers > 1 and not as_document:
+            sem = threading.BoundedSemaphore(page_workers)
+            recovery_lock = threading.Lock()
+            spawned: list[threading.Thread] = []
+
+            def _run_concurrent_item(it, page_client) -> None:
+                try:
+                    blocks, summary, failure = _recognize_page(run, it, opts, page_client, engine, cancel)
+                    if failure and not blocks and not cancel.is_set():
+                        with recovery_lock:
+                            recovered = _recover_local_server(run, cancel)
+                        if recovered and not cancel.is_set():
+                            _mark_item(it["id"], "running", error=None)
+                            blocks, summary, failure = _recognize_page(run, it, opts, page_client, engine, cancel)
+                    _finish_item(run_id, it, blocks, summary, failure, cancel)
+                finally:
+                    sem.release()
+
+            for item in items:
+                _wait_while_paused(run_id, cancel)
+                acquired = False
+                while not cancel.is_set():
+                    if sem.acquire(timeout=0.2):
+                        acquired = True
+                        break
+                if acquired:
+                    _wait_while_paused(run_id, cancel)
+                if cancel.is_set():
+                    if acquired:
+                        sem.release()
+                    _mark_item(item["id"], "cancelled", ended_at=_now())
+                    _refresh_counts(run_id)
+                    continue
+                _mark_item(item["id"], "running", started_at=_now(), error=None)
+                item_client = copy.copy(client) if client is not None else None
+                if item_client is not None and hasattr(item_client, "_next_page_prefetch"):
+                    item_client._next_page_prefetch = None
+                t = threading.Thread(
+                    target=_run_concurrent_item,
+                    args=(item, item_client),
+                    name=f"recognition-{run_id}-p{item['page_id']}",
+                    daemon=True,
+                )
+                t.start()
+                spawned.append(t)
+
+            for t in spawned:
+                t.join()
+        else:
+            for item in () if as_document else items:
+                _wait_while_paused(run_id, cancel)
+                if cancel.is_set():
+                    _mark_item(item["id"], "cancelled", ended_at=_now())
+                    _refresh_counts(run_id)
+                    continue
+                _mark_item(item["id"], "running", started_at=_now(), error=None)
                 blocks, summary, failure = _recognize_page(run, item, opts, client, engine, cancel)
-            _finish_item(run_id, item, blocks, summary, failure, cancel)
+                if failure and not blocks and not cancel.is_set() and _recover_local_server(run, cancel):
+                    _mark_item(item["id"], "running", error=None)
+                    blocks, summary, failure = _recognize_page(run, item, opts, client, engine, cancel)
+                _finish_item(run_id, item, blocks, summary, failure, cancel)
 
         counts = runstore.count_items(run_id)
         if cancel.is_set():

@@ -1894,9 +1894,10 @@ class XiaomiOcrAdapter(_StubAdapter):
       - served with stock vLLM (`--trust-remote-code --max-model-len 16384`). No vendor
         training code: the recipe is ms-swift's `qwen3_5` (see `models/xiaomi_ocr.py`);
       - no vendor MLX build, but `mlx-vlm` ships `qwen3_5` and loads the original weights.
-        Verified 2026-10-31 on Apple Silicon with mlx_vlm 0.7.1: `mlx_vlm.server` accepts
-        the vendor request (`enable_thinking: false`) and, with PP-DocLayoutV3 on CPU, a
-        full Historic Shipping Index register page comes back as one OTSL table in 43 s.
+        On Apple Silicon, `xiaomi_mlx_server.py` (`local_serve="mlx-xiaomi"`) combines a solo
+        speculative `mtp.*` fastpath (~12.4 s per register table) with continuous ragged
+        `BatchGenerator` batching (`B=8`, `KV=q8`), sustaining ~7–8 pages/min in bulk runs on
+        M5 Pro at full 4096-token crop sharpness.
     """
 
     adapter_id = "xiaomi-ocr-0"
@@ -1906,6 +1907,7 @@ class XiaomiOcrAdapter(_StubAdapter):
     official_runtime = "paddle"
     region_max_tokens = 16_384
     page_max_edge = XIAOMI_PAGE_MAX_EDGE
+    bulk_page_concurrency = 8
     recommended_generation = {
         "temperature": 0.0, "top_p": 0.8, "presence_penalty": 0.0, "repetition_penalty": 1.0,
     }
@@ -2700,8 +2702,18 @@ class CustomVllmAdapter(_StubAdapter):
             except ValueError:
                 self._base = None
         if self._base is not None:
+            self.native_runner = getattr(self._base, "native_runner", None)
             self.native_prefill_mode = getattr(self._base, "native_prefill_mode", None)
             self.page_layout_fallback = getattr(self._base, "page_layout_fallback", None)
+            self.official_runtime = getattr(self._base, "official_runtime", None)
+            if hasattr(self._base, "region_max_tokens"):
+                self.region_max_tokens = self._base.region_max_tokens
+            if hasattr(self._base, "page_max_edge"):
+                self.page_max_edge = self._base.page_max_edge
+            if hasattr(self._base, "bulk_page_concurrency"):
+                self.bulk_page_concurrency = self._base.bulk_page_concurrency
+            if hasattr(self._base, "recommended_generation"):
+                self.recommended_generation = dict(self._base.recommended_generation or {})
             self.capabilities = replace(
                 self._base.capabilities,
                 adapter_id=row["id"],

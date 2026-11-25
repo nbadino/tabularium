@@ -16,7 +16,7 @@ from contextlib import closing
 
 from . import config
 
-SCHEMA_VERSION = "27"
+SCHEMA_VERSION = "28"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -594,6 +594,29 @@ _MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE pages ADD COLUMN file_size INTEGER;
         CREATE INDEX IF NOT EXISTS idx_pages_content_sha256 ON pages(project_id, content_sha256);
     """),
+    ("28", """
+        -- Full-page overwrite (`replace_all`) supersedes older consensus comparisons
+        -- on that page without deleting historical `consensus_runs` / `consensus_outputs`
+        -- (R9/R13). Default Studio & Table Editor queries only consider consensus runs
+        -- strictly newer than `consensus_cleared_through`, while explicit `?run_id=` views
+        -- keep reading historical runs.
+        ALTER TABLE pages ADD COLUMN consensus_cleared_through INTEGER NOT NULL DEFAULT 0;
+        UPDATE pages
+           SET consensus_cleared_through = MAX(
+               consensus_cleared_through,
+               COALESCE((
+                   SELECT MAX(co.run_id)
+                     FROM consensus_outputs co
+                     JOIN recognition_run_items ri
+                       ON ri.page_id = pages.id AND ri.state = 'finished'
+                     JOIN recognition_runs rr
+                       ON rr.id = ri.run_id AND rr.mode = 'replace_all'
+                    WHERE co.page_id = pages.id
+                      AND co.state = 'finished'
+                      AND COALESCE(co.ended_at, '') < COALESCE(ri.ended_at, '')
+               ), 0)
+           );
+    """),
 ]
 
 
@@ -656,7 +679,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     for version, ddl in sorted(_MIGRATIONS, key=lambda m: int(m[0])):
         if int(version) <= current:
             continue
-        if version in {"16", "17", "18", "21", "22", "23", "24", "25", "26", "27"}:
+        if version in {"16", "17", "18", "21", "22", "23", "24", "25", "26", "27", "28"}:
             _execute_additive_migration(conn, ddl)
             conn.execute("UPDATE meta SET value=? WHERE key='schema_version'", (version,))
             conn.commit()

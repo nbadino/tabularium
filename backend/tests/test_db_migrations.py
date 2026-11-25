@@ -279,3 +279,59 @@ def test_db_at_25_without_users_keeps_the_key_on_the_profile():
         row = conn.execute("SELECT credential_ref, key_required FROM compute_profiles").fetchone()
         assert row["credential_ref"] == "vault:consensus_profile_ccc" and row["key_required"] == 1
         assert conn.execute("SELECT count(*) FROM secrets").fetchone()[0] == 1
+
+
+def test_db_at_26_backfills_consensus_cleared_through_after_replace_all():
+    """Migration 27: pages overwritten by a newer `replace_all` run have their
+    older consensus comparison marked superseded (`consensus_cleared_through`), while
+    `replace_drafts` runs and comparisons newer than `replace_all` stay active."""
+    with _fresh_conn() as conn:
+        db.init_db()
+        conn.execute("ALTER TABLE pages DROP COLUMN consensus_cleared_through")
+        conn.execute("UPDATE meta SET value='26' WHERE key='schema_version'")
+        conn.execute("DELETE FROM projects")
+        conn.execute("INSERT INTO projects (id, name, root_dir) VALUES (1, 'P', '/tmp/p')")
+        for pid in (1, 2, 3):
+            conn.execute(
+                "INSERT INTO pages (id, project_id, rel_path, abs_path) VALUES (?,1,?,?)",
+                (pid, f"p{pid}.png", f"/tmp/p/p{pid}.png"),
+            )
+        conn.execute("INSERT INTO consensus_runs (id, project_id, state) VALUES (1, 1, 'finished')")
+        conn.execute("INSERT INTO consensus_runs (id, project_id, state) VALUES (2, 1, 'finished')")
+        # p1 & p2 had consensus run 1 finished on Nov 16; p3 had consensus run 2 on Nov 20.
+        for cid, pid, t in (
+            (1, 1, "2026-11-16T10:00:00+00:00"),
+            (1, 2, "2026-11-16T10:00:00+00:00"),
+            (2, 3, "2026-11-20T10:00:00+00:00"),
+        ):
+            conn.execute(
+                "INSERT INTO consensus_outputs (run_id, page_id, model_key, state, ended_at) "
+                "VALUES (?, ?, 'm1', 'finished', ?)",
+                (cid, pid, t),
+            )
+        # Recognition run 1 (replace_all) on p1 and p3 at Nov 19; run 2 (replace_drafts) on p2 at Nov 19.
+        conn.execute(
+            "INSERT INTO recognition_runs (id, project_id, state, engine, mode) "
+            "VALUES (1, 1, 'finished', 'model', 'replace_all')"
+        )
+        conn.execute(
+            "INSERT INTO recognition_runs (id, project_id, state, engine, mode) "
+            "VALUES (2, 1, 'finished', 'model', 'replace_drafts')"
+        )
+        for rid, pid in ((1, 1), (2, 2), (1, 3)):
+            conn.execute(
+                "INSERT INTO recognition_run_items (run_id, page_id, state, ended_at) "
+                "VALUES (?, ?, 'finished', '2026-11-19T15:00:00+00:00')",
+                (rid, pid),
+            )
+        conn.commit()
+
+    db.init_db()
+
+    with db.connect() as conn:
+        assert _version(conn) == db.SCHEMA_VERSION
+        rows = {
+            r["id"]: r["consensus_cleared_through"]
+            for r in conn.execute("SELECT id, consensus_cleared_through FROM pages ORDER BY id")
+        }
+        assert rows == {1: 1, 2: 0, 3: 0}

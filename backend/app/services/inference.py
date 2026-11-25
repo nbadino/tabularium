@@ -261,6 +261,180 @@ def _fit_pixels(
 # default di config) da "tetto rimosso di proposito" (None).
 _MAX_PIXELS_DEFAULT = object()
 
+_ACTIVE_XIAOMI_PAGES_LOCK = threading.Lock()
+_ACTIVE_XIAOMI_PAGES = 0
+
+
+def _qwen3_smart_resize_pil(
+    image: Image.Image,
+    *,
+    factor: int = 32,
+    min_pixels: int = 65536,
+    max_pixels: int = 4_194_304,
+) -> Image.Image:
+    """Single-step Qwen3-VL `smart_resize` (`BICUBIC`, multiple of `factor`).
+
+    Pre-applying the exact patch-grid resize before loopback PNG transport shrinks
+    15 MP scans by ~3.5x while causing `FastVisionWrapper` on the server to see
+    `(h, w) == (rh, rw)` and skip any second interpolation.
+    """
+    import math
+
+    w, h = image.size
+    if w <= 0 or h <= 0 or max(h, w) / max(1, min(h, w)) > 200:
+        return image
+    h_bar = round(h / factor) * factor
+    w_bar = round(w / factor) * factor
+    if h_bar * w_bar > max_pixels:
+        beta = math.sqrt((h * w) / max_pixels)
+        h_bar = max(factor, math.floor(h / beta / factor) * factor)
+        w_bar = max(factor, math.floor(w / beta / factor) * factor)
+    elif h_bar * w_bar < min_pixels:
+        beta = math.sqrt(min_pixels / (h * w))
+        h_bar = math.ceil(h * beta / factor) * factor
+        w_bar = math.ceil(w * beta / factor) * factor
+    if (w_bar, h_bar) == (w, h):
+        return image
+    return image.resize((w_bar, h_bar), Image.Resampling.BICUBIC)
+
+
+def _looks_like_borderless_table(image: Image.Image, px_bbox: list[int]) -> bool:
+    """True when `px_bbox` contains a multi-column aligned table (`>= 3` columns, `>= 4` rows)."""
+    from ..domain.prefill import _TABLE_MIN_COLS, _TABLE_MIN_ROWS
+    from . import table_detect
+
+    x1, y1, x2, y2 = px_bbox
+    if x2 - x1 < 50 or y2 - y1 < 50:
+        return False
+    try:
+        detection = table_detect.detect_grid(image.crop((x1, y1, x2, y2)))
+    except Exception:  # noqa: BLE001
+        return False
+    if detection.rows < _TABLE_MIN_ROWS or detection.cols < _TABLE_MIN_COLS:
+        return False
+    internal = detection.column_support[1:-1]
+    if not internal:
+        return False
+    solid = sum(1 for s in internal if s >= 0.5 * detection.rows)
+    return solid >= _TABLE_MIN_COLS - 1
+
+
+def _repair_xiaomi_layout_regions(layout_page: Image.Image, regions: list[dict]) -> list[dict]:
+    """Recover borderless multi-column registers mislabelled `content` or split vertically.
+
+    1. `PP-DocLayoutV3` occasionally labels borderless multi-column registers as `content`
+       (or a single large `text` block): promote to `table` only when geometric column
+       support confirms `>= 3` aligned columns (leaving prose and 2-column TOCs as text).
+    2. When `PP-DocLayoutV3` splits one continuous borderless register across two stacked
+       `table` boxes with matching horizontal span (`x_iou >= 0.80`), small vertical gap,
+       and no intervening non-table block between them, coalesce them so the VLM reads
+       the bottom rows together with the table's column header.
+    """
+    promoted: list[dict] = []
+    w_img, h_img = layout_page.size
+    for r in regions:
+        lbl = r["label"]
+        bx = list(r["bbox"])
+        bw, bh = bx[2] - bx[0], bx[3] - bx[1]
+        if (lbl == "content" and bw >= 400 and bh >= 150) or (lbl == "text" and bw >= 500 and bh >= 250):
+            px_box = [
+                int(bx[0] / 1000 * w_img), int(bx[1] / 1000 * h_img),
+                int(bx[2] / 1000 * w_img), int(bx[3] / 1000 * h_img),
+            ]
+            if _looks_like_borderless_table(layout_page, px_box):
+                lbl = "table"
+        promoted.append({"label": lbl, "bbox": bx})
+
+    merged: list[dict] = []
+    for r in promoted:
+        if r["label"] == "table" and merged:
+            prev_t_idx = next(
+                (k for k in range(len(merged) - 1, -1, -1) if merged[k]["label"] == "table"),
+                None,
+            )
+            if prev_t_idx is not None:
+                pt = merged[prev_t_idx]["bbox"]
+                cb = r["bbox"]
+                ix1, ix2 = max(pt[0], cb[0]), min(pt[2], cb[2])
+                ux1, ux2 = min(pt[0], cb[0]), max(pt[2], cb[2])
+                x_iou = max(0, ix2 - ix1) / max(1, ux2 - ux1)
+                v_gap = cb[1] - pt[3]
+                intervening = any(
+                    m["label"] != "table"
+                    and m["bbox"][3] > pt[3] + 5
+                    and m["bbox"][1] < cb[1] - 5
+                    for m in merged[prev_t_idx + 1 :]
+                )
+                if x_iou >= 0.80 and (ux2 - ux1) >= 500 and -20 <= v_gap <= 90 and not intervening:
+                    cand = [ux1, min(pt[1], cb[1]), ux2, max(pt[3], cb[3])]
+                    px_cand = [
+                        int(cand[0] / 1000 * w_img), int(cand[1] / 1000 * h_img),
+                        int(cand[2] / 1000 * w_img), int(cand[3] / 1000 * h_img),
+                    ]
+                    if _looks_like_borderless_table(layout_page, px_cand):
+                        merged[prev_t_idx]["bbox"] = cand
+                        continue
+        merged.append(r)
+    return _join_side_by_side_tables(layout_page, merged)
+
+
+def _covered(inner: list, outer: list) -> float:
+    """Share of `inner`'s area that lies inside `outer` (boxes in 0-1000 coordinates)."""
+    w = max(0, min(inner[2], outer[2]) - max(inner[0], outer[0]))
+    h = max(0, min(inner[3], outer[3]) - max(inner[1], outer[1]))
+    return w * h / max(1, (inner[2] - inner[0]) * (inner[3] - inner[1]))
+
+
+def _join_side_by_side_tables(layout_page: Image.Image, regions: list[dict]) -> list[dict]:
+    """Rejoin a register `PP-DocLayoutV3` cut into side-by-side halves.
+
+    On bound volumes the detector reads one borderless register as a left half (name to
+    tonnage, sometimes itself in stacked pieces none half the page wide, so the stacked
+    rule never fires) and a right half (From/For/Latest). Two `table` boxes are joined when
+    they sit side by side (both at least 20% of the page tall, vertical overlap `>= 60%` of
+    the shorter, horizontal gap within `[-80, 40]`) or one lies `>= 80%` inside the other,
+    and the union holds no non-table block. A box under a fifth of the page wide touching the
+    left or right edge is the facing page caught by the scan: it is never joined, and as
+    `text` it does not block the join either. The geometric column check is
+    not asked: both boxes are already `table` for the detector, and on a curved page the
+    column edges drift so much that it rejects even a correct half. On project 4 no page
+    holds two complete registers side by side, so the rule has no counter-example there.
+    """
+
+    def side_by_side(a: list, b: list) -> bool:
+        left, right = (a, b) if a[0] <= b[0] else (b, a)
+        overlap = min(a[3], b[3]) - max(a[1], b[1])
+        shorter = min(a[3] - a[1], b[3] - b[1])
+        return shorter >= 200 and -80 <= right[0] - left[2] <= 40 and overlap / shorter >= 0.6
+
+    def edge_strip(b: list) -> bool:
+        # The facing page: up to ~13% wide on project 4, while a real half is >= 40%.
+        return b[2] - b[0] < 200 and (b[0] <= 20 or b[2] >= 980)
+
+    out = [{**r, "bbox": list(r["bbox"])} for r in regions]
+    joined = True
+    while joined:
+        joined = False
+        tables = [k for k, r in enumerate(out) if r["label"] == "table" and not edge_strip(r["bbox"])]
+        for n, i in enumerate(tables):
+            for j in tables[n + 1:]:
+                a, b = out[i]["bbox"], out[j]["bbox"]
+                if not (side_by_side(a, b) or _covered(a, b) >= 0.8 or _covered(b, a) >= 0.8):
+                    continue
+                cand = [min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])]
+                if any(
+                    r["label"] != "table" and not edge_strip(r["bbox"]) and _covered(r["bbox"], cand) >= 0.5
+                    for r in out
+                ):
+                    continue
+                out[i]["bbox"] = cand
+                del out[j]
+                joined = True
+                break
+            if joined:
+                break
+    return out
+
 
 class VllmClient:
     def __init__(
@@ -328,6 +502,7 @@ class VllmClient:
         self.max_pixels: int | None = cap if (cap or 0) > 0 else None
         self.last_trace: dict = {}
         self.last_text = ""
+        self._next_page_prefetch: Callable[[], None] | None = None
         # Session id stabile per il gateway OpenCode: il suo routing e il
         # prompt caching lo usano per raggruppare le richieste della stessa
         # conversazione (header `x-opencode-session`, obbligatorio lì).
@@ -785,64 +960,189 @@ class VllmClient:
     ) -> list[dict]:
         """Xiaomi-OCR-0's region mode: PP-DocLayoutV3, then one task prompt per crop.
 
-        `mcp_ocr_server.ocr_image(mode="region")`: the page is fitted to 2048 px, regions
-        keep the detector's order, crops are cut from the 0-1000 box without padding, and
-        up to eight run at once. Skipped regions (images, charts) stay as empty blocks.
+        Layout runs on a 2048 px view (`PP-DocLayoutV3`), borderless multi-column
+        registers mislabelled `content` or split vertically are recovered geometrically,
+        and region crops are cut from the full-resolution scan (capped per crop to
+        `edge * edge = 4,194,304` px = 4096 tokens, matching training and `gold_eval`).
         """
-        if self.adapter.adapter_id != "xiaomi-ocr-0":
+        if getattr(self.adapter, "native_runner", None) != "xiaomi":
             raise RuntimeError("il runner nativo Xiaomi-OCR-0 richiede l'adapter Xiaomi-OCR-0")
         from concurrent.futures import ThreadPoolExecutor
 
         from ..models.xiaomi_ocr import XIAOMI_LABELS, XIAOMI_LAYOUT_TASKS
         from . import model_settings, trainer
 
-        workflow = model_settings.get_settings("xiaomi-ocr-0")["effective"]["workflow"]
-        layout_dir = trainer.layout_model_dir(workflow.get("layout_model", "official"))
-        page = image.convert("RGB")
-        edge = self.adapter.page_max_edge
-        if page.width > edge or page.height > edge:
-            page.thumbnail((edge, edge), Image.Resampling.LANCZOS)
-        regions = [
-            region
-            for region in paddle_official.detect_layout(
-                page, threshold=float(workflow["layout_threshold"]), model_dir=layout_dir
+        global _ACTIVE_XIAOMI_PAGES
+        with _ACTIVE_XIAOMI_PAGES_LOCK:
+            _ACTIVE_XIAOMI_PAGES += 1
+        full_page: Image.Image | None = None
+        try:
+            settings_id = (
+                getattr(getattr(self.adapter, "_base", None), "adapter_id", None)
+                or self.adapter.adapter_id
             )
-            if region["label"] in XIAOMI_LAYOUT_TASKS
-        ]
+            workflow = model_settings.get_settings(settings_id)["effective"]["workflow"]
+            layout_dir = trainer.layout_model_dir(workflow.get("layout_model", "official"))
+            full_page = image.convert("RGB")
+            edge = self.adapter.page_max_edge
+            if full_page.width > edge or full_page.height > edge:
+                layout_page = full_page.copy()
+                layout_page.thumbnail((edge, edge), Image.Resampling.LANCZOS)
+            else:
+                layout_page = full_page
 
-        def read(region: dict) -> dict:
-            task = XIAOMI_LAYOUT_TASKS[region["label"]]
-            item = {"bbox": region["bbox"], "label": XIAOMI_LABELS[region["label"]], "content": ""}
-            if task == "skip":
-                return item
-            x1, y1, x2, y2 = region["bbox"]
-            crop = page.crop((
-                int(x1 / 1000 * page.width), int(y1 / 1000 * page.height),
-                int(x2 / 1000 * page.width), int(y2 / 1000 * page.height),
-            ))
-            sampling = self._sampling_for(task)
+            try:
+                raw_regions = [
+                    region
+                    for region in paddle_official.detect_layout(
+                        layout_page, threshold=float(workflow["layout_threshold"]), model_dir=layout_dir
+                    )
+                    if region["label"] in XIAOMI_LAYOUT_TASKS
+                ]
+                regions = _repair_xiaomi_layout_regions(layout_page, raw_regions)
+            finally:
+                if layout_page is not full_page:
+                    layout_page.close()
 
-            def ask(sampling: dict | None) -> str:
-                return (self._chat(
-                    crop,
-                    self.adapter.prompt_for(task),
-                    max_tokens=self._output_budget(self.adapter.region_max_tokens),
-                    max_pixels=None,
-                    sampling=sampling,
-                    task=task,
-                    cancel_event=cancel_event,
-                ) or "").strip()
+            prefetch_hook = getattr(self, "_next_page_prefetch", None)
+            self._next_page_prefetch = None
+            if callable(prefetch_hook):
+                prefetch_hook()
 
-            item["content"] = ask(sampling)
-            # The vendor's optional retry (`--retry-repetitive`): a region that reads as
-            # a decoding loop is asked again with a presence penalty.
-            if workflow.get("retry_repetitive") and protocol.looks_repetitive(item["content"]):
-                retry = {**(sampling or {}), "presence_penalty": float(workflow.get("retry_presence_penalty", 1.5))}
-                item["content"] = ask(retry)
-            return item
+            table_indices = [
+                idx for idx, reg in enumerate(regions)
+                if XIAOMI_LAYOUT_TASKS[reg["label"]] == "table"
+            ]
+            stream_region_idx = (
+                table_indices[0] if len(table_indices) == 1
+                else (0 if len(regions) == 1 else -1)
+            )
+            local_mlx = self._uses_local_mlx()
+            max_crop_pixels = edge * edge
 
-        with ThreadPoolExecutor(max_workers=min(8, max(1, len(regions)))) as pool:
-            return list(pool.map(read, regions))
+            def read(indexed_region: tuple[int, dict]) -> dict:
+                reg_idx, region = indexed_region
+                task = XIAOMI_LAYOUT_TASKS[region["label"]]
+                item = {"bbox": region["bbox"], "label": XIAOMI_LABELS[region["label"]], "content": ""}
+                if task == "skip":
+                    return item
+                assert full_page is not None
+                x1, y1, x2, y2 = region["bbox"]
+                crop = full_page.crop((
+                    int(x1 / 1000 * full_page.width), int(y1 / 1000 * full_page.height),
+                    int(x2 / 1000 * full_page.width), int(y2 / 1000 * full_page.height),
+                ))
+                try:
+                    if crop.width * crop.height > max_crop_pixels:
+                        next_crop = (
+                            _qwen3_smart_resize_pil(crop, max_pixels=max_crop_pixels)
+                            if local_mlx
+                            else _fit_pixels(crop, max_pixels=max_crop_pixels)
+                        )
+                        if next_crop is not crop:
+                            crop.close()
+                            crop = next_crop
+
+                    sampling = self._sampling_for(task)
+                    region_delta = on_delta if (on_delta is not None and reg_idx == stream_region_idx) else None
+                    with _ACTIVE_XIAOMI_PAGES_LOCK:
+                        multi_page_active = _ACTIVE_XIAOMI_PAGES > 1
+
+                    def ask(sampling: dict | None) -> str:
+                        extra_kw: dict = {}
+                        if region_delta is not None:
+                            extra_kw["on_delta"] = region_delta
+                        if local_mlx and multi_page_active:
+                            extra_kw["extra_headers"] = {"X-Xiaomi-Batch-Hint": "1"}
+                        return (self._chat(
+                            crop,
+                            self.adapter.prompt_for(task),
+                            max_tokens=self._output_budget(self.adapter.region_max_tokens),
+                            max_pixels=None,
+                            sampling=sampling,
+                            task=task,
+                            cancel_event=cancel_event,
+                            **extra_kw,
+                        ) or "").strip()
+
+                    item["content"] = ask(sampling)
+                    # The vendor's optional retry (`--retry-repetitive`): a region that reads as
+                    # a decoding loop is asked again with a presence penalty.
+                    if workflow.get("retry_repetitive") and protocol.looks_repetitive(item["content"]):
+                        retry = {**(sampling or {}), "presence_penalty": float(workflow.get("retry_presence_penalty", 1.5))}
+                        item["content"] = ask(retry)
+                    return item
+                finally:
+                    crop.close()
+
+            with _ACTIVE_XIAOMI_PAGES_LOCK:
+                concurrent_pages = _ACTIVE_XIAOMI_PAGES
+
+            if local_mlx and concurrent_pages == 1 and len(table_indices) == 1 and len(regions) > 1:
+                t_idx = table_indices[0]
+                other_indices = [idx for idx in range(len(regions)) if idx != t_idx]
+                ordered: list[dict | None] = [None] * len(regions)
+                with ThreadPoolExecutor(max_workers=min(8, len(other_indices))) as pool:
+                    for idx, res in zip(other_indices, pool.map(read, ((i, regions[i]) for i in other_indices))):
+                        ordered[idx] = res
+                ordered[t_idx] = read((t_idx, regions[t_idx]))
+                return [r for r in ordered if r is not None]
+
+            if local_mlx and concurrent_pages > 1 and table_indices:
+                # Run heavy table regions first across all concurrent pages so every
+                # `BatchGenerator` slot is dedicated to coalesced long table decodes
+                # without interleaved header prefills; tiny headers follow in ~0.15s.
+                table_set = set(table_indices)
+                other_indices = [idx for idx in range(len(regions)) if idx not in table_set]
+                ordered_batch: list[dict | None] = [None] * len(regions)
+                for t_idx in table_indices:
+                    ordered_batch[t_idx] = read((t_idx, regions[t_idx]))
+                if other_indices:
+                    with ThreadPoolExecutor(max_workers=min(4, len(other_indices))) as pool:
+                        for idx, res in zip(other_indices, pool.map(read, ((i, regions[i]) for i in other_indices))):
+                            ordered_batch[idx] = res
+                return [r for r in ordered_batch if r is not None]
+
+            max_workers = min(8, max(1, len(regions)))
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                return list(pool.map(read, enumerate(regions)))
+        finally:
+            if full_page is not None and full_page is not image:
+                full_page.close()
+            with _ACTIVE_XIAOMI_PAGES_LOCK:
+                _ACTIVE_XIAOMI_PAGES = max(0, _ACTIVE_XIAOMI_PAGES - 1)
+
+    def xiaomi_prefetch_page(self, image_loader: Callable[[], Image.Image | None]) -> None:
+        """Schedule next-page CPU layout detection to overlap with current-page VLM decode."""
+        if getattr(self.adapter, "native_runner", None) != "xiaomi":
+            return
+        from . import model_settings, trainer
+
+        settings_id = (
+            getattr(getattr(self.adapter, "_base", None), "adapter_id", None)
+            or self.adapter.adapter_id
+        )
+        workflow = model_settings.get_settings(settings_id)["effective"]["workflow"]
+        threshold = float(workflow["layout_threshold"])
+        layout_dir = trainer.layout_model_dir(workflow.get("layout_model", "official"))
+        edge = self.adapter.page_max_edge
+
+        def _kickoff() -> None:
+            def _bg() -> None:
+                try:
+                    nxt = image_loader()
+                    if nxt is None:
+                        return
+                    page = nxt.convert("RGB")
+                    if page.width > edge or page.height > edge:
+                        page.thumbnail((edge, edge), Image.Resampling.LANCZOS)
+                    paddle_official.detect_layout(page, threshold=threshold, model_dir=layout_dir)
+                except Exception:  # noqa: BLE001 - best-effort prefetch
+                    pass
+
+            threading.Thread(target=_bg, name="xiaomi-next-layout", daemon=True).start()
+
+        self._next_page_prefetch = _kickoff
 
     def paddle_native_page(
         self,
@@ -922,6 +1222,7 @@ class VllmClient:
         *,
         task: str = "text",
         cancel_event: threading.Event | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> str:
         # Alcuni modelli chiusi (Gemini 4 Argon) non parlano OpenAI: il loro
         # endpoint è il `generateContent` di Google. Il resto della pipeline
@@ -953,12 +1254,21 @@ class VllmClient:
         if min_pixels is None and self.adapter.adapter_id == "qwen3-vl-8b":
             min_pixels = self.min_pixels
         prepared = _fit_pixels(image, min_pixels=min_pixels, max_pixels=cap)
-        prepared.convert("RGB").save(buf, format="PNG")
+        prepared.convert("RGB").save(
+            buf, format="PNG", compress_level=1 if not self.is_cloud else 6,
+        )
         data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
         # Alcuni client upstream usano risposte OpenAI non-streaming. Manteniamo
         # il loro protocollo; gli adapter senza preferenza dichiarata conservano
         # lo streaming usato dalla UI.
         stream_response = bool(getattr(self.adapter, "stream_response", True))
+        if (
+            on_delta is None
+            and cancel_event is None
+            and getattr(self.adapter, "native_runner", None) == "xiaomi"
+            and self._uses_local_mlx()
+        ):
+            stream_response = False
         prompt_prefix = str(getattr(self.adapter, "image_prompt_prefix", "") or "")
         content = protocol.openai_content(
             data_uri,
@@ -989,7 +1299,7 @@ class VllmClient:
             scanner = _OuterListScanner()
             logical_done = False
             try:
-                with self._post_chat(payload, stream_response) as resp:
+                with self._post_chat(payload, stream_response, extra_headers=extra_headers) as resp:
                     resp.raise_for_status()
                     if not stream_response:
                         event = resp.json()
@@ -1200,7 +1510,13 @@ class VllmClient:
         parse = getattr(self.adapter, "parse_layout", None)
         return parse(raw) if callable(parse) else _tolerant_items(raw)
 
-    def _post_chat(self, payload: dict, stream: bool):
+    def _post_chat(
+        self,
+        payload: dict,
+        stream: bool,
+        *,
+        extra_headers: dict[str, str] | None = None,
+    ):
         """POST a chat completion, following Modal's long-request redirect.
 
         A Modal web endpoint answers a request that runs over 150 s with a 303 to the
@@ -1211,6 +1527,8 @@ class VllmClient:
         """
         url = f"{self.url}/chat/completions"
         headers = self._headers()
+        if extra_headers:
+            headers.update(extra_headers)
         resp = requests.post(
             url, json=payload, headers=headers, timeout=(10, self.timeout),
             stream=stream, allow_redirects=False,

@@ -136,11 +136,14 @@ def requeue_failed(run_id: int) -> int:
 
 
 def latest_run_for_page(page_id: int) -> int | None:
-    """The most recent run that has at least one finished output for the page."""
+    """The most recent non-superseded run that has at least one finished output for the page."""
     with connect() as conn:
         row = conn.execute(
-            "SELECT MAX(run_id) AS run_id FROM consensus_outputs "
-            "WHERE page_id=? AND state='finished'",
+            "SELECT MAX(o.run_id) AS run_id "
+            "FROM consensus_outputs o "
+            "JOIN pages p ON p.id = o.page_id "
+            "WHERE o.page_id=? AND o.state='finished' "
+            "  AND o.run_id > p.consensus_cleared_through",
             (page_id,),
         ).fetchone()
     return int(row["run_id"]) if row is not None and row["run_id"] is not None else None

@@ -5,10 +5,15 @@ principale non deve avere PaddlePaddle/PaddleX tra le dipendenze core.
 """
 from __future__ import annotations
 
+import atexit
+from collections import OrderedDict
+import hashlib
 import json
 import numbers
+import os
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 import requests
@@ -18,6 +23,10 @@ from PIL import Image
 from .. import config
 from . import paddle_runtime
 from .model_labels import PADDLE_LABELS
+
+
+_DEFAULT_SUBPROCESS_RUN = subprocess.run
+_LAYOUT_PREFIX = "__TABULARIUM_LAYOUT__ "
 
 
 _RUNNER = r'''
@@ -69,6 +78,84 @@ print(json.dumps([
 """
 
 
+# Persistent PP-DocLayoutV3 worker: imports PaddleX once, caches detector instances by
+# threshold, and reads raw RGB frames over stdin (`width * height * 3` bytes) so pages
+# avoid the ~7 s cold subprocess + PNG disk round-trip.
+_LAYOUT_DAEMON = r"""
+import json, os, sys, warnings
+warnings.filterwarnings("ignore")
+os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+os.environ.setdefault("GLOG_minloglevel", "2")
+os.environ.setdefault("FLAGS_minloglevel", "2")
+os.environ.setdefault("OMP_NUM_THREADS", "4")
+os.environ.setdefault("MKL_NUM_THREADS", "4")
+
+import numpy as np
+from paddlex import create_model
+
+PREFIX = "__TABULARIUM_LAYOUT__ "
+models = {}
+stdin = sys.stdin.buffer
+stdout = sys.stdout
+
+def get_model(threshold: float, model_dir: str):
+    key = (round(float(threshold), 6), model_dir)
+    mdl = models.get(key)
+    if mdl is None:
+        # `model_dir`: a fine-tuned export (`best_model/inference`); empty = the official weights.
+        extra = {"model_dir": model_dir} if model_dir else {}
+        try:
+            mdl = create_model("PP-DocLayoutV3", threshold=key[0], cpu_threads=4, **extra)
+        except TypeError:
+            mdl = create_model("PP-DocLayoutV3", threshold=key[0], **extra)
+        models[key] = mdl
+    return mdl
+
+while True:
+    header_line = stdin.readline()
+    if not header_line:
+        break
+    try:
+        header = json.loads(header_line.decode("utf-8"))
+        width = int(header["width"])
+        height = int(header["height"])
+        threshold = float(header["threshold"])
+        model_dir = str(header.get("model_dir") or "")
+        nbytes = int(header["nbytes"])
+        buf = bytearray()
+        while len(buf) < nbytes:
+            chunk = stdin.read(nbytes - len(buf))
+            if not chunk:
+                raise EOFError("truncated frame on stdin")
+            buf.extend(chunk)
+        arr = np.frombuffer(buf, dtype=np.uint8).reshape((height, width, 3))
+        result = list(get_model(threshold, model_dir).predict(arr))[0]
+        boxes = result.get("boxes") if hasattr(result, "get") else None
+        if boxes is None:
+            boxes = (result.json.get("res") or result.json).get("boxes", [])
+        out = [
+            {"label": str(b.get("label", "")), "coordinate": [float(v) for v in b.get("coordinate", [])]}
+            for b in boxes
+        ]
+        stdout.write(PREFIX + json.dumps({"ok": True, "boxes": out}) + "\n")
+        stdout.flush()
+    except EOFError:
+        break
+    except Exception as exc:
+        stdout.write(PREFIX + json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}) + "\n")
+        stdout.flush()
+"""
+
+_LAYOUT_POOL_COND = threading.Condition()
+_IDLE_LAYOUT_WORKERS: list[subprocess.Popen] = []
+_ALL_LAYOUT_WORKERS: list[subprocess.Popen] = []
+_WORKER_REQUEST_COUNTS: dict[int, int] = {}
+_BUSY_LAYOUT_WORKERS = 0
+_MAX_LAYOUT_WORKERS = 1
+_LAYOUT_WORKER_MAX_REQUESTS = 50
+_LAYOUT_CACHE_LOCK = threading.Lock()
+_LAYOUT_CACHE: OrderedDict[tuple[int, int, float, str, str], list[dict]] = OrderedDict()
+_LAYOUT_CACHE_MAX = 8
 # One install attempt per process: when it does not give a working runtime,
 # retrying on every page would rebuild the environment hundreds of times.
 _INSTALL_ATTEMPTED = False
@@ -110,15 +197,29 @@ def _require_runtime() -> None:
         )
 
 
-def detect_layout(image: Image.Image, *, threshold: float, model_dir: str | None = None) -> list[dict]:
-    """PP-DocLayoutV3 regions as `{label, bbox}` with the bbox in 0-1000 integers.
+def _serialize_layout_boxes(boxes: list[dict], width: int, height: int) -> list[dict]:
+    regions = []
+    for box in boxes:
+        if len(box.get("coordinate") or []) != 4:
+            continue
+        x1, y1, x2, y2 = box["coordinate"]
+        x1, x2 = (max(0.0, min(v, float(width))) for v in (x1, x2))
+        y1, y2 = (max(0.0, min(v, float(height))) for v in (y1, y2))
+        if x2 <= x1 or y2 <= y1:
+            continue
+        regions.append({
+            "label": box["label"],
+            "bbox": [
+                int(x1 / width * 1000),
+                int(y1 / height * 1000),
+                int(x2 / width * 1000),
+                int(y2 / height * 1000),
+            ],
+        })
+    return regions
 
-    `model_dir` loads a fine-tuned export instead of the official weights.
 
-    The scaling is the vendor's (`layout_detect_paddlex.serialize_regions`): clamp to the
-    image, drop empty boxes, `int(x / width * 1000)`.
-    """
-    _require_runtime()
+def _detect_layout_oneshot(image: Image.Image, *, threshold: float, model_dir: str | None = None) -> list[dict]:
     width, height = image.size
     with tempfile.TemporaryDirectory(prefix="tabularium-layout-", dir=config.ROOT_DIR) as tmp:
         path = Path(tmp) / "page.png"
@@ -133,21 +234,241 @@ def detect_layout(image: Image.Image, *, threshold: float, model_dir: str | None
         boxes = json.loads(result.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError) as exc:
         raise RuntimeError(f"output PP-DocLayoutV3 non valido: {exc}") from exc
-    regions = []
-    for box in boxes:
-        if len(box.get("coordinate") or []) != 4:
+    return _serialize_layout_boxes(boxes, width, height)
+
+
+def _terminate_proc_quietly(proc: subprocess.Popen) -> None:
+    try:
+        if proc.stdin is not None:
+            proc.stdin.close()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=3.0)
+    except Exception:  # noqa: BLE001
+        try:
+            kill = getattr(proc, "kill", None)
+            if callable(kill):
+                kill()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _shutdown_layout_worker() -> None:
+    """Terminate all persistent PP-DocLayoutV3 worker subprocesses if running."""
+    with _LAYOUT_POOL_COND:
+        procs = list(_ALL_LAYOUT_WORKERS)
+        _IDLE_LAYOUT_WORKERS.clear()
+        _ALL_LAYOUT_WORKERS.clear()
+        _WORKER_REQUEST_COUNTS.clear()
+    for proc in procs:
+        _terminate_proc_quietly(proc)
+
+
+def _clear_layout_cache() -> None:
+    with _LAYOUT_CACHE_LOCK:
+        _LAYOUT_CACHE.clear()
+
+
+atexit.register(_shutdown_layout_worker)
+
+
+def _spawn_layout_worker() -> subprocess.Popen:
+    return subprocess.Popen(
+        [str(paddle_runtime.python_bin()), "-u", "-c", _LAYOUT_DAEMON],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def _acquire_layout_worker() -> subprocess.Popen:
+    global _BUSY_LAYOUT_WORKERS
+    to_reap: list[subprocess.Popen] = []
+    spawn_new = False
+    proc: subprocess.Popen | None = None
+    with _LAYOUT_POOL_COND:
+        while True:
+            while _IDLE_LAYOUT_WORKERS:
+                cand = _IDLE_LAYOUT_WORKERS.pop(0)
+                if cand.poll() is None:
+                    _BUSY_LAYOUT_WORKERS += 1
+                    proc = cand
+                    break
+                if cand in _ALL_LAYOUT_WORKERS:
+                    _ALL_LAYOUT_WORKERS.remove(cand)
+                _WORKER_REQUEST_COUNTS.pop(id(cand), None)
+                to_reap.append(cand)
+            if proc is not None:
+                break
+            if _BUSY_LAYOUT_WORKERS < _MAX_LAYOUT_WORKERS:
+                _BUSY_LAYOUT_WORKERS += 1
+                spawn_new = True
+                break
+            _LAYOUT_POOL_COND.wait()
+    for dead in to_reap:
+        _terminate_proc_quietly(dead)
+    if spawn_new:
+        try:
+            proc = _spawn_layout_worker()
+            with _LAYOUT_POOL_COND:
+                _ALL_LAYOUT_WORKERS.append(proc)
+        except BaseException:
+            with _LAYOUT_POOL_COND:
+                _BUSY_LAYOUT_WORKERS = max(0, _BUSY_LAYOUT_WORKERS - 1)
+                _LAYOUT_POOL_COND.notify()
+            raise
+    assert proc is not None
+    return proc
+
+
+def _release_layout_worker(
+    proc: subprocess.Popen,
+    *,
+    healthy: bool,
+    request_ran: bool = False,
+) -> None:
+    global _BUSY_LAYOUT_WORKERS
+    reap = False
+    with _LAYOUT_POOL_COND:
+        _BUSY_LAYOUT_WORKERS = max(0, _BUSY_LAYOUT_WORKERS - 1)
+        reqs = _WORKER_REQUEST_COUNTS.get(id(proc), 0)
+        if request_ran:
+            reqs += 1
+            _WORKER_REQUEST_COUNTS[id(proc)] = reqs
+        recycle = reqs >= _LAYOUT_WORKER_MAX_REQUESTS
+        if healthy and not recycle and proc.poll() is None:
+            _IDLE_LAYOUT_WORKERS.append(proc)
+        else:
+            _WORKER_REQUEST_COUNTS.pop(id(proc), None)
+            if proc in _ALL_LAYOUT_WORKERS:
+                _ALL_LAYOUT_WORKERS.remove(proc)
+            reap = True
+        _LAYOUT_POOL_COND.notify()
+    if reap:
+        _terminate_proc_quietly(proc)
+
+
+def _query_layout_worker_locked(
+    proc: subprocess.Popen, width: int, height: int, threshold: float, raw_rgb: bytes, model_dir: str | None = None,
+) -> list[dict]:
+    header = (
+        json.dumps({
+            "width": width, "height": height, "threshold": float(threshold),
+            "model_dir": model_dir or "", "nbytes": len(raw_rgb),
+        }) + "\n"
+    ).encode("utf-8")
+    assert proc.stdin is not None and proc.stdout is not None
+    proc.stdin.write(header)
+    proc.stdin.write(raw_rgb)
+    proc.stdin.flush()
+
+    payload: dict | None = None
+    while True:
+        raw_line = proc.stdout.readline()
+        if not raw_line:
+            rc = proc.poll()
+            stderr_text = ""
+            if proc.stderr is not None:
+                try:
+                    stderr_text = proc.stderr.read().decode("utf-8", errors="replace")
+                except Exception:  # noqa: BLE001
+                    stderr_text = ""
+            raise EOFError(stderr_text or f"worker exited with code {rc}")
+        line = raw_line.decode("utf-8", errors="replace").strip()
+        if not line:
             continue
-        x1, y1, x2, y2 = box["coordinate"]
-        x1, x2 = (max(0.0, min(v, float(width))) for v in (x1, x2))
-        y1, y2 = (max(0.0, min(v, float(height))) for v in (y1, y2))
-        if x2 <= x1 or y2 <= y1:
-            continue
-        regions.append({
-            "label": box["label"],
-            "bbox": [int(x1 / width * 1000), int(y1 / height * 1000),
-                     int(x2 / width * 1000), int(y2 / height * 1000)],
-        })
+        if line.startswith(_LAYOUT_PREFIX):
+            payload = json.loads(line[len(_LAYOUT_PREFIX) :])
+            break
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                candidate = json.loads(line)
+                if isinstance(candidate, dict) and "ok" in candidate:
+                    payload = candidate
+                    break
+            except ValueError:
+                pass
+
+    if not payload or not payload.get("ok"):
+        err = (payload or {}).get("error") or "unknown error"
+        raise RuntimeError(f"PP-DocLayoutV3 non ha completato la pagina: {err}")
+    return payload.get("boxes") or []
+
+
+def detect_layout(image: Image.Image, *, threshold: float, model_dir: str | None = None) -> list[dict]:
+    """PP-DocLayoutV3 regions as `{label, bbox}` with the bbox in 0-1000 integers.
+
+    `model_dir` loads a fine-tuned export instead of the official weights.
+
+    The scaling is the vendor's (`layout_detect_paddlex.serialize_regions`): clamp to the
+    image, drop empty boxes, `int(x / width * 1000)`. Uses a persistent warm worker with
+    raw RGB framing and a bounded in-memory LRU cache; falls back transparently to
+    `subprocess.run` when tests monkeypatch `paddle_official.subprocess.run`.
+    """
+    _require_runtime()
+    if subprocess.run is not _DEFAULT_SUBPROCESS_RUN:
+        return _detect_layout_oneshot(image, threshold=threshold, model_dir=model_dir)
+
+    rgb = image if image.mode == "RGB" else image.convert("RGB")
+    width, height = rgb.size
+    raw_rgb = rgb.tobytes()
+    t_key = round(float(threshold), 6)
+    digest = hashlib.blake2b(raw_rgb, digest_size=16).hexdigest()
+    cache_key = (width, height, t_key, model_dir or "", digest)
+
+    with _LAYOUT_CACHE_LOCK:
+        cached = _LAYOUT_CACHE.get(cache_key)
+        if cached is not None:
+            _LAYOUT_CACHE.move_to_end(cache_key)
+            return [{"label": r["label"], "bbox": list(r["bbox"])} for r in cached]
+
+    boxes: list[dict] | None = None
+    last_exc: Exception | None = None
+    for _attempt in range(2):
+        proc = _acquire_layout_worker()
+        healthy = False
+        request_ran = False
+        try:
+            boxes = _query_layout_worker_locked(proc, width, height, threshold, raw_rgb, model_dir)
+            healthy = True
+            request_ran = True
+            break
+        except RuntimeError:
+            healthy = True
+            request_ran = True
+            raise
+        except Exception as exc:  # noqa: BLE001 - respawn once on broken pipe / exit
+            last_exc = exc
+        finally:
+            _release_layout_worker(proc, healthy=healthy, request_ran=request_ran)
+
+    if boxes is None:
+        return _detect_layout_oneshot(rgb, threshold=threshold, model_dir=model_dir) if last_exc is not None else []
+
+    regions = _serialize_layout_boxes(boxes, width, height)
+    with _LAYOUT_CACHE_LOCK:
+        _LAYOUT_CACHE[cache_key] = [{"label": r["label"], "bbox": list(r["bbox"])} for r in regions]
+        while len(_LAYOUT_CACHE) > _LAYOUT_CACHE_MAX:
+            _LAYOUT_CACHE.popitem(last=False)
     return regions
+
+
+def prefetch_layout(image: Image.Image, *, threshold: float, model_dir: str | None = None) -> None:
+    """Warm the layout cache on a background thread while the GPU is busy."""
+    if subprocess.run is not _DEFAULT_SUBPROCESS_RUN:
+        return
+    rgb = (image if image.mode == "RGB" else image.convert("RGB")).copy()
+
+    def _run() -> None:
+        try:
+            detect_layout(rgb, threshold=threshold, model_dir=model_dir)
+        except Exception:  # noqa: BLE001 - best-effort prefetch only
+            pass
+
+    threading.Thread(target=_run, name="paddle-layout-prefetch", daemon=True).start()
 
 
 def _axis_aligned_bbox(value) -> list | None:

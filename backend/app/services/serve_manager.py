@@ -233,12 +233,31 @@ def _local_runner(adapter_id: str):
 
     def _unlimited(model_path: str, port: int, overrides: dict) -> list[str]:
         # The standard MLX server does not inject the image for this architecture
-        # (v. `unlimited_ocr_mlx_server.py`): it needs the dedicated one, and below
+        # (see `unlimited_ocr_mlx_server.py`): it needs the dedicated one, and below
         # 12 GB of memory the buffer cache must be off — on an 8 GB M1 with the
         # browser open the GPU timed out with the cache on.
         memory_gb = hardware.summary().get("memory_gb") or 0
         return mlx_runtime.unlimited_ocr_serve_argv(
             model_path, port=port, cache_limit_gb=0 if 0 < memory_gb <= 12 else None,
+        )
+
+    def _xiaomi(model_path: str, port: int, overrides: dict) -> list[str]:
+        memory_gb = hardware.summary().get("memory_gb") or 0
+        if 0 < memory_gb <= 16:
+            cache_limit_gb: float | None = 0
+        elif 16 < memory_gb <= 32:
+            cache_limit_gb = 0.25
+        elif 32 < memory_gb <= 48:
+            cache_limit_gb = 0.5
+        elif memory_gb > 48:
+            cache_limit_gb = 1.0
+        else:
+            cache_limit_gb = None
+        return mlx_runtime.xiaomi_ocr_serve_argv(
+            model_path,
+            port=port,
+            settings=overrides,
+            cache_limit_gb=cache_limit_gb,
         )
 
     kinds = {
@@ -252,8 +271,16 @@ def _local_runner(adapter_id: str):
             ),
         ),
         "mlx-unlimited": (local_runtime.log_tail, mlx_runtime.ensure_ready, _unlimited),
+        "mlx-xiaomi": (mlx_runtime.log_tail, mlx_runtime.ensure_ready, _xiaomi),
     }
     recipe = serve_recipes.RECIPES.get(adapter_id)
+    if recipe is None and adapter_id:
+        try:
+            base = getattr(get_adapter(adapter_id), "_base", None)
+        except ValueError:
+            base = None
+        if base is not None:
+            recipe = serve_recipes.RECIPES.get(base.adapter_id)
     kind = getattr(recipe, "local_serve", "") if recipe is not None else ""
     return kinds.get(kind, kinds[""])
 
@@ -490,7 +517,11 @@ def _is_our_serving_process(pid: str | int) -> bool:
         return False
     if str(config.MODELS_DIR) in cmdline:
         return True
-    markers = ("vllm serve", "serve.py", "vllm/vllm-openai", "mlx_vlm.server", "mineru_mlx_gateway.py", "unlimited_ocr_mlx_server.py", "indra_native_gateway.py")
+    markers = (
+        "vllm serve", "serve.py", "vllm/vllm-openai", "mlx_vlm.server",
+        "mineru_mlx_gateway.py", "unlimited_ocr_mlx_server.py", "xiaomi_mlx_server.py",
+        "indra_native_gateway.py",
+    )
     return any(marker in cmdline for marker in markers)
 
 

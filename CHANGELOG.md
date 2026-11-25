@@ -74,6 +74,12 @@ Notable changes to Tabularium. The format follows
   `<root>/cache/`, so the first Studio opening after a restart or deploy no longer recomputes every
   table (~6–9 s of CPU during which other requests waited); concurrent requests compute once.
 - The Studio requests a page's blocks together with its preview image instead of after it.
+- **A register cut into side-by-side halves is read as one table.** On curved pages of bound
+  volumes PP-DocLayoutV3 split one borderless register into a left half (often in stacked pieces
+  too narrow for the stacked-table repair) and a right half, so Xiaomi-OCR-0 read fragments that
+  no longer lined up. Adjacent `table` boxes at least a fifth of the page tall are now joined, and
+  pieces lying inside the union are absorbed; a narrow strip of the facing page at the edge stays
+  out.
 
 ## [0.8.0] - 2026-11-22
 

@@ -109,6 +109,7 @@ SPEC = ModelSpec(
         # a pin keeps the Vast environment reproducible.
         vllm_version="0.25.1",
         serve_args=("--trust-remote-code", "--max-model-len", "16384"),
+        local_serve="mlx-xiaomi",
         source="Xiaomi-OCR-0 INSTALL.md: vllm serve ... --trust-remote-code --max-model-len 16384",
     )),
     train=Declared({
@@ -177,9 +178,10 @@ SPEC = ModelSpec(
             "emits and the vendor's `postprocess/otsl.py` reads; spanned header cells keep their "
             "`lcel`/`ucel` continuations.",
             "Image tokens match serving: `IMAGE_MIN_TOKEN_NUM=64` (processor `shortest_edge` "
-            "65536 px) and `IMAGE_MAX_TOKEN_NUM=4096` (the 2048 x 2048 px input bound). Crops come "
-            "from the full-resolution scan, while serving crops a page first fitted to 2048 px: on "
-            "scans larger than that, training crops are sharper than served ones.",
+            "65536 px) and `IMAGE_MAX_TOKEN_NUM=4096` (4,194,304 px per crop). Layout detection "
+            "runs on the page fitted to 2048 px, while region crops are cut from the "
+            "full-resolution scan and capped per crop to 4096 tokens, matching training and "
+            "`gold_eval` without double-downscale blur.",
             "Order in the message: the image comes before the prompt (`<image>…`), as Tabularium "
             "and the vendor's MCP server send it; the vendor's evaluation pipeline sends the text first.",
             "No packing or padding_free: ms-swift's FAQ says Qwen3.5's linear attention has no "

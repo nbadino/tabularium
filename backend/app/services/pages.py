@@ -251,6 +251,38 @@ def maybe_auto_deskew(
     return aligned, angle
 
 
+def peek_page_image_for_prefetch(
+    page, threshold: float = 0.10, *, may_transform: bool = True,
+) -> Image.Image | None:
+    """Load the master image for background CPU layout prefetch without touching disk.
+
+    Never persists deskew files, thumbnails, or PDF extractions so cancelling a batch
+    before `page` starts leaves zero side effects (R9).
+    """
+    from . import images as imgmod
+
+    try:
+        active = _active_transform_path(page["id"])
+        if active is not None and not _has_invalid_transform(page):
+            with Image.open(active) as raw:
+                return raw.convert("RGB")
+        if page["source_kind"] == "pdf" and not pdf_image_path(int(page["id"])).exists():
+            return None
+        src = Path(page["abs_path"])
+        if not src.exists():
+            return None
+        img = _load_source_image(page, use_deskew=False)
+        if img is None:
+            return None
+        img.load()
+        if not may_transform:
+            return img
+        aligned, _angle = imgmod.deskew(img)
+        return aligned
+    except Exception:  # noqa: BLE001 - best-effort prefetch only
+        return None
+
+
 def ensure_transform_preview(page: sqlite3.Row, kind: str) -> Path:
     """Anteprima JPEG derivata; i master originali/trasformati restano lossless."""
     if kind == "original":

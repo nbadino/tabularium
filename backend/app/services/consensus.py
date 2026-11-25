@@ -531,7 +531,11 @@ def adopt_output(
             if human and not replace_human:
                 skipped.append({"page_id": page_id, "reason": "human_work", "blocks": human})
                 continue
-            writer.replace_blocks(page_id, "replace_all" if replace_human else "replace_drafts")
+            writer.replace_blocks(
+                page_id,
+                "replace_all" if replace_human else "replace_drafts",
+                clear_consensus=False,
+            )
             for index, block in enumerate(output["blocks"], start=1):
                 block_id = writer.insert_block(
                     page_id,

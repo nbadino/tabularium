@@ -7,6 +7,9 @@ griglie — così che il caso d'uso sia leggibile e testabile senza il server.
 """
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import ExitStack
+import copy
 import json
 import threading
 from .table_provenance import with_cell_provenance
@@ -255,18 +258,91 @@ def model_prelabel_events(
     schema_labels = _project_schema_labels(project_id)
     table_hint_text = _project_table_hint(project_id)
     structure_guard = table_guard.resolve(projectstore.settings_json(project_id))
-    with (writer or blockstore.writing)() as conn:
-        for pid in page_ids:
+    bulk_conc = (
+        int(getattr(getattr(client, "adapter", None), "bulk_page_concurrency", 1) or 1)
+        if mm == "official" and len(page_ids) > 1
+        else 1
+    )
+    lookahead_pool: ThreadPoolExecutor | None = (
+        ThreadPoolExecutor(max_workers=min(bulk_conc, len(page_ids)))
+        if bulk_conc > 1
+        else None
+    )
+    lookahead_snapshots: dict[int, tuple[dict, bool]] = {}
+    lookahead_futures: dict[int, Future] = {}
+    next_submit_idx = 0
+
+    def _run_official_lookahead(p_dict: dict, may_tf: bool) -> list[dict] | None:
+        if cancel_event is not None and cancel_event.is_set():
+            return None
+        ahead_img = pagesvc.peek_page_image_for_prefetch(p_dict, may_transform=may_tf)
+        if ahead_img is None:
+            return None
+        ahead_client = copy.copy(client)
+        if hasattr(ahead_client, "_next_page_prefetch"):
+            ahead_client._next_page_prefetch = None
+        return native_page_items(ahead_client, ahead_img, on_delta=None, cancel_event=cancel_event)
+
+    with ExitStack() as stack, (writer or blockstore.writing)() as conn:
+        if lookahead_pool is not None:
+            stack.callback(lambda: lookahead_pool.shutdown(wait=False, cancel_futures=True))
+            for p_id in page_ids:
+                row_snap = conn.page(p_id, project_id)
+                if row_snap is not None:
+                    has_blk = conn.has_blocks(p_id)
+                    lookahead_snapshots[p_id] = (
+                        dict(row_snap),
+                        opts.mode in {"replace", "replace_all"} or not has_blk,
+                    )
+            conn.commit()
+            while next_submit_idx < min(bulk_conc, len(page_ids)):
+                cand_pid = page_ids[next_submit_idx]
+                next_submit_idx += 1
+                snap = lookahead_snapshots.get(cand_pid)
+                if snap is not None:
+                    lookahead_futures[cand_pid] = lookahead_pool.submit(
+                        _run_official_lookahead, snap[0], snap[1],
+                    )
+
+        for page_index, pid in enumerate(page_ids):
             if cancel_event is not None and cancel_event.is_set():
                 return
             page = conn.page(pid, project_id)
             if page is None:
                 raise HTTPException(status_code=404, detail=msg("page_not_in_project", lang, id=pid))
             keeps_blocks = conn.has_blocks(pid)
-            # Il SELECT apre una transazione di lettura. Chiuderla prima di
-            # chiamare il modello evita che l'inferenza (minuti) trattenga il
-            # lock e faccia fallire «elimina annotazioni»/autosave concorrenti.
+            next_prefetch_snapshot: tuple[dict, bool] | None = None
+            if lookahead_pool is None and mm == "official" and page_index + 1 < len(page_ids):
+                runner_name = getattr(getattr(client, "adapter", None), "native_runner", None)
+                if runner_name and callable(getattr(client, f"{runner_name}_prefetch_page", None)):
+                    nxt_row = conn.page(page_ids[page_index + 1], project_id)
+                    if nxt_row is not None:
+                        nxt_keeps = conn.has_blocks(page_ids[page_index + 1])
+                        next_prefetch_snapshot = (
+                            dict(nxt_row),
+                            opts.mode in {"replace", "replace_all"} or not nxt_keeps,
+                        )
+            # Closing the read transaction before model inference avoids holding the
+            # SQLite lock across multi-second calls while autosave/delete run.
             conn.commit()
+            if lookahead_pool is not None and next_submit_idx < len(page_ids):
+                cand_pid = page_ids[next_submit_idx]
+                next_submit_idx += 1
+                snap = lookahead_snapshots.get(cand_pid)
+                if snap is not None:
+                    lookahead_futures[cand_pid] = lookahead_pool.submit(
+                        _run_official_lookahead, snap[0], snap[1],
+                    )
+            elif next_prefetch_snapshot is not None:
+                nxt_dict, nxt_may_transform = next_prefetch_snapshot
+                runner_name = getattr(client.adapter, "native_runner", None)
+                prefetch_fn = getattr(client, f"{runner_name}_prefetch_page", None)
+                if callable(prefetch_fn):
+                    prefetch_fn(
+                        lambda nd=nxt_dict, mt=nxt_may_transform: pagesvc.peek_page_image_for_prefetch(
+                            nd, may_transform=mt,
+                        )
+                    )
             yield {"type": "page", "page_id": pid}
             if opts.keep_source_pixels and pagesvc.has_active_transform(page):
                 yield {
@@ -329,11 +405,17 @@ def model_prelabel_events(
                             return method(*args)
 
                 if mm == "official":
-                    items = native_page_items(
-                        client,
-                        image,
-                        on_delta=lambda delta: emit(delta, "layout"),
-                        cancel_event=cancel_event,
+                    ahead_fut = lookahead_futures.pop(pid, None)
+                    ahead_items = ahead_fut.result() if ahead_fut is not None else None
+                    items = (
+                        ahead_items
+                        if ahead_items is not None
+                        else native_page_items(
+                            client,
+                            image,
+                            on_delta=lambda delta: emit(delta, "layout"),
+                            cancel_event=cancel_event,
+                        )
                     )
                 elif mm == "end2end":
                     try:

@@ -25,6 +25,9 @@ class RecognitionRunCreate(BaseModel):
     page_ids: list[int] = Field(min_length=1, max_length=10000)
     engine: Literal["model", "ocr"] = "model"
     mode: Literal["merge", "replace_drafts", "replace_all"] = "replace_drafts"
+    # `replace_all` deletes human/verified annotations and resets approved pages
+    # to review: require explicit confirmation from the caller (R9).
+    confirm: bool = False
     # `document`: the pages go to the model together (models that parse whole
     # documents, e.g. Unlimited-OCR 2); otherwise like `native`.
     model_mode: Literal["native", "two_stage", "end2end", "document"] = "native"
@@ -56,6 +59,9 @@ def create_recognition_run(
     request: Request,
     user: dict = Depends(require_resource(write=True)),
 ) -> dict:
+    lang = parse_lang(request.headers.get("accept-language"))
+    if payload.mode == "replace_all" and not payload.confirm:
+        raise HTTPException(status_code=409, detail=msg("prefill_confirm", lang))
     if payload.stop_policy != "none" and payload.profile_id is None and not authsvc.is_admin(user):
         raise HTTPException(status_code=403, detail="solo un amministratore può disattivare l'inferenza globale")
     return recognitionsvc.create_run(
@@ -66,7 +72,7 @@ def create_recognition_run(
         model_mode=payload.model_mode,
         stop_policy=payload.stop_policy,
         owner_id=user.get("id"),
-        lang=parse_lang(request.headers.get("accept-language")),
+        lang=lang,
         profile_id=payload.profile_id,
     )
 

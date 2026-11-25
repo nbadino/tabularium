@@ -583,6 +583,14 @@ export default function AnnotationPage() {
     setPrefillDrafts(mapDrafts(rep.items))
     for (const block of rep.items) if (block.label === 'Table') bumpTable(block.id)
     setRemoteEdit(null)
+    const latestConsensus = await apiGet<PageConsensus>(`/pages/${p.id}/consensus`).catch(() => null)
+    if (latestConsensus && pageIdRef.current === p.id) {
+      setConsensus(latestConsensus)
+      if (!latestConsensus.comparison) {
+        setConsensusOn(false)
+        setConsensusSelected(null)
+      }
+    }
   }
 
   const reloadRemote = async () => {
@@ -696,6 +704,9 @@ export default function AnnotationPage() {
             // merge, e nelle bozze si mantiene ciò che non è una bozza.
             if (mode === 'replace_all') {
               ann.reset([])
+              setConsensus(null)
+              setConsensusOn(false)
+              setConsensusSelected(null)
             } else if (mode === 'replace_drafts') {
               ann.reset(
                 ann.blocks.filter((b) => !(b.prefill && !b.confirmed)),
