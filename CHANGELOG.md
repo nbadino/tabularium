@@ -7,6 +7,12 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **`tabularium recognition import-second-reading`** stores the table cells a second recognizer
+  read differently (`doubts` in each page's result file) as a finished comparison between two
+  models: the first reading against the same reading with the doubted cells as the second one read
+  them. The Studio shows them as cells to check, with the other reading on right click. No page is
+  written; verified pages, straightened pages, pages without doubts and pages another comparison
+  already covers are left alone, and `--dry-run` shows the plan.
 - **`tabularium recognition import`** stores results a model produced on another machine (one
   `<page id>.json` per page, as the Indra gateway returns them) through the prefill itself, as
   recognition runs with provider `import`: drafts are replaced, verified work stays, only pages in

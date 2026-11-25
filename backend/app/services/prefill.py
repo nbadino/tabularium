@@ -218,6 +218,23 @@ def _project_table_hint(project_id: int) -> str:
     return table_hint.get_table_hint(projectstore.settings_json(project_id))
 
 
+def grid_from_table_content(raw_content: str) -> dict | None:
+    """The grid a model's own table content describes, before any repair of ours.
+
+    A whole-page result follows the official parsing format: a table is often HTML,
+    not OTSL, so HTML is converted first (the OTSL parser would read every HTML tag
+    as one row). None when the content describes no rows or columns.
+    """
+    content = otsl.html_to_otsl(raw_content) if "<table" in raw_content.lower() else raw_content
+    candidate = table_headers.repair_flat_header(otsl.otsl_to_grid(content))
+    return candidate if candidate.get("rows") and candidate.get("cols") else None
+
+
+def finished_model_grid(grid: dict, structure_guard, model: str) -> dict:
+    """A model's grid as the prefill stores it: structure guard applied, cells marked as its draft."""
+    return with_cell_provenance(table_guard.apply(grid, structure_guard), f"model:{model}", generated=True)
+
+
 def model_prelabel_events(
     project_id: int,
     page_ids: list[int],
@@ -517,18 +534,8 @@ def model_prelabel_events(
                     used_end2end_content = False
                     if page_mode in {"end2end", "official"} and k.get("content"):
                         try:
-                            raw_content = k["content"]
-                            # END2END segue il formato ufficiale di parsing: per
-                            # le tabelle il contenuto è spesso HTML, non OTSL.
-                            # Convertiamo prima HTML→OTSL; altrimenti il parser
-                            # OTSL leggerebbe tutti i tag HTML come una sola riga.
-                            candidate_content = (
-                                otsl.html_to_otsl(raw_content)
-                                if "<table" in raw_content.lower()
-                                else raw_content
-                            )
-                            candidate = table_headers.repair_flat_header(otsl.otsl_to_grid(candidate_content))
-                            if candidate.get("rows") and candidate.get("cols"):
+                            candidate = grid_from_table_content(k["content"])
+                            if candidate is not None:
                                 grid = candidate
                                 used_end2end_content = True
                         except Exception:  # noqa: BLE001
@@ -554,9 +561,8 @@ def model_prelabel_events(
                         k["error"] = f"{k['bbox']}: {exc}"
                         grid = None
                     if grid and grid["rows"]:
-                        grid = table_guard.apply(grid, structure_guard)
+                        grid = finished_model_grid(grid, structure_guard, client.model)
                         table_repairs += len(grid.get("structure_repairs") or [])
-                        grid = with_cell_provenance(grid, f"model:{client.model}", generated=True)
                         conn.upsert_grid(block_id, grid)
                         grids += 1
                         source = "end2end" if used_end2end_content else "table_crop_fallback"

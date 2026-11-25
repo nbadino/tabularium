@@ -53,6 +53,56 @@ def create(
     return run_id
 
 
+def create_finished(
+    project_id: int, models: list[dict[str, Any]], *, owner_id: int | None, at: str,
+) -> int:
+    """A run whose readings were made elsewhere: finished from the start, no queue.
+
+    Its outputs are added with `add_finished_outputs`. It is never `queued` or
+    `running`, so a restart has nothing to resume and no model is ever called for it.
+    """
+    with connect() as conn:
+        cursor = conn.execute(
+            "INSERT INTO consensus_runs (project_id, owner_id, state, models_json, started_at, ended_at) "
+            "VALUES (?,?, 'finished', ?, ?, ?)",
+            (project_id, owner_id, json.dumps(models, ensure_ascii=False), at, at),
+        )
+        conn.commit()
+        return int(cursor.lastrowid or 0)
+
+
+def add_finished_outputs(
+    run_id: int, page_id: int, blocks_by_model: dict[str, list[dict[str, Any]]], *, at: str,
+) -> None:
+    """Every model's reading of one page, in one transaction: a page is compared or absent."""
+    with connect() as conn:
+        conn.executemany(
+            "INSERT INTO consensus_outputs (run_id, page_id, model_key, state, blocks_json, started_at, ended_at) "
+            "VALUES (?,?,?, 'finished', ?, ?, ?)",
+            [
+                (run_id, page_id, key, json.dumps(blocks, ensure_ascii=False), at, at)
+                for key, blocks in blocks_by_model.items()
+            ],
+        )
+        conn.execute("UPDATE consensus_runs SET ended_at=? WHERE id=?", (at, run_id))
+        conn.commit()
+
+
+def compared_pages(project_id: int) -> dict[int, set[str]]:
+    """Per page of the project, the model keys that have a finished reading in some run."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT o.page_id, o.model_key FROM consensus_outputs o "
+            "JOIN consensus_runs r ON r.id = o.run_id "
+            "WHERE r.project_id=? AND o.state='finished'",
+            (project_id,),
+        ).fetchall()
+    out: dict[int, set[str]] = {}
+    for row in rows:
+        out.setdefault(int(row["page_id"]), set()).add(str(row["model_key"]))
+    return out
+
+
 def _run_out(row) -> dict[str, Any]:
     out = dict(row)
     out["models"] = json.loads(out.pop("models_json") or "[]")

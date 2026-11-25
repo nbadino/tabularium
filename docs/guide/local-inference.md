@@ -115,6 +115,16 @@ the page fails that page only. The work shows up as recognition runs with provid
 application until it ends. If it is interrupted, run the same command again: the pages
 already written are skipped (`--again` writes them once more).
 
+When the pages were read a second time by another recognizer, the cells where the two readings
+differ can be brought in as cells to check. The files are the same results plus a `doubts` list;
+each page with doubts gets a comparison between the first and the second reading, which the
+Studio colours in the table editor (right click offers the other reading). No page is written:
+
+```bash
+tabularium recognition import-second-reading /path/to/second --project 4 --adapter indra-lloyds --name "Second reading" --dry-run
+tabularium recognition import-second-reading /path/to/second --project 4 --adapter indra-lloyds --name "Second reading"
+```
+
 The gateway executes `lloyds_lines.py` from the installed folder: import only a
 package you built or trust. It is served on this machine only; its accuracy was
 measured on the Lloyd's collections it was tuned on and nowhere else.

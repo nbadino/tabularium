@@ -49,6 +49,21 @@ and the content polls until both have read it.
 A *Check in the Studio* button opens the first compared page with cells still to check (else
 the first compared page, else the first page of the run); each page row also links to it.
 
+A comparison can also be **imported** (`services/consensus.py::import_second_reading`, CLI
+`tabularium recognition import-second-reading <folder> --project N --adapter ID --name NAME`):
+each `<page id>.json` is a gateway result for the page plus `doubts`, a list of
+`{row, col, text, other}` naming the table cells (0-based, header rows included) a second
+recognizer read differently; `col: null` is a whole row the second reading lacks. A page with
+doubts gets two finished outputs in a run created `finished` (`runstore.create_finished`, never
+queued, so a restart resumes nothing): `imported-first`, the file through the read-only prefill,
+and `imported-second`, the same blocks with each doubted cell replaced by `other` (a missing row
+emptied; the structure never changes). Their models carry `profile_id: null`: no saved model
+stands behind them. A doubt whose `text` is not the cell's text fails the page and nothing is
+stored for it. Left out and counted: pages outside the chosen statuses (default `new`),
+straightened pages, pages without doubts, pages already imported (`--again` imports them once
+more) and pages with a finished output of other models, whose comparison a newer run would hide.
+A run holds at most `MAX_PAGES` pages. Pinned by `tests/test_second_reading_import.py`.
+
 The metric is pure (`domain/consensus.py`), pinned by `tests/test_consensus.py`:
 
 - **Matching**: blocks of different models pair at IoU ≥ 0.5, best overlaps first, one block per

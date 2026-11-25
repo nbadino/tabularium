@@ -156,6 +156,31 @@ def _recognition(argv: list[str]) -> int:
         "--again", action="store_true",
         help="also write the pages an earlier import of this model already wrote",
     )
+    second = commands.add_parser(
+        "import-second-reading",
+        help="store the cells a second reading doubts as a comparison between two models",
+        description=(
+            "Read one <page id>.json per page from a folder: the model's result for the page "
+            "plus `doubts`, the table cells a second recognizer read differently. Each page "
+            "with doubts gets a finished comparison (first reading against second reading), "
+            "which the Studio shows as cells to check. No page is written. Run it with "
+            "--dry-run first."
+        ),
+    )
+    second.add_argument("source", help="folder with one <page id>.json per page")
+    second.add_argument("--project", type=int, required=True, help="project id")
+    second.add_argument("--adapter", required=True, help="adapter id of the model that read the pages")
+    second.add_argument("--name", required=True, help="how the second reading is called in the comparison")
+    second.add_argument(
+        "--status", action="append", metavar="STATUS",
+        help="page status to import for; repeat for more (default: new)",
+    )
+    second.add_argument("--limit", type=int, help="import at most this many pages (lowest ids first)")
+    second.add_argument("--dry-run", action="store_true", help="say what would be imported, write nothing")
+    second.add_argument(
+        "--again", action="store_true",
+        help="also import the pages an earlier import of a second reading already covers",
+    )
 
     args = parser.parse_args(argv)
     if args.data:
@@ -165,6 +190,8 @@ def _recognition(argv: list[str]) -> int:
     from .services import recognition
 
     init_db()
+    if args.command == "import-second-reading":
+        return _import_second_reading(args)
     done = {"pages": 0, "failed": 0}
 
     def progress(page_id: int, failure: str | None) -> None:
@@ -200,6 +227,53 @@ def _recognition(argv: list[str]) -> int:
         return 0
     runs = ", ".join(f"#{run_id}" for run_id in report["runs"]) or "none"
     print(f"imported {report['imported']} pages, {report['failed']} failed (recognition runs: {runs})")
+    return 1 if report["failed"] else 0
+
+
+def _import_second_reading(args) -> int:
+    from .services import consensus
+
+    done = {"pages": 0, "failed": 0}
+
+    def progress(page_id: int, failure: str | None) -> None:
+        done["pages"] += 1
+        if failure:
+            done["failed"] += 1
+            print(f"  page {page_id}: {failure}", file=sys.stderr)
+        if done["pages"] % 250 == 0:
+            print(f"  {done['pages']} pages, {done['failed']} failed", flush=True)
+
+    try:
+        report = consensus.import_second_reading(
+            args.project, args.source, adapter_id=args.adapter, second_name=args.name,
+            statuses=tuple(args.status or ("new",)), limit=args.limit,
+            dry_run=args.dry_run, again=args.again, progress=progress,
+        )
+    except ValueError as exc:
+        print(f"tabularium recognition import-second-reading: {exc}", file=sys.stderr)
+        return 2
+    skipped = report["skipped"]
+    print(f"{report['files']} result files in {args.source}")
+    if skipped["not_in_project"]:
+        print(f"  {skipped['not_in_project']} belong to no page of project {args.project}")
+    for status, count in sorted(skipped["status"].items()):
+        print(f"  {count} pages left alone: status {status}")
+    for key, why in (
+        ("transformed", "straightened, the boxes would not fit"),
+        ("already_imported", "second reading already imported (--again imports it once more)"),
+        ("compared", "a comparison between other models is there"),
+        ("no_doubts", "the second reading doubts no cell"),
+    ):
+        if skipped[key]:
+            print(f"  {skipped[key]} pages left alone: {why}")
+    if report["dry_run"]:
+        print(f"{report['selected']} pages would get a comparison; nothing was written")
+        return 0
+    runs = ", ".join(f"#{run_id}" for run_id in report["runs"]) or "none"
+    print(
+        f"imported {report['imported']} pages with {report['doubts']} doubted cells, "
+        f"{report['failed']} failed (comparisons: {runs})"
+    )
     return 1 if report["failed"] else 0
 
 

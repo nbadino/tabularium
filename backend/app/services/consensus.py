@@ -10,10 +10,12 @@ with `page_comparison`, which applies the pure metric in `domain/consensus.py`.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
@@ -21,8 +23,10 @@ from fastapi import HTTPException
 from ..adapters import blocks as blockstore
 from ..adapters import compute_profiles as profilestore
 from ..adapters import consensus as runstore
+from ..adapters import projects as projectstore
 from ..domain import consensus as metric
-from . import audit, consensus_decisions, inference, model_keys, prefill
+from ..domain import otsl
+from . import audit, consensus_decisions, inference, model_keys, prefill, table_guard
 from .compute_profiles import describe
 from .i18n import localize_detail, msg
 from .model_adapters import get_adapter
@@ -313,12 +317,15 @@ def _coordinate(run_id: int, cancel: threading.Event, key_user_id: int | None = 
             _ACTIVE.pop(run_id, None)
 
 
-def _recognize(project_id: int, page_id: int, client, cancel: threading.Event):
+def _recognize(
+    project_id: int, page_id: int, client, cancel: threading.Event,
+    opts: prefill.PrelabelOptions | None = None,
+):
     """One model on one page: the blocks it returned, or why it failed."""
     blocks: list[dict[str, Any]] = []
     failure: str | None = None
     done = False
-    opts = prefill.PrelabelOptions(mode="merge", model_mode="native")
+    opts = opts or prefill.PrelabelOptions(mode="merge", model_mode="native")
     try:
         for event in prefill.model_prelabel_events(
             project_id, [page_id], opts, client, "it",
@@ -618,6 +625,199 @@ def reconcile_runs() -> None:
         active_ids = set(_ACTIVE)
     for run in runstore.interrupted(active_ids):
         _start(int(run["id"]), run.get("owner_id"))
+
+
+# --- a second reading made elsewhere ------------------------------------------------
+
+# Model keys of an imported comparison. No saved model stands behind them, so the
+# run's models carry `profile_id: None`: there is nothing to retry or to call.
+IMPORT_FIRST = "imported-first"
+IMPORT_SECOND = "imported-second"
+
+
+def _cell_text(value: Any) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _second_reading(
+    blocks: list[dict[str, Any]], doubts: list[dict[str, Any]], structure_guard, model: str,
+) -> list[dict[str, Any]]:
+    """The first reading's blocks with every doubted cell as the second recognizer read it.
+
+    A doubt names a cell by row and column of the table as the model delivered it
+    (before the structure guard moves anything) and gives the text delivered and the
+    other reading; with no column it is a whole row the second reading does not
+    have, which is emptied. So the cells are replaced in the delivered table, and
+    that table then becomes a grid the way the prefill makes the first one. A doubt
+    that names no cell of the table, or whose text is not the cell's, was computed
+    on another table: ValueError, and nothing is stored for the page.
+    """
+    out = copy.deepcopy(blocks)
+    tables = [block for block in out if (block.get("grid") or {}).get("rows")]
+    if len(tables) != 1:
+        raise ValueError(f"the doubts name cells of one table, the page has {len(tables)}")
+    table = tables[0]
+    grid = prefill.grid_from_table_content(str(table.get("content") or ""))
+    if grid is None:
+        raise ValueError("the table's own content describes no table")
+    cells = {(int(cell["r"]), int(cell["c"])): cell for cell in grid["cells"]}
+    for doubt in doubts:
+        row, column = int(doubt["row"]), doubt.get("col")
+        if column is None:
+            if not 0 <= row < int(grid["rows"]):
+                raise ValueError(f"a doubt names row {row}, which the table does not have")
+            for (r, _c), cell in cells.items():
+                if r == row:
+                    cell["text"] = ""
+            continue
+        cell = cells.get((row, int(column)))
+        if cell is None or _cell_text(cell.get("text")) != _cell_text(doubt.get("text")):
+            raise ValueError(
+                f"the doubt at row {row}, column {column} does not match the table: "
+                "it was computed on another reading"
+            )
+        cell["text"] = str(doubt.get("other") or "")
+    table["content"] = otsl.grid_to_otsl(grid)
+    table["grid"] = prefill.finished_model_grid(grid, structure_guard, model)
+    return out
+
+
+def import_second_reading(
+    project_id: int,
+    source: str | Path,
+    *,
+    adapter_id: str,
+    second_name: str,
+    statuses: tuple[str, ...] = ("new",),
+    owner_id: int | None = None,
+    limit: int | None = None,
+    dry_run: bool = False,
+    again: bool = False,
+    progress=None,
+) -> dict[str, Any]:
+    """Store a second reading made elsewhere as finished comparisons of this project.
+
+    `source` holds one `<page id>.json` per page: what the Indra gateway's reader
+    returns for it, plus `doubts`, the table cells a second recognizer read
+    differently. Each page with doubts gets two readings in a consensus run: the
+    file's own (`IMPORT_FIRST`, named after the model) and the same with the doubted
+    cells as the second recognizer read them (`IMPORT_SECOND`, named `second_name`).
+    The Studio then shows those cells as cells to check. Nothing on a page is written.
+
+    Left out, and counted in the report: files of no page of the project, pages
+    whose status is not in `statuses`, straightened pages (the boxes were read on the
+    original pixels), pages without doubts, pages a comparison between other models
+    already covers (the newest run is the one shown, so theirs would be hidden) and
+    pages already imported (`again` imports those once more). A run holds at most
+    `MAX_PAGES` pages. `dry_run` returns the plan and writes nothing. Raises
+    ValueError for a request that cannot be honoured at all.
+    """
+    from ..adapters import pages as pagestore
+    from . import pages as pagesvc
+    from . import recognition
+
+    folder = Path(source).expanduser()
+    if not folder.is_dir():
+        raise ValueError(f"not a directory: {folder}")
+    second_name = second_name.strip()
+    if not second_name:
+        raise ValueError("the second reading needs a name")
+    adapter = get_adapter(adapter_id)
+    if getattr(adapter, "native_runner", None) != "indra":
+        raise ValueError(
+            f"'{adapter_id}': a second reading can be imported for the models of the Indra gateway only"
+        )
+    files = {
+        int(path.stem): path for path in folder.iterdir()
+        if path.suffix == ".json" and path.stem.isdigit()
+    }
+    pages = {
+        int(page["id"]): page for page in pagestore.all_for_project(project_id)
+        if int(page["id"]) in files
+    }
+    compared = runstore.compared_pages(project_id)
+    skipped_status: dict[str, int] = {}
+    skipped = {"transformed": 0, "already_imported": 0, "compared": 0, "no_doubts": 0}
+    selected: list[int] = []
+    for page_id in sorted(pages):
+        page = pages[page_id]
+        keys = compared.get(page_id, set())
+        if page["status"] not in statuses:
+            skipped_status[page["status"]] = skipped_status.get(page["status"], 0) + 1
+        elif pagesvc.has_active_transform(page):
+            skipped["transformed"] += 1
+        elif IMPORT_SECOND in keys and not again:
+            skipped["already_imported"] += 1
+        elif keys - {IMPORT_FIRST, IMPORT_SECOND}:
+            skipped["compared"] += 1
+        else:
+            selected.append(page_id)
+    report: dict[str, Any] = {
+        "dry_run": dry_run,
+        "files": len(files),
+        "selected": 0,
+        "skipped": {"not_in_project": len(files) - len(pages), "status": skipped_status, **skipped},
+        "runs": [],
+        "imported": 0,
+        "failed": 0,
+        "doubts": 0,
+    }
+    model = str(adapter.capabilities.served_model_name or adapter_id)
+    models = [
+        {"key": IMPORT_FIRST, "profile_id": None, "name": adapter.capabilities.display_name,
+         "adapter_id": adapter_id, "model_name": model},
+        {"key": IMPORT_SECOND, "profile_id": None, "name": second_name,
+         "adapter_id": adapter_id, "model_name": model},
+    ]
+    opts = prefill.PrelabelOptions(
+        mode="merge", model_mode="native", keep_source_pixels=True, table_promote=False,
+    )
+    structure_guard = table_guard.resolve(projectstore.settings_json(project_id))
+    cancel = threading.Event()
+    run_id, in_run = None, 0
+    for page_id in selected:
+        if limit is not None and report["selected"] >= max(0, int(limit)):
+            break
+        failure: str | None = None
+        readings: dict[str, list[dict[str, Any]]] = {}
+        doubts: list = []
+        try:
+            payload = recognition._imported_payload(files[page_id], pages[page_id])
+            doubts = payload.get("doubts") or []
+            if not isinstance(doubts, list):
+                raise ValueError(f"{files[page_id].name}: `doubts` is not a list")
+        except ValueError as exc:
+            failure = str(exc)
+        if failure is None and not doubts:
+            report["skipped"]["no_doubts"] += 1
+            continue
+        report["selected"] += 1
+        if dry_run:
+            continue
+        if failure is None:
+            client = recognition._ImportedPage(adapter, model, payload)
+            blocks, failure = _recognize(project_id, page_id, client, cancel, opts)
+            if failure is None:
+                try:
+                    readings = {
+                        IMPORT_FIRST: blocks,
+                        IMPORT_SECOND: _second_reading(blocks, doubts, structure_guard, model),
+                    }
+                except (ValueError, KeyError, TypeError) as exc:
+                    failure = str(exc) or type(exc).__name__
+        if failure is None:
+            if run_id is None or in_run >= MAX_PAGES:
+                run_id, in_run = runstore.create_finished(project_id, models, owner_id=owner_id, at=_now()), 0
+                report["runs"].append(run_id)
+            runstore.add_finished_outputs(run_id, page_id, readings, at=_now())
+            in_run += 1
+            report["imported"] += 1
+            report["doubts"] += len(doubts)
+        else:
+            report["failed"] += 1
+        if progress is not None:
+            progress(page_id, failure)
+    return report
 
 
 # --- one page -------------------------------------------------------------------
