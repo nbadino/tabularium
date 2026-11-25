@@ -10,7 +10,8 @@ import type { Pt } from '../lib/coords'
 
 export interface ConsensusModel {
   key: string
-  profile_id: number
+  /** The saved model behind the reading; null for a reading imported from elsewhere. */
+  profile_id: number | null
   name: string
   adapter_id: string
   model_name: string

@@ -34,7 +34,7 @@ export interface ConsensusRun {
   id: number
   project_id: number
   state: 'queued' | 'running' | 'finished' | 'finished_with_errors' | 'failed' | 'cancelled'
-  models: { key: string; profile_id: number; name: string }[]
+  models: { key: string; profile_id: number | null; name: string }[]
   total: number
   succeeded: number
   failed: number
