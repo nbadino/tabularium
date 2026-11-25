@@ -7,6 +7,10 @@ Notable changes to Tabularium. The format follows
 ## [Unreleased]
 
 ### Added
+- **`tabularium recognition import`** stores results a model produced on another machine (one
+  `<page id>.json` per page, as the Indra gateway returns them) through the prefill itself, as
+  recognition runs with provider `import`: drafts are replaced, verified work stays, only pages in
+  the chosen statuses are touched, a straightened page is skipped and `--dry-run` shows the plan.
 - **The Lloyd's reader can return the whole page.** A whole-page package for `indra-lloyds` gives
   the gateway its own blocks (title, issue date, page number, letter range, section titles,
   adverts, text, table), which arrive in the project with those labels; it reads the text outside

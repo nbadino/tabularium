@@ -54,6 +54,10 @@ class PrelabelOptions:
     # Collega ogni bozza alla sua provenienza senza cambiare il comportamento
     # storico del prefill sulla singola pagina.
     recognition_run_id: int | None = None
+    # True when the result was read on the scan's own pixels before this call (an
+    # imported result): the page must not be straightened under it, and a page whose
+    # canvas already is a straightened master cannot take it.
+    keep_source_pixels: bool = False
 
 
 def _looks_like_table(image, bbox: list[int]) -> bool:
@@ -264,10 +268,19 @@ def model_prelabel_events(
             # lock e faccia fallire «elimina annotazioni»/autosave concorrenti.
             conn.commit()
             yield {"type": "page", "page_id": pid}
+            if opts.keep_source_pixels and pagesvc.has_active_transform(page):
+                yield {
+                    "type": "error",
+                    "page_id": pid,
+                    "message": str(msg("result_needs_source_pixels", lang)),
+                }
+                continue
             try:
                 # Only replace_all clears the blocks the rotation would misplace.
                 image, applied_angle = pagesvc.maybe_auto_deskew(
-                    page, may_transform=opts.mode in {"replace", "replace_all"} or not keeps_blocks
+                    page,
+                    may_transform=not opts.keep_source_pixels
+                    and (opts.mode in {"replace", "replace_all"} or not keeps_blocks),
                 )
             except HTTPException as exc:
                 yield {"type": "error", "page_id": pid, "message": str(exc.detail)}

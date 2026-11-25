@@ -124,6 +124,79 @@ _BACKUP_SKIP_SUFFIXES = ("-runtime",)
 _BACKUP_SKIP_NAMES = {"vendor", "cache", "tiles", "tabularium.db", "tabularium.db-wal", "tabularium.db-shm"}
 
 
+def _recognition(argv: list[str]) -> int:
+    """`tabularium recognition`: store results a model produced on another machine."""
+    parser = argparse.ArgumentParser(
+        prog="tabularium recognition",
+        description="Recognition work done outside the running application.",
+    )
+    parser.add_argument("--data", metavar="DIR", help="data folder (default: ~/Tabularium)")
+    commands = parser.add_subparsers(dest="command", required=True)
+    importer = commands.add_parser(
+        "import",
+        help="store results read elsewhere as drafts, through a recognition run",
+        description=(
+            "Read one <page id>.json per page from a folder (what the model's gateway returns "
+            "for the page) and write it as the application would after reading the page itself: "
+            "unverified drafts are replaced, what a person drew or verified stays. Only pages in "
+            "the chosen statuses are touched. Run it with --dry-run first."
+        ),
+    )
+    importer.add_argument("source", help="folder with one <page id>.json per page")
+    importer.add_argument("--project", type=int, required=True, help="project id")
+    importer.add_argument("--adapter", required=True, help="adapter id of the model that read the pages")
+    importer.add_argument(
+        "--status", action="append", metavar="STATUS",
+        help="page status to import into; repeat for more (default: new)",
+    )
+    importer.add_argument("--limit", type=int, help="import at most this many pages (lowest ids first)")
+    importer.add_argument("--chunk", type=int, default=None, help="pages per recognition run")
+    importer.add_argument("--dry-run", action="store_true", help="say what would be imported, write nothing")
+
+    args = parser.parse_args(argv)
+    if args.data:
+        os.environ["TABULARIUM_ROOT"] = os.path.abspath(os.path.expanduser(args.data))
+
+    from .db import init_db
+    from .services import recognition
+
+    init_db()
+    done = {"pages": 0, "failed": 0}
+
+    def progress(page_id: int, failure: str | None) -> None:
+        done["pages"] += 1
+        if failure:
+            done["failed"] += 1
+            print(f"  page {page_id}: {failure}", file=sys.stderr)
+        if done["pages"] % 250 == 0:
+            print(f"  {done['pages']} pages, {done['failed']} failed", flush=True)
+
+    try:
+        report = recognition.import_results(
+            args.project, args.source, adapter_id=args.adapter,
+            statuses=tuple(args.status or ("new",)), limit=args.limit,
+            chunk=args.chunk or recognition.IMPORT_CHUNK, dry_run=args.dry_run,
+            progress=progress,
+        )
+    except ValueError as exc:
+        print(f"tabularium recognition import: {exc}", file=sys.stderr)
+        return 2
+    skipped = report["skipped"]
+    print(f"{report['files']} result files in {args.source}")
+    if skipped["not_in_project"]:
+        print(f"  {skipped['not_in_project']} belong to no page of project {args.project}")
+    for status, count in sorted(skipped["status"].items()):
+        print(f"  {count} pages left alone: status {status}")
+    if skipped["transformed"]:
+        print(f"  {skipped['transformed']} pages left alone: straightened, the boxes would not fit")
+    if report["dry_run"]:
+        print(f"{report['selected']} pages would be imported; nothing was written")
+        return 0
+    runs = ", ".join(f"#{run_id}" for run_id in report["runs"]) or "none"
+    print(f"imported {report['imported']} pages, {report['failed']} failed (recognition runs: {runs})")
+    return 1 if report["failed"] else 0
+
+
 def _backup(argv: list[str]) -> int:
     """`tabularium backup`: the data folder and the vault key in one archive."""
     parser = argparse.ArgumentParser(
@@ -457,6 +530,7 @@ def _reset_password(argv: list[str]) -> int:
 _COMMANDS = {
     "doctor": (_doctor, "check this installation without starting the app"),
     "models": (_models, "install a checkpoint offline, list the installed ones"),
+    "recognition": (_recognition, "import results a model produced on another machine"),
     "backup": (_backup, "archive the data folder and the vault key"),
     "restore": (_restore, "restore a backup archive, with the app stopped"),
     "restore-db": (_restore_db, "put a database backup back, with the app stopped"),

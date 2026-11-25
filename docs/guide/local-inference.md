@@ -98,6 +98,22 @@ install it on the server, then start it from Models as any local model.
 tabularium models import /path/to/release-t7b --adapter indra-lloyds
 ```
 
+**Results read on another machine.** A long run of the same reader on a rented GPU
+leaves one `<page id>.json` per page (what the gateway returns for the page). They
+enter the project as if the application had read the pages itself:
+
+```bash
+tabularium recognition import /path/to/results --project 4 --adapter indra-lloyds --dry-run
+tabularium recognition import /path/to/results --project 4 --adapter indra-lloyds
+```
+
+Only pages in status `new` are touched unless `--status` says otherwise; unverified
+drafts are replaced, what a person drew or verified stays; a straightened page is left
+alone (the boxes were read on the original scan) and a result whose boxes do not fit
+the page fails that page only. The work shows up as recognition runs with provider
+`import`. Run it while no model recognition is running, and do not restart the
+application until it ends.
+
 The gateway executes `lloyds_lines.py` from the installed folder: import only a
 package you built or trust. It is served on this machine only; its accuracy was
 measured on the Lloyd's collections it was tuned on and nowhere else.

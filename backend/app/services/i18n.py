@@ -207,6 +207,7 @@ _IT: dict[str, str] = {
     "disk_unknown_w": "impossibile verificare lo spazio disco",
     # --- OCR / prelabel ------------------------------------------------------------
     "image_not_available": "immagine non disponibile",
+    "result_needs_source_pixels": "la pagina è stata raddrizzata: un risultato letto sulla scansione originale non le corrisponde",
     # --- autenticazione & utenti ----------------------------------------------------
     "auth_required": "autenticazione richiesta",
     "admin_required": "servono privilegi di amministratore",
@@ -551,6 +552,7 @@ _EN: dict[str, str] = {
     "low_disk": "low remaining disk space: {gb} GB",
     "disk_unknown_w": "cannot check the disk space",
     "image_not_available": "image not available",
+    "result_needs_source_pixels": "the page has been straightened: a result read on the original scan does not match it",
     "auth_required": "authentication required",
     "admin_required": "administrator privileges required",
     "permission_denied": "insufficient permissions",
@@ -893,6 +895,7 @@ _FR: dict[str, str] = {
     "low_disk": "espace disque résiduel faible : {gb} Go",
     "disk_unknown_w": "impossible de vérifier l'espace disque",
     "image_not_available": "image indisponible",
+    "result_needs_source_pixels": "la page a été redressée : un résultat lu sur la numérisation d'origine ne lui correspond pas",
     "auth_required": "authentification requise",
     "admin_required": "privilèges d'administrateur requis",
     "permission_denied": "permissions insuffisantes",
